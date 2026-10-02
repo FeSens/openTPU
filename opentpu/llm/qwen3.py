@@ -39,7 +39,7 @@ from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, RunVar, T
 from . import formats as FM
 from . import generate as G
 from ..isasim import Config, Machine, design_config
-from ..kernels.attention import Bucket, _attend_heads
+from ..kernels.attention import Additive, Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
 from ..host.offload import BackendDram, RowLayout, RowServer
 from ..kernels import mailbox as MB
@@ -301,7 +301,8 @@ def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
     rows when `head` (its data and scale addresses) is given -- a tied int8 head whole on one
     slice -- else a table of their own, or with `embed_host` a slot of `rows` of them that the
     host fills from the table it keeps (embed_record: each row's int8 data, then its scale
-    words) and a mailbox for the generate loop's requests (opentpu.host.offload.RowLayout)."""
+    words) and a mailbox for the generate loop's requests (opentpu.host.offload.RowLayout).
+    A dense model's image also holds the prompt runs' additive mask tiles (amask_table)."""
     block = block or ATTN_BLOCK
     half = len(rope_tables(spec, 0)[0])
     V, H = spec.vocab, spec.hidden
@@ -321,9 +322,31 @@ def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
         emb.update(onehot=b.alloc(4 * M * onehot_blocks(D, M, "int8") * D), M=M)
     else:
         emb = {"embed": b.alloc(4 * V * H)}
+    if getattr(spec, "moe", None) is None and not getattr(spec, "experts", 0):
+        emb.update(amask=b.alloc(amask_table(block, M).nbytes), amask_M=M)
     return {**emb, "cos_t": b.alloc(4 * cap * half), "sin_t": b.alloc(4 * cap * half),
             "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block, "D": D,
             "gen": G.alloc(b, spec, cap, block)}
+
+
+def amask_table(block: int, M: int, start: bool = False) -> np.ndarray:
+    """attention.Additive's mask tiles for a prompt run's rows (docs/prefill.md 9), one a
+    position q in an attention block: M rows (MCOLS: a score buffer's) of the block's entries c
+    and a pad word (the buffer's row stride), -0 for c <= q (the row's own token and those
+    before it) and -inf after; [block, M, block + 1] fp32, 1 MiB at 256 and MCOLS 4. start:
+    the opposite (a sliding window's first block: -inf for c <= q, -0 after)."""
+    c = np.arange(block + 1)[None, :]
+    keep = ((c > np.arange(block)[:, None]) if start else (c <= np.arange(block)[:, None])) | \
+        (c == block)
+    tile = np.where(keep, np.float32(-0.0), np.float32(-np.inf)).astype(np.float32)
+    return np.ascontiguousarray(np.broadcast_to(tile[:, None, :], (block, M, block + 1)))
+
+
+def _amask(lk: dict):
+    """RunRows' amask: the table's address and its bytes a position, or None (no table)."""
+    if "amask" not in lk:
+        return None
+    return lk["amask"], 4 * lk["amask_M"] * (lk["block"] + 1)
 
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
@@ -345,6 +368,8 @@ def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
         put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
         put(s, lk["sin_t"], np.stack([x for _, x in cs]))
         put(s, lk["zmask"], z)
+        if "amask" in lk:
+            put(s, lk["amask"], amask_table(lk["block"], lk["amask_M"]))
         if "onehot" in lk:
             put(s, lk["onehot"], onehot(lk["D"], lk["M"], "int8"))
         G.build(put, s, S, spec, cap, lk["gen"])
@@ -905,7 +930,8 @@ class Image(EmbedHost):
             raise ValueError("a prompt run needs lookup tables (lookup=True)")
         if kind not in ("P", "L"):
             raise ValueError(f"prompt run kind {kind!r}")
-        pos = RunRows(blocks, block, (blocks - 1) * block, self.lookup["zmask"], self.cap, R, 0)
+        pos = RunRows(blocks, block, (blocks - 1) * block, self.lookup["zmask"], self.cap, R, 0,
+                      _amask(self.lookup))
         bs = [qwen3_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos, "R": R,
                                                    "kind": kind, "block": block})
               for s in range(self.cfg.S)]
@@ -1052,20 +1078,26 @@ class RunRows(RunPos):
     run-time value toks[r] (tok, tok1, ...); row r attends over the bucket with the mask row
     of its own position (bucket_row). values(tokens, p) gives the run's argument values.
     toks_at k (a prefill run, docs/prefill.md): the tokens from the generate area's out[]
-    instead, row r's at out[p + k + r], loaded once by the run: no argument per token."""
+    instead, row r's at out[p + k + r], loaded once by the run: no argument per token. amask
+    (a prompt run's: the image's _amask): row r's masked block takes the additive tile of its
+    position in the block (attention.Additive, docs/prefill.md 9) instead of a mask row."""
 
     def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int, R: int,
-                 toks_at: int | None = None):
+                 toks_at: int | None = None, amask: tuple | None = None):
         super().__init__(blocks, block, lo, zmask, cap)
         if not 0 < R <= min(block, cap - self.t0):
             raise ValueError(f"{R} rows do not fit bucket {blocks}")
-        self.R, self.toks_at = R, toks_at
+        self.R, self.toks_at, self.amask = R, toks_at, amask
         self.tpos.bound = min(block, cap - self.t0) - R + 1
         self.toks = [] if toks_at is not None else \
             [self.tok] + [RunVar(f"tok{r}") for r in range(1, R)]
 
     def bucket_row(self, r: int) -> Bucket:
-        return Bucket(self.blocks, self.bucket.z - 4 * r)
+        if self.amask is None:
+            return Bucket(self.blocks, self.bucket.z - 4 * r)
+        base, step = self.amask
+        return Bucket(self.blocks, self.bucket.z - 4 * r,
+                      Additive(Affine(base + step * r) + self.tpos * step))
 
     @staticmethod
     def values(tokens, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:

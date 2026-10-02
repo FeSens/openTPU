@@ -77,7 +77,7 @@ from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords,
-                    _attention, _attention_rows, _Bump,
+                    _amask, _attention, _attention_rows, _Bump,
                     _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
                     _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
                     _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables,
@@ -1181,7 +1181,7 @@ class Image(EmbedHost):
         if p0 is None:
             lo = max((blocks - 1) * block, spec.conv_k - 1)
             pos = RunRows(blocks, block, lo, self.lookup["zmask"], self.cap, R,
-                          1 if kind == "M" else 0)
+                          1 if kind == "M" else 0, _amask(self.lookup))
         else:
             pos = p0
         bs = [qwen35_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s, slot), "pos": pos,

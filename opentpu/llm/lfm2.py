@@ -55,7 +55,7 @@ from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (OutTokens, RunPos, RunRows, RunWords, _formats, _inputs, _inputs_rows,
-                    _lookup_alloc, _lookup_build, _lookup_desc, _tok_arg, _tokens_arg,
+                    _amask, _lookup_alloc, _lookup_build, _lookup_desc, _tok_arg, _tokens_arg,
                     compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables, EmbedHost, fill_logits,
@@ -686,7 +686,7 @@ class Image(EmbedHost):
             raise ValueError(f"{R} rows, the image's I/O area holds {self.rows}")
         pos = p0 if p0 is not None else \
             RunRows(blocks, block, max((blocks - 1) * block, self.spec.conv_k - 1),
-                    self.lookup["zmask"], self.cap, R, 0)
+                    self.lookup["zmask"], self.cap, R, 0, _amask(self.lookup))
         bs = [lfm2_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos, "R": R,
                                                   "kind": kind, "block": block})
               for s in range(self.cfg.S)]

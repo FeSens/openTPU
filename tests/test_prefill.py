@@ -348,3 +348,32 @@ def test_bucket_1_programs_are_warmed_at_start(tmp_path, monkeypatch):
     again = Engine(spec, W, cap=512, cfg=CFG, resident=True, prompt_runs=True, prog_cache=True)
     assert np.array_equal(again.prefill(prompt), lg) and PC.stats["compile"] == s["compile"]
     PC.clear()
+
+
+@pytest.mark.parametrize("case", ["qwen3-board", "lfm2", "kh8"])
+def test_prompt_runs_add_the_mask_tile(case):
+    """docs/prefill.md 9: a prompt run's masked block loads its row's tile of the image's mask
+    table (qwen3.amask_table: -0 where a token counts, -inf past it, MCOLS rows of a score
+    buffer's stride) into the score buffer and accumulates q.K^T into it with the row maxima
+    (MM ACC + RMAX): one LD and one MM, no VOP MIN; a run-time decode step keeps its mask
+    row."""
+    from opentpu import isa as I
+    from opentpu.llm.qwen3 import amask_table
+    W, spec, cfg, kw = _model(case)
+    a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True, **kw)
+    img, B = a.image, a.block
+    t = amask_table(B, cfg.MCOLS)
+    assert t.shape == (B, cfg.MCOLS, B + 1)
+    assert np.array_equal(np.signbit(t), np.ones_like(t, bool))         # -0 and -inf only
+    assert (np.isneginf(t[5, :, 6:B])).all() and not np.isinf(t[5, :, :6]).any()
+    assert not np.isinf(t[:, :, B]).any()                                # the pad word
+
+    def mins(progs):
+        return sum(ins.op == I.VOP and (ins.w[5] >> 16) & 0xFF == I.V_MIN
+                   and (ins.w[5] >> 24) & 3 == I.B_COL for pg in progs for ins in pg)
+
+    progs, _ = img.compile_prompt_run(2, 2, "P", B)
+    acc = [ins for pg in progs for ins in pg
+           if ins.op == I.MM and ins.flags & I.F_ACC and ins.flags & I.F_RMAX]
+    assert acc and mins(progs) == 0
+    assert mins(img.compile_decode(2, B, B)[0]) > 0

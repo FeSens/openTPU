@@ -12,21 +12,37 @@ class Bucket:
     address (bytes; run-time: it adds -4 * position) of a float row whose entry for token t0 + c
     of a block at t0 is +inf when the token is in the sequence and -inf past it: that block's
     scores are min(s, row), so the tokens past the sequence score -inf and weigh exactly +0 --
-    the softmax, its sums and P.V come out bit for bit as with the partial block."""
+    the softmax, its sums and P.V come out bit for bit as with the partial block. With `add`
+    (a prompt run's row: Additive) that block's scores are the mask tile plus q.K^T instead."""
 
-    def __init__(self, blocks: int, z):
-        self.blocks, self.z = blocks, z
+    def __init__(self, blocks: int, z, add: "Additive | None" = None):
+        self.blocks, self.z, self.add = blocks, z, add
 
     def row(self, t0: int, n: int) -> Tensor:
         return Tensor(self.z + 4 * t0, (n,), (1,))
+
+
+class Additive:
+    """A masked block's mask as a tile the scores are added to (docs/prefill.md 9): at `addr`
+    (bytes; run-time: affine in the position) MCOLS rows of the block's n entries and one pad
+    word (the score buffer's row stride), -0 where the token counts and -inf past it. The
+    block's score buffer is loaded with it, then q.K^T is accumulated into it with the row
+    maxima (MM ACC + RMAX): two instructions where min(s, row) takes four (MM, LD, VOP MIN,
+    VOP RMAX), bit for bit the same (s + -0 = s, s + -inf = -inf = min(s, -inf))."""
+
+    def __init__(self, addr):
+        self.addr = addr
+
+    def tile(self, rows: int, n: int) -> Tensor:
+        return Tensor(self.addr, (rows, n), (n + 1, 1))
 
 
 class Blocks:
     """Attention over an explicit list of cache blocks, in order: [(t0, n, mask)], tokens [t0,
     t0 + n) of the cache, mask None (all of them count) or a DRAM row of n floats, +inf where
     the token counts and -inf where not (the block's scores are min(s, row), as Bucket's last
-    block). A sliding window over a KV ring (Gemma 4: the window's first block masked at its
-    start, its last at its end)."""
+    block), or an Additive tile. A sliding window over a KV ring (Gemma 4: the window's first
+    block masked at its start, its last at its end)."""
 
     def __init__(self, items):
         self.items = [(t0, n, m) for t0, n, m in items]
@@ -116,12 +132,18 @@ def _attend_heads(qhs, kv, hs, seq_len: int, block: int, scale: float | None = N
 
     def scores(st, t0, n, out):
         """s = q.K^T for tokens [t0, t0+n); the MXU epilogue also writes the row maxima (a
-        masked block: min with its mask row, then the row maxima of that)."""
+        masked block: min with its mask row, then the row maxima of that; an Additive mask:
+        the mask tile plus q.K^T, the maxima from the MXU epilogue too)."""
         row = None
         if isinstance(t0, int):
             row = st.masks.get(t0)
             if st.masked is not None and st.masked[0] == t0:
-                row = st.masked[1].row(t0, n)
+                bk = st.masked[1]
+                row = bk.row(t0, n) if bk.add is None else bk.add
+        if isinstance(row, Additive):                   # the mask tile, then q.K^T added
+            ol.load(row.tile(st.G, n), out=out)
+            ol.dot(st.qs, st.K[t0:t0 + n, :], acc=out, rowmax=True)
+            return out
         if row is not None:
             ol.dot(st.qs, st.K[t0:t0 + n, :], out=out)
             s = ol.minimum(out, ol.load(row)[None, :])
