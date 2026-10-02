@@ -11,6 +11,11 @@ from opentpu.host.fake import FakeTransport
 # the tests quantize afresh, not through a host's image cache (opentpu/qcache.py), unless one
 # is set (test_qcache.py sets its own)
 os.environ.setdefault("OTPU_IMAGE_CACHE", "0")
+# and compile afresh, whatever the environment sets: opentpu/progcache.py's key does not see the
+# module constants and compile functions the tests patch (a gate's OTPU_PROG_CACHE handed
+# prefill.r_max's rows back from disk past a patched compile_prompt_run); the cache's own tests
+# set theirs
+os.environ["OTPU_PROG_CACHE"] = "0"
 
 
 def pytest_addoption(parser):
