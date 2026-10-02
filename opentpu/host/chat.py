@@ -745,12 +745,16 @@ def main(argv=None):
         raise SystemExit(f"otpu-chat: {e}") from None
     if a.mtp and (not hasattr(spec, "mtp") or a.per_position):
         raise SystemExit("otpu-chat: --mtp takes a Qwen3.5 model and resident decode")
-    if a.mtp and cfg is None:               # the simulators' default has two slices; MTP one
-        from dataclasses import replace
+    if a.mtp and cfg is None:   # the simulators' default is the design's (two slices): the
+        from dataclasses import replace     # card's one-slice configuration instead
 
-        from opentpu.llm.qwen3 import PREFILL_ROWS, device_config
-        cfg = device_config(replace(spec, mtp=True), a.cap, rows=PREFILL_ROWS,
-                            wformat=a.wformat, head_format=a.head_format, lookup=True, S=1)
+        from opentpu.isasim import board_config
+        from opentpu.llm.qwen3 import PREFILL_ROWS
+        flags = dict(DSTEP=True, STREAM=True, PAIR=True)
+        need = replace(spec, mtp=True).image(board_config(DRAM_BYTES=1 << 40, **flags), a.cap,
+                                             1, PREFILL_ROWS, a.wformat, a.head_format,
+                                             lookup=True).nbytes
+        cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **flags)
     try:
         if a.mtp:
             from opentpu.llm.mtp import mtp_engine
