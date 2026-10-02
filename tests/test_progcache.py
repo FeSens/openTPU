@@ -86,6 +86,41 @@ def test_engines_share_the_bucket_programs(tmp_path, monkeypatch):
     PC.clear()
 
 
+def test_filling_and_plain_decodes_are_cached_apart(tmp_path, monkeypatch):
+    """A streamed decode's programs fill their logits (qwen3.fill_logits), the others not: the
+    cache keeps the two apart for one layout and bucket (a card engine and its ISA reference in
+    one process), and a filling program read back from the disk cache (no comments) gives the
+    fill's gate as compiled."""
+    from opentpu.llm.qwen3 import Engine, device_config, fill_gate
+    monkeypatch.setenv("OTPU_PROG_CACHE", str(tmp_path))
+    PC.clear()
+    W, spec = _tiny("qwen3")
+    cfg = device_config(spec, 256, lookup=True)
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 3)]
+
+    def engine(fill):
+        e = Engine(spec, W, cap=256, cfg=cfg, resident=True, prog_cache=True)
+        e.image.stream_fill = fill
+        return e
+
+    plain, filling = engine(False), engine(True)
+    s0 = dict(PC.stats)
+    for t in toks:
+        assert np.array_equal(plain.step(t).view(np.uint32), filling.step(t).view(np.uint32))
+    assert PC.stats["compile"] - s0["compile"] == 2
+    gate = fill_gate(filling._decode(0)[0][0])
+    with pytest.raises(ValueError):
+        fill_gate(plain._decode(0)[0][0])
+    PC.clear()
+    again = engine(True)
+    s1 = dict(PC.stats)
+    assert np.array_equal(again.step(toks[0]).view(np.uint32),
+                          engine(False).step(toks[0]).view(np.uint32))
+    assert PC.stats["disk"] - s1["disk"] == 2 and PC.stats["compile"] == s1["compile"]
+    assert fill_gate(again._decode(0)[0][0]) == gate
+    PC.clear()
+
+
 def test_the_mtp_loop_programs_come_from_the_cache(tmp_path, monkeypatch):
     """MTP's loop programs (V, E, D, D1 of a bucket) through the cache: a new process's engine
     reads them from disk and gives the tokens of an engine without the cache."""

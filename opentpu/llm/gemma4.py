@@ -89,7 +89,7 @@ from . import moe as MO
 from .lfm2 import plan
 from ..host.offload import LINE, BackendDram, ExpertServer, Layout, RowLayout, RowServer
 from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, RunPos, _Bump, _lm_head, _lm_head_rows, _qdesc,
-                    _tdesc)
+                    _tdesc, fill_logits, step_descriptors)
 
 SLIDE, FULL = "sliding", "full"
 
@@ -1094,7 +1094,7 @@ class Image:
         if not (blocks - 1) * block <= lo < min(blocks * block, self.cap):
             raise ValueError(f"lo {lo} is not in bucket {blocks}")
         rp = RunPos(blocks, block, lo, 0, self.cap)
-        b = gemma4_step.trace(self.cfg, 0, {"m": self.descriptors(0), "pos": rp,
+        b = gemma4_step.trace(self.cfg, 0, {"m": step_descriptors(self, 0), "pos": rp,
                                             "block": block})
         return [b.finish()], list(b.run_args)
 
@@ -1143,12 +1143,15 @@ class Image:
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program: the decode token at position `pos`; its inputs from the host
         (host_inputs), or with `tok` (lookup tables) gathered on the device."""
-        return self.compile_rows([(0, pos)], [0], block, None if tok is None else [tok])
+        return self.compile_rows([(0, pos)], [0], block, None if tok is None else [tok],
+                                 fill=getattr(self, "stream_fill", False))
 
-    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None) -> list:
+    def compile_rows(self, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None,
+                     fill: bool = False) -> list:
         """One program: consecutive positions of the sequence at once; their inputs from the
         host (host_inputs), or with `tokens` (their ids, compiled in; lookup tables) gathered
-        and loaded on the device."""
+        and loaded on the device. fill: a streamed decode step's (compile_step: fill_logits
+        first)."""
         if self.spec.experts and len(rows) > 1:
             raise ValueError("a MoE model runs one row per program (its MoE block routes one "
                              "token)")
@@ -1165,7 +1168,9 @@ class Image:
             if len(tokens) != len(rows):
                 raise ValueError(f"{len(tokens)} tokens for {len(rows)} rows")
             kw["tokens"] = [int(t) for t in tokens]
-        return [gemma4_step.trace(self.cfg, 0, {"m": self.descriptors(0),
+        m = self.descriptors(0)
+        m.fill = bool(fill)
+        return [gemma4_step.trace(self.cfg, 0, {"m": m,
                                                 "pos": [p for _, p in rows],
                                                 "logit_rows": list(logit_rows),
                                                 "block": block, **kw}).finish()]
@@ -1618,6 +1623,7 @@ def gemma4_step(m, pos, logit_rows=(0,), block: int = ATTN_BLOCK, tokens=None):
     `tokens` (compile-time ids) gathered on the device (_gathered_rows), else the host's (rows
     of m.x, m.pe, m.rope)."""
     from .qwen3 import RunPos
+    fill_logits(m)
     spec = m.spec
     if isinstance(pos, RunPos):
         e, pe, ropes = _gathered(m, pos)
