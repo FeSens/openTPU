@@ -503,6 +503,12 @@ compile. Without it, a new process compiles before the second token of its first
 (Qwen3.5 on the card, [mtp.md](mtp.md) 11.7). `--no-prog-cache` turns it off;
 `OTPU_PROG_CACHE=0` keeps it in memory only.
 
+A dense Qwen3.5's prompt runs programs at run-time positions ([prefill.md](prefill.md)): its
+tokens go to the device's out[] and each run of up to R_max rows takes its position from the
+state block, so a bucket's programs are compiled once (and kept in the program cache), not per
+prompt. With int8 weights the logits are those of a prefill compiled at the prompt's positions,
+bit for bit. `--no-prompt-runs` compiles each prompt's runs at its positions instead.
+
 **`--mtp`** (Qwen3.5) decodes with the model's MTP drafter, the loop on the device
 ([mtp.md](mtp.md) sections 10 and 11). Each iteration verifies the token and a draft in one
 two-row run and drafts the next with the MTP layer, so a reply needs fewer runs of the model.

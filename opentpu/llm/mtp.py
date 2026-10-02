@@ -41,6 +41,7 @@ from .. import isa as I
 from .. import language as ol
 from ..compiler import CompileError, current
 from . import generate as G
+from . import prefill as PF
 from .qwen3 import ATTN_BLOCK, Engine, RunRows, fit_chunk, head_rows_chunk
 
 MTP_ROWS = 4            # the MTP layer's rows per run in the prefill (its TMEM: [R, 2H] input)
@@ -144,6 +145,10 @@ class MTPDecoder:
                              f"{self.img.cap}, and the next token needs a position")
         if p0 == 0:
             self.slot = 0
+        if self.eng.prompt_runs and PF.supported(self.eng):     # docs/prefill.md
+            a0, draft = PF.mtp(self, toks, st, pick, on_run)
+            self.draft = draft
+            return a0, draft
         a0 = draft = None
         fit = self.img.rows
         while p < P:

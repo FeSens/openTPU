@@ -17,8 +17,9 @@ and under the input a status line with TTFT, prefill and decode tokens/s (wall a
 the KV context, updated while the reply streams; /stats adds DRAM, session totals and sampling.
 --plain and --prompt print the same numbers as one line per reply.
 
-The model runs on the device, the prompt several tokens per run (Engine.prefill_chunks) and
-the reply token by token; the host only tokenizes, looks up the embedding rows, applies the
+The model runs on the device, the prompt several tokens per run (Engine.prefill_chunks; a
+dense model's from programs at run-time positions, compiled once per bucket: docs/prefill.md)
+and the reply token by token; the host only tokenizes, looks up the embedding rows, applies the
 chat template and samples from the logits. The KV cache stays in device DRAM
 across turns; only the new turn's tokens are fed. On the card the tool holds the device lock
 and publishes its status (model, DRAM, tokens/s) for otpu-smi; the next token's program is
@@ -743,6 +744,10 @@ def main(argv=None):
     ap.add_argument("--no-prog-cache", action="store_true",
                     help="compile the decode loop's bucket programs in every process (by "
                          "default they are kept on disk: opentpu/progcache.py)")
+    ap.add_argument("--no-prompt-runs", action="store_true",
+                    help="compile each prompt's prefill runs at its positions (by default a "
+                         "dense model's prompt runs programs at run-time positions, compiled "
+                         "once per bucket: docs/prefill.md)")
     ap.add_argument("--mtp", action="store_true",
                     help="Qwen3.5: decode with the model's MTP drafter, the loop on the device "
                          "(docs/mtp.md): the same replies, greedy or sampled, 1.3-1.6x the "
@@ -778,11 +783,12 @@ def main(argv=None):
             from opentpu.llm.mtp import mtp_engine
             eng = mtp_engine(spec, load_weights(path, mtp=True), cap=a.cap, cfg=cfg,
                              backend=backend, wformat=wformat, head_format=a.head_format,
-                             prog_cache=not a.no_prog_cache)
+                             prog_cache=not a.no_prog_cache, prompt_runs=not a.no_prompt_runs)
         else:
             eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
                          wformat=wformat, head_format=a.head_format,
-                         resident=not a.per_position, prog_cache=not a.no_prog_cache)
+                         resident=not a.per_position, prog_cache=not a.no_prog_cache,
+                         prompt_runs=not a.no_prompt_runs)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     weights = weights_label(eng.image, wformat)
