@@ -268,10 +268,15 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs,
     assert a.pos == ref.pos == len(toks)
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
     img = a.image
+    # all of it but a group-major layer's gates (DeltaNetParts._gates, each head group's): dead
+    # after every run -- _deltanet / _deltanet_dstep store every pair's (store_gates) before
+    # they load one (gates), in the same program, and nothing else reads them -- and R rows
+    # keep theirs in m.gr, so the last one-row run's stay there. Exactly those bytes, from the
+    # image's descriptors; the states, windows and KV cache compared whole
     dram = [e.backend.machine.slices[0].dram[img.layer0:img.head[0]].copy() for e in (a, ref)]
-    for li in range(spec.layers):       # (group-major: but the pairs' gates, a one-row run's
-        dn = getattr(img.descriptors(0).layer(li), "dn", None)  # scratch that R rows keep in
-        for g in range(dn.nl // dn.og if dn is not None and dn.grouped else 0):    # m.gr)
+    for li in range(spec.layers):
+        dn = getattr(img.descriptors(0).layer(li), "dn", None)
+        for g in range(dn.nl // dn.og if dn is not None and dn.grouped else 0):
             e = dn._gates(g)
             o = Affine.of(e.base).const - img.layer0
             for d in dram:
