@@ -2675,8 +2675,32 @@ The other runs, all bit for bit:
   tok/s.
 - The 35B's warm-up ran 0.6% under A1 (gemma4's pfhint2 saw 5% on a prefill).
 
-The confirm on today's parts, session 18 (13.12): +1.51% with ra, +0.85% with v2, both pairs
-positive and under 2%. The default stays off.
+### 12.10 Hints: closed (off)
+
+The 35B decode hints (top 4, n 1, whole-expert parts, `--hint-drop`) against no hints, on the
+card:
+
+| session | parts | pairs | mean |
+|:--|:--|:--|--:|
+| 17 (12.9) | v1 | +0.6%, +1.5% | +1.0% |
+| 17 (12.9), top 8 | v1 | +2.3%, +0.0% | +1.1% |
+| pfv2 (13.12) | v2, the hold not acting | +0.09, +0.13 tok/s | +2.09% |
+| 18 (13.12) | ra | +0.030, +0.130 tok/s | +1.51% |
+| 18 (13.12) | v2, the default | +0.010, +0.080 tok/s | +0.85% |
+
+On the default parts the gain is +0.85%, under the 2% bar, so the hints stay off and are
+closed.
+
+The misses fall as predicted: -22% (102.85 to about 80 a token). It doesn't pay, because the
+time saved on requests goes back into the card's own time (12.9's split for session 17):
+- Contention: the hinted experts, about 3,900 a run and 6.6 GB, go while the card computes,
+  at 13.8's 0.17 s a GB. That is about 1.1 s.
+- The hint polls: about 1 s of host time, partly in the card's path.
+- Requests seen behind an idle part: about 0.5 s with v1's parts. v2 shortens a part, but it
+  cuts neither the contention nor the polls.
+
+What could reopen them: hinting only where a miss costs more than a sent expert does, or a
+hint poll of fewer DMA calls.
 
 ## 13. Layer-major prefill
 
@@ -3473,13 +3497,17 @@ prefill is the 35B's layer-major prefill with the layer-ahead predictor (`--laye
 "Halts seen late" is prefill_time's halted_s - device_s: each run's start to its halt seen,
 past its device time.
 - The pairs B - A: -0.276 and -0.708 s. The mean is **-0.492 s (-3.9%)**.
-- The hold acts now: 8-10 held polls a run. The halts are seen 0.71 s sooner, about 0.27 ms
-  a run.
+- The gain is the host seeing halts sooner. Wall - device - between fell from 1.18 / 1.14 s
+  (ra) to 0.44 / 0.45 s (v2). The hold acts now, at 8-10 held polls a run, and the halts are
+  seen 0.71 s sooner, about 0.27 ms a run.
 - It costs device time. The held polls send nothing, so fewer experts land ahead: about
   1,280 fewer parts read ahead, about 630 more misses a prompt (+39%), and +0.21 s on the
-  device (the means, B against A).
+  device (the means, B against A; +0.40 s in the first pair, +0.01 s in the second).
 - A possible next step, not tried: near a run's end, send a part sized to the time left
   instead of none.
+- The 26B is untested with the fixed hold and stage_holds. pfv2's +0.018 s was measured
+  before the fix. Its re-measure was to ride with gemma4's expert-major B session (13.11),
+  which runs both models.
 
 The decode part: the 35B, a warm-up, then A B C C B A.
 - A has no hints.
@@ -3496,15 +3524,23 @@ The decode part: the 35B, a warm-up, then A B C C B A.
 - B against A: pairs +0.030 and +0.130 tok/s, mean **+1.51%**.
 - C against A: pairs +0.010 and +0.080 tok/s, mean **+0.85%**. pfv2's B was this same mode
   and measured +2.09%.
-- v2 held nothing in the decode. The card's generate loop is one run per generation, so
-  run_clock() has no earlier run of its length. C - B (-0.02, -0.05 tok/s) is inside the A
-  pairs' own spread (0.08).
+- v2 held nothing in the decode. C - B (-0.02, -0.05 tok/s) is inside the A pairs' own
+  spread (0.08).
+
+halt_aware's known limit in the decode:
+- The card's generate loop is one run a generation, so run_clock() has no earlier run of its
+  length and nothing is held.
+- With a run a token, it would still hold little. T0, the least of a program's last 16 run
+  times, comes from cycles that count the card's waits. Every decode run waits on about 100
+  misses, so T0 already holds waits, and adding the run's own waits counts them twice. The
+  expected end then lands late.
+- Not chased, since the hints are off (12.10).
 
 The lead's rulings, applied:
 - v2 becomes the default (`moe_card --idle-parts v2`, `ExpertServer.halt_aware` on). It
   holds on the card, the 35B prefill is faster in both pairs, and every run was bit for bit.
 - The hints stay off. On v2, the default from the first ruling, they gain +0.85%, under the
-  2% bar. On ra the gain is +1.51%, also under it.
+  2% bar. On ra the gain is +1.51%, also under it. They are closed (12.10).
 
 Tests: test_offload_server's `test_idle_parts_go_as_one_call_each_and_are_read_ahead` (an idle
 part's calls with and without, a request's misses with the lead cut, the staged reads, a
