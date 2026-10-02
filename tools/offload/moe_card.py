@@ -106,7 +106,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
          formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
-         willneed: bool = True, pool_map: bool = True, legacy_serve: bool = False) -> dict:
+         willneed: bool = True, pool_map: bool = True, legacy_serve: bool = False,
+         poll_idle: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -175,11 +176,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         mem.write_slot = timed("stage", mem.write_slot)     # waiting for the DMA thread
         mem.flush = timed("flush", mem.flush)
     if callable(getattr(eng.backend, "host", None)):
-        polled = eng.backend.host
+        polled = [eng.backend.host]             # (the decode's may be a PollPacer's)
 
         def served():                           # the polls that served a request: the card
             t0 = time.perf_counter()            # waits from its post to served (with the
-            r = polled()                        # poll's own latency)
+            r = polled[0]()                     # poll's own latency)
             if r:
                 tm["poll"] += time.perf_counter() - t0
             return r
@@ -207,6 +208,19 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     ids = ref["ids"]
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
+    pacer = None
+    if poll_idle == "predict" and callable(getattr(eng.backend, "host", None)):
+        from opentpu.host.offload import PollPacer   # the decode's polls sleep through the
+        pacer = PollPacer([x for x in (srv, eng.row_server) if x is not None])  # gaps (10.10)
+        polled[0] = pacer.poll
+    elif poll_idle not in (None, "spin", "predict"):    # a fixed sleep between empty polls
+        t_ = getattr(getattr(eng.backend, "board", None), "t", None)
+        if t_ is not None:
+            t_.host_idle = float(poll_idle)
+    elif poll_idle == "spin":
+        t_ = getattr(getattr(eng.backend, "board", None), "t", None)
+        if t_ is not None:
+            t_.host_idle = 0.0
     prefill_s = time.time() - t
     pre = len(per_req) if layer_major else 0    # layer-major: a request per layer run
     warm_decode = warm_at()
@@ -296,7 +310,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
-                legacy_serve=legacy_serve,
+                legacy_serve=legacy_serve, poll_idle=poll_idle,
+                pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
+                           kinds=len(pacer.gaps)) if pacer is not None else None,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
@@ -379,6 +395,10 @@ def main():
                     help="serve as before docs/offload.md 10.8 (A/B): a request's first miss in "
                          "halves, its reads through buffer lists, each victim's entry cleared "
                          "before its slot is written, a 50 us sleep between empty polls")
+    ap.add_argument("--poll-idle", default=None, metavar="spin|S|predict",
+                    help="the decode's polls that find nothing: spin (the card's default), "
+                         "sleep S seconds, or predict (PollPacer: sleep most of each gap's "
+                         "expected length, then spin; docs/offload.md 10.10)")
     ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
@@ -393,7 +413,8 @@ def main():
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
-             not a.keep_weights, not a.no_willneed, not a.no_pool_map, a.legacy_serve)
+             not a.keep_weights, not a.no_willneed, not a.no_pool_map, a.legacy_serve,
+             a.poll_idle)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

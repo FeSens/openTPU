@@ -876,3 +876,62 @@ def test_pooled_prefill_on_board_dram_writes_what_board_write_writes():
         assert seqs[0] == seqs[1] and fast.misses == plain.misses and fast.bytes == plain.bytes
         for c in (0, 1):
             assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), (restore, c)
+
+
+def test_poll_pacer_sleeps_through_the_quiet_part_of_each_gap():
+    """PollPacer (moe_card --poll-idle predict): after a request it sleeps share x the shortest
+    of the last gaps after that kind of request (less its lateness), then polls; each request is
+    still seen within a poll of its post, with far fewer polls than spinning. A gap shorter than
+    expected is seen at the sleep's end and shortens the next sleep; nothing sleeps while hinted
+    experts wait (pending), and a hinted part (last None) is not a request."""
+    from opentpu.host.offload import PollPacer
+    now = [0.0]
+    POLL = 30e-6                            # a poll's card read
+
+    class Card:                             # posts kind k's request gap[k] after the last served
+        def __init__(self, gaps):
+            self.gaps, self.k, self.due, self.last, self.pending = gaps, 0, 0.0, None, {}
+            self.seen = []
+
+        def poll(self):
+            now[0] += POLL
+            if now[0] < self.due:
+                return 0
+            self.seen.append(now[0] - self.due)
+            self.last = ("d", self.k)
+            now[0] += 1e-3                  # serving
+            self.k = (self.k + 1) % len(self.gaps)
+            self.due = now[0] + self.gaps[self.k]
+            return 1
+
+    def run(card, pacer, n):
+        polls = 0
+        while len(card.seen) < n:
+            pacer.poll()
+            polls += 1
+        return polls
+
+    def sleep(d):
+        now[0] += d
+    gaps = [2.7e-3, 1.5e-3, 3.0e-3]
+    card = Card(gaps)
+    pacer = PollPacer([card], sleep=sleep, clock=lambda: now[0])
+    first = run(card, pacer, len(gaps) + 1)         # learning: one gap of each kind
+    polls = run(card, pacer, 61)
+    assert max(card.seen) <= POLL + 1e-12            # within a poll of the post, every time
+    spin = sum(int(g / POLL) + 1 for g in gaps) * 20
+    assert polls < 0.4 * spin and pacer.sleeps >= 55 and first > 0
+    assert pacer.slept > 0.7 * 20 * sum(g * 0.75 - 2e-4 for g in gaps)
+    card.gaps[1] = 0.8e-3                           # a shorter gap: seen at the sleep's end
+    run(card, pacer, len(card.seen) + 6)
+    late = max(card.seen[-6:])
+    assert POLL < late < 0.75 * 1.5e-3
+    run(card, pacer, len(card.seen) + 6)            # then learned: within a poll again
+    assert max(card.seen[-3:]) <= POLL + 1e-12
+    card.pending = {7: 0}                           # hinted experts waiting: no sleep
+    run(card, pacer, len(card.seen) + 1)            # (after the sleep already set)
+    s0 = pacer.sleeps
+    run(card, pacer, len(card.seen) + 6)
+    assert pacer.sleeps == s0
+    with pytest.raises(ValueError, match="share"):
+        PollPacer([card], share=1.0)
