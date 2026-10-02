@@ -1564,6 +1564,149 @@ The pacer becomes the decode's default if MXU_STARVE falls and it is not slower.
 spinning stays, and the RUNNING - DMA_BUSY rise is the expert DMA's overlap, a matter for the
 DRAM's arbitration.
 
+Card session 14 (2026-10-02 00:47-01:04, `session14.sh`, tree 17e99eb, production g2fix
+0885d436 with no reload). All 7 runs matched the ISA simulator bit for bit:
+
+| run | poll | tok/s (device) | decode Gcycles | windows s | DMA_BUSY G | RUNNING - DMA_BUSY G | MXU_STARVE G | poll reads | pacer: sleeps, s slept |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B N1 | spin | 5.01 (5.02) | 3.396 | 13.60 | 1.549 | 1.847 | 0.122 | 442k | |
+| 35B P1 | paced | 5.00 (5.02) | 3.401 | 13.59 | 1.557 | 1.844 | 0.122 | 225k | 5206, 4.41 |
+| 26B gS1 | spin | 3.54 (3.55) | 4.809 | 20.64 | 0.839 | 3.970 | 0.317 | 573k | |
+| 26B gF1 | 50 us | 3.55 (3.55) | 4.801 | 20.42 | 0.839 | 3.962 | 0.318 | 106k | |
+| 26B gP1 | paced | 3.54 (3.54) | 4.815 | 20.67 | 0.858 | 3.957 | 0.313 | 249k | 3810, 6.98 |
+| 26B gS2 | spin | 3.55 (3.55) | 4.802 | 20.46 | 0.829 | 3.972 | 0.319 | 587k | |
+| 26B gP2 | paced | 3.54 (3.55) | 4.807 | 20.55 | 0.844 | 3.964 | 0.316 | 245k | 3810, 7.02 |
+
+- The poll's reads do not cost the MXU. The pacer cut them by 57% and the 50 us sleep by 82%,
+  and MXU_STARVE stayed within 0.006 G cycles of spinning, RUNNING - DMA_BUSY within 0.015 G.
+  That is the prediction's second case. The compute's rise from Gen1 to Gen2 (10.9) is the
+  expert DMA's writes, which overlap the hits' compute.
+- Decode cycles are within 0.3% across all five 26B runs, and the 35B's two runs within 0.15%.
+- The 50 us sleep did not lose the predicted 0.2 s. Its decode cycles are the lowest of the
+  five, within noise. So its later detection doesn't show on Gen2: on the 26B the card stalls
+  (DMA_BUSY) for only 6.3 s of its 20.5 s of windows, so most of a request's DMA is hidden
+  behind its compute.
+- The pacer slept 4.4 s (35B) and 7.0 s (26B) per 128 tokens. It cut fewer reads than the
+  140-200k predicted, because it spins out the rest of each gap.
+- The rule: MXU_STARVE did not fall beyond noise, so the pacer does not become the default and
+  the decode keeps spinning. A sleep between polls costs nothing measurable on Gen2 and saves
+  the host most of a core, so either --poll-idle 50e-6 or predict is safe where the host's CPU
+  matters.
+- The 35B's spin run made 5.01 tok/s against g2check's 5.07 / 5.10 an hour earlier. Its data
+  calls ran at 2.13 GB/s against 2.19-2.21 (records 665 against 660 us, first pieces 344 + 612
+  against 326 + 596 us), so the link varies by about 3% between sessions.
+
+### 10.11 One call per request: design
+
+Each miss ends in its directory entry, a 64-byte call the card waits for. On Gen2 these calls
+take 41 us (35B) and 58 us (26B) each, plus about 10 us of link idle before each. That comes to
+0.77-0.82 s per 128 tokens on the 35B (13,113 entries) and 0.93 s on the 26B (11,310), all on
+the card's critical path. The design below removes them. Each miss's own data call says it has
+landed, and one 64-byte call per request tells the card where its misses go.
+
+The host, per request with misses:
+1. **The answer**: one 64-byte beat (a new line after served; a two-line request's answer is
+   two beats). Its word r is the slot address of rank r when that expert is missing, and 0 for
+   the hits. It is written before the request's first data call, while the first part of the
+   expert is read from the pool, so it adds nothing to the critical path.
+2. **Each missing expert's data, with a tag**: a 128-byte tag chunk after the record (the 35B's
+   pitch grows by one 4 KiB block, the 26B's fits its padding). Its word 0 is nonzero. The
+   record goes as today, one call per channel, and the channel that holds the tag word goes
+   last. A hint's expert carries its tag in its last part.
+3. **The directory**, after the last data and before served: the new entries and the victims'
+   clears, as today. They can go one beat each (2m calls, as the clears do now), or as the
+   layer's directory, 8 x E bytes, in one call per channel. Off the critical path either way.
+4. **A victim whose tag is still set** (a hint's expert that was never used): its tag is cleared
+   in a 64-byte call before its data. That happens only with hints.
+
+The card (moe_ffn and moe_ffn_rows; the present flags still come from the directory, so a
+request with no miss never waits for the host):
+- For a present expert, as today: WAITW on its entry, then the expert. It also stores 0 to the
+  slot's tag word.
+- For a missing expert:
+  1. WAITW `answer + 4r != 0` (r its rank; 4r a new row of pe), which gives its slot. The
+     address goes into TMEM raw, as the entry's does now, never through the VPU.
+  2. WAITW `M32[slot + tag] != 0`.
+  3. Store 0 to the tag word.
+  4. Compute the expert.
+- After the layer's experts, store 0 to the answer's words.
+- The cost is one register as now, and per expert one WAITW and one store more: about 45k of
+  them per 128 tokens, about 0.01 s.
+
+Every expert the card uses has its tag cleared by the card's own store. That store is older
+than the card's next post, so it lands before the host can pick the slot as a victim again. A
+nonzero tag then means this load's data. The answer works the same way: zeroed by the card
+before its next post, written by the host only after it sees that post.
+
+The new ordering contract, and the risk: the tag is the last beat of the last call. The card
+must not see it before that call's earlier beats on the same channel. The other channel's call
+has completed before then, which is the current ordering contract. Within one XDMA transfer,
+the writes reach otpu_mem_ch in order (AXI writes are not interleaved), and LiteDRAM keeps a
+port's commands in order per bank. ld-memch should confirm that nothing on the path (the Gen2
+register slices, otpu_mem_ch's arbitration, the native adapter) lets a later beat of a transfer
+become visible before an earlier one. A card test checks it on the bitstream:
+`tools/qual/waitw.py` grows a case where the host sends 1-4 MB with a flag in its last beat
+while the card waits on the flag and checksums the data, thousands of times on both channel
+orders.
+
+The prediction, from the Gen2 traces (g2check). Entries removed, plus one answer call per
+request with misses where it is not hidden (the upper bound):
+
+| model | requests with misses | entries + their gaps | answer calls | saved per 128 tokens | tok/s |
+|:--|:--|:--|:--|:--|:--|
+| 35B | 4649 of 5120 (2.82 misses each) | 0.77-0.82 s | 0-0.19 s | 0.59-0.81 s | 5.07-5.10 -> 5.19-5.27 (+2.4-3.3%) |
+| 26B | 3661 of 3840 (3.09 each) | 0.93 s | 0-0.21 s | 0.72-0.93 s | 3.54 -> 3.61-3.63 (+2.0-2.5%) |
+
+A window's saving reaches the card only where the card is stalled at the window's end. On the
+35B it stalls for most of its windows (DMA_BUSY 11.6 s of 13.6 s), so most of the saving
+reaches it. On the 26B it stalls for 6.3 s of 20.5 s, its dense MLP and hits running while the
+experts stream (session 14). Requests with many misses stall, and they carry most of the
+entries, so perhaps 50-100% of the 26B's saving reaches the card: -0.4 to -0.9 s, 3.58-3.63
+tok/s.
+
+With the directory as one call per channel, the 35B's 64-byte calls fall from 31,346 to about
+19,000 per 128 tokens. That leaves more of the link's idle time for hints. The 35B's +4 KiB per slot could cost
+a few of its 1680 slots: about 0.3% more misses, under 0.03 s.
+
+The proof:
+- `test_offload_server`, the host's contract:
+  - the answer comes before any data of its request;
+  - each record's tag is in the last beat of the last call;
+  - the directory comes after the last data, and served after the directory;
+  - an armed victim's tag is cleared before its data.
+- ISA simulator, end to end:
+  - the tiny MoE test models (16 heads, untied head) and Qwen3.5 / Gemma 4 / LFM2 MoE shapes;
+  - all-miss, all-hit and mixed, with hints, layer-major and Gemma's beside();
+  - tokens and logits must be bit-identical to the current programs, since the math is
+    unchanged;
+  - an adversarial host: SimDram writes each record a beat per host call, with the machine
+    running in between, so the card would read any data it reaches before the tag;
+  - a negative control (the tag first) that must break.
+- Card: q35e128s / g26s on the new programs must match refs-d29bfe9's tokens and prefill sha.
+  The math is unchanged, so new references are not needed for the result. The programs'
+  references are still recomputed on omarchy, for the record.
+
+Program sha impact: every MoE model's programs change (moe_ffn, moe_ffn_rows; Qwen3.5-35B-A3B,
+Gemma 4 26B-A4B, LFM2-8B-A1B, the tiny test MoEs). So do their images: the slot pitch, the
+answer line, and the directory one line further. Dense models' programs do not change. The
+program cache's keys change with them.
+
+Two alternatives:
+- **B: the 64-byte writes as MMIO.** Use XDMA's bypass BAR, or an AXI-Lite window onto DRAM
+  through otpu_mem_ch. A posted write is about 1-2 us, so every 64-byte call (entries, clears,
+  served, the answer) loses its 35-58 us without a program change. The poll's read could also go
+  over the BAR, at ~2 us instead of a ~30 us C2H call, for faster detection. It saves about as
+  much as A on the critical path (0.6-0.8 s per 128 tokens) and about 1 s of link time besides.
+  It needs a bitstream (ld-memch's area), and a check that a posted write issued after a DMA's
+  completion lands after that DMA's data.
+- **C: XDMA's poll_mode=1** (a driver parameter: the user's setting). Completion by polling
+  instead of the interrupt might cut every call's fixed cost, data calls included. It needs a
+  dma_bench measurement after the user reloads the driver with it. That is a proposal, not
+  something I change.
+
+The recommendation is A first: no bitstream, +2-3% on Gen2, and the ordering test can run on
+the current production bitstream. B later, with the next bitstream that has room for it.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
