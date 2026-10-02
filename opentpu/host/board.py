@@ -79,6 +79,10 @@ POLL_MIN_SLEEP = 20e-6          # poll: shortest sleep between reads (past the e
 # logits not written yet (the device's NaN is canonical: 0x7FC00000, or 0xFFC00000 after a sign
 # flip), so the host reads each piece of the LM head's output as soon as it is complete.
 SENTINEL = 0xFFFFFFFF
+# A step program compiled with fill (opentpu.llm.qwen3.fill_logits) writes this over its logits
+# region itself, at its start (-inf: VOP FILL keeps it; the LM head's logits are finite), and
+# the host polls ICOUNT until the fill has landed (start(stream=(..., gate))): no host write.
+FILL_SENTINEL = 0xFF800000
 STREAM_EARLY = 0.3e-3           # probe a piece this long before it came complete last token
 STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete yet
 STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
@@ -1070,6 +1074,12 @@ class BoardBackend:
     runs_words = True           # start() takes assembled words too (the Engine's worker process)
 
     @property
+    def fills(self) -> bool:
+        """Streamed runs may fill their logits region themselves (qwen3.fill_logits: an RLD, so
+        a bitstream with CAPS bit30), the host polling ICOUNT for its end."""
+        return self.streams and bool((self.info.get("caps") or {}).get("gen"))
+
+    @property
     def args(self) -> bool:
         """The bitstream takes run arguments (CAPS bit25): start(programs, args=words)."""
         return bool((self.info.get("caps") or {}).get("args"))
@@ -1086,7 +1096,9 @@ class BoardBackend:
         wrote the region), else it was marked again after the last run (_stream_tail, on the
         DMA worker while the host takes the token; waited for here, before RUN: a write that
         size must not meet a run, RUN_H2C). Needs a transport that allows DMA during a run
-        (`streams`).
+        (`streams`). stream=(addr, nbytes, piece, gate): the program fills the region with
+        FILL_SENTINEL itself (qwen3.fill_logits; `fills`), and its fill has landed once ICOUNT
+        reaches `gate` (qwen3.fill_gate): the host writes nothing there, before or after.
 
         args: the run's arguments (up to 8 words, ARG0..7; a bitstream with CAPS bit25). The
         program in IMEM stays there: starting the same `programs` object again (a program
@@ -1113,7 +1125,9 @@ class BoardBackend:
             self._resident = (programs, words)
         if args is not None:
             self.board.set_args(list(args) + [0] * (8 - len(args)))
-        if stream is not None and self._armed != stream:
+        if stream is not None and len(stream) > 3:
+            self._armed = None                      # the program fills the region itself
+        elif stream is not None and self._armed != stream:
             self.board.write(stream[0], np.full(stream[1] // 4, SENTINEL, np.uint32))
             self._armed = stream
         elif stream is None:
@@ -1179,16 +1193,20 @@ class BoardBackend:
         return dev * self._ratio
 
     def _pieces(self):
-        addr, n, piece = self._stream
+        addr, n, piece = self._stream[:3]
         return [(o, min(piece, n - o)) for o in range(0, n, piece)]
 
     def _stream_logits(self, feed) -> None:
         """Hand over the pieces before the last one while the run goes on: probe a piece's
         last beat from STREAM_EARLY before its completion time of the last token (or every
         STREAM_PROBE), read it once the beat is written, check every word, mark it again.
-        Stops at HALTED; the last piece (written just before it) is left to _stream_tail."""
+        Stops at HALTED; the last piece (written just before it) is left to _stream_tail. A
+        program that fills the region itself: no piece is probed before ICOUNT shows its fill
+        landed (until then the region holds the last token's logits)."""
         t, b = self.board.t, self.board
         addr = self._stream[0]
+        gate = self._stream[3] if len(self._stream) > 3 else None
+        mark = SENTINEL if gate is None else FILL_SENTINEL
         pieces, due = self._pieces(), {}
         t0, i, probes, tries = b._t_run, 0, 0, 0
         halted = False
@@ -1209,15 +1227,20 @@ class BoardBackend:
             if halted or t.reg_read(R_STATUS) & ST_HALTED:
                 self._seen = time.perf_counter()
                 break
+            if gate is not None:
+                if t.reg_read(R_ICOUNT) < gate:        # the fill has not landed yet
+                    time.sleep(POLL_MIN_SLEEP)
+                    continue
+                gate = None
             o, k = pieces[i]
             last = addr + o + k - BEAT                  # the piece's last beat (64-byte aligned)
             probes += 1
             tries += 1
             beat = t.mem_read(last // BEAT % 2, last // (2 * BEAT) * BEAT, BEAT)
             w = None
-            if not (beat.view(np.uint32) == SENTINEL).any():
+            if not (beat.view(np.uint32) == mark).any():
                 w = b.read(addr + o, k).view(np.uint32)
-                if (w == SENTINEL).any():               # the beats land out of order: soon
+                if (w == mark).any():                   # the beats land out of order: soon
                     w = None
             if w is None:
                 # near the expected end the retry is short too: the run may end while this
@@ -1240,7 +1263,9 @@ class BoardBackend:
 
     def _stream_tail(self, feed) -> None:
         """After HALTED: the pieces not handed over yet, in one read and one feed."""
-        addr, n, _ = self._stream
+        addr, n = self._stream[:2]
+        fill = len(self._stream) > 3
+        mark = FILL_SENTINEL if fill else SENTINEL
         pieces = self._pieces()
         i = self.last_stream.get("during", 0)
         o = pieces[i][0]
@@ -1253,19 +1278,23 @@ class BoardBackend:
             pass
         w = self.board.read(addr + o, n - o).view(np.uint32)
         tries = 0
-        while (w == SENTINEL).any() and time.perf_counter() - t0 < TAIL_SETTLE:
+        while (w == mark).any() and time.perf_counter() - t0 < TAIL_SETTLE:
             tries += 1
             time.sleep(50e-6)
             w = self.board.read(addr + o, n - o).view(np.uint32)
-        if (w == SENTINEL).any():
+        if (w == mark).any():
             self._armed = None
-            bad = np.flatnonzero(w == SENTINEL)
+            bad = np.flatnonzero(w == mark)
             raise RuntimeError(f"streamed logits: the run left words unwritten ({len(bad)}, "
                                f"bytes {o + 4 * bad[0]}..{o + 4 * bad[-1] + 3} of the region, "
                                f"{tries} re-reads over {1e3 * TAIL_SETTLE:.0f} ms): the program "
                                "does not write the whole logits region, or a marking raced it")
         self.last_stream["tail_retries"] = tries
         feed(o, w)                                  # the rest in one piece
+        if fill:                                    # the next run fills it again
+            self._stream = None
+            self.last_stream.update(tail_bytes=n - o, tail_s=time.perf_counter() - t0)
+            return
         # every piece marked again, on the DMA worker while the host takes the token (the run
         # has ended: whole calls); start() and write() wait for it
         if len(self._marks) != n // 4:

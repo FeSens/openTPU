@@ -331,6 +331,95 @@ def test_tiny_int8_embedding(tiny, head):
     assert _cos(dev, emu).min() > 0.999
 
 
+@pytest.mark.parametrize("resident", [False, True])
+def test_tiny_filling_step_programs_are_transparent(tiny, resident):
+    """The step programs that fill their logits first (the card's streamed decode) give the
+    plain programs' logits and DRAM bit for bit, per position and resident."""
+    from conftest import assert_fill_is_transparent
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 6)]
+    assert_fill_is_transparent(lambda: Engine(spec, W, cap=256, resident=resident), toks)
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_tiny_streamed_decode_under_compile_contention(tiny, monkeypatch, resident):
+    """The card's streamed decode where the programs fill their logits themselves
+    (qwen3.fill_logits), at LFM2's shortest run (about 11 ms on the card), with the next
+    programs compiling on a thread and another one holding the GIL while the run goes on
+    (switches every 0.5 ms), the fill landing anywhere before the LM head's first piece: the
+    logits are the ISA simulator's bit for bit, token after token, with pieces taken during
+    the runs and probes held back until the fill. (mark-in-run, the host's in-run marking it
+    replaces, lost this race on the card: docs/host.md.)"""
+    import sys
+    import threading
+    import time
+
+    from conftest import IsaCard
+    from opentpu.host import regs as R
+    from opentpu.host.board import BoardBackend, sim_config
+    from opentpu.llm import qwen3 as Q
+    monkeypatch.setattr(Q, "HEAD_CHUNK", 128)          # pieces of 128 logits: 8 in the vocab
+    _, W, spec = tiny
+    cfg = sim_config(spec, 256, lookup=resident)
+    rng = np.random.default_rng(7)
+    toks = [int(t) for t in rng.integers(0, 1000, 12)]
+    ref = Engine(spec, W, cap=256, cfg=cfg, resident=resident)
+    want = [ref.step(t) for t in toks]
+
+    class Card(IsaCard):
+        computing = False                               # the simulation is not the run
+        held = 0                                        # ICOUNT reads before the fill
+
+        def reg_write(self, off, val):
+            self.computing = True
+            try:
+                super().reg_write(off, val)
+            finally:
+                self.computing = False
+
+        def reg_read(self, off):
+            v = super().reg_read(off)
+            self.held += off == R.R_ICOUNT and v == 0
+            return v
+
+    # the fill lands anywhere before the first piece (0.4 of the run); every third run waits
+    # for the host to look (IsaCard's anchor), its fill just before the first piece, so the
+    # host's probes find it still on the way however late the host gets there
+    card = Card(cfg, None, 4 * 128, run_s=0.011, gen=True, args=True,
+                fill_at=lambda r: 0.39 if r % 3 == 1 else rng.uniform(0.01, 0.39),
+                anchor=lambda r: r % 3 == 1)
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread", resident=resident,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert eng.image.stream_fill and eng.resident == resident
+    stop = threading.Event()
+
+    def hog():
+        x = 0
+        while not stop.is_set():
+            if card.computing:
+                time.sleep(1e-3)
+            x += 1
+    switch = sys.getswitchinterval()
+    sys.setswitchinterval(5e-4)
+    hogs = [threading.Thread(target=hog, daemon=True)]
+    for h in hogs:
+        h.start()
+    during = 0
+    try:
+        for t, w in zip(toks, want):
+            got = eng.step(t)
+            assert np.array_equal(w.view(np.uint32), got.view(np.uint32)), eng.pos
+            during += eng.backend.last_stream["during"]
+    finally:
+        stop.set()
+        for h in hogs:
+            h.join()
+        sys.setswitchinterval(switch)
+        eng.backend.close()
+    assert during > 0 and card.held > 0                 # pieces during the runs; the gate held
+
+
 def test_tiny_resident_decode_on_rtl(tiny, have_verilator):
     """The resident decode program on the Verilator RTL (its arguments preset R8..R15) across
     the bucket boundary: positions 255 (bucket 1, the masked block's last column) and 256

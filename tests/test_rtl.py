@@ -424,6 +424,34 @@ def test_native_memory_path(have_verilator, prog, seed, stall, lat):
     assert sum(n["part_sw"] for n in st["native"]) == 0, st["native"]
 
 
+# A streamed step's first instructions (qwen3.fill_logits): FILL keeps -inf on the RTL too, the
+# stores cover the region exactly, and the load-back and RLD complete, on the native memory
+# path with stalls; a load of the region after them reads the fill.
+@pytest.mark.parametrize("stall", [0, 60])
+def test_logits_fill_rtl(have_verilator, stall):
+    from types import SimpleNamespace
+    from opentpu import language as ol
+    from opentpu.host.board import FILL_SENTINEL
+    from opentpu.llm.qwen3 import _tdesc, fill_logits
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16, DRAM_BYTES=1 << 21)
+    V, at = 20000, 1 << 19
+
+    @ol.jit
+    def kern(m):
+        fill_logits(m)
+        ol.store(_tdesc(at + 4 * V, (64,)), ol.load(_tdesc(at + 4 * (V - 64), (64,))))
+    m = SimpleNamespace(fill=True, v_loc=V, logits=_tdesc(at, (1, V)))
+    prog = kern.trace(cfg, 0, {"m": m}).finish()
+    img = np.random.default_rng(stall).integers(0, 256, cfg.DRAM_BYTES, np.uint8)
+    ref = Machine(cfg, [prog], [img.copy()]).run()
+    w = ref.slices[0].dram[at:at + 4 * V + 512].view(np.uint32)
+    assert (w[:V + 64] == FILL_SENTINEL).all() and not (w[V + 64:] == FILL_SENTINEL).any()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                 seed=stall + 3)
+    assert np.array_equal(drams[0], ref.slices[0].dram)
+    assert np.array_equal(tmems[0], ref.slices[0].tmem)
+
+
 # The card's channels (rtlsim's LDC: the board's bridge otpu_mem_ch and LiteDRAM's own controller,
 # generated with the production core's settings, sim/verilator/otpu_ldc_mem.sv). The controller
 # alone, on one channel's sequential reads or writes on one port (the BIST's pattern), moves what

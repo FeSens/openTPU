@@ -34,7 +34,7 @@ from .. import progcache as PC
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words
+from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words, current
 from . import formats as FM
 from . import generate as G
 from ..isasim import Config, Machine, design_config
@@ -493,7 +493,8 @@ def compile_decode(image, kernel, blocks: int, lo: int, block: int | None = None
     if not (blocks - 1) * block <= lo < min(blocks * block, image.cap):
         raise ValueError(f"lo {lo} is not in bucket {blocks}")
     rp = RunPos(blocks, block, lo, image.lookup["zmask"], image.cap)
-    bs = [kernel.trace(image.cfg, s, {"m": image.descriptors(s), "pos": rp, "block": block})
+    bs = [kernel.trace(image.cfg, s, {"m": step_descriptors(image, s), "pos": rp,
+                                      "block": block})
           for s in range(image.cfg.S)]
     progs = [b.finish() for b in bs]
     if any(b.run_args != bs[0].run_args for b in bs):
@@ -881,7 +882,7 @@ class Image(EmbedHost):
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (qwen3_step); with `tok`
         (an image with lookup tables) its inputs come from the tables, not the host."""
-        return [qwen3_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
+        return [qwen3_step.trace(self.cfg, s, {"m": step_descriptors(self, s), "pos": pos,
                                                "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
@@ -1136,6 +1137,63 @@ DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled fr
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
 
 
+def fill_logits(m) -> None:
+    """A step program's first instructions when compiled with fill (m.fill: the engine's
+    streamed logits, BoardBackend.start(stream=...)): FILL_SENTINEL (-inf: VOP FILL keeps it;
+    the LM head's logits are finite) over this slice's logits in HEAD_CHUNK stores, so that
+    the host tells the pieces the LM head has written from the last token's. Then one word
+    loaded back from the last store (it waits for that ST, which completes only once the DRAM
+    has taken every write so far: the host's reads see the fill) into an RLD, which holds
+    every later instruction until the word is back: once the card's ICOUNT has counted the
+    instruction after the RLD, the fill has landed (fill_gate). Static addresses and no loop,
+    so ICOUNT counts each instruction before it once; the rest of the program is the one
+    compiled without the fill (TMEM's next-fit cursor put back). Nothing in the generate loop's
+    programs (lm_sink / lm_split)."""
+    if not getattr(m, "fill", False) or getattr(m, "lm_sink", None) is not None or \
+            getattr(m, "lm_split", None) is not None:
+        return
+    b, sid = current(), ol.program_id()
+    cursor = b.tmem_next
+    n = min(HEAD_CHUNK, ol.tmem_words() // 8, m.v_loc)
+    t = ol.full([n], -math.inf)                     # FILL_SENTINEL
+    for c0 in range(0, m.v_loc, n):
+        k = min(n, m.v_loc - c0)
+        col = sid * m.v_loc + c0
+        ol.store(m.logits[0, col:col + k], t[:k])
+    last = sid * m.v_loc + m.v_loc - 1
+    b.rld(0, ol.load(m.logits[0, last:last + 1], out=t[0:1]), comment="logits fill landed")
+    del t
+    b.tmem_next = cursor        # the rest of the program as compiled without the fill
+
+
+def fill_gate(prog) -> int:
+    """The ICOUNT past fill_logits' RLD in `prog` (a slice's instructions, or their words): the
+    instructions up to the first RLD, plus the one after it. (Instructions read back from the
+    program cache have no comments: there the first RLD must be into r0, as the fill's.)"""
+    if isinstance(prog, np.ndarray):
+        ops = np.asarray(prog, np.uint32).reshape(-1, 8)[:, 0] & 0xFF
+        at = np.flatnonzero(ops[:512] == I.RLD)         # near the start: no whole scan
+        if not len(at):
+            at = np.flatnonzero(ops == I.RLD)
+        if not len(at):
+            raise ValueError("no RLD: not a program compiled with fill")
+        return int(at[0]) + 2
+    for i, ins in enumerate(prog):
+        if ins.op == I.RLD:
+            if ins.comment != "logits fill landed" and (ins.comment or ins.rd != 0):
+                raise ValueError("the program's first RLD is not fill_logits'")
+            return i + 2
+    raise ValueError("no RLD: not a program compiled with fill")
+
+
+def step_descriptors(image, sid: int) -> SimpleNamespace:
+    """image.descriptors(sid) for a decode step's program (compile_step, compile_decode): with
+    fill_logits when the image's engine streams the logits (image.stream_fill)."""
+    m = image.descriptors(sid)
+    m.fill = bool(getattr(image, "stream_fill", False))
+    return m
+
+
 @ol.jit
 def qwen3_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     """One decode token at position `pos`: x (the token's embedding) -> logits.
@@ -1144,6 +1202,7 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     positions 0..pos. Logits for this slice's vocabulary rows are stored to m.logits. `tok`:
     the token's id, its inputs read from the image's tables (_inputs).
     """
+    fill_logits(m)
     spec = m.spec
     x, c, s_ = _inputs(m, pos, tok)
     for lw in _layers(m):
@@ -1451,12 +1510,15 @@ class IsaBackend:
 _WORKER: tuple | None = None                # (image, block) in the compile worker process
 
 
-def _worker_init(spec, cfg, cap, batch, rows, block, image_kw: dict) -> None:
+def _worker_init(spec, cfg, cap, batch, rows, block, image_kw: dict,
+                 stream_fill: bool = False) -> None:
     """The worker's image: the engine's layout (spec.image with the engine's keywords: weight
     formats, the resident decode's lookup tables, a MoE's expert slots; its programs must
-    address the same image)."""
+    address the same image), and its step programs as the engine's (stream_fill)."""
     global _WORKER
-    _WORKER = (spec.image(cfg, cap, batch, rows, **image_kw), block)
+    image = spec.image(cfg, cap, batch, rows, **image_kw)
+    image.stream_fill = stream_fill
+    _WORKER = (image, block)
     _exit_with_parent()
 
 
@@ -1554,7 +1616,9 @@ class Engine:
     wait() -> stats, the two halves of run() (step compiles the next program in between);
     streams (true: start(programs, stream=(addr, nbytes, piece)) and wait(feed) hand the logits
     over in pieces, most of them during the run; the engine's stream_logits turns it off);
-    args (true: run / start take args=words, the run's arguments: resident decode).
+    fills (true, with streams: the step programs fill their logits region themselves,
+    fill_logits, and the stream carries their ICOUNT gate, fill_gate); args (true: run / start
+    take args=words, the run's arguments: resident decode).
 
     resident: decode with programs that take the position and the token as run arguments
     (compile_decode, docs/isa.md "Arguments"): one program per attention bucket of `block`
@@ -1692,6 +1756,10 @@ class Engine:
         self.poss = [0] * batch
         # step(): stream the logits when the backend can (not while its wait serves the host)
         self.stream_logits = getattr(self.backend, "host", None) is None
+        # ... and the step programs fill the region themselves (fill_logits) when the backend
+        # polls ICOUNT for the fill (BoardBackend.fills): the host writes nothing there
+        self.image.stream_fill = bool(self.stream_logits and self.cfg.S == 1
+                                      and getattr(self.backend, "fills", False))
         # rows per run that fit TMEM (prefill_chunks), at most the image's fit_rows (Gemma 4:
         # the ACT rows, so that a run streams the weights once)
         self._fit_rows = min(self.rows, getattr(self.image, "fit_rows", self.rows))
@@ -1728,7 +1796,7 @@ class Engine:
         self._pool = ProcessPoolExecutor(
             self._ahead, mp_context=mp.get_context("spawn"), initializer=_worker_init,
             initargs=(self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
-                      self._image_kw))
+                      self._image_kw, self.image.stream_fill))
         self._ready = self._pool.submit(_worker_ready)
 
     def _take(self, key, fn, *args):
@@ -1793,7 +1861,8 @@ class Engine:
         return PC.get(self.layout, what, compile) if self.prog_cache else compile()
 
     def _decode_what(self, b: int) -> tuple:
-        return ("decode", b, max((b - 1) * self.block, self._conv_lo))
+        what = ("decode", b, max((b - 1) * self.block, self._conv_lo))
+        return what + ("fill",) if self.image.stream_fill else what    # fill_logits' or not
 
     def _prefetch(self, pos: int) -> None:
         """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet); resident:
@@ -1871,6 +1940,8 @@ class Engine:
                 getattr(self.backend, "streams", False):
             piece = 4 * min(HEAD_CHUNK, self.cfg.TMEM_WORDS // 8)     # _lm_head's chunks
             stream = (io["logits"], 4 * vocab, piece)
+            if self.image.stream_fill:      # the program fills the region (fill_logits)
+                stream += (fill_gate(progs if isinstance(progs, np.ndarray) else progs[0]),)
         if start is None:
             if sink is not None:
                 sink.begin(vocab)
