@@ -9,7 +9,10 @@
 #   OLD     main's tree (default O/../tree-main: git archive of main with COMMIT)
 #   RF      the references (default O/refs-s16: q35ref16.json from refs-8100ffb, q26ref16.json
 #           from refs-f725c2b)
-# About 20 min. It stops at a mismatch, a timeout or an error.
+# Then the 35B's layer-major prefill (pooled, R = 2, lmtime's 134-token prompt PF_HF, its sha
+# PF_SHA and tokens), main against this tree: onecall's prefill serve rose 6.56 -> 7.10 s.
+#   EXPECT  the card's build (default e4db91c9: production pa); another one stops it
+# About 26 min. It stops at a mismatch, a timeout or an error.
 # Run: otpu-lock --wait 10800 -- tools/offload/sessions/session16.sh   (log: O/s16/session.log)
 set -u
 SESSION=${SESSION:-s16}; RF=${RF:-${O:-$HOME/otpu-build/offload/card2}/refs-s16}
@@ -24,8 +27,43 @@ run() {   # its name, runs, tree
   echo "--- $1: $2 ($(cat $3/COMMIT 2>/dev/null || echo $3), RF $RF)"
   env T=$3 RF=$RF R=$R/$1 RUNS="$2" bash "$3/tools/offload/sessions/card_moe.sh"
 }
-stop || for x in "M1 q35e128s $OLD" "H1 q35e128s $T" "M2 q35e128s $OLD" "H2 q35e128s $T" \
-                 "gM1 g26s $OLD" "gH1 g26s $T" "gM2 g26s $OLD" "gH2 g26s $T"; do
+EXPECT=${EXPECT:-e4db91c9}
+PF_HF=${PF_HF:-$HOME/otpu-build/moepf/lmtime/q35w-hf.json} PF_SHA=${PF_SHA:-95426ebacc3b40a9}
+PF_TOK="[8160, 579, 264, 7047, 1817, 421]"
+pf() {    # its name, tree: the 35B's prompt layer-major, R = 2, pooled, with its timeline
+  echo "--- $1: 35B layer-major prefill ($(cat $2/COMMIT))"
+  t0=$SECONDS; cat $O/pool-q35-fp4.split.bin > /dev/null; echo "  pool read in $((SECONDS - t0)) s"
+  (cd $2 && PYTHONPATH=$2 timeout 1800 python tools/offload/moe_card.py $O/Qwen3.5-35B-A3B \
+    --check $PF_HF -n 16 --pool $O/pool-q35-fp4.split.bin --cfg $R/cfg-dev.pkl --experts 0 --card \
+    --policy lfu --embed-table host --hints off --layer-major 2 --prefill-trace $R/$1.trace.json \
+    --out $R/$1.json > $R/$1.log 2>&1)
+  echo "  exit $? $(date +%T)"; grep -E "Error|Traceback" $R/$1.log | tail -3
+  python - $R/$1.json $PF_SHA "$PF_TOK" <<'PY' || echo "STOP: $1 differs"
+import json, sys
+d = json.load(open(sys.argv[1]))
+tok = json.loads(sys.argv[3])
+ok = d["prefill_logits_sha"] == sys.argv[2] and d["tokens"][:len(tok)] == tok
+print(f"  [{'PASS' if ok else 'FAIL'}] prefill sha {d['prefill_logits_sha']} vs {sys.argv[2]}, tokens "
+      f"{'same' if d['tokens'][:len(tok)] == tok else 'DIFFER'}; prefill {d['prefill_s']} s, "
+      f"requests {d.get('prefill_requests')} misses {d.get('prefill_misses')}")
+pt = d["prefill_time"]
+print("  prefill_time " + json.dumps({k: pt.get(k) for k in ("wall_s", "runs", "device_s", "between_s", "requests", "serve_s")}))
+sys.exit(0 if ok else 1)
+PY
+}
+st=$(timeout 600 python -m opentpu.host.selftest 2>&1)
+echo "$st" | grep -E "\[(PASS|FAIL)\]|ALL|build" | tail -14
+echo "$st" | grep -q "build $EXPECT" || echo "STOP: the card's build is not $EXPECT"
+timeout 300 python tools/qual/refs.py cfg $R/cfg-dev.pkl > /dev/null 2>&1; echo "cfg exit $?"
+stop || for x in "M1 q35e128s $OLD" "H1 q35e128s $T" "M2 q35e128s $OLD" "H2 q35e128s $T"; do
+  run $x
+  stop && break
+done
+stop || for x in "pfM $OLD" "pfH $T"; do
+  pf $x
+  stop && break
+done
+stop || for x in "gM1 g26s $OLD" "gH1 g26s $T" "gM2 g26s $OLD" "gH2 g26s $T"; do
   run $x
   stop && break
 done
