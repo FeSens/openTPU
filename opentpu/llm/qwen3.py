@@ -1585,7 +1585,8 @@ class Engine:
     release_weights: with the experts streamed from a pool file, the checkpoint's files are
     released once the image is written and the slots warm (W.release(), a LazyWeights': its
     mapped pages would stay in the page cache over the pool's, docs/offload.md 10.6; a later
-    read reopens its file). Default on; False keeps them.
+    read reopens its file). Default on; False keeps them. pool_map: the pool file's reads
+    touched through a read-only map (PoolFile's mapped, docs/offload.md 10.7). Default on.
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1594,7 +1595,7 @@ class Engine:
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
                  embed_host: bool | None = None, layer_major: int = 0,
-                 release_weights: bool = True):
+                 release_weights: bool = True, pool_map: bool = True):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
@@ -1633,7 +1634,7 @@ class Engine:
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         if pool_file is not None and getattr(self.image, "offload", None) is not None:
             from .moe import open_pool      # its read into the page cache runs during the build
-            pool_file = open_pool(self.image.offload, pool_file)
+            pool_file = open_pool(self.image.offload, pool_file, mapped=pool_map)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)

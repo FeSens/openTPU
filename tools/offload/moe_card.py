@@ -106,7 +106,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
          formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
-         willneed: bool = True) -> dict:
+         willneed: bool = True, pool_map: bool = True) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -138,7 +138,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         ekw["layer_major"] = layer_major        # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
-                 release_weights=release_weights, **ekw)    # (the checkpoint released: 10.6)
+                 release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
+                 **ekw)
     load_s = time.time() - t
     srv = eng.server
     srv.policy = policy                         # the slots' replacement (ExpertServer)
@@ -280,7 +281,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
-                release_weights=release_weights, willneed=willneed,
+                release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
@@ -355,6 +356,10 @@ def main():
     ap.add_argument("--no-willneed", action="store_true",
                     help="read a request's misses from the pool one after another (by default "
                          "PoolFile.willneed queues those not in the page cache at once)")
+    ap.add_argument("--no-pool-map", action="store_true",
+                    help="read the pool through read() only (by default each read is also "
+                         "touched through a read-only map of the pool: its page cache's standing "
+                         "under MGLRU, docs/offload.md 10.7)")
     ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
@@ -369,7 +374,7 @@ def main():
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
-             not a.keep_weights, not a.no_willneed)
+             not a.keep_weights, not a.no_willneed, not a.no_pool_map)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
