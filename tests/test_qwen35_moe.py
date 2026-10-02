@@ -291,14 +291,15 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs,
 
 
 
-@pytest.mark.parametrize("ready", [True, False])
-def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
+@pytest.mark.parametrize("ready,hint", [(True, False), (False, False), (True, True)])
+def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready, hint):
     """Engine._precompile_layers: with the process pipeline (a backend running assembled words,
     as the board does) prefill_layers' programs all come from the worker processes
     (layer_programs in the worker's image, assembled), queued in the order they run; here the
     ISA simulator runs them (the words decoded), and the logits and the decode steps after
     equal token by token's bit for bit. With the workers not up yet (ready False: a prompt
-    right after the engine) each run compiles in line and its queued compile is dropped."""
+    right after the engine) each run compiles in line and its queued compile is dropped.
+    hint: the workers' programs post the next layer's hints (layer_ahead "hint")."""
     from opentpu import isa as I
     from opentpu.llm.qwen3 import IsaBackend
 
@@ -314,7 +315,8 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
     spec, W = _untied(tiny)
     cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
     a = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, layer_major=2,
-               backend=lambda c, imgs: Words(c, imgs, adopt=True))
+               backend=lambda c, imgs: Words(c, imgs, adopt=True),
+               **({"layer_ahead": "hint"} if hint else {}))
     ref = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K)
     try:
         assert a._procs and a._ready.result(timeout=120)
@@ -336,6 +338,7 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
         la, lb = a.prefill(toks), ref.prefill(toks)
         assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
         assert a._layer_runs and not a._layer_next
+        assert (a.server.hints > 0) == hint
         assert all((progs is None) == ready and isinstance(w, np.ndarray)  # (None: the
                    for progs, _, w in a._layer_runs.values())             # worker's)
         if not ready:
@@ -392,6 +395,60 @@ def test_layer_ahead_sends_the_next_layers_experts(tiny, monkeypatch):
     a.layer_ahead, got = True, []                # True: each layer's experts in index order
     a._send_ahead(lambda j, ids: got.append((j, ids)), 2)
     assert got == [(2, list(range(2 * E, 3 * E)))]
+
+
+def _no_mixers(W):
+    """W with every mixer's output projection zero: a layer's MoE block reads the layer's input
+    (x + 0), so its route is the hint the layer before posts."""
+    return {k: (np.zeros_like(v) if k.endswith(("self_attn.o_proj.weight",
+                                                "linear_attn.out_proj.weight")) else v)
+            for k, v in W.items()}
+
+
+def _record_hints(eng):
+    """eng's server's hints (each one's global ids, a list) and the requests named after
+    begin_prefill (ExpertServer.history after its call: it serves the last token step's
+    request first, settle)."""
+    srv, hints, mark = eng.server, [], []
+    hint, begin = srv.hint, srv.begin_prefill
+    srv.hint = lambda ids: (hints.append(list(ids)), hint(ids))
+    srv.begin_prefill = lambda **kw: (begin(**kw), mark.append(len(srv.history)))
+    srv.history = []
+    return hints, lambda: srv.history[mark[0]:]
+
+
+def test_layer_runs_hint_the_next_layer_and_change_no_logit(tiny):
+    """Engine(layer_ahead="hint"): each layer run but the last layer's ends with the next
+    layer's hint (moe.moe_hint_rows: that layer's router on the run's output rows, one line of
+    R k ids), served as the next run waits on its fence; begin_prefill gets AHEAD_PART and
+    every ahead_layer call names no expert. The logits and the decode steps after equal token
+    by token's bit for bit. With the mixers' output projections zero a layer's route reads the
+    layer's input, so each hint is the next layer's request for the same rows, ids in their
+    order: 20 rows, the first 3 token by token (conv_k - 1), then runs of 2 and one of 1."""
+    from opentpu.llm.qwen3 import AHEAD_PART
+    spec, W = _untied(tiny)
+    L = len(KINDS)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    a, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, **kw)
+              for kw in ({"layer_major": 2, "layer_ahead": "hint"}, {}))
+    calls, ahead, begin = [], a.server.ahead_layer, a.server.begin_prefill
+    a.server.ahead_layer = lambda j, ids: (calls.append(list(ids)), ahead(j, ids))
+    a.server.begin_prefill = lambda **kw: (calls.append(kw), begin(**kw))
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 20)]
+    la, lr = a.prefill(toks), ref.prefill(toks)
+    assert calls[0] == {"ahead": True, "part": AHEAD_PART} and calls[1:] == [[]] * L
+    runs = 9                                    # (rows 3..19 in runs of 2, the last of 1)
+    assert a.server.hints == (L - 1) * runs
+    assert np.array_equal(la.view(np.uint32), lr.view(np.uint32))
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    z = Engine(spec, _no_mixers(W), cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K,
+               layer_major=2, layer_ahead="hint")
+    hints, requests = _record_hints(z)
+    z.prefill(toks)
+    got = requests()
+    assert len(got) == L * runs and len(hints) == (L - 1) * runs
+    assert hints == got[runs:] and any(len(h) > K for h in hints)  # (two rows' ids)
 
 
 def _hinted(spec):

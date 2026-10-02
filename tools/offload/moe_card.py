@@ -92,11 +92,12 @@ def host_mem() -> dict | None:
 
 
 def ahead_order(value: str, spec):
-    """--layer-ahead's order: "index" (True: each layer's experts in index order), or router
+    """--layer-ahead's order: "index" (True: each layer's experts in index order), "hint" (the
+    card's own guess: each layer run's hint for the next layer, docs/offload.md 13.9), or router
     traces (router_trace.py's or --trace's, comma-separated): per MoE layer its experts by use
     in them, most used first (a static profile; no model math on the host)."""
-    if value == "index":
-        return True
+    if value in ("index", "hint"):
+        return True if value == "index" else value
     E, nl = spec.moe.E, spec.layers - spec.moe.first
     cnt = np.zeros((nl, E))
     for path in value.split(","):
@@ -305,7 +306,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         host={k: round(v, 3) for k, v in tm.items()},   # (all the prompt's: none before)
         counters={k: v - snap_pre[k] for k, v in snap_end.items()} if snap_end else None,
         ahead=dict(calls=srv.aheads, landed=srv.landed, dropped=srv.dropped,  # (the layer
-                   promoted=srv.promoted) if eng.layer_ahead else None)       # ahead's)
+                   promoted=srv.promoted, hints=sum(e[2] == "h" for e in pev),  # ahead's;
+                   queued=getattr(srv, "hinted_ahead", None))   # the hints' ids it queued)
+        if eng.layer_ahead else None)
     if prefill_trace:                           # the prompt's timeline (s from its start)
         z = lambda v: None if v is None else round(v - t_pre, 6)    # noqa: E731
         Path(prefill_trace).write_text(json.dumps(dict(
@@ -479,10 +482,12 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
-    ap.add_argument("--layer-ahead", metavar="index|TRACES",
+    ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
                     help="--layer-major with pooled slots: the next MoE layer's experts sent "
-                         "while a layer runs (docs/offload.md 13.7), each layer's in index order "
-                         "or by their use in router traces (comma-separated .npz)")
+                         "while a layer runs (docs/offload.md 13.7), each layer's in index "
+                         "order, the card's hints (each layer run's router of the next layer on "
+                         "its output rows, 13.9) or by their use in router traces "
+                         "(comma-separated .npz)")
     ap.add_argument("--embed-runs", action="store_true",
                     help="--layer-major with the embed runs and compile-time-position runs "
                          "for an embedding table on the host (Engine embed_runs; needs a "
