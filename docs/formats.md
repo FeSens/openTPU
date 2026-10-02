@@ -18,7 +18,8 @@ In short:
   change in %), without the noise of the sampled tokens.
 - **Rule.** A mix qualifies if dKL% <= 0.1 x its decode gain in % over int8, with at most two
   layer layouts (Qwen3.5: one) unless the compile check passes (decode and prompt runs, buckets
-  1 and 16: Gemma 4), and the LM head in int8. The default is the fastest mix at least
+  1 and 16: Gemma 4; E2B's 4-row prompt run of bucket 2 does not fit, [gemma4.md](gemma4.md)),
+  and the LM head in int8. The default is the fastest mix at least
   1 SE under its bar; a dKL gap under 2 SE is a tie, which goes to the mix with fewer runs.
   Finals are at 2000 tokens.
 - **Choices.** Phi-4-mini: `mlp@4-29=fp4`, 31% faster than int8 for dKL 2.8% (fp4: 64% for

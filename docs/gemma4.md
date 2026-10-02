@@ -229,11 +229,14 @@ block), and the mix's three runs add about 1160 instructions to the first pick's
 (4106 at 4 rows, 10 over the 4096; the first pick's 2946). Bucket 2 is uncovered, so a prompt
 past 256 tokens takes today's route, which compiles every run's program on the host. On the card
 (session mix5, fmvf, cap 2048) a 1500-token prompt takes 536 runs: 100.3-101.4 s to the first
-token warm (98.7 cold), 69.3 s of it on the device (a run 129-146 ms at 4 rows in buckets 1-2,
-149-152 at 3 in 3-4, 109-110 at 2 in 5-6) and 58 ms a run on the host, where today's compile of
-the next run outlasts the device's. The first pick would take prompt runs, 375 of 4 rows:
-estimated 62 s (59.4 on the device by the weights model above, the rest of a row as the mix's
-measured runs; 1.9-3.3 s for the prompt runs' whole-bucket attention; 0.7 ms a run on the host).
+token in the two warm runs (the cold one 98.7 s: today's route keeps no programs between
+prompts, so cold and warm differ by the host's noise only), 69.3 s of it on the device (a run
+129-146 ms at 4 rows in buckets 1-2, 149-152 at 3 in 3-4, 109-110 at 2 in 5-6) and 58 ms a run
+on the host in series with the device (today's route compiles each run's program before it
+starts): 31 s. The first pick would take prompt runs, 375 of 4 rows: an estimated 62 s, of which
+59.4 s on the device (each bucket's rows at 4 a run: the weights by the model above, int8 and
+fp4 MMs apart, and the rest of a row as the mix's measured runs in that bucket), 1.9-3.3 s for
+the prompt runs' whole-bucket attention and 0.3 s on the host (0.7 ms a run).
 Prompts within bucket 1 (up to 256 tokens) take prompt runs of 4 rows, as the first pick's. With
 bucket 2 covered the mix would take prompt runs too (estimated 72 s); with attention looped over
 blocks instead of unrolled ([prefill.md](prefill.md) 7), 4 rows in every bucket. The fix, in the
