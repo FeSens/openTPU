@@ -1019,6 +1019,30 @@ class RunPos:
         return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
 
 
+class RunRows(RunPos):
+    """R consecutive rows at a run-time position (MTP's verify and draft runs, docs/mtp.md 10):
+    row r is position t0 + tpos + r, every row in the bucket (tpos <= block - R), its token the
+    run-time value toks[r] (tok, tok1, ...); row r attends over the bucket with the mask row
+    of its own position (bucket_row). values(tokens, p) gives the run's argument values."""
+
+    def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int, R: int):
+        super().__init__(blocks, block, lo, zmask, cap)
+        if not 0 < R <= min(block, cap - self.t0):
+            raise ValueError(f"{R} rows do not fit bucket {blocks}")
+        self.R = R
+        self.tpos.bound = min(block, cap - self.t0) - R + 1
+        self.toks = [self.tok] + [RunVar(f"tok{r}") for r in range(1, R)]
+
+    def bucket_row(self, r: int) -> Bucket:
+        return Bucket(self.blocks, self.bucket.z - 4 * r)
+
+    @staticmethod
+    def values(tokens, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
+        v = RunPos.values(tokens[0], p, K, block)
+        v.update({f"tok{r}": t for r, t in enumerate(tokens) if r})
+        return v
+
+
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for one token, this slice's heads; returns the new residual
     (replicated on every slice).
@@ -1171,7 +1195,19 @@ def _embed(m, tok):
 def _inputs_rows(m, rows, tokens=None):
     """_inputs for token rows (rows[r] = (sequence, position)): from the I/O area, or with
     `tokens` (their ids, compile-time values) from the image's tables, the embedding row of
-    each token and the RoPE rows of each run of consecutive positions."""
+    each token and the RoPE rows of each run of consecutive positions. rows a RunRows: its
+    tokens' rows (run-time ids) and its positions' RoPE rows from the tables."""
+    if isinstance(rows, RunRows):
+        R = rows.R
+        x = ol.empty([R, m.xr.shape[1]], dense=True)
+        c = ol.empty([R, m.cosr.shape[1]], dense=True)
+        s_ = ol.empty([R, m.sinr.shape[1]], dense=True)
+        ol.load(m.cos_t[rows.pos:rows.pos + R, :], out=c)
+        ol.load(m.sin_t[rows.pos:rows.pos + R, :], out=s_)
+        for r, t in enumerate(rows.toks):
+            x[r:r + 1, :].set(_embed(m, t))
+            ol.release(t)
+        return x, c, s_
     R = len(rows)
     if tokens is None:
         return ol.load(m.xr[0:R, :]), ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
@@ -1260,7 +1296,9 @@ def _rope_rows_padded(x, c, s_, out=None):
 
 def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for R token rows; row r is token position rows[r][1] of sequence
-    rows[r][0] (its own KV cache). Every row's K/V is appended first, then each row attends
+    rows[r][0] (its own KV cache), or rows is a RunRows (sequence 0, run-time positions; the
+    V^T appends a row at a time, each row's mask its own). Every row's K/V is appended first,
+    then each row attends
     over positions 0..pos of its sequence -- for consecutive rows of one sequence (a prefill
     chunk) that is exactly the causal mask. Each projection streams its weights once for all
     R rows (ceil(R / MCOLS) MMs); the (row, KV head) pairs then run as one pipelined
@@ -1269,7 +1307,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
     and a query group wider than the MXU attends in parts of MCOLS heads."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
-    R = len(rows)
+    R = rows.R if isinstance(rows, RunRows) else len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     k = ol.dot(xs, lw.wk)                       # [R, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
@@ -1280,10 +1318,14 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     heads = list(lw.kv.owned_heads(spec.n_kv))
     nh = len(heads)
     nq = nh * G
+    run = isinstance(rows, RunRows)
     for j, hh in enumerate(heads):
         kj = _rope_rows_padded(_norm_heads(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
         vj = _padded(v[:, j * d:(j + 1) * d])
-        for sq, p0, r0, n in _runs(rows):
+        if run:                                 # V^T at a run-time position: a row at a time
+            for r in range(R):
+                ol.kv_append(lw.kvs[0], hh, rows.pos + r, kj[r:r + 1, :], vj[r:r + 1, :])
+        for sq, p0, r0, n in [] if run else _runs(rows):
             ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
         del kj, vj
     del k, v
@@ -1304,9 +1346,10 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
         o[r, (j * G + g0) * d:(j * G + g1) * d].reshape(g1 - g0, d).set(acc / l[:, None])
 
     _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
-                  [lw.kvs[rows[r][0]] for r, *_ in ent], [heads[j] for _, j, _, _ in ent],
-                  [rows[r][1] + 1 for r, *_ in ent], block, scale, depth=ATTN_DEPTH,
-                  emit=emit)
+                  [lw.kvs[0 if run else rows[r][0]] for r, *_ in ent],
+                  [heads[j] for _, j, _, _ in ent],
+                  [rows.bucket_row(r) if run else rows[r][1] + 1 for r, *_ in ent], block,
+                  scale, depth=ATTN_DEPTH, emit=emit)
     del Q
     if gated:                                   # after the heads: o * sigmoid(gate), rounded
         for h0 in range(0, nq, mc):             # as _attention's (acc / l) * sg; mc heads at
@@ -1331,19 +1374,33 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     _lm_head_rows(x, m, spec, logit_rows)
 
 
+def head_rows_chunk(rows: int) -> int:
+    """The LM head's vocabulary rows per MM for `rows` token rows (their fp32 logits fit TMEM)."""
+    return min(HEAD_CHUNK, ol.tmem_words() // (8 * rows))
+
+
 def _lm_head_rows(x, m, spec, logit_rows):
     """Final norm and this slice's vocabulary rows of the LM head for the rows `logit_rows`
-    of x (a contiguous range, or empty: nothing) -> m.logitsr."""
+    of x (a contiguous range, or empty: nothing) -> m.logitsr, or, with m.lm_sinks (one sink
+    per logit row, generate.Greedy over head_rows_chunk's chunks: MTP's verify run), each
+    chunk's row r to sink r instead."""
     if not logit_rows:
         return
     sid = ol.program_id()
     a, e = logit_rows[0], logit_rows[-1] + 1
     xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
-    chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
+    chunk = head_rows_chunk(e - a)
+    sinks = getattr(m, "lm_sinks", None)
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
         col = sid * m.v_loc + c0
-        ol.store(m.logitsr[a:e, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+        if sinks is None:
+            ol.store(m.logitsr[a:e, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+            continue
+        y = ol.dot(xs, m.head[c0:c0 + n, :])
+        for r, sk in enumerate(sinks):
+            sk(y[r:r + 1, :], col)
+        del y
 
 
 # =============================================================================== engine

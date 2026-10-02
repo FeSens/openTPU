@@ -76,7 +76,7 @@ from .lfm2 import _place, plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, _attention, _attention_rows, _Bump,
+from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, RunRows, _attention, _attention_rows, _Bump,
                     _fake_q, _fake_w, _formats, _inputs, _inputs_rows, _lm_head, _lm_head_rows,
                     _lookup_alloc, _lookup_build, _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg,
                     _tokens_arg, compile_decode, rope_tables, EmbedHost)
@@ -758,6 +758,9 @@ class Image(EmbedHost):
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
                                     rows=rows) if lookup else {}
+        if lookup and spec.mtp:     # the MTP loop's chain area (opentpu/llm/mtp.py)
+            from .mtp import gen_alloc
+            self.lookup["mtpgen"] = gen_alloc(b, cap)
         self.choices = {"embed_host": self.embed_host,          # (the compile worker's
                         "formats": self.formats}                # image)
         self.offload = None
@@ -1055,6 +1058,34 @@ class Image(EmbedHost):
                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
+    def _run_rows(self, kernel, blocks: int, lo: int, R: int, block: int, slot: int, **kw):
+        if not self.lookup:
+            raise ValueError("a run at a run-time position needs lookup tables (lookup=True)")
+        if not (blocks - 1) * block <= lo < min(blocks * block, self.cap):
+            raise ValueError(f"lo {lo} is not in bucket {blocks}")
+        rp = RunRows(blocks, block, lo, self.lookup["zmask"], self.cap, R)
+        bs = [kernel.trace(self.cfg, s, {"m": self.descriptors(s, slot), "p0": rp, "R": R,
+                                         "block": block, **kw}) for s in range(self.cfg.S)]
+        return [b.finish() for b in bs], list(bs[0].run_args)
+
+    def compile_rows_run(self, blocks: int, lo: int, R: int, logit_rows, block: int = ATTN_BLOCK,
+                         slot: int = 0, fork: bool = False, hidden: bool = False):
+        """compile_rows at a run-time position (qwen3.RunRows): R rows from p, every p of
+        bucket `blocks` from lo with its R rows in the bucket, their tokens run-time values:
+        (programs, run_args); compiler.arg_words of RunRows.values gives the arguments."""
+        if fork or hidden:
+            if not self.spec.mtp:
+                raise ValueError("fork / hidden rows need an MTP image (Spec.mtp)")
+        return self._run_rows(qwen35_rows, blocks, lo, R, block, slot,
+                              logit_rows=list(logit_rows), fork=fork, hidden=hidden)
+
+    def compile_mtp_run(self, blocks: int, lo: int, R: int, block: int = ATTN_BLOCK,
+                        h0: int = 0):
+        """compile_mtp at a run-time position (RunRows; see compile_rows_run)."""
+        if not self.spec.mtp:
+            raise ValueError("the MTP drafter needs an MTP image (Spec.mtp)")
+        return self._run_rows(qwen35_mtp, blocks, lo, R, block, 0, h0=h0)
+
     # ---- kernel descriptors
     def descriptors(self, sid: int, slot: int = 0) -> SimpleNamespace:
         """The kernels' descriptors of slice sid; `slot`: the DeltaNet states' and windows'
@@ -1143,7 +1174,8 @@ class Image(EmbedHost):
                            gm=_tdesc(mo["gm"], (H,)),
                            fc=QTensor(*mo["fc"], (H, 2 * H), Q.row_bytes(2 * H, ff, D),
                                       4 * (2 * H // D), D, wf=Q.mxu_wf(ff)),
-                           dh=_qdesc(*mo["dh"], self.nd, H, D, "fp4")))
+                           dh=_qdesc(*mo["dh"], self.nd, H, D, "fp4")),
+                       mtpgen=self.lookup.get("mtpgen"))
         return SimpleNamespace(
             spec=spec, layer=layer, plan=self.plan, moe_dev=dev, **mtp,
             x=_tdesc(self.io["x"], (1, H)), cos=_tdesc(self.io["cos"], (spec.rope_dim // 2,)),
@@ -2032,15 +2064,21 @@ def qwen35_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=
     MTP decoding (Spec.mtp, docs/mtp.md 9): `hidden` stores every row's final-normed hidden
     (the LM head's input) to m.hid for the MTP layer; `fork` (the verify run) leaves the
     DeltaNet states and windows after row R-2 in the committed slot and those after row R-1
-    in the other (_deltanet_rows)."""
+    in the other (_deltanet_rows). p0 a RunRows (R its rows): the run at a run-time position,
+    its tokens run-time values (docs/mtp.md 10); the DeltaNet rows do not depend on the
+    position from K - 1 on, so they take the bucket's first position."""
     spec = m.spec
-    rows = [(0, p0 + r) for r in range(R)]
+    run = isinstance(p0, RunRows)
+    rows = p0 if run else [(0, p0 + r) for r in range(R)]
+    pd = p0.lo if run else p0
+    if run and (R != p0.R or pd < spec.conv_k - 1):
+        raise CompileError(f"a run-time rows run: {p0.R} rows from position {pd}")
     x, c, s_ = _inputs_rows(m, rows, tokens)
 
     def layer(li, it):
         lw = m.layer(li, it)
         if lw.kind == LIN:
-            x.set(_deltanet_rows(x, lw, p0, spec, m.gr[0:R, :], m.on[0:R, :], fork))
+            x.set(_deltanet_rows(x, lw, pd, spec, m.gr[0:R, :], m.on[0:R, :], fork))
         else:
             x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
         x.set(_mlp(x, lw, spec))
@@ -2072,10 +2110,12 @@ def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, 
 
     The layer appends every row's K/V before any row attends, so a row whose hidden belongs to
     a rejected draft is overwritten by the next run's row at that position before anything
-    reads it. keep: the draft head's logits to m.logitsr too (tests)."""
+    reads it. keep: the draft head's logits to m.logitsr too (tests). p0 a RunRows (R its
+    rows): the run at a run-time position, its tokens run-time values (docs/mtp.md 10).
+    Returns the drafts' [1] tiles."""
     spec, mt, b = m.spec, m.mtp, current()
     H, eps = spec.hidden, spec.eps
-    rows = [(0, p0 + r) for r in range(R)]
+    rows = p0 if isinstance(p0, RunRows) else [(0, p0 + r) for r in range(R)]
     e, c, s_ = _inputs_rows(m, rows, tokens)
     cat = ol.empty([R, 2 * H], dense=True)
     cat[:, 0:H].set(rmsnorm(e, ol.load(mt.ge), eps))
@@ -2098,5 +2138,7 @@ def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, 
         for r, sk in enumerate(sinks):
             sk(y[r:r + 1, :], c0)
         del y
-    for r, sk in enumerate(sinks):
-        ol.store(m.draft[r:r + 1], sk.token())
+    drafts = [sk.token() for sk in sinks]
+    for r, t in enumerate(drafts):
+        ol.store(m.draft[r:r + 1], t)
+    return drafts
