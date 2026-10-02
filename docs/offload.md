@@ -1256,8 +1256,11 @@ every run:
   slots by whole RUN blocks (`Layout.pitch`: the 26B's 3,448,832, 1.1 MB more for its 540 slots,
   still 18 a layer in its 4052 MiB image; the 35B's and LFM2.5-8B's slots are whole blocks
   already) and every expert reads into its runs. The slot addresses are the directory's, so no
-  program changes (program_sha.py: main's hashes under both configurations). Expected: about
-  16 s less staging, the 26B near 2.8 tok/s.
+  program changes (program_sha.py: main's hashes under both configurations). Card session 11
+  (2026-10-01, `tools/offload/sessions/session12.sh`'s first part, d29bfe9's programs, g26r
+  twice, bit for bit): 2.65 and 2.69 tok/s against 2.39 and 2.42, every expert read in place
+  (`direct` 11,310), staging 21.6 -> 12.3-12.8 s, the windows 38 -> 32 s against the DMA
+  thread's 27.2 (2.8 was expected: the rest is each request's own cost, as the 35B's).
 
 ### 10.7 The pool under MGLRU
 
@@ -1298,10 +1301,22 @@ Not tried: MADV_HUGEPAGE (file-backed huge pages need READ_ONLY_THP_FOR_FS and k
 touch already gives the standing). It does not change what the pool needs (about 14 GB of RAM
 for the 35B, 10.6) or the SSD's 4.2 ms an expert.
 
-The card's check: card_moe.sh `HOG=dir:dir` maps and touches those files from another process
-before a run (the Qwen3.5 0.8B / 2B / 4B checkpoints, session 10's 13.6 GB), with DROPOTHER="":
-q35e128r before this change (session 10's tree) against after. Expected: s10's 3.05-3.50 against
-s10b's 3.79.
+The card's check, session 12 (2026-10-01, `tools/offload/sessions/session12.sh`, d29bfe9's
+programs, every run bit for bit): card_moe.sh `HOG=dir:dir` mapped and touched the Qwen3.5
+0.8B / 2B / 4B checkpoints (15.6 GB) from another process before each run, with DROPOTHER="",
+then q35e128r (the checkpoint released) with the pool read through read() (A, the tree before
+this change) or touched through its map (B), A B A B:
+
+| run | the pool | tok/s | disk reads (s) | staging s | windows s | pool GB cached at decode, end |
+|:--|:--|:--|:--|:--|:--|:--|
+| A1 | read() | 2.67 | 2387 (15.5) | 23.0 | 35.5 | 8.9, 13.4 |
+| B1 | mapped | **3.71** | 173 (0.4) | 8.6 | 22.1 | 16.7, 16.8 |
+| A2 | read() | 3.08 | 1077 (8.2) | 16.0 | 29.1 | 15.6, 16.7 |
+| B2 | mapped | **3.76** | 2 (0.0) | 8.2 | 21.5 | 17.1, 17.1 |
+
+The mapped pool held its page cache against the other process's checkpoints: 3.71 and 3.76 tok/s
+against session 10's 3.79 with them dropped (10.6), where read() lost 19-30%. B's `rss_file` at
+decode was 16.2-16.7 GB: the pool, mapped (page cache, not the process's own memory).
 
 ## 11. Gemma 4 26B-A4B: design note
 
