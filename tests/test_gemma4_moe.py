@@ -231,6 +231,58 @@ def test_moe_device_follows_the_emulation(moe, wf):
         assert np.median(_cos(G.softcap(spec, dev), hf)) > 0.98
 
 
+def test_formats_scan_on_the_cards_experts(moe, tmp_path):
+    """tools/formats_scan.py's rows for the 26B (--base experts=fp4,head=fp4, the card's): each
+    variant's NLL and KL divergence from float's are gemma4_quant_eval.emulate's under the
+    dense layers' formats on top of the base, the experts in the base's format; no PLE (no
+    table, no kind); a row's bytes are the dense layers' and the head's; the groups halve the
+    layers at a multiple of the attention period (the 26B: 0-11, 12-29); a variant's residual
+    checkpoint goes once its rows are in the cache."""
+    import importlib.util
+    from dataclasses import replace
+    from pathlib import Path
+    s = importlib.util.spec_from_file_location("formats_scan", Path(__file__).resolve().parent
+                                               .parent / "tools" / "formats_scan.py")
+    FS = importlib.util.module_from_spec(s)
+    s.loader.exec_module(FS)
+    E = FS._g4q()
+    _, W, spec = moe
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 24)]
+    base = "experts=fp4,head=fp4"
+    specs = {"float": None, "int8": (base, "int8", None),
+             "attn": (base + ",attn@0-2=fp4", "int8", None),
+             "mlp": (base + ",gateup@3-5=fp4,down=fp4", "int8", None)}
+    rows = FS._g4_run(spec, W, toks, specs, 128, None, tmp_path, head_rows=256)
+
+    def logp(lg):
+        lg = 30.0 * np.tanh(lg / 30.0)
+        m = lg.max(1, keepdims=True)
+        return lg - m - np.log(np.exp(lg - m).sum(1, keepdims=True))
+
+    lf = logp(E.emulate(spec, W, toks, wformat="none"))
+    tgt = np.arange(len(toks) - 1), toks[1:]
+    for lab, v in specs.items():
+        wf, hf, wmap, pf = FS._g4_args(spec, v)
+        assert pf == rows[lab]["ple_table"] == "none"
+        if v is not None:
+            assert (wmap["experts"], hf) == ("fp4", "fp4")
+        lq = logp(E.emulate(spec, W, toks, wformat=wf, hf=hf, ple_format=pf, wmap=wmap))
+        assert np.abs(np.asarray(rows[lab]["nll_tok"]) + lq[:-1][tgt]).max() < 1e-4
+        kl = (np.exp(lf) * (lf - lq)).sum(1)
+        assert np.abs(np.asarray(rows[lab]["kl_tok"]) - kl).max() < 1e-6
+    assert rows["attn"]["kl_float"] != rows["int8"]["kl_float"] != rows["mlp"]["kl_float"]
+    assert len(list(tmp_path.glob("*.npy"))) == 4 and not list(tmp_path.glob("*.ckpt.npz"))
+    shapes = FS._g4_shapes(spec, W)
+    assert not any("experts" in n or "per_layer" in n for n in shapes)
+    by = {lab: FS._g4_bytes(spec, shapes, v) for lab, v in specs.items() if v is not None}
+    n8 = sum(r * (-(-c // 128) * 128) * 33 // 32 for r, c in shapes.values())
+    assert by["int8"] - n8 == 1000 * 256 * 17 // 32 and by["int8"] > by["attn"] > 0
+    assert FS._g4_spans(spec) == [(0, 2), (3, 5)]
+    big = replace(spec, kinds=((G.SLIDE,) * 5 + (G.FULL,)) * 5, kv_src=tuple(range(30)),
+                  ffn=(2112,) * 30)
+    assert FS._g4_spans(big) == [(0, 11), (12, 29)]
+
+
 def test_moe_experts_gain_with_outliers(moe_g2):
     """The experts read the norm times pre_feedforward_layernorm_2's gain, quantized (moe_ffn's
     g_exp), not the norm with the gain folded into W_gate's and W_up's columns: with 4 channels
