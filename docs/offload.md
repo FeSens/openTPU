@@ -2037,6 +2037,50 @@ B, q35e128s and g26s. Both must match their ISA references bit for bit (refs-s16
 - The 26B's programs did not change (4400270b, 6d7a8ec2), so refs-f725c2b's 90e6b6e06e19da99
   still holds for it.
 
+On the card, session 16 (2026-10-02 08:58-09:19 opentpu):
+- Setup: production pa e4db91c9, no reload, one lock. M = main a60df35 (A), H = offload-head
+  40baa60 (A'), M H M H.
+- All ten runs matched bit for bit: the decode runs against refs-s16, the prefill pair against
+  lmtime's sha 95426ebacc3b40a9. The selftests before and after were ALL PASS.
+
+Column meanings in the table below:
+- crit: as in 10.11, seen to the last tag's call, over the requests with misses (4649 / 3661).
+- head: seen to the first data call. body: the rest of crit.
+- lead: the median from seen to the lead's DMA.
+
+| run | tok/s (device) | RUNNING G | DMA_BUSY G | crit s (head + body) | lead us |
+|:--|:--|:--|:--|:--|:--|
+| 35B M | 5.05 (5.06) | 3.370 | 1.558 | 12.55 (2.07 + 10.48) | 403 |
+| 35B H | **5.29** (5.31) | 3.211 | 1.366 | 11.32 (1.43 + 9.89) | 290 |
+| 35B M | 5.14 (5.16) | 3.305 | 1.488 | 12.05 (1.94 + 10.11) | 404 |
+| 35B H | **5.23** (5.25) | 3.249 | 1.417 | 11.61 (1.43 + 10.18) | 297 |
+| 26B M | 3.57 (3.58) | 4.768 | 0.835 | 19.49 (1.85 + 17.64) | 475 |
+| 26B H | **3.59** (3.60) | 4.741 | 0.771 | 19.12 (1.21 + 17.91) | 311 |
+| 26B M | 3.57 (3.58) | 4.773 | 0.847 | 19.57 (1.86 + 17.71) | 477 |
+| 26B H | **3.60** (3.61) | 4.730 | 0.755 | 19.02 (1.21 + 17.82) | 313 |
+
+- The 35B gains +3.2% on the means (5.10 -> 5.26), inside the prediction (5.20-5.27).
+- The head fell as predicted on both models: -0.51 to -0.64 s (35B) and -0.64 s (26B). The
+  lead's DMA now starts 290-313 us after seen, against A's 403-477.
+- The answer now costs its 43-58 us call inside the body: +0.2 s on the 26B.
+- The 26B gains only +0.7% (3.57 -> 3.60, predicted 3.63-3.65).
+  - Its requests with 1 or 2 misses are compute-bound. The card is still on the present
+    experts (3.45 MB each) when the last tag lands, so the head's gain moves into the card's time
+    after the critical end.
+  - That time, from the critical end to the next post, rose 150-200 us a request (1 miss: 4158-4189
+    -> 4332-4334 us median; 2 misses: 3187-3223 -> 3382-3394).
+  - Requests with 3-4 misses are unchanged (2971-2983 us).
+  - serve_emu's card model takes that time per request from the old path's traces, as fixed. It
+    misses the overlap, which is why it predicted the 26B's head gain as wall time.
+- H2C writes during the card's compute: they cost the card ~0.17 s per GB written (gemma4's
+  layer-ahead, 13.8). Here A and A' write the same bytes in the same windows, and the 3-4-miss
+  requests' time after the critical end did not change, so nothing points at a change in
+  contention. The tail (critical end to the poll's return) grew 0.2-0.3 s with the deferred
+  touches, but the next post is never sooner than 1.4 ms after it.
+- The 35B prefill pair (pooled, R = 2, layer-major, one run each): wall 13.04 (M) and 13.08 s
+  (H); demand serve 6.41 and 6.28 s for the same 6241 misses. The prompt is bound by the card's
+  runs (12.1-12.3 s), so the head's gain does not reach its wall time.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
