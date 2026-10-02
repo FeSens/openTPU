@@ -2552,6 +2552,28 @@ its own programs: q35ref16 without hints, q35ref16h with them and the caps. Hint
 bit. The 26B has no decode hint programs (a gemma4.py change), so they wait for the 35B's
 result.
 
+### 12.8 An expert landing as its request is posted
+
+The card posts a request, then reads the present flag of each id it names; a missing one's
+slot comes from the request's answer word, which the host writes only for the ids it serves as
+misses. An idle poll reads seq, finds no request, and lands a hinted (or ahead_layer's) expert:
+its last part with the tag, then its entry. If the card posts a request naming that expert
+after the poll read seq, it can read the entry before it lands, as missing, and wait on its
+answer word, while the host, at the next poll, finds the expert landed and serves it as a hit:
+answer word 0, and the card's WAITW never holds. Two polls later the race is over (the poll
+between read seq after the entry had landed).
+
+Found by a hang of the live fake card (test_qwen35_moe's hints test under load, 2026-10-02:
+`WAITW ... wait: its slot (the answer) never holds`). Capped hints make it likelier on the
+card: a whole expert lands about 0.9 ms after its hint, the request comes 1.6-1.7 ms after.
+The fix, host only: `poll` keeps the experts the last idle poll landed (`_fresh`); the request
+served in the next poll names their slots in its answer too (`late`), and writes the answer
+even with no miss. Their tags landed with them, so a card that read the entry as missing finds
+its slot and its data; one that read it present never reads that answer word, and zeroes the
+answer after its experts as always. test_offload_server's
+`test_an_expert_landed_in_the_poll_before_a_request_is_answered` posts the request right after
+the landing poll's read of seq; on the server before the fix its answer word is 0.
+
 ## 13. Layer-major prefill
 
 Today a prompt runs token by token through the decode step. Each token's MoE layers ask for
@@ -3068,7 +3090,9 @@ prefill about 0.75 s and the 26B's 0.25-0.32 s):
   part / `PART_GBS`: 0.2 ms + 3.15 GB/s). The poll returns 0 and the backend polls again, so
   requests are served at once as always.
 - A run past its expected end by `HOLD_LATE` (1 ms) gets parts again (its expectation was
-  wrong), and so does one with no expectation. `holds` counts the polls held.
+  wrong), and so does one with no expectation. `holds` counts the polls held. A poll that
+  holds after ahead_layer's next expert took a victim's slot flushes the victim's entry first,
+  so the next read of seq meets no DMA in flight.
 - gemma4's estimate: 35B -0.5 to -0.7 s and 26B -0.3 to -0.4 s on the layer-ahead prefill.
 
 Predicted per part (session 16's fit: 122 us a call pair + bytes / 3.15 GB/s; pfhint's
@@ -3088,6 +3112,7 @@ hints (a discarded warm-up run, then A B B A).
 Tests: test_offload_server's `test_idle_parts_go_as_one_call_each_and_are_read_ahead` (an idle
 part's calls with and without, a request's misses with the lead cut, the staged reads, a
 request dropping one, ahead_layer's slot at its stage, the card's memories as Board.write's)
-and `test_halt_aware_idle_parts_wait_near_a_runs_expected_end`; test_qwen35_moe's live card
+`test_halt_aware_idle_parts_wait_near_a_runs_expected_end` and
+`test_a_held_idle_poll_leaves_no_dma_in_flight`; test_qwen35_moe's live card
 (BoardDram, CHASH, a split pool) bit for bit with v2: the decode hints and the layer-ahead
 prefill (`test_layer_ahead_on_a_live_card_with_idle_parts_v2`), and moe_card's `--idle-parts`.

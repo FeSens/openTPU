@@ -539,6 +539,12 @@ class ExpertServer:
         # once a request is served, while the card computes
         self.pool_file = None
         self._victims: list = []            # this request's victims: entries cleared at its end
+        # the experts the last poll landed on idle time (step: their last part and entry): the
+        # card may have posted a request naming one after that poll read seq and read its entry
+        # before the entry landed, as missing; that request's answer names their slots (late)
+        self._fresh: set = set()
+        self._racy: set = set()             # (serve's: the poll before's _fresh)
+        self.late = 0                       # hits answered so (docs/offload.md 12.8)
         self.last = None                    # what the last poll served: ("d" / "h", its layer),
                                             # None for a hinted expert's part (PollPacer's key)
         self.clear_late = True              # (False: each at once, before its slot is written)
@@ -607,11 +613,17 @@ class ExpertServer:
         seq, n = (int(v) for v in np.frombuffer(bytes(self.mem.read(self.L.mbox, 8)),
                                                 np.float32))
         t0 = time.perf_counter()
+        fresh, self._fresh = self._fresh, set()
         if seq == self.seq:
-            if not self.pending and not self._next_ahead() or self._hold():
+            if not self.pending and not self._next_ahead():
+                return 0
+            if self._hold():
+                self._flush()               # (a victim's entry _next_ahead cleared)
                 return 0
             g = next(iter(self.pending))
             self.step()
+            if g not in self.pending:       # landed: its entry after this poll read seq
+                self._fresh.add(g)
             self._stage_next()              # (the next part's read beside this one's DMA)
             self._flush()
             self._touched()
@@ -646,7 +658,11 @@ class ExpertServer:
         else:
             if self.history is not None:
                 self.history.append(ids)
-            self.serve(ids, [pos[g] for g in ids])
+            self._racy = fresh
+            try:
+                self.serve(ids, [pos[g] for g in ids])
+            finally:
+                self._racy = set()
             self._used = {self.lru[g // self.L.E][g] for g in ids}
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
@@ -680,7 +696,9 @@ class ExpertServer:
         (its first place in the request; default its index). The missing ones' slots are
         chosen first, then each one's bytes go with its tag, the answer once the first one's
         first part is on its way (the link starts on the expert), then the directory's new and
-        cleared entries (docs/offload.md 10.11)."""
+        cleared entries (docs/offload.md 10.11). A hit that landed in the poll before this one's
+        (_racy) gets its slot in the answer as well (12.8): the card may have read its entry as
+        missing."""
         j = self._layer(ids)
         self._unstage()
         pos = list(range(len(ids))) if pos is None else pos
@@ -688,7 +706,7 @@ class ExpertServer:
         lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
         for g in ids:                       # the decayed use count, kept as log2 + t / half
             use[g] = math.log2(2.0 ** (use[g] - t) + 1.0) + t if g in use else t
-        plan = []                           # (id, its answer word, slot, its rest only)
+        plan, late = [], []                 # (id, its answer word, slot, its rest only)
         for g, p in zip(ids, pos):
             if g in lru:
                 lru.move_to_end(g)
@@ -699,15 +717,22 @@ class ExpertServer:
                     plan.append((g, p, lru[g], True))
                 else:
                     self.hits += 1
+                    if g in self._racy:     # landed as the card may have read its entry
+                        late.append((p, lru[g]))
                 continue
             self.misses += 1
             slot = self._pool_slot(j, ids) if self.pooled else self._slot(j, ids)
             lru[g] = slot                   # (no victim of this request: they are not in ids)
             plan.append((g, p, slot, False))
-        if plan:
+        self.late += len(late)
+        if plan or late:
             ans = np.zeros(self.L.max_ids, np.uint32)
             for g, p, slot, _ in plan:
                 ans[p] = slot
+            for p, slot in late:            # (its tag landed with it: the card goes on)
+                ans[p] = slot
+            if not plan:
+                self.mem.write(self.L.answer, ans)
 
             later = [g for g, _, _, rest in plan[1:] if not rest]
 
