@@ -1764,13 +1764,14 @@ bytes per token are B's):
   36.92 -> 37.47 tokens/s, LFM2 97.53 -> 98.84, Qwen3.5 26.76 -> 27.35. The on-card decode loop
   gives Qwen3 37.37 -> 37.89 and LFM2 97.65 -> 98.89.
 
-### The chooser and the turnarounds (2026-10-01): parked
+### The chooser and the turnarounds (2026-10-01; in the core 2026-10-02, with the next build)
 
 The two multiplexer items left after memeff, with a third of the same kind, as options of
 `tools/litedram/fastmux.py`: a copy of LiteDRAM's multiplexer that `gen_core.py` and `gen_ldc.py`
-build through. `ctl_settings.py`'s `MULTIPLEXER` leaves all three off, and then the core and the
-co-simulated controller are LiteDRAM's, byte for byte (`check_core.sh` matches;
-`gen_ldc.py` writes the committed `otpu_ldc_ch.v`).
+build through. `ctl_settings.py`'s `MULTIPLEXER` is `FASTMUX`, all three on, since 2026-10-02
+(the committed core and `otpu_ldc_ch.v`; their first build is the next full build). With all
+three off the core and the co-simulated controller are LiteDRAM's, byte for byte: `gen_ldc.py
+--rtw none --no-same-cycle --no-direct-wtr` writes the model main had before.
 - **`same_cycle`: the choosers grant in the cycle a request is valid.** LiteDRAM's
   `_CommandChooser` keeps its round-robin grant in a register and moves it only when the granted
   request is taken or is not valid. So a grant on a bank with nothing to issue in the current state
@@ -1837,11 +1838,55 @@ token against main ff186b1, memeff):
   a third to a half of that. The rest is DDR3's and the PHY's own spacing and banks still waiting on their timers.
 - **One port, sequential** (the BIST's pattern): `same_cycle` takes reads from 90.4% to 91.7% of
   peak, writes from 89.9% to 91.2% (91.5% with all three). That is the BIST's figure, not decode.
-- **Parked:** under the ~1% a build and a card session would have to pay for. To take it: set
-  `MULTIPLEXER` (`rtw=3, same_cycle=True, direct_wtr=True`), regenerate the core and the model
-  (`check_core.sh --update`, `gen_ldc.py`), and replace the BIST test's figures. Before a build it
-  needs the out-of-context timing check of the chooser's priority encoder (sys at 133.33 MHz).
-  On the card it needs a read-to-write check: the ECC counters after mixed traffic at `rtw 3`.
+- **No build of its own** (under the ~1% a build and a card session would have to pay for): it
+  rides with the next full build, whatever brings it.
+
+**The choosers' timing, out of context** (2026-10-02, omarchy: the generated core alone, both
+channels, sys at 7.5 ns and the board's clock constraints, OBUFs on the PHY's single-ended outputs
+as the board top's synthesis puts them; Explore):
+- **The worst path through the multiplexer's cells** (`*choose*`, `*multiplexer*`,
+  `*steerer*`) is +1.177 ns at 9 levels in LiteDRAM's core (the refresher's ZQCS timer into
+  the bank machines), and +0.577 ns at 13 levels with `FASTMUX`. That path is the combinational
+  grant: bank 10's row compare (CARRY4) -> `choose_cmd`'s priority encoder -> the command's
+  accept and tFAW -> bank 12's `trascon` reset. 1.31 ns of it is logic and 5.18 ns is route.
+- **Calibration:** the same filter on the production build's routed checkpoint (g2fix
+  0885d436) gives +1.004 ns, 0.17 ns tighter than out of context. So `FASTMUX` should keep
+  about +0.4 ns in a full build.
+- **The core's other paths:** the sys domain's WNS out of context (-1.30 ns LiteDRAM's,
+  -1.06 `FASTMUX`) is on paths only the out-of-context placement has (a CSR counter into the
+  CPU's LUTRAM FIFOs, 92% route). In the full build that domain is +0.009 ns, on the
+  `crg_rst1` fanout. `FASTMUX` takes 1,021 fewer LUTs: the registered grant goes.
+
+**The fallback, `FASTMUX_SAFE`** (`rtw 3`, `direct_wtr`, no `same_cycle`): no new
+combinational path, -0.42 / -0.17 / -0.52% decode on the 4-bit models (above). If a build
+misses sys's timing on the `choose_cmd` / `choose_req` paths:
+1. Set `MULTIPLEXER = FASTMUX_SAFE` in `ctl_settings.py`.
+2. Run `check_core.sh --update` and `gen_ldc.py sim/verilator/otpu_ldc_ch.v`.
+3. Rebuild. `test_rtl.py`'s BIST figures follow `MULTIPLEXER`.
+
+**The BIST's figures in the model** (`test_ldc_sequential_is_the_card_bist`, one port,
+sequential, % of peak):
+
+| | read | write |
+|---|---|---|
+| LiteDRAM's multiplexer | 90.4 (card 90.4) | 89.9 (card 89.8) |
+| `FASTMUX` | 91.65 | 91.49 |
+| `FASTMUX_SAFE` | 90.38 | 90.17 |
+
+The first fastmux build's qual compares the card's BIST with these.
+
+**On the card,** `tools/qual/qual.sh` runs `tools/qual/turnaround.py` before its final selftest,
+in every qual:
+- **The traffic:** 30 s (TURN) of fp4 weight reads (port A) beside 64 KiB stores and loads of
+  the tile stored just before (port B), so reads and writes take turns in both channels all the
+  time.
+- **The data:** the stored tiles and the MMs' results must equal the ISA simulator's.
+- **The ECC counters:** both channels' sec / ded counts must be 0. A turnaround that comes too
+  early corrupts a burst on the bus, and every beat carries its ECC byte, so the channel's
+  decoder sees it. The loads of what was just stored put any write it corrupted through the
+  decoder in the same run.
+- **Checked so far:** on the board model (`test_board.py`). Its first card run is the next
+  qual.
 
 ### What is left after memeff (2026-10-02)
 

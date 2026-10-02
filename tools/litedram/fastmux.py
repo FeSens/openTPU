@@ -1,6 +1,7 @@
 """LiteDRAM's multiplexer with three scheduling options (docs/litedram.md section 11, "The chooser
 and the turnarounds"), for the production core (gen_core.py) and its simulation model (gen_ldc.py);
-ctl_settings.py's MULTIPLEXER sets them (all off: LiteDRAM's multiplexer, byte for byte):
+ctl_settings.py's MULTIPLEXER sets them (the core's: FASTMUX, all three; all off: LiteDRAM's
+multiplexer, byte for byte):
 
 - rtw: the read-to-write turnaround as a command spacing in controller cycles, counted from the
   last read the multiplexer issued (a tXXDController, like tCCD's and tWTR's). The multiplexer

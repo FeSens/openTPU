@@ -11,7 +11,7 @@
 // Device     : xc7k480t-ffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-09-30 21:46:04
+// Date       : 2026-10-02 06:00:42
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -333,11 +333,17 @@ OTPULiteDRAM
 │    ├── bitslip_152 (BitSlip) [Gen]
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:ISERDESE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -349,78 +355,17 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:OBUFDS]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -469,6 +414,61 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -570,28 +570,26 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:IOBUF]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
@@ -600,14 +598,14 @@ OTPULiteDRAM
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
@@ -616,7 +614,9 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -628,7 +628,6 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
@@ -641,6 +640,7 @@ OTPULiteDRAM
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -707,6 +707,7 @@ OTPULiteDRAM
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -769,43 +770,43 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -819,48 +820,48 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -911,48 +912,47 @@ OTPULiteDRAM
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
+│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
 │    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    └── [BB:IDELAYE2]
+│    ├── [BB:IDELAYE2]
+│    └── [BB:IOBUF]
 ├── sdram (LiteDRAMCore)
 │    ├── dfii (DFIInjector)
 │    │    ├── pi0 (PhaseInjector)
@@ -1049,15 +1049,14 @@ OTPULiteDRAM
 │    │    │    ├── trascon (tXXDController)
 │    │    │    └── fsm (FSM)
 │    │    └── multiplexer (Multiplexer)
-│    │         ├── choose_cmd (_CommandChooser)
-│    │         │    └── roundrobin_0 (RoundRobin) [Gen]
-│    │         ├── choose_req (_CommandChooser)
-│    │         │    └── roundrobin_0 (RoundRobin) [Gen]
+│    │         ├── choose_cmd (SameCycleChooser)
+│    │         ├── choose_req (SameCycleChooser)
 │    │         ├── _steerer_0 (_Steerer) [Gen]
 │    │         ├── trrdcon (tXXDController)
 │    │         ├── tfawcon (tFAWController)
 │    │         ├── tccdcon (tXXDController)
 │    │         ├── twtrcon (tXXDController)
+│    │         ├── trtwcon (tXXDController)
 │    │         └── fsm (FSM)
 │    └── crossbar (LiteDRAMCrossbar)
 │         ├── roundrobin_0 (RoundRobin) [Gen]
@@ -1281,6 +1280,7 @@ OTPULiteDRAM
 │    ├── tappeddelayline_2 (TappedDelayLine) [Gen]
 │    ├── tappeddelayline_3 (TappedDelayLine) [Gen]
 │    ├── [BB:FDRE]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OBUFDS]
@@ -1328,7 +1328,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
@@ -1528,11 +1527,8 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
-│    ├── [BB:IOBUFDS]
 │    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
 │    ├── [BB:IOBUFDS]
-│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:IOBUFDS]
@@ -1541,6 +1537,121 @@ OTPULiteDRAM
 │    ├── [BB:IOBUFDS]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:FDRE]
+│    ├── [BB:IOBUFDS]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:IOBUF]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
+│    ├── [BB:OSERDESE2]
+│    ├── [BB:ISERDESE2]
+│    ├── [BB:IDELAYE2]
+│    ├── [BB:IOBUF]
+│    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
@@ -1633,34 +1744,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -1694,46 +1777,6 @@ OTPULiteDRAM
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
 │    ├── [BB:FDRE]
@@ -1746,50 +1789,6 @@ OTPULiteDRAM
 │    ├── [BB:ISERDESE2]
 │    ├── [BB:IDELAYE2]
 │    ├── [BB:IOBUF]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
-│    ├── [BB:FDRE]
-│    ├── [BB:OSERDESE2]
-│    ├── [BB:ISERDESE2]
-│    ├── [BB:IOBUF]
-│    ├── [BB:IDELAYE2]
 │    ├── [BB:FDRE]
 │    ├── [BB:OSERDESE2]
 │    ├── [BB:ISERDESE2]
@@ -1996,15 +1995,14 @@ OTPULiteDRAM
 │    │    │    ├── trascon (tXXDController)
 │    │    │    └── fsm (FSM)
 │    │    └── multiplexer (Multiplexer)
-│    │         ├── choose_cmd (_CommandChooser)
-│    │         │    └── roundrobin_0 (RoundRobin) [Gen]
-│    │         ├── choose_req (_CommandChooser)
-│    │         │    └── roundrobin_0 (RoundRobin) [Gen]
+│    │         ├── choose_cmd (SameCycleChooser)
+│    │         ├── choose_req (SameCycleChooser)
 │    │         ├── _steerer_0 (_Steerer) [Gen]
 │    │         ├── trrdcon (tXXDController)
 │    │         ├── tfawcon (tFAWController)
 │    │         ├── tccdcon (tXXDController)
 │    │         ├── twtrcon (tXXDController)
+│    │         ├── trtwcon (tXXDController)
 │    │         └── fsm (FSM)
 │    └── crossbar (LiteDRAMCrossbar)
 │         ├── roundrobin_0 (RoundRobin) [Gen]
@@ -4779,7 +4777,6 @@ reg     [2:0] litedramcore0_bankmachine7_wrport_adr = 3'd0;
 wire   [24:0] litedramcore0_bankmachine7_wrport_dat_w;
 wire          litedramcore0_bankmachine7_wrport_we;
 wire          litedramcore0_cas_allowed;
-wire          litedramcore0_choose_cmd_ce;
 wire   [14:0] litedramcore0_choose_cmd_cmd_payload_a;
 wire    [2:0] litedramcore0_choose_cmd_cmd_payload_ba;
 reg           litedramcore0_choose_cmd_cmd_payload_cas = 1'd0;
@@ -4791,13 +4788,12 @@ reg           litedramcore0_choose_cmd_cmd_payload_we = 1'd0;
 reg           litedramcore0_choose_cmd_cmd_ready = 1'd0;
 wire          litedramcore0_choose_cmd_cmd_valid;
 reg     [2:0] litedramcore0_choose_cmd_grant = 3'd0;
-wire    [7:0] litedramcore0_choose_cmd_request;
+reg     [2:0] litedramcore0_choose_cmd_ptr = 3'd0;
 reg     [7:0] litedramcore0_choose_cmd_valids = 8'd0;
 reg           litedramcore0_choose_cmd_want_activates = 1'd0;
 reg           litedramcore0_choose_cmd_want_cmds = 1'd0;
 reg           litedramcore0_choose_cmd_want_reads = 1'd0;
 reg           litedramcore0_choose_cmd_want_writes = 1'd0;
-wire          litedramcore0_choose_req_ce;
 wire   [14:0] litedramcore0_choose_req_cmd_payload_a;
 wire    [2:0] litedramcore0_choose_req_cmd_payload_ba;
 reg           litedramcore0_choose_req_cmd_payload_cas = 1'd0;
@@ -4809,7 +4805,7 @@ reg           litedramcore0_choose_req_cmd_payload_we = 1'd0;
 reg           litedramcore0_choose_req_cmd_ready = 1'd0;
 wire          litedramcore0_choose_req_cmd_valid;
 reg     [2:0] litedramcore0_choose_req_grant = 3'd0;
-wire    [7:0] litedramcore0_choose_req_request;
+reg     [2:0] litedramcore0_choose_req_ptr = 3'd0;
 reg     [7:0] litedramcore0_choose_req_valids = 8'd0;
 reg           litedramcore0_choose_req_want_activates = 1'd0;
 reg           litedramcore0_choose_req_want_cmds = 1'd0;
@@ -5171,8 +5167,8 @@ reg           litedramcore0_master_p3_wrdata_en = 1'd0;
 reg    [17:0] litedramcore0_master_p3_wrdata_mask = 18'd0;
 wire          litedramcore0_max_time0;
 wire          litedramcore0_max_time1;
-reg     [3:0] litedramcore0_multiplexer0_next_state = 4'd0;
-reg     [3:0] litedramcore0_multiplexer0_state = 4'd0;
+reg     [1:0] litedramcore0_multiplexer0_next_state = 2'd0;
+reg     [1:0] litedramcore0_multiplexer0_state = 2'd0;
 reg           litedramcore0_new_master_rdata_valid0 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid1 = 1'd0;
 reg           litedramcore0_new_master_rdata_valid10 = 1'd0;
@@ -5443,6 +5439,10 @@ reg           litedramcore0_trrdcon_count = 1'd0;
 (* dont_touch = "true" *)
 reg           litedramcore0_trrdcon_ready = 1'd0;
 wire          litedramcore0_trrdcon_valid;
+reg     [1:0] litedramcore0_trtwcon_count = 2'd0;
+(* dont_touch = "true" *)
+reg           litedramcore0_trtwcon_ready = 1'd0;
+wire          litedramcore0_trtwcon_valid;
 reg     [2:0] litedramcore0_twtrcon_count = 3'd0;
 (* dont_touch = "true" *)
 reg           litedramcore0_twtrcon_ready = 1'd0;
@@ -6260,7 +6260,6 @@ reg     [2:0] litedramcore1_bankmachine9_wrport_adr = 3'd0;
 wire   [24:0] litedramcore1_bankmachine9_wrport_dat_w;
 wire          litedramcore1_bankmachine9_wrport_we;
 wire          litedramcore1_cas_allowed;
-wire          litedramcore1_choose_cmd_ce;
 wire   [14:0] litedramcore1_choose_cmd_cmd_payload_a;
 wire    [2:0] litedramcore1_choose_cmd_cmd_payload_ba;
 reg           litedramcore1_choose_cmd_cmd_payload_cas = 1'd0;
@@ -6272,13 +6271,12 @@ reg           litedramcore1_choose_cmd_cmd_payload_we = 1'd0;
 reg           litedramcore1_choose_cmd_cmd_ready = 1'd0;
 wire          litedramcore1_choose_cmd_cmd_valid;
 reg     [2:0] litedramcore1_choose_cmd_grant = 3'd0;
-wire    [7:0] litedramcore1_choose_cmd_request;
+reg     [2:0] litedramcore1_choose_cmd_ptr = 3'd0;
 reg     [7:0] litedramcore1_choose_cmd_valids = 8'd0;
 reg           litedramcore1_choose_cmd_want_activates = 1'd0;
 reg           litedramcore1_choose_cmd_want_cmds = 1'd0;
 reg           litedramcore1_choose_cmd_want_reads = 1'd0;
 reg           litedramcore1_choose_cmd_want_writes = 1'd0;
-wire          litedramcore1_choose_req_ce;
 wire   [14:0] litedramcore1_choose_req_cmd_payload_a;
 wire    [2:0] litedramcore1_choose_req_cmd_payload_ba;
 reg           litedramcore1_choose_req_cmd_payload_cas = 1'd0;
@@ -6290,7 +6288,7 @@ reg           litedramcore1_choose_req_cmd_payload_we = 1'd0;
 reg           litedramcore1_choose_req_cmd_ready = 1'd0;
 wire          litedramcore1_choose_req_cmd_valid;
 reg     [2:0] litedramcore1_choose_req_grant = 3'd0;
-wire    [7:0] litedramcore1_choose_req_request;
+reg     [2:0] litedramcore1_choose_req_ptr = 3'd0;
 reg     [7:0] litedramcore1_choose_req_valids = 8'd0;
 reg           litedramcore1_choose_req_want_activates = 1'd0;
 reg           litedramcore1_choose_req_want_cmds = 1'd0;
@@ -6652,8 +6650,8 @@ reg           litedramcore1_master_p3_wrdata_en = 1'd0;
 reg    [17:0] litedramcore1_master_p3_wrdata_mask = 18'd0;
 wire          litedramcore1_max_time0;
 wire          litedramcore1_max_time1;
-reg     [3:0] litedramcore1_multiplexer1_next_state = 4'd0;
-reg     [3:0] litedramcore1_multiplexer1_state = 4'd0;
+reg     [1:0] litedramcore1_multiplexer1_next_state = 2'd0;
+reg     [1:0] litedramcore1_multiplexer1_state = 2'd0;
 reg           litedramcore1_new_master_rdata_valid0 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid1 = 1'd0;
 reg           litedramcore1_new_master_rdata_valid10 = 1'd0;
@@ -6924,6 +6922,10 @@ reg           litedramcore1_trrdcon_count = 1'd0;
 (* dont_touch = "true" *)
 reg           litedramcore1_trrdcon_ready = 1'd0;
 wire          litedramcore1_trrdcon_valid;
+reg     [1:0] litedramcore1_trtwcon_count = 2'd0;
+(* dont_touch = "true" *)
+reg           litedramcore1_trtwcon_ready = 1'd0;
+wire          litedramcore1_trtwcon_valid;
 reg     [2:0] litedramcore1_twtrcon_count = 3'd0;
 (* dont_touch = "true" *)
 reg           litedramcore1_twtrcon_ready = 1'd0;
@@ -28232,6 +28234,7 @@ assign litedramcore0_ras_allowed = (litedramcore0_trrdcon_ready & litedramcore0_
 assign litedramcore0_tccdcon_valid = ((litedramcore0_choose_req_cmd_valid & litedramcore0_choose_req_cmd_ready) & (litedramcore0_choose_req_cmd_payload_is_write | litedramcore0_choose_req_cmd_payload_is_read));
 assign litedramcore0_cas_allowed = litedramcore0_tccdcon_ready;
 assign litedramcore0_twtrcon_valid = ((litedramcore0_choose_req_cmd_valid & litedramcore0_choose_req_cmd_ready) & litedramcore0_choose_req_cmd_payload_is_write);
+assign litedramcore0_trtwcon_valid = ((litedramcore0_choose_req_cmd_valid & litedramcore0_choose_req_cmd_ready) & litedramcore0_choose_req_cmd_payload_is_read);
 assign litedramcore0_read_available = ((((((((litedramcore0_bankmachine0_cmd_valid & litedramcore0_bankmachine0_cmd_payload_is_read) | (litedramcore0_bankmachine1_cmd_valid & litedramcore0_bankmachine1_cmd_payload_is_read)) | (litedramcore0_bankmachine2_cmd_valid & litedramcore0_bankmachine2_cmd_payload_is_read)) | (litedramcore0_bankmachine3_cmd_valid & litedramcore0_bankmachine3_cmd_payload_is_read)) | (litedramcore0_bankmachine4_cmd_valid & litedramcore0_bankmachine4_cmd_payload_is_read)) | (litedramcore0_bankmachine5_cmd_valid & litedramcore0_bankmachine5_cmd_payload_is_read)) | (litedramcore0_bankmachine6_cmd_valid & litedramcore0_bankmachine6_cmd_payload_is_read)) | (litedramcore0_bankmachine7_cmd_valid & litedramcore0_bankmachine7_cmd_payload_is_read));
 assign litedramcore0_write_available = ((((((((litedramcore0_bankmachine0_cmd_valid & litedramcore0_bankmachine0_cmd_payload_is_write) | (litedramcore0_bankmachine1_cmd_valid & litedramcore0_bankmachine1_cmd_payload_is_write)) | (litedramcore0_bankmachine2_cmd_valid & litedramcore0_bankmachine2_cmd_payload_is_write)) | (litedramcore0_bankmachine3_cmd_valid & litedramcore0_bankmachine3_cmd_payload_is_write)) | (litedramcore0_bankmachine4_cmd_valid & litedramcore0_bankmachine4_cmd_payload_is_write)) | (litedramcore0_bankmachine5_cmd_valid & litedramcore0_bankmachine5_cmd_payload_is_write)) | (litedramcore0_bankmachine6_cmd_valid & litedramcore0_bankmachine6_cmd_payload_is_write)) | (litedramcore0_bankmachine7_cmd_valid & litedramcore0_bankmachine7_cmd_payload_is_write));
 assign litedramcore0_max_time0 = (litedramcore0_time0 == 1'd0);
@@ -28259,7 +28262,291 @@ always @(*) begin
     litedramcore0_choose_cmd_valids[6] = (litedramcore0_bankmachine6_cmd_valid & (((litedramcore0_bankmachine6_cmd_payload_is_cmd & litedramcore0_choose_cmd_want_cmds) & ((~((litedramcore0_bankmachine6_cmd_payload_ras & (~litedramcore0_bankmachine6_cmd_payload_cas)) & (~litedramcore0_bankmachine6_cmd_payload_we))) | litedramcore0_choose_cmd_want_activates)) | ((litedramcore0_bankmachine6_cmd_payload_is_read == litedramcore0_choose_cmd_want_reads) & (litedramcore0_bankmachine6_cmd_payload_is_write == litedramcore0_choose_cmd_want_writes))));
     litedramcore0_choose_cmd_valids[7] = (litedramcore0_bankmachine7_cmd_valid & (((litedramcore0_bankmachine7_cmd_payload_is_cmd & litedramcore0_choose_cmd_want_cmds) & ((~((litedramcore0_bankmachine7_cmd_payload_ras & (~litedramcore0_bankmachine7_cmd_payload_cas)) & (~litedramcore0_bankmachine7_cmd_payload_we))) | litedramcore0_choose_cmd_want_activates)) | ((litedramcore0_bankmachine7_cmd_payload_is_read == litedramcore0_choose_cmd_want_reads) & (litedramcore0_bankmachine7_cmd_payload_is_write == litedramcore0_choose_cmd_want_writes))));
 end
-assign litedramcore0_choose_cmd_request = litedramcore0_choose_cmd_valids;
+always @(*) begin
+    litedramcore0_choose_cmd_grant = 3'd0;
+    case (litedramcore0_choose_cmd_ptr)
+        1'd0: begin
+            if (litedramcore0_choose_cmd_valids[0]) begin
+                litedramcore0_choose_cmd_grant = 1'd0;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[1]) begin
+                    litedramcore0_choose_cmd_grant = 1'd1;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[2]) begin
+                        litedramcore0_choose_cmd_grant = 2'd2;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[3]) begin
+                            litedramcore0_choose_cmd_grant = 2'd3;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[4]) begin
+                                litedramcore0_choose_cmd_grant = 3'd4;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[5]) begin
+                                    litedramcore0_choose_cmd_grant = 3'd5;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[6]) begin
+                                        litedramcore0_choose_cmd_grant = 3'd6;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[7]) begin
+                                            litedramcore0_choose_cmd_grant = 3'd7;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 1'd0;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        1'd1: begin
+            if (litedramcore0_choose_cmd_valids[1]) begin
+                litedramcore0_choose_cmd_grant = 1'd1;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[2]) begin
+                    litedramcore0_choose_cmd_grant = 2'd2;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[3]) begin
+                        litedramcore0_choose_cmd_grant = 2'd3;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[4]) begin
+                            litedramcore0_choose_cmd_grant = 3'd4;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[5]) begin
+                                litedramcore0_choose_cmd_grant = 3'd5;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[6]) begin
+                                    litedramcore0_choose_cmd_grant = 3'd6;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[7]) begin
+                                        litedramcore0_choose_cmd_grant = 3'd7;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[0]) begin
+                                            litedramcore0_choose_cmd_grant = 1'd0;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 1'd1;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd2: begin
+            if (litedramcore0_choose_cmd_valids[2]) begin
+                litedramcore0_choose_cmd_grant = 2'd2;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[3]) begin
+                    litedramcore0_choose_cmd_grant = 2'd3;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[4]) begin
+                        litedramcore0_choose_cmd_grant = 3'd4;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[5]) begin
+                            litedramcore0_choose_cmd_grant = 3'd5;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[6]) begin
+                                litedramcore0_choose_cmd_grant = 3'd6;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[7]) begin
+                                    litedramcore0_choose_cmd_grant = 3'd7;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[0]) begin
+                                        litedramcore0_choose_cmd_grant = 1'd0;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[1]) begin
+                                            litedramcore0_choose_cmd_grant = 1'd1;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 2'd2;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd3: begin
+            if (litedramcore0_choose_cmd_valids[3]) begin
+                litedramcore0_choose_cmd_grant = 2'd3;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[4]) begin
+                    litedramcore0_choose_cmd_grant = 3'd4;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[5]) begin
+                        litedramcore0_choose_cmd_grant = 3'd5;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[6]) begin
+                            litedramcore0_choose_cmd_grant = 3'd6;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[7]) begin
+                                litedramcore0_choose_cmd_grant = 3'd7;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[0]) begin
+                                    litedramcore0_choose_cmd_grant = 1'd0;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[1]) begin
+                                        litedramcore0_choose_cmd_grant = 1'd1;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[2]) begin
+                                            litedramcore0_choose_cmd_grant = 2'd2;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 2'd3;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd4: begin
+            if (litedramcore0_choose_cmd_valids[4]) begin
+                litedramcore0_choose_cmd_grant = 3'd4;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[5]) begin
+                    litedramcore0_choose_cmd_grant = 3'd5;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[6]) begin
+                        litedramcore0_choose_cmd_grant = 3'd6;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[7]) begin
+                            litedramcore0_choose_cmd_grant = 3'd7;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[0]) begin
+                                litedramcore0_choose_cmd_grant = 1'd0;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[1]) begin
+                                    litedramcore0_choose_cmd_grant = 1'd1;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[2]) begin
+                                        litedramcore0_choose_cmd_grant = 2'd2;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[3]) begin
+                                            litedramcore0_choose_cmd_grant = 2'd3;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 3'd4;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd5: begin
+            if (litedramcore0_choose_cmd_valids[5]) begin
+                litedramcore0_choose_cmd_grant = 3'd5;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[6]) begin
+                    litedramcore0_choose_cmd_grant = 3'd6;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[7]) begin
+                        litedramcore0_choose_cmd_grant = 3'd7;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[0]) begin
+                            litedramcore0_choose_cmd_grant = 1'd0;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[1]) begin
+                                litedramcore0_choose_cmd_grant = 1'd1;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[2]) begin
+                                    litedramcore0_choose_cmd_grant = 2'd2;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[3]) begin
+                                        litedramcore0_choose_cmd_grant = 2'd3;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[4]) begin
+                                            litedramcore0_choose_cmd_grant = 3'd4;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 3'd5;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd6: begin
+            if (litedramcore0_choose_cmd_valids[6]) begin
+                litedramcore0_choose_cmd_grant = 3'd6;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[7]) begin
+                    litedramcore0_choose_cmd_grant = 3'd7;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[0]) begin
+                        litedramcore0_choose_cmd_grant = 1'd0;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[1]) begin
+                            litedramcore0_choose_cmd_grant = 1'd1;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[2]) begin
+                                litedramcore0_choose_cmd_grant = 2'd2;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[3]) begin
+                                    litedramcore0_choose_cmd_grant = 2'd3;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[4]) begin
+                                        litedramcore0_choose_cmd_grant = 3'd4;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[5]) begin
+                                            litedramcore0_choose_cmd_grant = 3'd5;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 3'd6;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd7: begin
+            if (litedramcore0_choose_cmd_valids[7]) begin
+                litedramcore0_choose_cmd_grant = 3'd7;
+            end else begin
+                if (litedramcore0_choose_cmd_valids[0]) begin
+                    litedramcore0_choose_cmd_grant = 1'd0;
+                end else begin
+                    if (litedramcore0_choose_cmd_valids[1]) begin
+                        litedramcore0_choose_cmd_grant = 1'd1;
+                    end else begin
+                        if (litedramcore0_choose_cmd_valids[2]) begin
+                            litedramcore0_choose_cmd_grant = 2'd2;
+                        end else begin
+                            if (litedramcore0_choose_cmd_valids[3]) begin
+                                litedramcore0_choose_cmd_grant = 2'd3;
+                            end else begin
+                                if (litedramcore0_choose_cmd_valids[4]) begin
+                                    litedramcore0_choose_cmd_grant = 3'd4;
+                                end else begin
+                                    if (litedramcore0_choose_cmd_valids[5]) begin
+                                        litedramcore0_choose_cmd_grant = 3'd5;
+                                    end else begin
+                                        if (litedramcore0_choose_cmd_valids[6]) begin
+                                            litedramcore0_choose_cmd_grant = 3'd6;
+                                        end else begin
+                                            litedramcore0_choose_cmd_grant = 3'd7;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    endcase
+end
 assign litedramcore0_choose_cmd_cmd_valid = rhs_self8;
 assign litedramcore0_choose_cmd_cmd_payload_a = rhs_self9;
 assign litedramcore0_choose_cmd_cmd_payload_ba = rhs_self10;
@@ -28284,7 +28571,6 @@ always @(*) begin
         litedramcore0_choose_cmd_cmd_payload_we = t_self2;
     end
 end
-assign litedramcore0_choose_cmd_ce = (litedramcore0_choose_cmd_cmd_ready | (~litedramcore0_choose_cmd_cmd_valid));
 always @(*) begin
     litedramcore0_choose_req_valids = 8'd0;
     litedramcore0_choose_req_valids[0] = (litedramcore0_bankmachine0_cmd_valid & (((litedramcore0_bankmachine0_cmd_payload_is_cmd & litedramcore0_choose_req_want_cmds) & ((~((litedramcore0_bankmachine0_cmd_payload_ras & (~litedramcore0_bankmachine0_cmd_payload_cas)) & (~litedramcore0_bankmachine0_cmd_payload_we))) | litedramcore0_choose_req_want_activates)) | ((litedramcore0_bankmachine0_cmd_payload_is_read == litedramcore0_choose_req_want_reads) & (litedramcore0_bankmachine0_cmd_payload_is_write == litedramcore0_choose_req_want_writes))));
@@ -28296,7 +28582,291 @@ always @(*) begin
     litedramcore0_choose_req_valids[6] = (litedramcore0_bankmachine6_cmd_valid & (((litedramcore0_bankmachine6_cmd_payload_is_cmd & litedramcore0_choose_req_want_cmds) & ((~((litedramcore0_bankmachine6_cmd_payload_ras & (~litedramcore0_bankmachine6_cmd_payload_cas)) & (~litedramcore0_bankmachine6_cmd_payload_we))) | litedramcore0_choose_req_want_activates)) | ((litedramcore0_bankmachine6_cmd_payload_is_read == litedramcore0_choose_req_want_reads) & (litedramcore0_bankmachine6_cmd_payload_is_write == litedramcore0_choose_req_want_writes))));
     litedramcore0_choose_req_valids[7] = (litedramcore0_bankmachine7_cmd_valid & (((litedramcore0_bankmachine7_cmd_payload_is_cmd & litedramcore0_choose_req_want_cmds) & ((~((litedramcore0_bankmachine7_cmd_payload_ras & (~litedramcore0_bankmachine7_cmd_payload_cas)) & (~litedramcore0_bankmachine7_cmd_payload_we))) | litedramcore0_choose_req_want_activates)) | ((litedramcore0_bankmachine7_cmd_payload_is_read == litedramcore0_choose_req_want_reads) & (litedramcore0_bankmachine7_cmd_payload_is_write == litedramcore0_choose_req_want_writes))));
 end
-assign litedramcore0_choose_req_request = litedramcore0_choose_req_valids;
+always @(*) begin
+    litedramcore0_choose_req_grant = 3'd0;
+    case (litedramcore0_choose_req_ptr)
+        1'd0: begin
+            if (litedramcore0_choose_req_valids[0]) begin
+                litedramcore0_choose_req_grant = 1'd0;
+            end else begin
+                if (litedramcore0_choose_req_valids[1]) begin
+                    litedramcore0_choose_req_grant = 1'd1;
+                end else begin
+                    if (litedramcore0_choose_req_valids[2]) begin
+                        litedramcore0_choose_req_grant = 2'd2;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[3]) begin
+                            litedramcore0_choose_req_grant = 2'd3;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[4]) begin
+                                litedramcore0_choose_req_grant = 3'd4;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[5]) begin
+                                    litedramcore0_choose_req_grant = 3'd5;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[6]) begin
+                                        litedramcore0_choose_req_grant = 3'd6;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[7]) begin
+                                            litedramcore0_choose_req_grant = 3'd7;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 1'd0;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        1'd1: begin
+            if (litedramcore0_choose_req_valids[1]) begin
+                litedramcore0_choose_req_grant = 1'd1;
+            end else begin
+                if (litedramcore0_choose_req_valids[2]) begin
+                    litedramcore0_choose_req_grant = 2'd2;
+                end else begin
+                    if (litedramcore0_choose_req_valids[3]) begin
+                        litedramcore0_choose_req_grant = 2'd3;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[4]) begin
+                            litedramcore0_choose_req_grant = 3'd4;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[5]) begin
+                                litedramcore0_choose_req_grant = 3'd5;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[6]) begin
+                                    litedramcore0_choose_req_grant = 3'd6;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[7]) begin
+                                        litedramcore0_choose_req_grant = 3'd7;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[0]) begin
+                                            litedramcore0_choose_req_grant = 1'd0;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 1'd1;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd2: begin
+            if (litedramcore0_choose_req_valids[2]) begin
+                litedramcore0_choose_req_grant = 2'd2;
+            end else begin
+                if (litedramcore0_choose_req_valids[3]) begin
+                    litedramcore0_choose_req_grant = 2'd3;
+                end else begin
+                    if (litedramcore0_choose_req_valids[4]) begin
+                        litedramcore0_choose_req_grant = 3'd4;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[5]) begin
+                            litedramcore0_choose_req_grant = 3'd5;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[6]) begin
+                                litedramcore0_choose_req_grant = 3'd6;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[7]) begin
+                                    litedramcore0_choose_req_grant = 3'd7;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[0]) begin
+                                        litedramcore0_choose_req_grant = 1'd0;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[1]) begin
+                                            litedramcore0_choose_req_grant = 1'd1;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 2'd2;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd3: begin
+            if (litedramcore0_choose_req_valids[3]) begin
+                litedramcore0_choose_req_grant = 2'd3;
+            end else begin
+                if (litedramcore0_choose_req_valids[4]) begin
+                    litedramcore0_choose_req_grant = 3'd4;
+                end else begin
+                    if (litedramcore0_choose_req_valids[5]) begin
+                        litedramcore0_choose_req_grant = 3'd5;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[6]) begin
+                            litedramcore0_choose_req_grant = 3'd6;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[7]) begin
+                                litedramcore0_choose_req_grant = 3'd7;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[0]) begin
+                                    litedramcore0_choose_req_grant = 1'd0;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[1]) begin
+                                        litedramcore0_choose_req_grant = 1'd1;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[2]) begin
+                                            litedramcore0_choose_req_grant = 2'd2;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 2'd3;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd4: begin
+            if (litedramcore0_choose_req_valids[4]) begin
+                litedramcore0_choose_req_grant = 3'd4;
+            end else begin
+                if (litedramcore0_choose_req_valids[5]) begin
+                    litedramcore0_choose_req_grant = 3'd5;
+                end else begin
+                    if (litedramcore0_choose_req_valids[6]) begin
+                        litedramcore0_choose_req_grant = 3'd6;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[7]) begin
+                            litedramcore0_choose_req_grant = 3'd7;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[0]) begin
+                                litedramcore0_choose_req_grant = 1'd0;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[1]) begin
+                                    litedramcore0_choose_req_grant = 1'd1;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[2]) begin
+                                        litedramcore0_choose_req_grant = 2'd2;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[3]) begin
+                                            litedramcore0_choose_req_grant = 2'd3;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 3'd4;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd5: begin
+            if (litedramcore0_choose_req_valids[5]) begin
+                litedramcore0_choose_req_grant = 3'd5;
+            end else begin
+                if (litedramcore0_choose_req_valids[6]) begin
+                    litedramcore0_choose_req_grant = 3'd6;
+                end else begin
+                    if (litedramcore0_choose_req_valids[7]) begin
+                        litedramcore0_choose_req_grant = 3'd7;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[0]) begin
+                            litedramcore0_choose_req_grant = 1'd0;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[1]) begin
+                                litedramcore0_choose_req_grant = 1'd1;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[2]) begin
+                                    litedramcore0_choose_req_grant = 2'd2;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[3]) begin
+                                        litedramcore0_choose_req_grant = 2'd3;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[4]) begin
+                                            litedramcore0_choose_req_grant = 3'd4;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 3'd5;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd6: begin
+            if (litedramcore0_choose_req_valids[6]) begin
+                litedramcore0_choose_req_grant = 3'd6;
+            end else begin
+                if (litedramcore0_choose_req_valids[7]) begin
+                    litedramcore0_choose_req_grant = 3'd7;
+                end else begin
+                    if (litedramcore0_choose_req_valids[0]) begin
+                        litedramcore0_choose_req_grant = 1'd0;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[1]) begin
+                            litedramcore0_choose_req_grant = 1'd1;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[2]) begin
+                                litedramcore0_choose_req_grant = 2'd2;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[3]) begin
+                                    litedramcore0_choose_req_grant = 2'd3;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[4]) begin
+                                        litedramcore0_choose_req_grant = 3'd4;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[5]) begin
+                                            litedramcore0_choose_req_grant = 3'd5;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 3'd6;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd7: begin
+            if (litedramcore0_choose_req_valids[7]) begin
+                litedramcore0_choose_req_grant = 3'd7;
+            end else begin
+                if (litedramcore0_choose_req_valids[0]) begin
+                    litedramcore0_choose_req_grant = 1'd0;
+                end else begin
+                    if (litedramcore0_choose_req_valids[1]) begin
+                        litedramcore0_choose_req_grant = 1'd1;
+                    end else begin
+                        if (litedramcore0_choose_req_valids[2]) begin
+                            litedramcore0_choose_req_grant = 2'd2;
+                        end else begin
+                            if (litedramcore0_choose_req_valids[3]) begin
+                                litedramcore0_choose_req_grant = 2'd3;
+                            end else begin
+                                if (litedramcore0_choose_req_valids[4]) begin
+                                    litedramcore0_choose_req_grant = 3'd4;
+                                end else begin
+                                    if (litedramcore0_choose_req_valids[5]) begin
+                                        litedramcore0_choose_req_grant = 3'd5;
+                                    end else begin
+                                        if (litedramcore0_choose_req_valids[6]) begin
+                                            litedramcore0_choose_req_grant = 3'd6;
+                                        end else begin
+                                            litedramcore0_choose_req_grant = 3'd7;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    endcase
+end
 assign litedramcore0_choose_req_cmd_valid = rhs_self14;
 assign litedramcore0_choose_req_cmd_payload_a = rhs_self15;
 assign litedramcore0_choose_req_cmd_payload_ba = rhs_self16;
@@ -28393,7 +28963,6 @@ always @(*) begin
         litedramcore0_bankmachine7_cmd_ready = 1'd1;
     end
 end
-assign litedramcore0_choose_req_ce = (litedramcore0_choose_req_cmd_ready | (~litedramcore0_choose_req_cmd_valid));
 assign litedramcore0_dfi_p0_reset_n = 1'd1;
 assign litedramcore0_dfi_p0_cke = {1{litedramcore0_steerer00}};
 assign litedramcore0_dfi_p0_odt = {1{litedramcore0_steerer01}};
@@ -28416,7 +28985,7 @@ always @(*) begin
     litedramcore0_cmd_ready = 1'd0;
     litedramcore0_en0 = 1'd0;
     litedramcore0_en1 = 1'd0;
-    litedramcore0_multiplexer0_next_state = 4'd0;
+    litedramcore0_multiplexer0_next_state = 2'd0;
     litedramcore0_steerer0_sel0 = 2'd0;
     litedramcore0_steerer0_sel1 = 2'd0;
     litedramcore0_steerer0_sel2 = 2'd0;
@@ -28427,11 +28996,11 @@ always @(*) begin
             litedramcore0_en1 = 1'd1;
             litedramcore0_choose_req_want_writes = 1'd1;
             if (1'd0) begin
-                litedramcore0_choose_req_cmd_ready = (litedramcore0_cas_allowed & ((~((litedramcore0_choose_req_cmd_payload_ras & (~litedramcore0_choose_req_cmd_payload_cas)) & (~litedramcore0_choose_req_cmd_payload_we))) | litedramcore0_ras_allowed));
+                litedramcore0_choose_req_cmd_ready = ((litedramcore0_cas_allowed & litedramcore0_trtwcon_ready) & ((~((litedramcore0_choose_req_cmd_payload_ras & (~litedramcore0_choose_req_cmd_payload_cas)) & (~litedramcore0_choose_req_cmd_payload_we))) | litedramcore0_ras_allowed));
             end else begin
                 litedramcore0_choose_cmd_want_activates = litedramcore0_ras_allowed;
                 litedramcore0_choose_cmd_cmd_ready = ((~((litedramcore0_choose_cmd_cmd_payload_ras & (~litedramcore0_choose_cmd_cmd_payload_cas)) & (~litedramcore0_choose_cmd_cmd_payload_we))) | litedramcore0_ras_allowed);
-                litedramcore0_choose_req_cmd_ready = litedramcore0_cas_allowed;
+                litedramcore0_choose_req_cmd_ready = (litedramcore0_cas_allowed & litedramcore0_trtwcon_ready);
             end
             litedramcore0_steerer0_sel0 = 1'd0;
             if ((wl7ddrphy0_wrphase_storage == 1'd0)) begin
@@ -28463,7 +29032,7 @@ always @(*) begin
             end
             if (litedramcore0_read_available) begin
                 if (((~litedramcore0_write_available) | litedramcore0_max_time1)) begin
-                    litedramcore0_multiplexer0_next_state = 2'd3;
+                    litedramcore0_multiplexer0_next_state = 1'd0;
                 end
             end
             if (litedramcore0_go_to_refresh) begin
@@ -28477,41 +29046,15 @@ always @(*) begin
                 litedramcore0_multiplexer0_next_state = 1'd0;
             end
         end
-        2'd3: begin
-            if (litedramcore0_twtrcon_ready) begin
-                litedramcore0_multiplexer0_next_state = 1'd0;
-            end
-        end
-        3'd4: begin
-            litedramcore0_multiplexer0_next_state = 3'd5;
-        end
-        3'd5: begin
-            litedramcore0_multiplexer0_next_state = 3'd6;
-        end
-        3'd6: begin
-            litedramcore0_multiplexer0_next_state = 3'd7;
-        end
-        3'd7: begin
-            litedramcore0_multiplexer0_next_state = 4'd8;
-        end
-        4'd8: begin
-            litedramcore0_multiplexer0_next_state = 4'd9;
-        end
-        4'd9: begin
-            litedramcore0_multiplexer0_next_state = 4'd10;
-        end
-        4'd10: begin
-            litedramcore0_multiplexer0_next_state = 1'd1;
-        end
         default: begin
             litedramcore0_en0 = 1'd1;
             litedramcore0_choose_req_want_reads = 1'd1;
             if (1'd0) begin
-                litedramcore0_choose_req_cmd_ready = (litedramcore0_cas_allowed & ((~((litedramcore0_choose_req_cmd_payload_ras & (~litedramcore0_choose_req_cmd_payload_cas)) & (~litedramcore0_choose_req_cmd_payload_we))) | litedramcore0_ras_allowed));
+                litedramcore0_choose_req_cmd_ready = ((litedramcore0_cas_allowed & litedramcore0_twtrcon_ready) & ((~((litedramcore0_choose_req_cmd_payload_ras & (~litedramcore0_choose_req_cmd_payload_cas)) & (~litedramcore0_choose_req_cmd_payload_we))) | litedramcore0_ras_allowed));
             end else begin
                 litedramcore0_choose_cmd_want_activates = litedramcore0_ras_allowed;
                 litedramcore0_choose_cmd_cmd_ready = ((~((litedramcore0_choose_cmd_cmd_payload_ras & (~litedramcore0_choose_cmd_cmd_payload_cas)) & (~litedramcore0_choose_cmd_cmd_payload_we))) | litedramcore0_ras_allowed);
-                litedramcore0_choose_req_cmd_ready = litedramcore0_cas_allowed;
+                litedramcore0_choose_req_cmd_ready = (litedramcore0_cas_allowed & litedramcore0_twtrcon_ready);
             end
             litedramcore0_steerer0_sel0 = 1'd0;
             if ((wl7ddrphy0_rdphase_storage == 1'd0)) begin
@@ -28543,7 +29086,7 @@ always @(*) begin
             end
             if (litedramcore0_write_available) begin
                 if (((~litedramcore0_read_available) | litedramcore0_max_time0)) begin
-                    litedramcore0_multiplexer0_next_state = 3'd4;
+                    litedramcore0_multiplexer0_next_state = 1'd1;
                 end
             end
             if (litedramcore0_go_to_refresh) begin
@@ -46452,6 +46995,7 @@ assign litedramcore1_ras_allowed = (litedramcore1_trrdcon_ready & litedramcore1_
 assign litedramcore1_tccdcon_valid = ((litedramcore1_choose_req_cmd_valid & litedramcore1_choose_req_cmd_ready) & (litedramcore1_choose_req_cmd_payload_is_write | litedramcore1_choose_req_cmd_payload_is_read));
 assign litedramcore1_cas_allowed = litedramcore1_tccdcon_ready;
 assign litedramcore1_twtrcon_valid = ((litedramcore1_choose_req_cmd_valid & litedramcore1_choose_req_cmd_ready) & litedramcore1_choose_req_cmd_payload_is_write);
+assign litedramcore1_trtwcon_valid = ((litedramcore1_choose_req_cmd_valid & litedramcore1_choose_req_cmd_ready) & litedramcore1_choose_req_cmd_payload_is_read);
 assign litedramcore1_read_available = ((((((((litedramcore1_bankmachine8_cmd_valid & litedramcore1_bankmachine8_cmd_payload_is_read) | (litedramcore1_bankmachine9_cmd_valid & litedramcore1_bankmachine9_cmd_payload_is_read)) | (litedramcore1_bankmachine10_cmd_valid & litedramcore1_bankmachine10_cmd_payload_is_read)) | (litedramcore1_bankmachine11_cmd_valid & litedramcore1_bankmachine11_cmd_payload_is_read)) | (litedramcore1_bankmachine12_cmd_valid & litedramcore1_bankmachine12_cmd_payload_is_read)) | (litedramcore1_bankmachine13_cmd_valid & litedramcore1_bankmachine13_cmd_payload_is_read)) | (litedramcore1_bankmachine14_cmd_valid & litedramcore1_bankmachine14_cmd_payload_is_read)) | (litedramcore1_bankmachine15_cmd_valid & litedramcore1_bankmachine15_cmd_payload_is_read));
 assign litedramcore1_write_available = ((((((((litedramcore1_bankmachine8_cmd_valid & litedramcore1_bankmachine8_cmd_payload_is_write) | (litedramcore1_bankmachine9_cmd_valid & litedramcore1_bankmachine9_cmd_payload_is_write)) | (litedramcore1_bankmachine10_cmd_valid & litedramcore1_bankmachine10_cmd_payload_is_write)) | (litedramcore1_bankmachine11_cmd_valid & litedramcore1_bankmachine11_cmd_payload_is_write)) | (litedramcore1_bankmachine12_cmd_valid & litedramcore1_bankmachine12_cmd_payload_is_write)) | (litedramcore1_bankmachine13_cmd_valid & litedramcore1_bankmachine13_cmd_payload_is_write)) | (litedramcore1_bankmachine14_cmd_valid & litedramcore1_bankmachine14_cmd_payload_is_write)) | (litedramcore1_bankmachine15_cmd_valid & litedramcore1_bankmachine15_cmd_payload_is_write));
 assign litedramcore1_max_time0 = (litedramcore1_time0 == 1'd0);
@@ -46479,7 +47023,291 @@ always @(*) begin
     litedramcore1_choose_cmd_valids[6] = (litedramcore1_bankmachine14_cmd_valid & (((litedramcore1_bankmachine14_cmd_payload_is_cmd & litedramcore1_choose_cmd_want_cmds) & ((~((litedramcore1_bankmachine14_cmd_payload_ras & (~litedramcore1_bankmachine14_cmd_payload_cas)) & (~litedramcore1_bankmachine14_cmd_payload_we))) | litedramcore1_choose_cmd_want_activates)) | ((litedramcore1_bankmachine14_cmd_payload_is_read == litedramcore1_choose_cmd_want_reads) & (litedramcore1_bankmachine14_cmd_payload_is_write == litedramcore1_choose_cmd_want_writes))));
     litedramcore1_choose_cmd_valids[7] = (litedramcore1_bankmachine15_cmd_valid & (((litedramcore1_bankmachine15_cmd_payload_is_cmd & litedramcore1_choose_cmd_want_cmds) & ((~((litedramcore1_bankmachine15_cmd_payload_ras & (~litedramcore1_bankmachine15_cmd_payload_cas)) & (~litedramcore1_bankmachine15_cmd_payload_we))) | litedramcore1_choose_cmd_want_activates)) | ((litedramcore1_bankmachine15_cmd_payload_is_read == litedramcore1_choose_cmd_want_reads) & (litedramcore1_bankmachine15_cmd_payload_is_write == litedramcore1_choose_cmd_want_writes))));
 end
-assign litedramcore1_choose_cmd_request = litedramcore1_choose_cmd_valids;
+always @(*) begin
+    litedramcore1_choose_cmd_grant = 3'd0;
+    case (litedramcore1_choose_cmd_ptr)
+        1'd0: begin
+            if (litedramcore1_choose_cmd_valids[0]) begin
+                litedramcore1_choose_cmd_grant = 1'd0;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[1]) begin
+                    litedramcore1_choose_cmd_grant = 1'd1;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[2]) begin
+                        litedramcore1_choose_cmd_grant = 2'd2;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[3]) begin
+                            litedramcore1_choose_cmd_grant = 2'd3;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[4]) begin
+                                litedramcore1_choose_cmd_grant = 3'd4;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[5]) begin
+                                    litedramcore1_choose_cmd_grant = 3'd5;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[6]) begin
+                                        litedramcore1_choose_cmd_grant = 3'd6;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[7]) begin
+                                            litedramcore1_choose_cmd_grant = 3'd7;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 1'd0;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        1'd1: begin
+            if (litedramcore1_choose_cmd_valids[1]) begin
+                litedramcore1_choose_cmd_grant = 1'd1;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[2]) begin
+                    litedramcore1_choose_cmd_grant = 2'd2;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[3]) begin
+                        litedramcore1_choose_cmd_grant = 2'd3;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[4]) begin
+                            litedramcore1_choose_cmd_grant = 3'd4;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[5]) begin
+                                litedramcore1_choose_cmd_grant = 3'd5;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[6]) begin
+                                    litedramcore1_choose_cmd_grant = 3'd6;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[7]) begin
+                                        litedramcore1_choose_cmd_grant = 3'd7;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[0]) begin
+                                            litedramcore1_choose_cmd_grant = 1'd0;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 1'd1;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd2: begin
+            if (litedramcore1_choose_cmd_valids[2]) begin
+                litedramcore1_choose_cmd_grant = 2'd2;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[3]) begin
+                    litedramcore1_choose_cmd_grant = 2'd3;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[4]) begin
+                        litedramcore1_choose_cmd_grant = 3'd4;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[5]) begin
+                            litedramcore1_choose_cmd_grant = 3'd5;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[6]) begin
+                                litedramcore1_choose_cmd_grant = 3'd6;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[7]) begin
+                                    litedramcore1_choose_cmd_grant = 3'd7;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[0]) begin
+                                        litedramcore1_choose_cmd_grant = 1'd0;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[1]) begin
+                                            litedramcore1_choose_cmd_grant = 1'd1;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 2'd2;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd3: begin
+            if (litedramcore1_choose_cmd_valids[3]) begin
+                litedramcore1_choose_cmd_grant = 2'd3;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[4]) begin
+                    litedramcore1_choose_cmd_grant = 3'd4;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[5]) begin
+                        litedramcore1_choose_cmd_grant = 3'd5;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[6]) begin
+                            litedramcore1_choose_cmd_grant = 3'd6;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[7]) begin
+                                litedramcore1_choose_cmd_grant = 3'd7;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[0]) begin
+                                    litedramcore1_choose_cmd_grant = 1'd0;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[1]) begin
+                                        litedramcore1_choose_cmd_grant = 1'd1;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[2]) begin
+                                            litedramcore1_choose_cmd_grant = 2'd2;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 2'd3;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd4: begin
+            if (litedramcore1_choose_cmd_valids[4]) begin
+                litedramcore1_choose_cmd_grant = 3'd4;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[5]) begin
+                    litedramcore1_choose_cmd_grant = 3'd5;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[6]) begin
+                        litedramcore1_choose_cmd_grant = 3'd6;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[7]) begin
+                            litedramcore1_choose_cmd_grant = 3'd7;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[0]) begin
+                                litedramcore1_choose_cmd_grant = 1'd0;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[1]) begin
+                                    litedramcore1_choose_cmd_grant = 1'd1;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[2]) begin
+                                        litedramcore1_choose_cmd_grant = 2'd2;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[3]) begin
+                                            litedramcore1_choose_cmd_grant = 2'd3;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 3'd4;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd5: begin
+            if (litedramcore1_choose_cmd_valids[5]) begin
+                litedramcore1_choose_cmd_grant = 3'd5;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[6]) begin
+                    litedramcore1_choose_cmd_grant = 3'd6;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[7]) begin
+                        litedramcore1_choose_cmd_grant = 3'd7;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[0]) begin
+                            litedramcore1_choose_cmd_grant = 1'd0;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[1]) begin
+                                litedramcore1_choose_cmd_grant = 1'd1;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[2]) begin
+                                    litedramcore1_choose_cmd_grant = 2'd2;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[3]) begin
+                                        litedramcore1_choose_cmd_grant = 2'd3;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[4]) begin
+                                            litedramcore1_choose_cmd_grant = 3'd4;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 3'd5;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd6: begin
+            if (litedramcore1_choose_cmd_valids[6]) begin
+                litedramcore1_choose_cmd_grant = 3'd6;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[7]) begin
+                    litedramcore1_choose_cmd_grant = 3'd7;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[0]) begin
+                        litedramcore1_choose_cmd_grant = 1'd0;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[1]) begin
+                            litedramcore1_choose_cmd_grant = 1'd1;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[2]) begin
+                                litedramcore1_choose_cmd_grant = 2'd2;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[3]) begin
+                                    litedramcore1_choose_cmd_grant = 2'd3;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[4]) begin
+                                        litedramcore1_choose_cmd_grant = 3'd4;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[5]) begin
+                                            litedramcore1_choose_cmd_grant = 3'd5;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 3'd6;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd7: begin
+            if (litedramcore1_choose_cmd_valids[7]) begin
+                litedramcore1_choose_cmd_grant = 3'd7;
+            end else begin
+                if (litedramcore1_choose_cmd_valids[0]) begin
+                    litedramcore1_choose_cmd_grant = 1'd0;
+                end else begin
+                    if (litedramcore1_choose_cmd_valids[1]) begin
+                        litedramcore1_choose_cmd_grant = 1'd1;
+                    end else begin
+                        if (litedramcore1_choose_cmd_valids[2]) begin
+                            litedramcore1_choose_cmd_grant = 2'd2;
+                        end else begin
+                            if (litedramcore1_choose_cmd_valids[3]) begin
+                                litedramcore1_choose_cmd_grant = 2'd3;
+                            end else begin
+                                if (litedramcore1_choose_cmd_valids[4]) begin
+                                    litedramcore1_choose_cmd_grant = 3'd4;
+                                end else begin
+                                    if (litedramcore1_choose_cmd_valids[5]) begin
+                                        litedramcore1_choose_cmd_grant = 3'd5;
+                                    end else begin
+                                        if (litedramcore1_choose_cmd_valids[6]) begin
+                                            litedramcore1_choose_cmd_grant = 3'd6;
+                                        end else begin
+                                            litedramcore1_choose_cmd_grant = 3'd7;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    endcase
+end
 assign litedramcore1_choose_cmd_cmd_valid = rhs_self44;
 assign litedramcore1_choose_cmd_cmd_payload_a = rhs_self45;
 assign litedramcore1_choose_cmd_cmd_payload_ba = rhs_self46;
@@ -46504,7 +47332,6 @@ always @(*) begin
         litedramcore1_choose_cmd_cmd_payload_we = t_self8;
     end
 end
-assign litedramcore1_choose_cmd_ce = (litedramcore1_choose_cmd_cmd_ready | (~litedramcore1_choose_cmd_cmd_valid));
 always @(*) begin
     litedramcore1_choose_req_valids = 8'd0;
     litedramcore1_choose_req_valids[0] = (litedramcore1_bankmachine8_cmd_valid & (((litedramcore1_bankmachine8_cmd_payload_is_cmd & litedramcore1_choose_req_want_cmds) & ((~((litedramcore1_bankmachine8_cmd_payload_ras & (~litedramcore1_bankmachine8_cmd_payload_cas)) & (~litedramcore1_bankmachine8_cmd_payload_we))) | litedramcore1_choose_req_want_activates)) | ((litedramcore1_bankmachine8_cmd_payload_is_read == litedramcore1_choose_req_want_reads) & (litedramcore1_bankmachine8_cmd_payload_is_write == litedramcore1_choose_req_want_writes))));
@@ -46516,7 +47343,291 @@ always @(*) begin
     litedramcore1_choose_req_valids[6] = (litedramcore1_bankmachine14_cmd_valid & (((litedramcore1_bankmachine14_cmd_payload_is_cmd & litedramcore1_choose_req_want_cmds) & ((~((litedramcore1_bankmachine14_cmd_payload_ras & (~litedramcore1_bankmachine14_cmd_payload_cas)) & (~litedramcore1_bankmachine14_cmd_payload_we))) | litedramcore1_choose_req_want_activates)) | ((litedramcore1_bankmachine14_cmd_payload_is_read == litedramcore1_choose_req_want_reads) & (litedramcore1_bankmachine14_cmd_payload_is_write == litedramcore1_choose_req_want_writes))));
     litedramcore1_choose_req_valids[7] = (litedramcore1_bankmachine15_cmd_valid & (((litedramcore1_bankmachine15_cmd_payload_is_cmd & litedramcore1_choose_req_want_cmds) & ((~((litedramcore1_bankmachine15_cmd_payload_ras & (~litedramcore1_bankmachine15_cmd_payload_cas)) & (~litedramcore1_bankmachine15_cmd_payload_we))) | litedramcore1_choose_req_want_activates)) | ((litedramcore1_bankmachine15_cmd_payload_is_read == litedramcore1_choose_req_want_reads) & (litedramcore1_bankmachine15_cmd_payload_is_write == litedramcore1_choose_req_want_writes))));
 end
-assign litedramcore1_choose_req_request = litedramcore1_choose_req_valids;
+always @(*) begin
+    litedramcore1_choose_req_grant = 3'd0;
+    case (litedramcore1_choose_req_ptr)
+        1'd0: begin
+            if (litedramcore1_choose_req_valids[0]) begin
+                litedramcore1_choose_req_grant = 1'd0;
+            end else begin
+                if (litedramcore1_choose_req_valids[1]) begin
+                    litedramcore1_choose_req_grant = 1'd1;
+                end else begin
+                    if (litedramcore1_choose_req_valids[2]) begin
+                        litedramcore1_choose_req_grant = 2'd2;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[3]) begin
+                            litedramcore1_choose_req_grant = 2'd3;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[4]) begin
+                                litedramcore1_choose_req_grant = 3'd4;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[5]) begin
+                                    litedramcore1_choose_req_grant = 3'd5;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[6]) begin
+                                        litedramcore1_choose_req_grant = 3'd6;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[7]) begin
+                                            litedramcore1_choose_req_grant = 3'd7;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 1'd0;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        1'd1: begin
+            if (litedramcore1_choose_req_valids[1]) begin
+                litedramcore1_choose_req_grant = 1'd1;
+            end else begin
+                if (litedramcore1_choose_req_valids[2]) begin
+                    litedramcore1_choose_req_grant = 2'd2;
+                end else begin
+                    if (litedramcore1_choose_req_valids[3]) begin
+                        litedramcore1_choose_req_grant = 2'd3;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[4]) begin
+                            litedramcore1_choose_req_grant = 3'd4;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[5]) begin
+                                litedramcore1_choose_req_grant = 3'd5;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[6]) begin
+                                    litedramcore1_choose_req_grant = 3'd6;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[7]) begin
+                                        litedramcore1_choose_req_grant = 3'd7;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[0]) begin
+                                            litedramcore1_choose_req_grant = 1'd0;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 1'd1;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd2: begin
+            if (litedramcore1_choose_req_valids[2]) begin
+                litedramcore1_choose_req_grant = 2'd2;
+            end else begin
+                if (litedramcore1_choose_req_valids[3]) begin
+                    litedramcore1_choose_req_grant = 2'd3;
+                end else begin
+                    if (litedramcore1_choose_req_valids[4]) begin
+                        litedramcore1_choose_req_grant = 3'd4;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[5]) begin
+                            litedramcore1_choose_req_grant = 3'd5;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[6]) begin
+                                litedramcore1_choose_req_grant = 3'd6;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[7]) begin
+                                    litedramcore1_choose_req_grant = 3'd7;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[0]) begin
+                                        litedramcore1_choose_req_grant = 1'd0;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[1]) begin
+                                            litedramcore1_choose_req_grant = 1'd1;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 2'd2;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        2'd3: begin
+            if (litedramcore1_choose_req_valids[3]) begin
+                litedramcore1_choose_req_grant = 2'd3;
+            end else begin
+                if (litedramcore1_choose_req_valids[4]) begin
+                    litedramcore1_choose_req_grant = 3'd4;
+                end else begin
+                    if (litedramcore1_choose_req_valids[5]) begin
+                        litedramcore1_choose_req_grant = 3'd5;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[6]) begin
+                            litedramcore1_choose_req_grant = 3'd6;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[7]) begin
+                                litedramcore1_choose_req_grant = 3'd7;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[0]) begin
+                                    litedramcore1_choose_req_grant = 1'd0;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[1]) begin
+                                        litedramcore1_choose_req_grant = 1'd1;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[2]) begin
+                                            litedramcore1_choose_req_grant = 2'd2;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 2'd3;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd4: begin
+            if (litedramcore1_choose_req_valids[4]) begin
+                litedramcore1_choose_req_grant = 3'd4;
+            end else begin
+                if (litedramcore1_choose_req_valids[5]) begin
+                    litedramcore1_choose_req_grant = 3'd5;
+                end else begin
+                    if (litedramcore1_choose_req_valids[6]) begin
+                        litedramcore1_choose_req_grant = 3'd6;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[7]) begin
+                            litedramcore1_choose_req_grant = 3'd7;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[0]) begin
+                                litedramcore1_choose_req_grant = 1'd0;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[1]) begin
+                                    litedramcore1_choose_req_grant = 1'd1;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[2]) begin
+                                        litedramcore1_choose_req_grant = 2'd2;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[3]) begin
+                                            litedramcore1_choose_req_grant = 2'd3;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 3'd4;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd5: begin
+            if (litedramcore1_choose_req_valids[5]) begin
+                litedramcore1_choose_req_grant = 3'd5;
+            end else begin
+                if (litedramcore1_choose_req_valids[6]) begin
+                    litedramcore1_choose_req_grant = 3'd6;
+                end else begin
+                    if (litedramcore1_choose_req_valids[7]) begin
+                        litedramcore1_choose_req_grant = 3'd7;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[0]) begin
+                            litedramcore1_choose_req_grant = 1'd0;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[1]) begin
+                                litedramcore1_choose_req_grant = 1'd1;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[2]) begin
+                                    litedramcore1_choose_req_grant = 2'd2;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[3]) begin
+                                        litedramcore1_choose_req_grant = 2'd3;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[4]) begin
+                                            litedramcore1_choose_req_grant = 3'd4;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 3'd5;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd6: begin
+            if (litedramcore1_choose_req_valids[6]) begin
+                litedramcore1_choose_req_grant = 3'd6;
+            end else begin
+                if (litedramcore1_choose_req_valids[7]) begin
+                    litedramcore1_choose_req_grant = 3'd7;
+                end else begin
+                    if (litedramcore1_choose_req_valids[0]) begin
+                        litedramcore1_choose_req_grant = 1'd0;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[1]) begin
+                            litedramcore1_choose_req_grant = 1'd1;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[2]) begin
+                                litedramcore1_choose_req_grant = 2'd2;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[3]) begin
+                                    litedramcore1_choose_req_grant = 2'd3;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[4]) begin
+                                        litedramcore1_choose_req_grant = 3'd4;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[5]) begin
+                                            litedramcore1_choose_req_grant = 3'd5;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 3'd6;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        3'd7: begin
+            if (litedramcore1_choose_req_valids[7]) begin
+                litedramcore1_choose_req_grant = 3'd7;
+            end else begin
+                if (litedramcore1_choose_req_valids[0]) begin
+                    litedramcore1_choose_req_grant = 1'd0;
+                end else begin
+                    if (litedramcore1_choose_req_valids[1]) begin
+                        litedramcore1_choose_req_grant = 1'd1;
+                    end else begin
+                        if (litedramcore1_choose_req_valids[2]) begin
+                            litedramcore1_choose_req_grant = 2'd2;
+                        end else begin
+                            if (litedramcore1_choose_req_valids[3]) begin
+                                litedramcore1_choose_req_grant = 2'd3;
+                            end else begin
+                                if (litedramcore1_choose_req_valids[4]) begin
+                                    litedramcore1_choose_req_grant = 3'd4;
+                                end else begin
+                                    if (litedramcore1_choose_req_valids[5]) begin
+                                        litedramcore1_choose_req_grant = 3'd5;
+                                    end else begin
+                                        if (litedramcore1_choose_req_valids[6]) begin
+                                            litedramcore1_choose_req_grant = 3'd6;
+                                        end else begin
+                                            litedramcore1_choose_req_grant = 3'd7;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    endcase
+end
 assign litedramcore1_choose_req_cmd_valid = rhs_self50;
 assign litedramcore1_choose_req_cmd_payload_a = rhs_self51;
 assign litedramcore1_choose_req_cmd_payload_ba = rhs_self52;
@@ -46613,7 +47724,6 @@ always @(*) begin
         litedramcore1_bankmachine15_cmd_ready = 1'd1;
     end
 end
-assign litedramcore1_choose_req_ce = (litedramcore1_choose_req_cmd_ready | (~litedramcore1_choose_req_cmd_valid));
 assign litedramcore1_dfi_p0_reset_n = 1'd1;
 assign litedramcore1_dfi_p0_cke = {1{litedramcore1_steerer10}};
 assign litedramcore1_dfi_p0_odt = {1{litedramcore1_steerer11}};
@@ -46636,7 +47746,7 @@ always @(*) begin
     litedramcore1_cmd_ready = 1'd0;
     litedramcore1_en0 = 1'd0;
     litedramcore1_en1 = 1'd0;
-    litedramcore1_multiplexer1_next_state = 4'd0;
+    litedramcore1_multiplexer1_next_state = 2'd0;
     litedramcore1_steerer1_sel0 = 2'd0;
     litedramcore1_steerer1_sel1 = 2'd0;
     litedramcore1_steerer1_sel2 = 2'd0;
@@ -46647,11 +47757,11 @@ always @(*) begin
             litedramcore1_en1 = 1'd1;
             litedramcore1_choose_req_want_writes = 1'd1;
             if (1'd0) begin
-                litedramcore1_choose_req_cmd_ready = (litedramcore1_cas_allowed & ((~((litedramcore1_choose_req_cmd_payload_ras & (~litedramcore1_choose_req_cmd_payload_cas)) & (~litedramcore1_choose_req_cmd_payload_we))) | litedramcore1_ras_allowed));
+                litedramcore1_choose_req_cmd_ready = ((litedramcore1_cas_allowed & litedramcore1_trtwcon_ready) & ((~((litedramcore1_choose_req_cmd_payload_ras & (~litedramcore1_choose_req_cmd_payload_cas)) & (~litedramcore1_choose_req_cmd_payload_we))) | litedramcore1_ras_allowed));
             end else begin
                 litedramcore1_choose_cmd_want_activates = litedramcore1_ras_allowed;
                 litedramcore1_choose_cmd_cmd_ready = ((~((litedramcore1_choose_cmd_cmd_payload_ras & (~litedramcore1_choose_cmd_cmd_payload_cas)) & (~litedramcore1_choose_cmd_cmd_payload_we))) | litedramcore1_ras_allowed);
-                litedramcore1_choose_req_cmd_ready = litedramcore1_cas_allowed;
+                litedramcore1_choose_req_cmd_ready = (litedramcore1_cas_allowed & litedramcore1_trtwcon_ready);
             end
             litedramcore1_steerer1_sel0 = 1'd0;
             if ((wl7ddrphy1_wrphase_storage == 1'd0)) begin
@@ -46683,7 +47793,7 @@ always @(*) begin
             end
             if (litedramcore1_read_available) begin
                 if (((~litedramcore1_write_available) | litedramcore1_max_time1)) begin
-                    litedramcore1_multiplexer1_next_state = 2'd3;
+                    litedramcore1_multiplexer1_next_state = 1'd0;
                 end
             end
             if (litedramcore1_go_to_refresh) begin
@@ -46697,41 +47807,15 @@ always @(*) begin
                 litedramcore1_multiplexer1_next_state = 1'd0;
             end
         end
-        2'd3: begin
-            if (litedramcore1_twtrcon_ready) begin
-                litedramcore1_multiplexer1_next_state = 1'd0;
-            end
-        end
-        3'd4: begin
-            litedramcore1_multiplexer1_next_state = 3'd5;
-        end
-        3'd5: begin
-            litedramcore1_multiplexer1_next_state = 3'd6;
-        end
-        3'd6: begin
-            litedramcore1_multiplexer1_next_state = 3'd7;
-        end
-        3'd7: begin
-            litedramcore1_multiplexer1_next_state = 4'd8;
-        end
-        4'd8: begin
-            litedramcore1_multiplexer1_next_state = 4'd9;
-        end
-        4'd9: begin
-            litedramcore1_multiplexer1_next_state = 4'd10;
-        end
-        4'd10: begin
-            litedramcore1_multiplexer1_next_state = 1'd1;
-        end
         default: begin
             litedramcore1_en0 = 1'd1;
             litedramcore1_choose_req_want_reads = 1'd1;
             if (1'd0) begin
-                litedramcore1_choose_req_cmd_ready = (litedramcore1_cas_allowed & ((~((litedramcore1_choose_req_cmd_payload_ras & (~litedramcore1_choose_req_cmd_payload_cas)) & (~litedramcore1_choose_req_cmd_payload_we))) | litedramcore1_ras_allowed));
+                litedramcore1_choose_req_cmd_ready = ((litedramcore1_cas_allowed & litedramcore1_twtrcon_ready) & ((~((litedramcore1_choose_req_cmd_payload_ras & (~litedramcore1_choose_req_cmd_payload_cas)) & (~litedramcore1_choose_req_cmd_payload_we))) | litedramcore1_ras_allowed));
             end else begin
                 litedramcore1_choose_cmd_want_activates = litedramcore1_ras_allowed;
                 litedramcore1_choose_cmd_cmd_ready = ((~((litedramcore1_choose_cmd_cmd_payload_ras & (~litedramcore1_choose_cmd_cmd_payload_cas)) & (~litedramcore1_choose_cmd_cmd_payload_we))) | litedramcore1_ras_allowed);
-                litedramcore1_choose_req_cmd_ready = litedramcore1_cas_allowed;
+                litedramcore1_choose_req_cmd_ready = (litedramcore1_cas_allowed & litedramcore1_twtrcon_ready);
             end
             litedramcore1_steerer1_sel0 = 1'd0;
             if ((wl7ddrphy1_rdphase_storage == 1'd0)) begin
@@ -46763,7 +47847,7 @@ always @(*) begin
             end
             if (litedramcore1_write_available) begin
                 if (((~litedramcore1_read_available) | litedramcore1_max_time0)) begin
-                    litedramcore1_multiplexer1_next_state = 3'd4;
+                    litedramcore1_multiplexer1_next_state = 1'd1;
                 end
             end
             if (litedramcore1_go_to_refresh) begin
@@ -65636,477 +66720,27 @@ always @(posedge sys_clk_1) begin
             litedramcore0_time1 <= (litedramcore0_time1 - 1'd1);
         end
     end
-    if (litedramcore0_choose_cmd_ce) begin
-        case (litedramcore0_choose_cmd_grant)
-            1'd0: begin
-                if (litedramcore0_choose_cmd_request[1]) begin
-                    litedramcore0_choose_cmd_grant <= 1'd1;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[2]) begin
-                        litedramcore0_choose_cmd_grant <= 2'd2;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[3]) begin
-                            litedramcore0_choose_cmd_grant <= 2'd3;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[4]) begin
-                                litedramcore0_choose_cmd_grant <= 3'd4;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[5]) begin
-                                    litedramcore0_choose_cmd_grant <= 3'd5;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[6]) begin
-                                        litedramcore0_choose_cmd_grant <= 3'd6;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[7]) begin
-                                            litedramcore0_choose_cmd_grant <= 3'd7;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            1'd1: begin
-                if (litedramcore0_choose_cmd_request[2]) begin
-                    litedramcore0_choose_cmd_grant <= 2'd2;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[3]) begin
-                        litedramcore0_choose_cmd_grant <= 2'd3;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[4]) begin
-                            litedramcore0_choose_cmd_grant <= 3'd4;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[5]) begin
-                                litedramcore0_choose_cmd_grant <= 3'd5;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[6]) begin
-                                    litedramcore0_choose_cmd_grant <= 3'd6;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[7]) begin
-                                        litedramcore0_choose_cmd_grant <= 3'd7;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[0]) begin
-                                            litedramcore0_choose_cmd_grant <= 1'd0;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd2: begin
-                if (litedramcore0_choose_cmd_request[3]) begin
-                    litedramcore0_choose_cmd_grant <= 2'd3;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[4]) begin
-                        litedramcore0_choose_cmd_grant <= 3'd4;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[5]) begin
-                            litedramcore0_choose_cmd_grant <= 3'd5;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[6]) begin
-                                litedramcore0_choose_cmd_grant <= 3'd6;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[7]) begin
-                                    litedramcore0_choose_cmd_grant <= 3'd7;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[0]) begin
-                                        litedramcore0_choose_cmd_grant <= 1'd0;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[1]) begin
-                                            litedramcore0_choose_cmd_grant <= 1'd1;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd3: begin
-                if (litedramcore0_choose_cmd_request[4]) begin
-                    litedramcore0_choose_cmd_grant <= 3'd4;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[5]) begin
-                        litedramcore0_choose_cmd_grant <= 3'd5;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[6]) begin
-                            litedramcore0_choose_cmd_grant <= 3'd6;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[7]) begin
-                                litedramcore0_choose_cmd_grant <= 3'd7;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[0]) begin
-                                    litedramcore0_choose_cmd_grant <= 1'd0;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[1]) begin
-                                        litedramcore0_choose_cmd_grant <= 1'd1;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[2]) begin
-                                            litedramcore0_choose_cmd_grant <= 2'd2;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd4: begin
-                if (litedramcore0_choose_cmd_request[5]) begin
-                    litedramcore0_choose_cmd_grant <= 3'd5;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[6]) begin
-                        litedramcore0_choose_cmd_grant <= 3'd6;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[7]) begin
-                            litedramcore0_choose_cmd_grant <= 3'd7;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[0]) begin
-                                litedramcore0_choose_cmd_grant <= 1'd0;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[1]) begin
-                                    litedramcore0_choose_cmd_grant <= 1'd1;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[2]) begin
-                                        litedramcore0_choose_cmd_grant <= 2'd2;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[3]) begin
-                                            litedramcore0_choose_cmd_grant <= 2'd3;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd5: begin
-                if (litedramcore0_choose_cmd_request[6]) begin
-                    litedramcore0_choose_cmd_grant <= 3'd6;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[7]) begin
-                        litedramcore0_choose_cmd_grant <= 3'd7;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[0]) begin
-                            litedramcore0_choose_cmd_grant <= 1'd0;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[1]) begin
-                                litedramcore0_choose_cmd_grant <= 1'd1;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[2]) begin
-                                    litedramcore0_choose_cmd_grant <= 2'd2;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[3]) begin
-                                        litedramcore0_choose_cmd_grant <= 2'd3;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[4]) begin
-                                            litedramcore0_choose_cmd_grant <= 3'd4;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd6: begin
-                if (litedramcore0_choose_cmd_request[7]) begin
-                    litedramcore0_choose_cmd_grant <= 3'd7;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[0]) begin
-                        litedramcore0_choose_cmd_grant <= 1'd0;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[1]) begin
-                            litedramcore0_choose_cmd_grant <= 1'd1;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[2]) begin
-                                litedramcore0_choose_cmd_grant <= 2'd2;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[3]) begin
-                                    litedramcore0_choose_cmd_grant <= 2'd3;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[4]) begin
-                                        litedramcore0_choose_cmd_grant <= 3'd4;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[5]) begin
-                                            litedramcore0_choose_cmd_grant <= 3'd5;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd7: begin
-                if (litedramcore0_choose_cmd_request[0]) begin
-                    litedramcore0_choose_cmd_grant <= 1'd0;
-                end else begin
-                    if (litedramcore0_choose_cmd_request[1]) begin
-                        litedramcore0_choose_cmd_grant <= 1'd1;
-                    end else begin
-                        if (litedramcore0_choose_cmd_request[2]) begin
-                            litedramcore0_choose_cmd_grant <= 2'd2;
-                        end else begin
-                            if (litedramcore0_choose_cmd_request[3]) begin
-                                litedramcore0_choose_cmd_grant <= 2'd3;
-                            end else begin
-                                if (litedramcore0_choose_cmd_request[4]) begin
-                                    litedramcore0_choose_cmd_grant <= 3'd4;
-                                end else begin
-                                    if (litedramcore0_choose_cmd_request[5]) begin
-                                        litedramcore0_choose_cmd_grant <= 3'd5;
-                                    end else begin
-                                        if (litedramcore0_choose_cmd_request[6]) begin
-                                            litedramcore0_choose_cmd_grant <= 3'd6;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        endcase
+    if ((litedramcore0_choose_cmd_cmd_valid & litedramcore0_choose_cmd_cmd_ready)) begin
+        if ((litedramcore0_choose_cmd_grant == 3'd7)) begin
+            litedramcore0_choose_cmd_ptr <= 1'd0;
+        end else begin
+            litedramcore0_choose_cmd_ptr <= (litedramcore0_choose_cmd_grant + 1'd1);
+        end
+    end else begin
+        if (litedramcore0_choose_cmd_cmd_valid) begin
+            litedramcore0_choose_cmd_ptr <= litedramcore0_choose_cmd_grant;
+        end
     end
-    if (litedramcore0_choose_req_ce) begin
-        case (litedramcore0_choose_req_grant)
-            1'd0: begin
-                if (litedramcore0_choose_req_request[1]) begin
-                    litedramcore0_choose_req_grant <= 1'd1;
-                end else begin
-                    if (litedramcore0_choose_req_request[2]) begin
-                        litedramcore0_choose_req_grant <= 2'd2;
-                    end else begin
-                        if (litedramcore0_choose_req_request[3]) begin
-                            litedramcore0_choose_req_grant <= 2'd3;
-                        end else begin
-                            if (litedramcore0_choose_req_request[4]) begin
-                                litedramcore0_choose_req_grant <= 3'd4;
-                            end else begin
-                                if (litedramcore0_choose_req_request[5]) begin
-                                    litedramcore0_choose_req_grant <= 3'd5;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[6]) begin
-                                        litedramcore0_choose_req_grant <= 3'd6;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[7]) begin
-                                            litedramcore0_choose_req_grant <= 3'd7;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            1'd1: begin
-                if (litedramcore0_choose_req_request[2]) begin
-                    litedramcore0_choose_req_grant <= 2'd2;
-                end else begin
-                    if (litedramcore0_choose_req_request[3]) begin
-                        litedramcore0_choose_req_grant <= 2'd3;
-                    end else begin
-                        if (litedramcore0_choose_req_request[4]) begin
-                            litedramcore0_choose_req_grant <= 3'd4;
-                        end else begin
-                            if (litedramcore0_choose_req_request[5]) begin
-                                litedramcore0_choose_req_grant <= 3'd5;
-                            end else begin
-                                if (litedramcore0_choose_req_request[6]) begin
-                                    litedramcore0_choose_req_grant <= 3'd6;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[7]) begin
-                                        litedramcore0_choose_req_grant <= 3'd7;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[0]) begin
-                                            litedramcore0_choose_req_grant <= 1'd0;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd2: begin
-                if (litedramcore0_choose_req_request[3]) begin
-                    litedramcore0_choose_req_grant <= 2'd3;
-                end else begin
-                    if (litedramcore0_choose_req_request[4]) begin
-                        litedramcore0_choose_req_grant <= 3'd4;
-                    end else begin
-                        if (litedramcore0_choose_req_request[5]) begin
-                            litedramcore0_choose_req_grant <= 3'd5;
-                        end else begin
-                            if (litedramcore0_choose_req_request[6]) begin
-                                litedramcore0_choose_req_grant <= 3'd6;
-                            end else begin
-                                if (litedramcore0_choose_req_request[7]) begin
-                                    litedramcore0_choose_req_grant <= 3'd7;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[0]) begin
-                                        litedramcore0_choose_req_grant <= 1'd0;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[1]) begin
-                                            litedramcore0_choose_req_grant <= 1'd1;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd3: begin
-                if (litedramcore0_choose_req_request[4]) begin
-                    litedramcore0_choose_req_grant <= 3'd4;
-                end else begin
-                    if (litedramcore0_choose_req_request[5]) begin
-                        litedramcore0_choose_req_grant <= 3'd5;
-                    end else begin
-                        if (litedramcore0_choose_req_request[6]) begin
-                            litedramcore0_choose_req_grant <= 3'd6;
-                        end else begin
-                            if (litedramcore0_choose_req_request[7]) begin
-                                litedramcore0_choose_req_grant <= 3'd7;
-                            end else begin
-                                if (litedramcore0_choose_req_request[0]) begin
-                                    litedramcore0_choose_req_grant <= 1'd0;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[1]) begin
-                                        litedramcore0_choose_req_grant <= 1'd1;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[2]) begin
-                                            litedramcore0_choose_req_grant <= 2'd2;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd4: begin
-                if (litedramcore0_choose_req_request[5]) begin
-                    litedramcore0_choose_req_grant <= 3'd5;
-                end else begin
-                    if (litedramcore0_choose_req_request[6]) begin
-                        litedramcore0_choose_req_grant <= 3'd6;
-                    end else begin
-                        if (litedramcore0_choose_req_request[7]) begin
-                            litedramcore0_choose_req_grant <= 3'd7;
-                        end else begin
-                            if (litedramcore0_choose_req_request[0]) begin
-                                litedramcore0_choose_req_grant <= 1'd0;
-                            end else begin
-                                if (litedramcore0_choose_req_request[1]) begin
-                                    litedramcore0_choose_req_grant <= 1'd1;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[2]) begin
-                                        litedramcore0_choose_req_grant <= 2'd2;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[3]) begin
-                                            litedramcore0_choose_req_grant <= 2'd3;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd5: begin
-                if (litedramcore0_choose_req_request[6]) begin
-                    litedramcore0_choose_req_grant <= 3'd6;
-                end else begin
-                    if (litedramcore0_choose_req_request[7]) begin
-                        litedramcore0_choose_req_grant <= 3'd7;
-                    end else begin
-                        if (litedramcore0_choose_req_request[0]) begin
-                            litedramcore0_choose_req_grant <= 1'd0;
-                        end else begin
-                            if (litedramcore0_choose_req_request[1]) begin
-                                litedramcore0_choose_req_grant <= 1'd1;
-                            end else begin
-                                if (litedramcore0_choose_req_request[2]) begin
-                                    litedramcore0_choose_req_grant <= 2'd2;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[3]) begin
-                                        litedramcore0_choose_req_grant <= 2'd3;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[4]) begin
-                                            litedramcore0_choose_req_grant <= 3'd4;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd6: begin
-                if (litedramcore0_choose_req_request[7]) begin
-                    litedramcore0_choose_req_grant <= 3'd7;
-                end else begin
-                    if (litedramcore0_choose_req_request[0]) begin
-                        litedramcore0_choose_req_grant <= 1'd0;
-                    end else begin
-                        if (litedramcore0_choose_req_request[1]) begin
-                            litedramcore0_choose_req_grant <= 1'd1;
-                        end else begin
-                            if (litedramcore0_choose_req_request[2]) begin
-                                litedramcore0_choose_req_grant <= 2'd2;
-                            end else begin
-                                if (litedramcore0_choose_req_request[3]) begin
-                                    litedramcore0_choose_req_grant <= 2'd3;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[4]) begin
-                                        litedramcore0_choose_req_grant <= 3'd4;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[5]) begin
-                                            litedramcore0_choose_req_grant <= 3'd5;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd7: begin
-                if (litedramcore0_choose_req_request[0]) begin
-                    litedramcore0_choose_req_grant <= 1'd0;
-                end else begin
-                    if (litedramcore0_choose_req_request[1]) begin
-                        litedramcore0_choose_req_grant <= 1'd1;
-                    end else begin
-                        if (litedramcore0_choose_req_request[2]) begin
-                            litedramcore0_choose_req_grant <= 2'd2;
-                        end else begin
-                            if (litedramcore0_choose_req_request[3]) begin
-                                litedramcore0_choose_req_grant <= 2'd3;
-                            end else begin
-                                if (litedramcore0_choose_req_request[4]) begin
-                                    litedramcore0_choose_req_grant <= 3'd4;
-                                end else begin
-                                    if (litedramcore0_choose_req_request[5]) begin
-                                        litedramcore0_choose_req_grant <= 3'd5;
-                                    end else begin
-                                        if (litedramcore0_choose_req_request[6]) begin
-                                            litedramcore0_choose_req_grant <= 3'd6;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        endcase
+    if ((litedramcore0_choose_req_cmd_valid & litedramcore0_choose_req_cmd_ready)) begin
+        if ((litedramcore0_choose_req_grant == 3'd7)) begin
+            litedramcore0_choose_req_ptr <= 1'd0;
+        end else begin
+            litedramcore0_choose_req_ptr <= (litedramcore0_choose_req_grant + 1'd1);
+        end
+    end else begin
+        if (litedramcore0_choose_req_cmd_valid) begin
+            litedramcore0_choose_req_ptr <= litedramcore0_choose_req_grant;
+        end
     end
     litedramcore0_dfi_p0_cs_n <= 1'd0;
     litedramcore0_dfi_p0_bank <= self0;
@@ -66190,6 +66824,21 @@ always @(posedge sys_clk_1) begin
             litedramcore0_twtrcon_count <= (litedramcore0_twtrcon_count - 1'd1);
             if ((litedramcore0_twtrcon_count == 1'd1)) begin
                 litedramcore0_twtrcon_ready <= 1'd1;
+            end
+        end
+    end
+    if (litedramcore0_trtwcon_valid) begin
+        litedramcore0_trtwcon_count <= 2'd2;
+        if (1'd0) begin
+            litedramcore0_trtwcon_ready <= 1'd1;
+        end else begin
+            litedramcore0_trtwcon_ready <= 1'd0;
+        end
+    end else begin
+        if ((~litedramcore0_trtwcon_ready)) begin
+            litedramcore0_trtwcon_count <= (litedramcore0_trtwcon_count - 1'd1);
+            if ((litedramcore0_trtwcon_count == 1'd1)) begin
+                litedramcore0_trtwcon_ready <= 1'd1;
             end
         end
     end
@@ -68438,477 +69087,27 @@ always @(posedge sys_clk_1) begin
             litedramcore1_time1 <= (litedramcore1_time1 - 1'd1);
         end
     end
-    if (litedramcore1_choose_cmd_ce) begin
-        case (litedramcore1_choose_cmd_grant)
-            1'd0: begin
-                if (litedramcore1_choose_cmd_request[1]) begin
-                    litedramcore1_choose_cmd_grant <= 1'd1;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[2]) begin
-                        litedramcore1_choose_cmd_grant <= 2'd2;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[3]) begin
-                            litedramcore1_choose_cmd_grant <= 2'd3;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[4]) begin
-                                litedramcore1_choose_cmd_grant <= 3'd4;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[5]) begin
-                                    litedramcore1_choose_cmd_grant <= 3'd5;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[6]) begin
-                                        litedramcore1_choose_cmd_grant <= 3'd6;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[7]) begin
-                                            litedramcore1_choose_cmd_grant <= 3'd7;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            1'd1: begin
-                if (litedramcore1_choose_cmd_request[2]) begin
-                    litedramcore1_choose_cmd_grant <= 2'd2;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[3]) begin
-                        litedramcore1_choose_cmd_grant <= 2'd3;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[4]) begin
-                            litedramcore1_choose_cmd_grant <= 3'd4;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[5]) begin
-                                litedramcore1_choose_cmd_grant <= 3'd5;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[6]) begin
-                                    litedramcore1_choose_cmd_grant <= 3'd6;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[7]) begin
-                                        litedramcore1_choose_cmd_grant <= 3'd7;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[0]) begin
-                                            litedramcore1_choose_cmd_grant <= 1'd0;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd2: begin
-                if (litedramcore1_choose_cmd_request[3]) begin
-                    litedramcore1_choose_cmd_grant <= 2'd3;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[4]) begin
-                        litedramcore1_choose_cmd_grant <= 3'd4;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[5]) begin
-                            litedramcore1_choose_cmd_grant <= 3'd5;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[6]) begin
-                                litedramcore1_choose_cmd_grant <= 3'd6;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[7]) begin
-                                    litedramcore1_choose_cmd_grant <= 3'd7;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[0]) begin
-                                        litedramcore1_choose_cmd_grant <= 1'd0;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[1]) begin
-                                            litedramcore1_choose_cmd_grant <= 1'd1;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd3: begin
-                if (litedramcore1_choose_cmd_request[4]) begin
-                    litedramcore1_choose_cmd_grant <= 3'd4;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[5]) begin
-                        litedramcore1_choose_cmd_grant <= 3'd5;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[6]) begin
-                            litedramcore1_choose_cmd_grant <= 3'd6;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[7]) begin
-                                litedramcore1_choose_cmd_grant <= 3'd7;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[0]) begin
-                                    litedramcore1_choose_cmd_grant <= 1'd0;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[1]) begin
-                                        litedramcore1_choose_cmd_grant <= 1'd1;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[2]) begin
-                                            litedramcore1_choose_cmd_grant <= 2'd2;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd4: begin
-                if (litedramcore1_choose_cmd_request[5]) begin
-                    litedramcore1_choose_cmd_grant <= 3'd5;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[6]) begin
-                        litedramcore1_choose_cmd_grant <= 3'd6;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[7]) begin
-                            litedramcore1_choose_cmd_grant <= 3'd7;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[0]) begin
-                                litedramcore1_choose_cmd_grant <= 1'd0;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[1]) begin
-                                    litedramcore1_choose_cmd_grant <= 1'd1;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[2]) begin
-                                        litedramcore1_choose_cmd_grant <= 2'd2;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[3]) begin
-                                            litedramcore1_choose_cmd_grant <= 2'd3;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd5: begin
-                if (litedramcore1_choose_cmd_request[6]) begin
-                    litedramcore1_choose_cmd_grant <= 3'd6;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[7]) begin
-                        litedramcore1_choose_cmd_grant <= 3'd7;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[0]) begin
-                            litedramcore1_choose_cmd_grant <= 1'd0;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[1]) begin
-                                litedramcore1_choose_cmd_grant <= 1'd1;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[2]) begin
-                                    litedramcore1_choose_cmd_grant <= 2'd2;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[3]) begin
-                                        litedramcore1_choose_cmd_grant <= 2'd3;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[4]) begin
-                                            litedramcore1_choose_cmd_grant <= 3'd4;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd6: begin
-                if (litedramcore1_choose_cmd_request[7]) begin
-                    litedramcore1_choose_cmd_grant <= 3'd7;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[0]) begin
-                        litedramcore1_choose_cmd_grant <= 1'd0;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[1]) begin
-                            litedramcore1_choose_cmd_grant <= 1'd1;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[2]) begin
-                                litedramcore1_choose_cmd_grant <= 2'd2;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[3]) begin
-                                    litedramcore1_choose_cmd_grant <= 2'd3;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[4]) begin
-                                        litedramcore1_choose_cmd_grant <= 3'd4;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[5]) begin
-                                            litedramcore1_choose_cmd_grant <= 3'd5;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd7: begin
-                if (litedramcore1_choose_cmd_request[0]) begin
-                    litedramcore1_choose_cmd_grant <= 1'd0;
-                end else begin
-                    if (litedramcore1_choose_cmd_request[1]) begin
-                        litedramcore1_choose_cmd_grant <= 1'd1;
-                    end else begin
-                        if (litedramcore1_choose_cmd_request[2]) begin
-                            litedramcore1_choose_cmd_grant <= 2'd2;
-                        end else begin
-                            if (litedramcore1_choose_cmd_request[3]) begin
-                                litedramcore1_choose_cmd_grant <= 2'd3;
-                            end else begin
-                                if (litedramcore1_choose_cmd_request[4]) begin
-                                    litedramcore1_choose_cmd_grant <= 3'd4;
-                                end else begin
-                                    if (litedramcore1_choose_cmd_request[5]) begin
-                                        litedramcore1_choose_cmd_grant <= 3'd5;
-                                    end else begin
-                                        if (litedramcore1_choose_cmd_request[6]) begin
-                                            litedramcore1_choose_cmd_grant <= 3'd6;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        endcase
+    if ((litedramcore1_choose_cmd_cmd_valid & litedramcore1_choose_cmd_cmd_ready)) begin
+        if ((litedramcore1_choose_cmd_grant == 3'd7)) begin
+            litedramcore1_choose_cmd_ptr <= 1'd0;
+        end else begin
+            litedramcore1_choose_cmd_ptr <= (litedramcore1_choose_cmd_grant + 1'd1);
+        end
+    end else begin
+        if (litedramcore1_choose_cmd_cmd_valid) begin
+            litedramcore1_choose_cmd_ptr <= litedramcore1_choose_cmd_grant;
+        end
     end
-    if (litedramcore1_choose_req_ce) begin
-        case (litedramcore1_choose_req_grant)
-            1'd0: begin
-                if (litedramcore1_choose_req_request[1]) begin
-                    litedramcore1_choose_req_grant <= 1'd1;
-                end else begin
-                    if (litedramcore1_choose_req_request[2]) begin
-                        litedramcore1_choose_req_grant <= 2'd2;
-                    end else begin
-                        if (litedramcore1_choose_req_request[3]) begin
-                            litedramcore1_choose_req_grant <= 2'd3;
-                        end else begin
-                            if (litedramcore1_choose_req_request[4]) begin
-                                litedramcore1_choose_req_grant <= 3'd4;
-                            end else begin
-                                if (litedramcore1_choose_req_request[5]) begin
-                                    litedramcore1_choose_req_grant <= 3'd5;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[6]) begin
-                                        litedramcore1_choose_req_grant <= 3'd6;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[7]) begin
-                                            litedramcore1_choose_req_grant <= 3'd7;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            1'd1: begin
-                if (litedramcore1_choose_req_request[2]) begin
-                    litedramcore1_choose_req_grant <= 2'd2;
-                end else begin
-                    if (litedramcore1_choose_req_request[3]) begin
-                        litedramcore1_choose_req_grant <= 2'd3;
-                    end else begin
-                        if (litedramcore1_choose_req_request[4]) begin
-                            litedramcore1_choose_req_grant <= 3'd4;
-                        end else begin
-                            if (litedramcore1_choose_req_request[5]) begin
-                                litedramcore1_choose_req_grant <= 3'd5;
-                            end else begin
-                                if (litedramcore1_choose_req_request[6]) begin
-                                    litedramcore1_choose_req_grant <= 3'd6;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[7]) begin
-                                        litedramcore1_choose_req_grant <= 3'd7;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[0]) begin
-                                            litedramcore1_choose_req_grant <= 1'd0;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd2: begin
-                if (litedramcore1_choose_req_request[3]) begin
-                    litedramcore1_choose_req_grant <= 2'd3;
-                end else begin
-                    if (litedramcore1_choose_req_request[4]) begin
-                        litedramcore1_choose_req_grant <= 3'd4;
-                    end else begin
-                        if (litedramcore1_choose_req_request[5]) begin
-                            litedramcore1_choose_req_grant <= 3'd5;
-                        end else begin
-                            if (litedramcore1_choose_req_request[6]) begin
-                                litedramcore1_choose_req_grant <= 3'd6;
-                            end else begin
-                                if (litedramcore1_choose_req_request[7]) begin
-                                    litedramcore1_choose_req_grant <= 3'd7;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[0]) begin
-                                        litedramcore1_choose_req_grant <= 1'd0;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[1]) begin
-                                            litedramcore1_choose_req_grant <= 1'd1;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            2'd3: begin
-                if (litedramcore1_choose_req_request[4]) begin
-                    litedramcore1_choose_req_grant <= 3'd4;
-                end else begin
-                    if (litedramcore1_choose_req_request[5]) begin
-                        litedramcore1_choose_req_grant <= 3'd5;
-                    end else begin
-                        if (litedramcore1_choose_req_request[6]) begin
-                            litedramcore1_choose_req_grant <= 3'd6;
-                        end else begin
-                            if (litedramcore1_choose_req_request[7]) begin
-                                litedramcore1_choose_req_grant <= 3'd7;
-                            end else begin
-                                if (litedramcore1_choose_req_request[0]) begin
-                                    litedramcore1_choose_req_grant <= 1'd0;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[1]) begin
-                                        litedramcore1_choose_req_grant <= 1'd1;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[2]) begin
-                                            litedramcore1_choose_req_grant <= 2'd2;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd4: begin
-                if (litedramcore1_choose_req_request[5]) begin
-                    litedramcore1_choose_req_grant <= 3'd5;
-                end else begin
-                    if (litedramcore1_choose_req_request[6]) begin
-                        litedramcore1_choose_req_grant <= 3'd6;
-                    end else begin
-                        if (litedramcore1_choose_req_request[7]) begin
-                            litedramcore1_choose_req_grant <= 3'd7;
-                        end else begin
-                            if (litedramcore1_choose_req_request[0]) begin
-                                litedramcore1_choose_req_grant <= 1'd0;
-                            end else begin
-                                if (litedramcore1_choose_req_request[1]) begin
-                                    litedramcore1_choose_req_grant <= 1'd1;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[2]) begin
-                                        litedramcore1_choose_req_grant <= 2'd2;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[3]) begin
-                                            litedramcore1_choose_req_grant <= 2'd3;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd5: begin
-                if (litedramcore1_choose_req_request[6]) begin
-                    litedramcore1_choose_req_grant <= 3'd6;
-                end else begin
-                    if (litedramcore1_choose_req_request[7]) begin
-                        litedramcore1_choose_req_grant <= 3'd7;
-                    end else begin
-                        if (litedramcore1_choose_req_request[0]) begin
-                            litedramcore1_choose_req_grant <= 1'd0;
-                        end else begin
-                            if (litedramcore1_choose_req_request[1]) begin
-                                litedramcore1_choose_req_grant <= 1'd1;
-                            end else begin
-                                if (litedramcore1_choose_req_request[2]) begin
-                                    litedramcore1_choose_req_grant <= 2'd2;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[3]) begin
-                                        litedramcore1_choose_req_grant <= 2'd3;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[4]) begin
-                                            litedramcore1_choose_req_grant <= 3'd4;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd6: begin
-                if (litedramcore1_choose_req_request[7]) begin
-                    litedramcore1_choose_req_grant <= 3'd7;
-                end else begin
-                    if (litedramcore1_choose_req_request[0]) begin
-                        litedramcore1_choose_req_grant <= 1'd0;
-                    end else begin
-                        if (litedramcore1_choose_req_request[1]) begin
-                            litedramcore1_choose_req_grant <= 1'd1;
-                        end else begin
-                            if (litedramcore1_choose_req_request[2]) begin
-                                litedramcore1_choose_req_grant <= 2'd2;
-                            end else begin
-                                if (litedramcore1_choose_req_request[3]) begin
-                                    litedramcore1_choose_req_grant <= 2'd3;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[4]) begin
-                                        litedramcore1_choose_req_grant <= 3'd4;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[5]) begin
-                                            litedramcore1_choose_req_grant <= 3'd5;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-            3'd7: begin
-                if (litedramcore1_choose_req_request[0]) begin
-                    litedramcore1_choose_req_grant <= 1'd0;
-                end else begin
-                    if (litedramcore1_choose_req_request[1]) begin
-                        litedramcore1_choose_req_grant <= 1'd1;
-                    end else begin
-                        if (litedramcore1_choose_req_request[2]) begin
-                            litedramcore1_choose_req_grant <= 2'd2;
-                        end else begin
-                            if (litedramcore1_choose_req_request[3]) begin
-                                litedramcore1_choose_req_grant <= 2'd3;
-                            end else begin
-                                if (litedramcore1_choose_req_request[4]) begin
-                                    litedramcore1_choose_req_grant <= 3'd4;
-                                end else begin
-                                    if (litedramcore1_choose_req_request[5]) begin
-                                        litedramcore1_choose_req_grant <= 3'd5;
-                                    end else begin
-                                        if (litedramcore1_choose_req_request[6]) begin
-                                            litedramcore1_choose_req_grant <= 3'd6;
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        endcase
+    if ((litedramcore1_choose_req_cmd_valid & litedramcore1_choose_req_cmd_ready)) begin
+        if ((litedramcore1_choose_req_grant == 3'd7)) begin
+            litedramcore1_choose_req_ptr <= 1'd0;
+        end else begin
+            litedramcore1_choose_req_ptr <= (litedramcore1_choose_req_grant + 1'd1);
+        end
+    end else begin
+        if (litedramcore1_choose_req_cmd_valid) begin
+            litedramcore1_choose_req_ptr <= litedramcore1_choose_req_grant;
+        end
     end
     litedramcore1_dfi_p0_cs_n <= 1'd0;
     litedramcore1_dfi_p0_bank <= self28;
@@ -68992,6 +69191,21 @@ always @(posedge sys_clk_1) begin
             litedramcore1_twtrcon_count <= (litedramcore1_twtrcon_count - 1'd1);
             if ((litedramcore1_twtrcon_count == 1'd1)) begin
                 litedramcore1_twtrcon_ready <= 1'd1;
+            end
+        end
+    end
+    if (litedramcore1_trtwcon_valid) begin
+        litedramcore1_trtwcon_count <= 2'd2;
+        if (1'd0) begin
+            litedramcore1_trtwcon_ready <= 1'd1;
+        end else begin
+            litedramcore1_trtwcon_ready <= 1'd0;
+        end
+    end else begin
+        if ((~litedramcore1_trtwcon_ready)) begin
+            litedramcore1_trtwcon_count <= (litedramcore1_trtwcon_count - 1'd1);
+            if ((litedramcore1_trtwcon_count == 1'd1)) begin
+                litedramcore1_trtwcon_ready <= 1'd1;
             end
         end
     end
@@ -71086,8 +71300,8 @@ always @(posedge sys_clk_1) begin
         litedramcore0_bankmachine7_trccon_count <= 3'd0;
         litedramcore0_bankmachine7_trascon_ready <= 1'd0;
         litedramcore0_bankmachine7_trascon_count <= 3'd0;
-        litedramcore0_choose_cmd_grant <= 3'd0;
-        litedramcore0_choose_req_grant <= 3'd0;
+        litedramcore0_choose_cmd_ptr <= 3'd0;
+        litedramcore0_choose_req_ptr <= 3'd0;
         litedramcore0_trrdcon_ready <= 1'd0;
         litedramcore0_trrdcon_count <= 1'd0;
         litedramcore0_tfawcon_ready <= 1'd1;
@@ -71096,6 +71310,8 @@ always @(posedge sys_clk_1) begin
         litedramcore0_tccdcon_count <= 1'd0;
         litedramcore0_twtrcon_ready <= 1'd0;
         litedramcore0_twtrcon_count <= 3'd0;
+        litedramcore0_trtwcon_ready <= 1'd0;
+        litedramcore0_trtwcon_count <= 2'd0;
         litedramcore0_time0 <= 8'd0;
         litedramcore0_time1 <= 7'd0;
         dqsphase0_dqs_shift_storage <= 1'd0;
@@ -71527,8 +71743,8 @@ always @(posedge sys_clk_1) begin
         litedramcore1_bankmachine15_trccon_count <= 3'd0;
         litedramcore1_bankmachine15_trascon_ready <= 1'd0;
         litedramcore1_bankmachine15_trascon_count <= 3'd0;
-        litedramcore1_choose_cmd_grant <= 3'd0;
-        litedramcore1_choose_req_grant <= 3'd0;
+        litedramcore1_choose_cmd_ptr <= 3'd0;
+        litedramcore1_choose_req_ptr <= 3'd0;
         litedramcore1_trrdcon_ready <= 1'd0;
         litedramcore1_trrdcon_count <= 1'd0;
         litedramcore1_tfawcon_ready <= 1'd1;
@@ -71537,6 +71753,8 @@ always @(posedge sys_clk_1) begin
         litedramcore1_tccdcon_count <= 1'd0;
         litedramcore1_twtrcon_ready <= 1'd0;
         litedramcore1_twtrcon_count <= 3'd0;
+        litedramcore1_trtwcon_ready <= 1'd0;
+        litedramcore1_trtwcon_count <= 2'd0;
         litedramcore1_time0 <= 8'd0;
         litedramcore1_time1 <= 7'd0;
         dqsphase1_dqs_shift_storage <= 1'd0;
@@ -71661,7 +71879,7 @@ always @(posedge sys_clk_1) begin
         litedramcore0_bankmachine5_state <= 4'd0;
         litedramcore0_bankmachine6_state <= 4'd0;
         litedramcore0_bankmachine7_state <= 4'd0;
-        litedramcore0_multiplexer0_state <= 4'd0;
+        litedramcore0_multiplexer0_state <= 2'd0;
         litedramcore0_roundrobin0_grant <= 2'd0;
         litedramcore0_roundrobin1_grant <= 2'd0;
         litedramcore0_roundrobin2_grant <= 2'd0;
@@ -71712,7 +71930,7 @@ always @(posedge sys_clk_1) begin
         litedramcore1_bankmachine13_state <= 4'd0;
         litedramcore1_bankmachine14_state <= 4'd0;
         litedramcore1_bankmachine15_state <= 4'd0;
-        litedramcore1_multiplexer1_state <= 4'd0;
+        litedramcore1_multiplexer1_state <= 2'd0;
         litedramcore1_roundrobin8_grant <= 2'd0;
         litedramcore1_roundrobin9_grant <= 2'd0;
         litedramcore1_roundrobin10_grant <= 2'd0;
@@ -104798,7 +105016,7 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-09-30 21:46:49.
+//  Auto-Generated by LiteX on 2026-10-02 06:01:25.
 //------------------------------------------------------------------------------
 
 // VexRiscv_Min.v (modules renamed otpu_selfcal_*)

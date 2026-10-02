@@ -58,7 +58,9 @@ the banks' internal VREF and LiteX's reset-synchronizer paths; the top adds the 
 (ctl_clk and sys_clk are asynchronous: the CSR port crosses them through FIFOs).
 
 The controllers take LiteDRAM's default ControllerSettings except ctl_settings.py's (refresh
-postponing, the multiplexer's read and write times), which gen_ldc.py's simulation model shares.
+postponing, the multiplexer's read and write times), and fastmux.py's multiplexer with
+ctl_settings.py's MULTIPLEXER (FASTMUX: rtw 3, same_cycle, direct_wtr); gen_ldc.py's simulation
+model shares both.
 """
 import argparse
 import json

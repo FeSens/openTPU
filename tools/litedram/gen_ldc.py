@@ -12,7 +12,7 @@ the board's bridge (otpu_mem_ch) with the data held in the model.
 
     python3 gen_ldc.py OUT.v [--name otpu_ldc_ch] [--cmd-buffer-depth 8] [--no-refresh]
                       [--postponing 2] [--read-time 256] [--write-time 128] [--ports 2]
-                      [--no-lock] [--rtw 3] [--direct-wtr] [--same-cycle]
+                      [--no-lock] [--rtw 3|none] [--[no-]direct-wtr] [--[no-]same-cycle]
 
 DDR3-1066 only (the controller at 133.33 MHz, CL 7 / CWL 6, the latencies WL7DDRPHY derives
 from them, the data-sheet timings in that clock): the board's DDR3 never runs faster, the rate
@@ -22,7 +22,7 @@ multiplexer's read and write times (the defaults: the core's, ctl_settings.py), 
 of user ports (the one-port core's: --ports 1, its signals unprefixed; more: p<i>_*), the
 crossbar without its lock (a master's commands in one bank at a time; without it read data may
 come back out of order, so it is a timing bound only), and fastmux.py's multiplexer options (the
-defaults: ctl_settings.py's MULTIPLEXER, all off).
+defaults: ctl_settings.py's MULTIPLEXER, the core's).
 
 Ports (sys clock): sys_clk, sys_rst and per user port p<i>_cmd_valid/ready/we/addr[24:0] (the
 64-byte beat in the channel), p<i>_wdata_valid/ready/data[511:0]/we[63:0],
@@ -135,9 +135,12 @@ def main():
     ap.add_argument("--write-time", type=int, default=CONTROLLER["write_time"])
     ap.add_argument("--ports", type=int, default=2)
     ap.add_argument("--no-lock", action="store_true")
-    ap.add_argument("--rtw", type=int, default=MULTIPLEXER["rtw"])
-    ap.add_argument("--same-cycle", action="store_true", default=MULTIPLEXER["same_cycle"])
-    ap.add_argument("--direct-wtr", action="store_true", default=MULTIPLEXER["direct_wtr"])
+    ap.add_argument("--rtw", type=lambda x: None if x == "none" else int(x),
+                    default=MULTIPLEXER["rtw"])
+    ap.add_argument("--same-cycle", action=argparse.BooleanOptionalAction,
+                    default=MULTIPLEXER["same_cycle"])
+    ap.add_argument("--direct-wtr", action=argparse.BooleanOptionalAction,
+                    default=MULTIPLEXER["direct_wtr"])
     a = ap.parse_args()
     if a.no_lock:
         orig = xbar.LiteDRAMCrossbar.do_finalize
