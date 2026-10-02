@@ -181,8 +181,8 @@ take '212'. So the device's 4-bit path is quantization, not a kernel error.
 4-bit (8.7 tok/s) gives fluent text, but it leaves HF's greedy path after 1 to 11 tokens on
 the four prompts. No cheaper mix helps, because the error is in the MLP, which holds most of the
 weights. The recommended mixes (`wformat="mix"`, `docs/formats.md`) are SmolLM3's
-`gateup@9-35=fp4` (23% faster than int8, dKL 2.1%) and Phi-4-mini's `mlp@4-27=fp4` (5.20 tok/s
-on the card, 28% over int8).
+`gateup@9-35=fp4` (23% faster than int8, dKL 2.1%) and Phi-4-mini's `mlp@4-29=fp4` (31% over
+int8, dKL 2.8%; `mlp@4-27=fp4` before it ran 5.20 tok/s on the card).
 
 ## Tests
 

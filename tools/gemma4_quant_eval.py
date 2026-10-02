@@ -40,10 +40,12 @@ THREADS = 4     # experts quantized at once (numpy's 4-bit search releases the G
 
 
 def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", rows=None,
-            quant=None, wmap=None, on_rows=None, ckpt=None):
+            quant=None, wmap=None, on_rows=None, ckpt=None, hidden=False):
     """gemma4.emulated_logits over the whole sequence at once: the logits [len(rows), vocab]
     before the soft cap (rows: default all), or with on_rows each group of up to 64 rows handed
-    to on_rows(first row, logits). wformat / hf: the layers' and the head's formats, "none" for
+    to on_rows(first row, logits), or with hidden the rows the head multiplies [len(rows), H]
+    (after the final norm and its quantization; tools/formats_scan.py scores many variants'
+    rows in one pass over the head). wformat / hf: the layers' and the head's formats, "none" for
     float weights (the PLE table then float too); wmap: per-kind layer formats {"attn", "mlp"
     (or "down" / "gateup" of it), "ple": format}, a key "kind@a-b" for layers a..b only
     (checkpoint layers; it wins over "kind"). quant: the activation quantization points
@@ -194,6 +196,8 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
             os.replace(tmp, ckpt)
     rows = list(range(T)) if rows is None else rows
     xl = fq(G._norm(x[rows], W["model.norm.weight"], eps))
+    if hidden:
+        return xl
 
     def head_rows(r0):          # (a checkpoint's head read 16384 rows at a time: 0.2 GB)
         if isinstance(W, G.Weights):
