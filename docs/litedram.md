@@ -217,7 +217,10 @@ in short:
 - **Ordering by the command stream instead of write responses.** An SW fill read waits until
   the older SW writes of its beat have entered the stream, not until they are done. A write
   drops the A run or reused beat it touches when it goes out, not when it is answered.
-  `wr_idle` waits for `n_wdone`.
+  `wr_idle` waits for `n_wdone`. The host's writes (XDMA, the channels' other master) reach
+  neither: `a_flush` drops both between runs, at a program load and when a WAITW holds
+  (2026-10-02, after the 35B's back-to-back embed runs read token 0's scales for tokens 1 and 2;
+  tests/test_rtl.py `test_porta_*`, two runs in one simulation: tb_top `+runs`).
 - **Simulation:** `sim/verilator/otpu_native_mem.sv` (random command and write-data
   backpressure, in-order read data with jitter, late `n_wdone`, the DDR3 bank model of
   `otpu_axi_mem`); `OTPU_NATIVE=1` runs the AXI-path tests and the board model on it (since

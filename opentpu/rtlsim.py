@@ -198,12 +198,17 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
         plusargs: list | None = None, args=None, ldc: int | None = None,
-        pokes: dict | None = None):
+        pokes: dict | None = None, again: list | None = None, reload: bool = False):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
     run's arguments (R8..R15 at the start, as isasim.Machine). ldc: MEMORY's LDC for this run
     (the core at MEMORY's LDC_MHZ unless `plusargs` set +ldc_ratio: ldc_plusargs). pokes:
     {slice: [(cycle, DRAM byte address, uint32 word)]}, the host's writes during the run (the
-    behavioural DRAM only: no AXI path)."""
+    behavioural DRAM, or the native memory model: not the LDC). again: more runs of the same
+    programs in the same simulation, after the first halts, as the host runs a program again
+    (the memory path is not reset between them; tb_top +runs), each {"args": its arguments
+    (default: the run before's), "pokes": {slice: [(DRAM byte address, uint32 word)]}, the
+    host's writes before it (the native memory model only)}; reload: the programs loaded again
+    before each (boot only). The result is the state after the last run."""
     from . import isa as I
     run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
@@ -239,13 +244,27 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
             img = np.concatenate([img, np.zeros(at - len(img), np.uint8), progs[s].view(np.uint8)])
         img.view("<u4").astype(">u4").tofile(tmp / f"dram_{s}.bin")
     for s, pk in (pokes or {}).items():
-        if axi:
-            raise ValueError("pokes: the behavioural DRAM only (axi=False)")
+        if axi and ldc:
+            raise ValueError("pokes: the behavioural DRAM or the native memory model (not LDC)")
         (tmp / f"poke_{s}.txt").write_text("".join(
             f"{int(c):x} {int(a) // 4:x} {int(v) & 0xFFFFFFFF:x}\n" for c, a, v in sorted(pk)))
+    again = list(again or [])
+    between = {}
+    for r, a in enumerate(again, 1):
+        for s, pk in (a.get("pokes") or {}).items():
+            if not axi or ldc:
+                raise ValueError("again's pokes: the native memory model only (axi, not LDC)")
+            between.setdefault(s, []).extend((r, int(ad), int(v)) for ad, v in pk)
+    for s, pk in between.items():
+        (tmp / f"pokeb_{s}.txt").write_text("".join(
+            f"{r:x} {ad // 4:x} {v & 0xFFFFFFFF:x}\n" for r, ad, v in pk))
     args = [str(exe), f"+dir={tmp}", f"+max_cycles={max_cycles}"] + (["+trace"] if trace else [])
     args += list(plusargs or [])
     args += [f"+arg{k}={int(v) & 0xFFFFFFFF}" for k, v in enumerate(run_args or [])]
+    if again:
+        args += [f"+runs={1 + len(again)}"] + (["+reload"] if reload else [])
+        for r, a in enumerate(again, 1):
+            args += [f"+r{r}_arg{k}={int(v) & 0xFFFFFFFF}" for k, v in enumerate(a.get("args") or [])]
     if axi:
         args += [f"+axi_stall={stall}", f"+axi_seed={seed}",
                  f"+axi_bw={MEMORY['BW'] if bw is None else bw}",

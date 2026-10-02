@@ -110,7 +110,7 @@ module otpu_board #(
   end
 
   // ---- control
-  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle;
+  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle, a_inval;
   logic [31:0] ld_addr, ld_n, icount;
   logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag, b_rdy;
@@ -190,7 +190,7 @@ module otpu_board #(
     .coll_req, .coll_cmd, .coll_ack,
     .coll_ren, .coll_raddr, .coll_rdata,
     .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
-    .halted, .error, .wait_to, .icount, .pf, .dump(1'b0));
+    .halted, .error, .wait_to, .a_inval, .icount, .pf, .dump(1'b0));
 
   // the collective's reset through a register of its own, next to it: it leaves reset a cycle
   // after the slice, idle either way (133.33 MHz, 110ec6d: core_rst -> u_coll's state, 0 levels,
@@ -207,8 +207,9 @@ module otpu_board #(
     .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
 
   // ---- memory: the native adapter
+  // port A's held beats go where the host may have written: between runs, a load, a WAITW
   otpu_native_dram #(.D(D), .CHASH(CHASH)) u_mem (
-    .clk, .rst,
+    .clk, .rst, .a_flush(core_rst || ld_start || a_inval),
     .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
         .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
