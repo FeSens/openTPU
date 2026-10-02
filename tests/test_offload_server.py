@@ -361,12 +361,41 @@ def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):
     b = Board(Slow(ch_bytes=1 << 20, devname=None))
     b.info()["caps"]["chash"] = True
     lay = Layout.build(4096, 4, 2, (2, 3), slot)
-    srv = ExpertServer(BoardDram(SimpleNamespace(board=b), lay, depth=1, pieces=3), lay,
-                       PoolFile(f, slot, split=True).get)
+    m, pf = BoardDram(SimpleNamespace(board=b), lay, depth=1, pieces=3), PoolFile(f, slot, True)
+    pf.io = {}
+    srv = ExpertServer(m, lay, pf.get)
     srv.load(range(8))
     for g in srv.lru[0].keys() | srv.lru[1].keys():
         s = srv.lru[g // 4][g]
         assert np.array_equal(np.asarray(b.read(s, slot)).view(np.uint8), x[g]), g
+    assert m.wait_s > 2e-3                              # (moe_card's stage_wait)
+    assert sum(v[2] for v in pf.io.values()) == 5 * slot   # each read counted once, in parts
+
+
+def test_pool_file_counts_its_reads_by_the_page_cache(tmp_path):
+    """PoolFile.io (moe_card's decode): each read counted as "cached" (all its pages in the
+    page cache just before it) or "disk", [reads, seconds, bytes, bytes not in the cache];
+    nothing without io. A hole of the sparse file (never written or read) is not cached."""
+    import os
+
+    from opentpu.host.offload import PoolFile, to_split
+    slot, n = 4096 * 4, 6
+    x = np.random.default_rng(0).integers(0, 256, (4, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(x.tobytes())
+    os.truncate(f, slot * n)                            # experts 4 and 5: holes
+    for split, hole in ((False, 4), (True, 5)):
+        pf = PoolFile(f, slot, split=split)
+        if pf.resident(range(n)) is None:
+            pytest.skip("no mincore here")
+        np.asarray(pf.get(1))
+        assert pf.io is None
+        pf.io = {}
+        got = np.asarray(pf.get(2))
+        assert np.array_equal(to_split(got) if split else got, x[2])    # (x as written)
+        np.asarray(pf.get(hole))
+        assert pf.io["cached"][0] == 1 and pf.io["cached"][2:] == [slot, 0], pf.io
+        assert pf.io["disk"][0] == 1 and pf.io["disk"][2:] == [slot, slot], pf.io
 
 
 def test_lfu_policy_evicts_the_least_decayed_use():
