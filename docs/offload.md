@@ -2030,9 +2030,12 @@ Sweeps hs1-hs3 ran on opentpu with the card idle; A, the merged design, is in ev
 
 Prediction for the card: the 35B 5.08-5.16 -> 5.20-5.27 tok/s, the 26B 3.58 -> 3.63-3.65.
 The check is session 16 (`session16.sh`): main against this tree on the same bitstream, A B A
-B, q35e128s and g26s. Both must match their ISA references bit for bit. Main's Qwen3.5-35B
-programs changed after f725c2b (b0b2b541 -> 1a32006f, the MTP and layer-compile merges), so the
-35B needs refs-8100ffb; the 26B's programs did not, so refs-f725c2b still holds for it.
+B, q35e128s and g26s. Both must match their ISA references bit for bit (refs-s16).
+- Main's Qwen3.5-35B programs changed after f725c2b (b0b2b541 -> 1a32006f, the MTP and
+  layer-compile merges). Their new ISA reference (refs-8100ffb, main a60df35's tree) gives the
+  same tokens and prefill sha as before, 88225ff781699291.
+- The 26B's programs did not change (4400270b, 6d7a8ec2), so refs-f725c2b's 90e6b6e06e19da99
+  still holds for it.
 
 ## 11. Gemma 4 26B-A4B: design note
 
