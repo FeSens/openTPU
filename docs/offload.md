@@ -1564,6 +1564,38 @@ The pacer becomes the decode's default if MXU_STARVE falls and it is not slower.
 spinning stays, and the RUNNING - DMA_BUSY rise is the expert DMA's overlap, a matter for the
 DRAM's arbitration.
 
+Card session 14 (2026-10-02 00:47-01:04, `session14.sh`, tree 17e99eb, production g2fix
+0885d436 with no reload). All 7 runs matched the ISA simulator bit for bit:
+
+| run | poll | tok/s (device) | decode Gcycles | windows s | DMA_BUSY G | RUNNING - DMA_BUSY G | MXU_STARVE G | poll reads | pacer: sleeps, s slept |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B N1 | spin | 5.01 (5.02) | 3.396 | 13.60 | 1.549 | 1.847 | 0.122 | 442k | |
+| 35B P1 | paced | 5.00 (5.02) | 3.401 | 13.59 | 1.557 | 1.844 | 0.122 | 225k | 5206, 4.41 |
+| 26B gS1 | spin | 3.54 (3.55) | 4.809 | 20.64 | 0.839 | 3.970 | 0.317 | 573k | |
+| 26B gF1 | 50 us | 3.55 (3.55) | 4.801 | 20.42 | 0.839 | 3.962 | 0.318 | 106k | |
+| 26B gP1 | paced | 3.54 (3.54) | 4.815 | 20.67 | 0.858 | 3.957 | 0.313 | 249k | 3810, 6.98 |
+| 26B gS2 | spin | 3.55 (3.55) | 4.802 | 20.46 | 0.829 | 3.972 | 0.319 | 587k | |
+| 26B gP2 | paced | 3.54 (3.55) | 4.807 | 20.55 | 0.844 | 3.964 | 0.316 | 245k | 3810, 7.02 |
+
+- The poll's reads do not cost the MXU. The pacer cut them by 57% and the 50 us sleep by 82%,
+  and MXU_STARVE stayed within 0.006 G cycles of spinning, RUNNING - DMA_BUSY within 0.015 G.
+  That is the prediction's second case. The compute's rise from Gen1 to Gen2 (10.9) is the
+  expert DMA's writes, which overlap the hits' compute.
+- Decode cycles are within 0.3% across all five 26B runs, and the 35B's two runs within 0.15%.
+- The 50 us sleep did not lose the predicted 0.2 s. Its decode cycles are the lowest of the
+  five, within noise. So its later detection doesn't show on Gen2: on the 26B the card stalls
+  (DMA_BUSY) for only 6.3 s of its 20.5 s of windows, so most of a request's DMA is hidden
+  behind its compute.
+- The pacer slept 4.4 s (35B) and 7.0 s (26B) per 128 tokens. It cut fewer reads than the
+  140-200k predicted, because it spins out the rest of each gap.
+- The rule: MXU_STARVE did not fall beyond noise, so the pacer does not become the default and
+  the decode keeps spinning. A sleep between polls costs nothing measurable on Gen2 and saves
+  the host most of a core, so either --poll-idle 50e-6 or predict is safe where the host's CPU
+  matters.
+- The 35B's spin run made 5.01 tok/s against g2check's 5.07 / 5.10 an hour earlier. Its data
+  calls ran at 2.13 GB/s against 2.19-2.21 (records 665 against 660 us, first pieces 344 + 612
+  against 326 + 596 us), so the link varies by about 3% between sessions.
+
 ### 10.11 One call per request: design
 
 Each miss ends in its directory entry, a 64-byte call the card waits for. On Gen2 these calls
@@ -1624,6 +1656,13 @@ request with misses where it is not hidden (the upper bound):
 |:--|:--|:--|:--|:--|:--|
 | 35B | 4649 of 5120 (2.82 misses each) | 0.77-0.82 s | 0-0.19 s | 0.59-0.81 s | 5.07-5.10 -> 5.19-5.27 (+2.4-3.3%) |
 | 26B | 3661 of 3840 (3.09 each) | 0.93 s | 0-0.21 s | 0.72-0.93 s | 3.54 -> 3.61-3.63 (+2.0-2.5%) |
+
+A window's saving reaches the card only where the card is stalled at the window's end. On the
+35B it stalls for most of its windows (DMA_BUSY 11.6 s of 13.6 s), so most of the saving
+reaches it. On the 26B it stalls for 6.3 s of 20.5 s, its dense MLP and hits running while the
+experts stream (session 14). Requests with many misses stall, and they carry most of the
+entries, so perhaps 50-100% of the 26B's saving reaches the card: -0.4 to -0.9 s, 3.58-3.63
+tok/s.
 
 With the directory as one call per channel, the 35B's 64-byte calls fall from 31,346 to about
 19,000 per 128 tokens. That leaves more of the link's idle time for hints. The 35B's +4 KiB per slot could cost
