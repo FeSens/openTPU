@@ -457,3 +457,64 @@ The runs that did not fit IMEM by 10-42 instructions now do: E2B's mix takes 4 r
 every bucket of the 16 layouts is covered (a prompt there took today's route before). No other
 R_max changes (the next size stays over 4096: LFM2-2.6B int8 bucket 2 at 4 rows 4676 -> 4484,
 SmolLM3's mix bucket 16 at 4 rows 4311 -> 4247, E2B int8 bucket 16 at 4 rows 4299 -> 4168).
+
+On the card (window3, fmvf 542fc43a, 2026-10-02 16:36-16:54 opentpu; one engine a model, a new
+program cache each; prompt runs cold, prompt runs warm, then today's route; the tokens equal in
+every phase):
+
+| model | prompt (cap) | buckets | runs | warm | cold | today's route | device cycles |
+|---|---|---|---|---|---|---|---|
+| Gemma 4 E2B mix | 1500 (2048) | 1-6 | 538 | 72.79 s | 80.13 s | 100.46 s | +4.5% |
+| Gemma 4 E2B mix | 300 (2048) | 1-2 | 75 | 10.54 s | 14.50 s | 10.22 s | +6.8% |
+| LFM2.5-230M | 1850 (2048) | 0-8 | 368 | 6.81 s | 22.41 s | 122.89 s | +2.5% |
+| Qwen3-0.6B | 236 (1024) | 1 | 30 | 2.12 s | 2.12 s | 2.20 s | +4.4% |
+
+E2B's mix at 1500 tokens takes prompt runs end to end (R_max 4 in buckets 1-2, 3 in 3-4, 2 in
+5-6): -27.5% against today's route (session mix5: 100.3 s), the device's time at 72.5 s of
+it. The device cycles are prompt runs' against compile-time runs, as on main (the co-sim above:
+the additive mask +0.02%): a prompt run's masked block is a whole block, a compile-time run's
+last block its p + 1 - t0 entries. They bound what a masked block sized to the run can take
+back. E2B int8 (bucket 6) was not on the card: its masked blocks are the mix's code (the formats
+differ, not the attention path), which ISA and RTL tests cover; it goes in a later window that
+builds an int8 E2B image anyway (636 s on the host: the prebuild caches 4-bit matrices only).
+No ISA reference of these prompts was run (waived): the card's tokens equal today's route's,
+which is ISA-verified on these models.
+
+## 10. Later: looped attention (parked)
+
+A prompt run unrolls its attention entries (row r, KV head j, column group g), so its program
+grows with R x heads x blocks; past the middle of the cache IMEM caps the rows (R_max by bucket:
+Phi-4-mini's mix 3 3 3 2 2, then 1; LFM2-2.6B int8 4 3 2 2, then 1; E2B's mix 4 4 3 3, then 2),
+and its masked block is a whole block (the card's +2.5 to +6.8% above). Two parts, built
+together, both bit-exact against compile-time runs:
+
+- **A. An entry loop.** KV heads outside, rows x column groups inside, so every address is affine
+  (the K/V head base in j; the q tile, output row and mask tile in the inner index, G <= MCOLS
+  or nh = 1 as on E2B): induction registers (ADDI a stride). The body is one entry (its block
+  loop, the remaining blocks, the masked block), software-pipelined by one entry as prime(nxt)
+  does today. Loop depth: layers, heads, rows x groups, then the block loop and B's variant
+  LOOPs side by side (4, the ISA's limit), so the overlap across entries breaks at a head: one
+  drain a KV head a layer. The program is about bucket 1's, so it fits wherever bucket 1 fits
+  and TMEM is the limit (LFM2-2.6B's mix at bucket 16 runs out at 4 rows).
+- **B. A masked block sized to the run.** Variants of N = 64, 128, 192, 256 tokens, each in a
+  LOOP of count 0 or 1 from a per-tpos word, so a run takes the shortest N >= tpos + R; the
+  extra tokens score -inf as today (section 9's 2-instruction block, repeated). The tokens
+  wasted a row drop from ~128 on average to ~32; 32-token variants (8 bodies) only if the co-sim
+  asks for them.
+
+Predicted (compile-time counts; on the card a TTFT change has been 0.55-1.0x the MXU change):
+- B: about 75% of the masked-block overhead goes (the ISA, Qwen3-0.6B at R = 4: MM chunks
+  +9.6% at p = 0 to +0.03% at 252; the card: E2B's mix +4.5% at 1500 tokens, +6.8% at 300).
+- A: every bucket takes bucket 1's rows as far as TMEM allows. MXU cycles a row in bucket 16:
+  Phi-4-mini's mix 1 -> 3 rows -46.5%, LFM2-2.6B int8 1 -> 4 -73.5% (its mix 1 -> 2 -48.1%),
+  E2B's mix 2 -> 4 -23.3%, E2B int8 3 -> 4 -22.1%, SmolLM3's mix 3 -> 4 -21.5%; Qwen3-0.6B and
+  LFM2.5-230M (4 -> 8) ~0% (the replay pass); Phi-4-mini int8 and Qwen3.5 unchanged. A prompt
+  or chat turn past ~1-1.3K tokens: Phi-4-mini's mix and LFM2-2.6B about -25 to -70% TTFT, E2B
+  and SmolLM3's mix about -12 to -23%.
+
+Gates, in order: an ISA count (one looped program per layout, the 16 and E4B, Qwen3.5's MTP
+runs included: its size per bucket against today's, R_max per bucket after); an RTL co-sim of a
+Phi-4-mini mix run in bucket 16, 3 rows looped against today's 1 (an E2B mix one if cheap);
+then the code (bit-exact against compile-time runs on the ISA, an RTL test of one looped
+program) and a card check of TTFT past ~1.3K tokens (Phi-4-mini's mix, LFM2-2.6B int8, E2B's
+mix, token-exact). Prompt runs only: decode's attention stays as it is.
