@@ -106,6 +106,9 @@ def main():
                     help="the card's detection latency in the trace's gaps (s)")
     ap.add_argument("--pool-n", type=int, default=0, help="experts in POOL (0: the model's)")
     ap.add_argument("--h2c-call", type=float, default=20e-6, help="a write call's cost (s)")
+    ap.add_argument("--beat-call", type=float, default=0.0,
+                    help="a 64-byte write call's whole cost (s; default --h2c-call's: session "
+                         "13's card measured 49-61 us)")
     ap.add_argument("--h2c-bps", type=float, default=1.365e9, help="the link's write rate")
     ap.add_argument("--c2h-call", type=float, default=22e-6, help="a beat read's cost (s)")
     ap.add_argument("--reg", type=float, default=1.5e-6, help="a register read's cost (s)")
@@ -195,7 +198,7 @@ def main():
             if fd != -2:
                 return os.pwrite(fd, buf, at)
             n = len(buf)
-            t = a.h2c_call + n / a.h2c_bps
+            t = a.beat_call if n == 64 and a.beat_call else a.h2c_call + n / a.h2c_bps
             t0 = time.perf_counter()
             lib.wait_ns(int(t * 1e9))
             t1 = time.perf_counter()
