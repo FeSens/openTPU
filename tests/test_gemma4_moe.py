@@ -336,6 +336,41 @@ def test_moe_layer_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
         t = int(np.argmax(ga))
 
 
+def test_moe_layer_runs_hint_the_next_layer_and_change_no_logit(moe):
+    """Engine(layer_ahead="hint") on Gemma 4: each layer run but the last layer's ends with the
+    next layer's hint (moe.moe_hint_rows: its router, through its norm and scale, on the run's
+    output rows); the logits and decode steps of token-by-token runs bit for bit. With the
+    attention's output projections zero (its norm of 0 adds 0) a layer's route reads the
+    layer's input, so each hint is the next layer's request for the same rows, in order: 21
+    rows in runs of 2, the last of 1."""
+    _, W, spec = moe
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 21)]
+    a = _moe_engine(moe, experts=2 * K, layer_major=2, layer_ahead="hint")
+    b = _moe_engine(moe, experts=2 * K)
+    la, lb = a.prefill(toks), b.prefill(toks)
+    L, runs = len(KINDS), 11
+    assert a.server.hints == (L - 1) * runs and a.server.aheads == L
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    t = int(np.argmax(la))
+    for _ in range(3):
+        ga, gb = a.step(t), b.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))
+    W0 = {k: (np.zeros_like(v) if k.endswith("self_attn.o_proj.weight") else v)
+          for k, v in W.items()}
+    z = Engine(spec, W0, cap=1024, cfg=_cfg(), rows=1, experts=2 * K, layer_major=2,
+               layer_ahead="hint")
+    srv, hints, mark = z.server, [], []
+    hint, begin = srv.hint, srv.begin_prefill
+    srv.hint = lambda ids: (hints.append(list(ids)), hint(ids))
+    srv.begin_prefill = lambda **kw: (begin(**kw), mark.append(len(srv.history)))
+    srv.history = []
+    z.prefill(toks)
+    got = srv.history[mark[0]:]
+    assert len(got) == L * runs and len(hints) == (L - 1) * runs
+    assert hints == got[runs:] and any(len(h) > K for h in hints)
+
+
 @pytest.mark.parametrize("restore", ["lazy", "eager"])
 def test_moe_pooled_slots_cut_the_prompts_misses(moe, restore):
     """Layer-major prefill with the slots pooled (ExpertServer.begin_prefill / end_prefill:

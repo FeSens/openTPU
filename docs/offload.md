@@ -2920,3 +2920,20 @@ The split follows 13.8's.
 
 Card check: the base and the predictor for the 35B and the 26B, R = 2, pooled, with
 --prefill-trace, and the zero-miss runs' contention measured again.
+
+The card side (Engine(layer_ahead="hint"), moe_card --layer-ahead hint):
+- A layer run of layer li ends with `moe.moe_hint_rows` when li + 1 is a MoE layer: its
+  router through its norm (g_post, quantized) on the R rows the run stored, each row's k best
+  by the model's rule, one line of R x k global ids offset by hint_off (layers x E), its count
+  and seq after the fence. The program compiles with `hint` (layer_programs, the worker
+  processes' too); the other runs and every decode program are unchanged (program_sha on the
+  card's configuration: the same nine sums for E2B, E4B, LFM2.5-8B-A1B, the 35B both ways, the
+  26B both ways and the tiny models).
+- The hint adds 37 instructions a run (its loops are hardware loops); the largest layer run
+  is 14,344 words of IMEM's 32,768 (the 26B's at bucket 16).
+- prefill_layers calls ahead_layer at the same points as 13.8, with no ids: each call starts
+  the next layer's queue, and the hints fill it. begin_prefill gets 1 MiB parts (AHEAD_PART).
+- A hint changes no row. The tests check the logits and the decode after them against token
+  by token (Qwen3.5, Gemma 4), and that each hint equals the next layer's own request for the
+  same rows when the mixers' output projections are zero, so that a layer's route reads its
+  input.
