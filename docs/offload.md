@@ -2634,18 +2634,14 @@ What is left:
    compiles in line until the workers are up. With that (pfcomp2, tree 94e635e) the 26B's
    prompt went from 17.33 to 16.25 s, bit-exact. Its time between runs fell from 1.28 to
    0.18 s; the only wait left is layer 0's first run (130 ms while the workers came up).
-2. The pooled misses, 4.5 s of link on the 35B and 3.4 s on the 26B. Streamed a layer ahead
-   into the pooled slots while the layer before runs, they can hide behind the compute. A
-   layer's compute is 207 ms on the 35B and 457 ms on the 26B. All of a layer's experts take
-   200 ms (256 x 0.78 ms) and 197 ms (128 x 1.54 ms). So a static profile order, with a
-   request for an expert still in flight served first, needs no prediction of the next
-   layer's routes at this length (and no host compute): about 9.6-10.6 s for the 35B and 14 s
-   for the 26B.
+2. The pooled misses, 4.5 s of link on the 35B and 3.4 s on the 26B. Streaming them a layer
+   ahead, in a static order, was predicted at about 10 s and 14 s. On the card it gains nothing,
+   because writes during compute slow the card's runs by 13-16% (13.8).
 3. R = 4, if the TMEM layout for 4-bit experts at 4 rows allows it. The R = 1 / 2 runs fit
    1.58 + 0.90 R ms (DeltaNet) and 1.35 + 0.63 R ms (attention): 6.4 s of compute for the
    35B, against its 4.5 s of pooled misses, so about 8 s.
 
-### 13.8 Layer-ahead streaming
+### 13.8 Layer-ahead streaming (opt-in: no gain on the card)
 
 `Engine(layer_ahead=...)` (`moe_card.py --layer-ahead index|TRACES`) gives the expert server
 the next MoE layer's experts to send while a layer runs: `ExpertServer.ahead_layer(j, ids)`,
@@ -2656,41 +2652,70 @@ global ids in the order to send. It is called between runs only:
 
 The order is index order, or a static profile: each layer's experts by their use in router
 traces of other texts (`router_trace.py`, `--trace`). It is host bookkeeping on recorded routes,
-with no model math on the host. A request still names its own experts: one not landed yet is
-a miss, served first (the server's promote path for one partly sent).
+with no model math on the host. Each call replaces what the last one queued and has not landed
+(at short prompts a queue that only appends fills with layers that already ran). A request still
+names its own experts. One not landed is a miss; one partly sent gets its rest at once
+(promoted). The server side is 13.4's layer ahead (offload): slots taken when an expert's first
+part goes out on an idle poll, `settle` first, and `end_prefill` dropping what has not landed.
+It is off by default and changes nothing without `--layer-ahead`.
 
-An event model (`lahsim.py`, scratchpad) runs on the measured pooled R = 2 traces (pfcomp,
-pfcomp2). Each run's device time is its kind's zero-miss time plus the measured cost of its
-misses. The link sends the queued experts on its idle time, and a demand miss goes first after
-the part in flight. Without ahead the model gives 13.48 s against the card's 13.32 s (35B) and
-16.76 s against 16.25 s (26B). The table shows the layer runs' seconds over the first T rows of
-each layer, sending all of a layer's experts in the profile order of three other texts:
+On the card (session pfahead, 2026-10-02 08:05-08:15 opentpu, pa e4db91c9, tree ce8c8a5 = main
+a3da5ff + offload-ahead 665b8a0), pooled slots, R = 2. Every run is bit-exact (95426ebacc3b40a9
+and 90e6b6e06e19da99), and each is compared with a baseline on the same tree:
 
-| | T = 16 | 32 | 64 | 134 |
-|:--|--:|--:|--:|--:|
-| 35B, no ahead | 2.48 | 4.08 | 6.92 | 12.13 |
-| 35B, a call appends to the queue | 2.47 | 4.07 | 6.78 | 8.49 |
-| 35B, a call replaces the queue | **2.33** | **3.58** | **5.28** | 8.58 |
-| 26B, no ahead | 3.57 | 5.63 | 9.52 | 16.54 |
-| 26B, a call appends to the queue | 3.56 | 5.59 | 7.19 | 13.83 |
-| 26B, a call replaces the queue | **3.09** | **4.35** | 7.20 | 13.89 |
+| | prefill | misses | device | ahead: calls / landed / dropped / promoted |
+|:--|--:|--:|--:|:--|
+| 35B, no ahead | 13.69 s | 6241 | 12.88 s | |
+| 35B, index order | 13.62 s | 4566 | 12.35 s | 40 / 3175 / 32 / 1 |
+| 35B, profile order | 13.51 s | 4339 | 12.18 s | 40 / 2996 / 29 / 0 |
+| 26B, no ahead | 16.06 s | 2234 | 15.82 s | |
+| 26B, profile order | 16.87 s | 157 | 16.12 s | 30 / 3523 / 13 / 0 |
 
-Appending leaves the link on the leftovers of layers that already ran when a layer's runs are
-shorter than its stream (short prompts). Replacing drops them: the cost is about 1% at 134 rows,
-the gain 7-30% below. Index order instead of the profile is the same at 134 rows and 6% slower
-at 64. Cutting the order hurts at 134 rows: the top 128 of the 35B's 256 experts gives 9.78 s
-against 8.58 s, since the last expert a layer needs sits at rank 253 of 256 on average.
-Predicted prompts: about 9.9 s for the 35B (13.32 s now) and 14.1 s for the 26B (16.25 s).
+Static orders gain nothing on the card: -0.2 s on the 35B, +0.8 s on the 26B. The experts land
+and the misses fall, and three costs take it back:
+1. DRAM write contention. A run with no misses waits for nothing, yet it slows down while
+   parts stream into DRAM during it. This is 0.13-0.18 s of the card's compute per GB written
+   during compute. A demand miss writes the same bytes while the card waits, and does not pay it.
 
-The server side (offload) builds on the one-call entry:
-- `ahead_layer` serves the card's last request first (`settle`). Then it replaces what earlier
-  calls queued and has not landed.
-- An expert takes its slot only when its first part goes out on an idle poll: any layer's free
-  slot, else the oldest expert outside the queued ids. A dropped entry evicts nothing.
-- Its tag rides in its last part. A request naming a queued, unsent expert takes it as a miss;
-  one naming an expert in flight gets its rest now.
-- `begin_prefill(ahead=True, part=None)` sets the idle-poll part size, by default the server's
-  `part` (`moe_card.py --hint-part`). `end_prefill` drops the queue and anything in flight. The Engine side
-is tested on the ISA simulator against a stub that loads each queued expert at once
-(`test_layer_ahead_sends_the_next_layers_experts`): the call schedule, fewer misses, and the
-logits and decode bit-exact.
+   | run with no misses | no ahead | with ahead | parts during it | slower |
+   |:--|--:|--:|--:|--:|
+   | 35B DeltaNet | 3.375 ms | 3.818 ms | 6.5 (3.4 MB) | 13% |
+   | 35B attention | 2.618 ms | 3.012 ms | 5.2 (2.7 MB) | 15% |
+   | 26B sliding | 7.289 ms | 8.485 ms | 13.8 (7.2 MB) | 16% |
+   | 26B global | 7.805 ms | 8.885 ms | 11.6 (6.1 MB) | 14% |
+
+2. The parts' rate. An idle poll's part of 512 KiB takes 0.53 ms (median) against its 0.24 ms
+   of DMA, plus 0.12 ms for the poll: about 1 GB/s, 2.6 ms a 35B expert. A layer's runs (about
+   340 ms) carry about 79 of the 144 experts it needs, as landed (3175 / 40). At the link's
+   0.78 ms an expert they would carry about 265.
+3. Halts seen late. A part in flight when a run halts delays the host: 0.30 against 0.12 ms a
+   run (35B), 0.29 against 0.04 ms (26B), about 0.5 s a prompt each.
+
+The profile also sends experts the prompt never uses. Among a layer's first |used| experts in
+the profile order, 65% are used on the 26B (index order: 58%), so 3523 landed against the 2237
+needed, each one paying the contention. ld-memch's qual image prebuild ran from 08:10:58,
+during both 26B runs. The 26B pool stayed resident in both (13.24 of 13.24 GB, decode reads
+all cached, prefill pool reads 0.01-0.1 s), and the contention table compares the cycles of
+runs with and without parts, which the host's page cache cannot change.
+
+The first event model (on pfcomp's traces) left these costs out and predicted 9.9 s and
+14.1 s. The refit model (`lahsim2.py`, scratchpad) adds them: contention at 0.17 s a GB, the
+part and poll costs, and halts seen at the end of the part in flight. It gives the base runs
+within 0.1-0.7 s and the ahead runs within about 0.65 s:
+- Static orders, at any part size, with or without holding parts back near a run's end, and
+  capped at a layer's expected number of experts: within about 0.5 s of the base, as on the
+  card. A cap saves bytes but loses them again as misses (26B, top 74 of 128: 842 misses).
+- An oracle order, exactly the experts the next layer's rows will use, in first use, with
+  1 MiB parts: 11.9 s for the 35B (-1.9 s) and 15.4 s for the 26B (-1.4 s in the model), each
+  good to about 0.7 s.
+
+What is left needs the next layer's set nearly exactly, before it runs. Only the card can give
+it without host compute: layer j's runs would run layer j + 1's router on their output rows
+and post the ids as a hint for the ahead queue. That is the next step, measured offline first
+(its recall against each layer's union).
+
+`test_layer_ahead_sends_the_next_layers_experts` (test_qwen35_moe.py, ISA) drives the server's
+own `ahead_layer`, with the link's idle time given before each run (polls until none sends; the
+plain simulator polls only while a run waits). It checks the call schedule over two chunks, the
+experts landed, fewer misses than without, and logits and decode bit-exact with token by
+token's.
