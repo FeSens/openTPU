@@ -240,8 +240,10 @@ three prompts (P tokens from p0), prompt runs / today's:
   context. A long context there costs 3-4x the passes of bucket 1 either way (below).
 - **Runs.** Qwen3-0.6B and LFM2.5-230M fit 8 rows (two passes) in one run of today's in
   bucket 1, where a prompt run takes one pass's 4: the same passes, more runs (30 tokens 8 / 5,
-  237 tokens 60 / 31). The host adds 0.5-0.8 ms a run (section 6), about 2 and 20 ms; today's
-  route spent 0.6-0.9 s compiling on short prompts (section 1).
+  237 tokens 60 / 31). On the card that costs Qwen3-0.6B's 236-token prompt 7% more device
+  cycles and 2.2% of its TTFT (below). Next: R_max in fit_chunk's sizes (one pass, then whole
+  passes up to the image's rows where the L program fits; Qwen3.5 stays at one pass, its MTP
+  runs take R_max too), and covers() on the literal rule (R_max >= today's rows).
 - **A bucket's end.** A run-time run's rows stay in its bucket, so a prompt that crosses one
   can take one pass more than today's (3 tokens from 255: runs of 1 and 2 rows, today's one of
   3), at most one per bucket crossed.
@@ -253,6 +255,49 @@ Today's rows are checked only where R_max is below one pass's rows (MCOLS, the i
 cache's end): compile_rows of R_max + 1 rows at the bucket's first run-time position, which
 must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
+
+**Card** (fmvf 542fc43a, 2026-10-02 11:04-11:13 opentpu, E2B 11:16-11:28; tree ce0f3b1, cap
+1024; one engine a model: prompt runs on with a new program cache, off, on again; the qual
+prompt (A0), PROMPTS[7] (B0) and a next turn of 13 tokens at the run-time position after B0's
+reply (B1); up to 32 tokens each on the device loop; tokens equal in every phase for every
+model, and equal to the ISA simulator's prompt runs for Qwen3-0.6B, LFM2.5-230M, LFM2-2.6B and
+E2B, whose references fit omarchy's memory). TTFT seconds, on (cold) / off / on (warm), and the
+prefill's runs and device Mcycles (on / off):
+
+| model | prompt | on cold | off | on warm | runs | Mcycles |
+|---|---|---|---|---|---|---|
+| Qwen3-0.6B int8 | A0 24 | 0.482 | 0.377 | 0.236 | 6 / 3 | 30.5 / 27.6 |
+| | B0 236 | 2.199 | 2.150 | 2.197 | 59 / 30 | 288.0 / 268.7 |
+| | B1 13 at 267 | 0.392 | 0.306 | 0.165 | 4 / 3 | 21.4 / 20.2 |
+| LFM2.5-230M int8 | A0 21 | 0.561 | 0.417 | 0.079 | 6 / 4 | 9.9 / 9.5 |
+| | B0 238 | 0.775 | 1.854 | 0.769 | 60 / 31 | 96.5 / 92.7 |
+| | B1 13 at 269 | 0.355 | 0.377 | 0.057 | 4 / 3 | 7.0 / 6.8 |
+| LFM2-2.6B mix | A0 21 | 1.856 | 1.661 | 0.842 | 6 / 6 | 111.3 / 110.5 |
+| | B0 238 | 8.936 | 12.052 | 8.948 | 60 / 78 | 1185.5 / 1520.0 |
+| | B1 13 at 269 | 1.990 | 1.393 | 0.692 | 5 / 5 | 91.5 / 90.8 |
+| SmolLM3-3B mix | A0 80 | 4.029 | 3.967 | 3.633 | 20 / 20 | 482.4 / 474.2 |
+| | B0 291 | 13.633 | 13.228 | 13.235 | 73 / 73 | 1757.7 / 1737.4 |
+| | B1 13 at 322 | 0.903 | 0.886 | 0.713 | 4 / 4 | 94.3 / 93.3 |
+| Phi-4-mini mix | A0 15 | 2.069 | 1.708 | 1.065 | 5 / 5 | 141.2 / 138.9 |
+| | B0 227 | 15.539 | 15.566 | 15.548 | 76 / 76 | 2066.2 / 2044.5 |
+| | B1 13 at 258 | 2.111 | 1.282 | 1.020 | 5 / 5 | 135.4 / 134.1 |
+| Gemma 4 E2B int8 | A0 13 | 4.211 | 0.816 | 0.577 | 4 / 4 | 76.2 / 70.2 |
+| | B0 224 | 7.960 | 7.691 | 7.962 | 56 / 56 | 1056.2 / 989.3 |
+| | B1 13 at 224 | 0.576 | 0.747 | 0.576 | 4 / 4 | 76.2 / 75.6 |
+
+- Warm, prompt runs take short prompts and a chat's next turn 1.3-6.6x faster, and long ones
+  as fast (SmolLM3, Phi) or faster: LFM2-2.6B's 238 tokens 12.05 -> 8.95 s, where today's
+  runs took 3 rows (78 runs) and the prompt runs 4 (60).
+- Cold (the first prompt of a new program cache) the programs are compiled once: +0.2-1.3 s
+  (E2B's first prompt 3.6 s).
+- Slower on: Qwen3-0.6B's B0, +2.2% (the 8-row runs above), and E2B's B0, +3.5% (below).
+- **Open: more device cycles at the same runs**, +0.7-1.2% on LFM2-2.6B, SmolLM3 and Phi, and
+  on E2B by position: +8.5% for rows at 0-12 (A0), +6.8% at 0-223 (B0), +0.8% at 224-236 (B1).
+  A guess, not measured: a run-time row attends over its whole bucket (256 positions) with a
+  run-time mask, where a compile-time row attends over exactly its p + 1 positions; the
+  position dependence fits it, and E2B spends the largest share in attention. A co-sim or an
+  ISA instruction count should confirm it before a fix is written (e.g. attention over the
+  blocks up to the run's last row, a run-time block count).
 
 **Later: a looped attention.** A run's program grows with its rows times the blocks its rows
 attend over, because attention is unrolled per row, KV head and block. In bucket 16 (blocks
