@@ -20,12 +20,14 @@ In short:
   layer layouts (Qwen3.5: one) and the LM head in int8. The default is the fastest mix at least
   1 SE under its bar; a dKL gap under 2 SE is a tie, which goes to the mix with fewer runs.
   Finals are at 2000 tokens.
-- **Choices.** Phi-4-mini: `mlp@4-27=fp4`, 28% faster than int8 for dKL 2.5% (fp4: 64% for
+- **Choices.** Phi-4-mini: `mlp@4-29=fp4`, 31% faster than int8 for dKL 2.8% (fp4: 64% for
   16%). Qwen3.5-4B: `delta=fp4,mlp=fp4` (the attention layers int8), 56% for 5.3% (fp4: 64% for
   6.5%, on its bar). SmolLM3-3B: `gateup@9-35=fp4`, 23% for 2.1%. LFM2-2.6B:
-  `conv=fp4,mlp=fp4` (the attention layers int8), 77% for 7.4% (fp4: 82% for 11.8%).
-  Qwen3.5-2B: none qualifies. On the card the mixes run at the predicted speed (within 0.1%),
-  and their images give the ISA simulator's tokens (Phi's and SmolLM3's through a proxy).
+  `conv=fp4,mlp=fp4` (the attention layers int8), 77% for 7.4% (fp4: 82% for 11.8%). Gemma 4
+  E2B: `attn@15-34=fp4,mlp@15-34=fp4` (the KV-shared layers), 35% for 3.3% against int8 with
+  the int8 PLE table (fp4 layers: 61% for about 21%). Qwen3.5-2B: none qualifies. On the card
+  the mixes run at the predicted speed (within 0.1%), and their images give the ISA simulator's
+  tokens (Phi's and SmolLM3's through a proxy).
 
 ## Formats strings
 
@@ -59,12 +61,18 @@ bucket 1 / 16:
 | Qwen3.5-2B | 2308 / 2461 (1 run) | 4484 / 4789 (`mlp@0-11`, 2 runs) |
 | LFM2-2.6B | 1806 / 3510 (5 runs) | 1974 / 3678 (`mlp@7-20`, 5 runs), 2358 / 4630 (`mlp@0-14`, 8 runs) |
 
+Gemma 4 E2B, resident decode at bucket 16: 1769 instructions in int8, 1735 with
+`attn@15-34=fp4,mlp@15-34=fp4` (2 runs), 2418 with a boundary at layer 10 too (4 runs).
+
 - **Qwen3 and the Llama-likes** (SmolLM3, Phi-4-mini): a body is one layer, so two layouts in
   up to three runs fit.
 - **Qwen3.5**: a body is four layers (three DeltaNet, one attention), about 1,900-2,300
   instructions, so a second run does not fit: one layout only.
 - **LFM2**: the plan already has five runs (`lfm2.plan`); a second layout fits where its
   boundary falls on a run boundary, and adds runs elsewhere.
+- **Gemma 4**: a body per (attention kind, own K / V, MLP width, formats): E2B has four (sliding
+  and global, in the layers with their own K / V and in the KV-shared ones from 15) in two runs.
+  A format boundary at 15 adds none; one at 10 adds two bodies and two runs, which still fit.
 
 In DRAM each layer block has its kind's size in its formats group (`Image.loc`,
 `Image._off`), so an fp4 block takes fp4's bytes. The Qwen3.5-4B image fits the card's 4 GiB
@@ -87,15 +95,16 @@ from int8's.
   their bars. Mixes are ranked by dKL, and the finals run 2000 tokens.
 - `scan MODEL OUT.json`: pass 1 runs float, int8, fp4 (int8 head), each kind in fp4, each kind
   in each quarter of the layers, and the head; pass 2 every set of whole kinds (and the head),
-  and the quarter groups added in order of NLL lost per byte saved. `ppl MODEL FORMATS...
-  --tokens 2000`: the given strings.
+  and the quarter groups added in order of dKL per byte saved (the scans before Gemma 4's: of
+  NLL). `ppl MODEL FORMATS... --tokens 2000`: the given strings.
 
 ## The rule
 
 Decode time per token is linear in the weight bytes b: T(b) = T4 + k (b - B4) cycles at 133.33
 MHz, with T4 and B4 the card's fp4 (int8 head) decode and its bytes, and k from the card's
 int8 and fp4 pair of the same model (Phi-4-mini 8.13 K cycles per MB) or family (Qwen3.5: the
-2B's, 8.15; the 4B's int8 image does not fit the card). The gain is T(int8) / T(b) - 1.
+2B's, 8.15; the 4B's int8 image does not fit the card; Gemma 4 E2B: its fp4 layers with the
+int8 and the fp4 head, 8.11). The gain is T(int8) / T(b) - 1.
 
 A mix qualifies if dKL% <= 0.1 x gain%: 0.1% of perplexity for each 1% of speed. Among the
 qualifying mixes with at most two layouts (Qwen3.5: one) the fastest wins; a dKL gap under 2
@@ -117,15 +126,23 @@ quarters cheap (+0.3% each). Finals, 2000 tokens:
 | Formats | Layouts / runs | dKL % (SE) | Perplexity vs int8 % (SE) | MiB | tok/s (est.) | Gain | Bar |
 |:--|:-:|--:|--:|--:|--:|--:|--:|
 | `mlp@2-29=fp4` | 2 / 3 | +9.48 (0.59) | +8.76 (1.09) | 2764 | 5.37 | +34.6% | 3.46 |
-| **`mlp@4-27=fp4`** | 2 / 3 | **+2.54 (0.15)** | +1.72 (0.68) | 2908 | 5.12 | +28.3% | 2.83 |
+| `mlp@4-31=fp4` | 2 / 2 | +8.26 (1.46) | +8.91 (1.24) | 2764 | 5.37 | +34.6% | 3.46 |
+| `mlp@4-30=fp4` | 2 / 3 | +5.66 (1.42) | +5.86 (1.11) | 2800 | 5.31 | +33.0% | 3.30 |
+| `mlp@3-28=fp4` | 2 / 3 | +9.24 (0.57) | +8.98 (1.11) | 2836 | 5.24 | +31.4% | 3.14 |
+| **`mlp@4-29=fp4`** | 2 / 3 | **+2.81 (0.14)** | +2.19 (0.70) | 2836 | 5.24 | +31.4% | 3.14 |
+| `mlp@4-28=fp4` | 2 / 3 | +2.63 (0.16) | +1.95 (0.69) | 2872 | 5.18 | +29.8% | 2.98 |
+| `mlp@3-27=fp4` | 2 / 3 | +9.26 (0.58) | +8.83 (1.11) | 2872 | 5.18 | +29.8% | 2.98 |
+| `mlp@4-27=fp4` | 2 / 3 | +2.54 (0.15) | +1.72 (0.68) | 2908 | 5.12 | +28.3% | 2.83 |
 | `mlp@6-25=fp4` | 2 / 3 | +1.91 (0.13) | +1.60 (0.59) | 3052 | 4.89 | +22.5% | 2.25 |
 | `gateup@0-27=fp4` | 2 / 2 | +1.71 (0.15) | +0.83 (0.64) | 3100 | 4.82 | +20.7% | 2.07 |
 | `gateup@0-23=fp4` | 2 / 2 | +1.57 (0.15) | +0.61 (0.61) | 3196 | 4.68 | +17.2% | 1.72 |
 | `mlp@8-23=fp4` | 2 / 3 | +1.53 (0.12) | +1.31 (0.52) | 3196 | 4.68 | +17.2% | 1.72 |
 | `attn=fp4` | 1 / 1 | +3.93 (0.28) | +2.56 (0.77) | 3388 | 4.42 | +10.9% | 1.09 |
 
-`mlp@4-27=fp4` is the fastest that qualifies (1.9 SE under its bar). Two more layers at each
-end (2-3 and 28-29) add 6.9 points of dKL.
+`mlp@4-29=fp4` is the fastest that qualifies (2.3 SE under its bar). Layer 3's MLP adds 6.7
+points of dKL, layers 28 and 29 together 0.27, layer 30 2.85 and layer 31 2.6 more (their SE
+1.4: a few tokens). Until the probe of these edges the default was `mlp@4-27=fp4` (5.20 tok/s
+on the card, below); the two run the same programs (three runs, generate 1262 / 2978).
 
 ### Qwen3.5-4B
 
@@ -199,6 +216,47 @@ and the program size (generate 1806 / 3510). Finals, 2000 tokens:
 The default is `conv=fp4,mlp=fp4`, one layout, 1.2 SE under its bar: everything but the
 attention layers in fp4, 3% slower than fp4 for 4.1 points less dKL (900 tokens: +7.73%
 against +11.80%).
+
+### Gemma 4 E2B
+
+`formats_scan.py`'s Gemma 4 family runs `tools/gemma4_quant_eval.py`'s emulation a variant at a
+time up to the head's input (its KV-shared layers read earlier layers' K / V), then one pass
+over the soft-capped head for every variant. The kinds are attn, gateup, down and ple (a
+layer's PLE gate and projection; unranged, the PLE model projection too), the groups the layers
+with their own K / V and the KV-shared ones, each halved at a multiple of five (0-9, 10-14,
+15-24, 25-34). The card point is build B's fp4 layers with the int8 head ([gemma4.md](gemma4.md):
+12.611 M cycles, 1475 MB a token; the fp4 head 10.981 M for 201 MB less, k 8.11). int8 layers
+read 2351 MB a token, a projected 6.59 tok/s.
+
+**The PLE table.** int8 layers fit the card only with the fp4 PLE table (the image tries the
+int8 table on the card, then fp4 on the card, then int8 on the host), and that table is most
+of int8's error: at 2000 tokens int8 with the int8 table on the host (`OTPU_PLE_HOST=1`) has
+perplexity 18.62 (float 18.60), with the fp4 table 19.15, dKL +2.42% (SE 0.08) for the 0.56% of
+decode time the host table costs. The mixes are measured against int8 with the int8 table (on
+the host, 6.56 tok/s); their own images keep it on the card. A variant's table in the scan is
+the one its image takes at 2048 tokens.
+
+At 900 tokens fp4 layers (int8 head) are dKL +18.7% against int8 with the fp4 table (about +21%
+against the int8 table) for +60% (bar 6.0). Per byte, the KV-shared layers' attention and MLP
+cost least (down@15-24 +0.32%, gate / up@15-24 +0.71%, attention@15-24 and @25-34 +0.36% and
++0.32%); the attention of layers 10-14 (+5.5%) and the PLE kinds (ple@10-14 +3.1%) the most.
+Finals, 2000 tokens:
+
+| Formats | Runs | dKL % (SE) | Perplexity vs int8 % (SE) | MB | tok/s (est.) | Gain | Bar | Margin |
+|:--|:-:|--:|--:|--:|--:|--:|--:|--:|
+| **`attn@15-34=fp4,mlp@15-34=fp4`** | 2 | **+3.34 (0.08)** | +3.90 (0.67) | 1709 | 8.88 | +35.4% | 3.54 | 2.5 SE |
+| `mlp=fp4` | 2 | +5.90 (0.14) | +5.61 (0.94) | 1572 | 9.59 | +46.2% | 4.62 | -9.2 SE |
+| `attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | +6.01 (0.14) | +6.23 (0.93) | 1520 | 9.89 | +50.8% | 5.08 | -6.6 SE |
+| `attn@15-34=fp4,mlp=fp4` | 2 | +7.01 (0.16) | +7.56 (1.01) | 1497 | 10.03 | +53.0% | 5.30 | -10.8 SE |
+| `attn@0-9=fp4,attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | +7.41 (0.20) | +8.54 (1.00) | 1478 | 10.15 | +54.7% | 5.47 | -9.7 SE |
+| `attn@0-9=fp4,attn@15-34=fp4,mlp=fp4` | 4 | +8.57 (0.23) | +9.69 (1.08) | 1454 | 10.30 | +57.0% | 5.70 | -12.6 SE |
+
+The default is `attn@15-34=fp4,mlp@15-34=fp4`, 2.5 SE under its bar: the KV-shared layers'
+attention and MLP in fp4, the layers with their own K / V and every PLE weight in int8. Its
+boundary is the own / shared one, which already splits the layer loops, so it runs int8's two
+runs, and its image (3.94 GiB at 4096 tokens) keeps the int8 PLE table on the card. Against int8
+with the fp4 table the faster mixes would qualify (`attn@15-34=fp4,mlp=fp4` +4.59% for +52.1%,
+4.1 SE under); counted against the int8 table they are 7-13 SE over.
 
 ## On the card
 

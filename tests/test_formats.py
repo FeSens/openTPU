@@ -48,8 +48,8 @@ def test_named_mix(monkeypatch):
 def test_mixes():
     """The recommended mixes (docs/formats.md): found by their config, the head int8, at most
     two layer layouts (Qwen3.5: one, its second run does not fit the IMEM)."""
-    from opentpu.llm import lfm2, qwen3, qwen35
-    fam = {"qwen3_5_text": (qwen35, 1), "lfm2": (lfm2, 2)}
+    from opentpu.llm import gemma4, lfm2, qwen3, qwen35
+    fam = {"qwen3_5_text": (qwen35, 1), "lfm2": (lfm2, 2), "gemma4_text": (gemma4, 2)}
     assert FM.MIXES
     for (mt, layers, hidden, vocab), mix in FM.MIXES.items():
         assert FM.mix_for({"model_type": mt, "num_hidden_layers": layers, "hidden_size": hidden,

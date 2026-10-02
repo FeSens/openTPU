@@ -472,10 +472,10 @@ otpu-chat --backend board --model smollm3 --wformat int8   # the weights' format
 ```
 
 `--wformat auto`, the default, takes the model's recommended mix of int8 and fp4 layers where it
-has one (Phi-4-mini, SmolLM3-3B, LFM2-2.6B, Qwen3.5-4B: [formats.md](formats.md)) and int8
-elsewhere; `int8`, `fp4` and `mix` choose explicitly, and `--head-format` sets the LM head's. The
-tool prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head int8`); the
-interface's header and `/stats` panel show them, and otpu-smi's process line.
+has one (Phi-4-mini, SmolLM3-3B, LFM2-2.6B, Qwen3.5-4B, Gemma 4 E2B: [formats.md](formats.md))
+and int8 elsewhere; `int8`, `fp4` and `mix` choose explicitly, and `--head-format` sets the LM
+head's. The tool prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head
+int8`); the interface's header and `/stats` panel show them, and otpu-smi's process line.
 
 The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
 0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the

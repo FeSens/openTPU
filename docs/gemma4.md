@@ -189,7 +189,14 @@ Over the whole text, the next-token NLL of the soft-capped logits at its 899 pos
 
 As on the other models ([quant.md](quant.md)), the int8 head is the default: the fp4 head costs 4%
 in perplexity for 14% of decode speed. Attention in int8 would recover a third of the 4-bit
-loss for 9% more bytes; the image has one format for all layers today.
+loss for 9% more bytes.
+
+Per layer ([formats.md](formats.md), 2000 tokens of docs/isa.md): the recommended mix
+(`wformat="mix"`, otpu-chat's default) is `attn@15-34=fp4,mlp@15-34=fp4`, the KV-shared layers'
+attention and MLP in fp4, an estimated 35% faster than int8 (8.88 tok/s) for dKL +3.3%; fp4
+layers are about +21%. int8 layers fit the card only beside the fp4 PLE table, which costs dKL
++2.4% against the int8 table on the host (`OTPU_PLE_HOST=1`, 0.56% slower); the mix's image
+keeps the int8 table on the card.
 
 ## 26B-A4B: accuracy
 

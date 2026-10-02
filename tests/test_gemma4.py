@@ -429,6 +429,19 @@ def test_one_sequence_one_slice(tiny):
         spec.image(design_config(), 256)
 
 
+def test_named_mix(tiny, monkeypatch):
+    """wformat "mix": int8 with Spec.mix (formats.named), in the image and emulated_logits."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, W, spec = tiny
+    spec = replace(spec, mix="attn@6-8=fp4,mlp@6-8=fp4")
+    img = spec.image(_cfg(), 1024, wformat="mix")
+    assert img.wformat == "int8" and img.formats == spec.mix and img.head_format == "int8"
+    assert img.lf[5] == ("int8",) * 4 and img.lf[6] == ("fp4", "fp4", "fp4", "int8")
+    toks = [5, 6, 7, 8, 9]
+    assert np.array_equal(G.emulated_logits(spec, W, toks, wformat="mix"),
+                          G.emulated_logits(spec, W, toks, formats=spec.mix))
+
+
 def _tool(name):
     import importlib.util
     s = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent.parent /
@@ -495,7 +508,7 @@ def test_formats_scan(tiny, tmp_path, monkeypatch):
 @pytest.mark.skipif(not (REAL / "config.json").exists(), reason="no models/gemma-4-E2B")
 def test_real_model_programs_fit():
     """Gemma 4 E2B on the board: fp4 layers, int8 LM head and PLE fit 4 GiB at 4096 tokens;
-    the resident decode programs fit IMEM and take 6 argument words."""
+    the resident decode programs fit IMEM and take 6 argument words. Its recommended mix too."""
     spec = G.Spec.from_hf(REAL)
     img = spec.image(board_config(), 4096, 1, 8, "fp4", "int8", lookup=True)
     assert img.ple_format == "int8" and img.nbytes < 1 << 32
@@ -506,6 +519,14 @@ def test_real_model_programs_fit():
         assert len(ra) == 6
     with pytest.raises(CompileError, match="TMEM"):
         img.compile_rows([(0, p) for p in range(8)], [7])
+    # the recommended mix (docs/formats.md): the shared layers' attention and MLP in fp4, the
+    # int8 PLE table on the card beside them; the layer loops int8's (the split is at 15)
+    mix = spec.image(board_config(), 4096, 1, 8, "mix", lookup=True)
+    assert spec.mix == "attn@15-34=fp4,mlp@15-34=fp4" and mix.formats == spec.mix
+    assert (mix.ple_format, mix.ple_host, mix.head_format) == ("int8", False, "int8")
+    assert len(mix.runs) == len(img.runs) == 2 and mix.nbytes < 1 << 32
+    progs, _ = mix.compile_decode(16, 15 * 256)
+    assert 8 * len(progs[0]) <= board_config().IMEM_WORDS
 
 
 @pytest.mark.skipif(not (REAL_E4B / "config.json").exists(), reason="no models/gemma-4-E4B")
