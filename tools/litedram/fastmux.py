@@ -166,6 +166,9 @@ class Multiplexer(Module, AutoCSR):
         commands = [nop, choose_cmd.cmd, choose_req.cmd, refresher.cmd]
         steerer = _Steerer(commands, dfi)
         self.submodules += steerer
+        if hasattr(refresher, "idle"):        # idlerefresh.py's: no bank machine has a request
+            self.comb += refresher.idle.eq(~reduce(or_, [bm.req.valid | bm.req.lock
+                                                         for bm in bank_machines]))
 
         # tRRD timing (Row to Row delay) -----------------------------------------------------------
         self.submodules.trrdcon = trrdcon = tXXDController(settings.timing.tRRD)

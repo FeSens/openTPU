@@ -2081,6 +2081,67 @@ gave 0 FAIL lines and 44 PASS. The decode counters land on the predictions:
   - dma_bench: H2C 2.31-2.32 GB/s.
   - The selftests.
 
+### Decode after the fused build: the controller's share (2026-10-02)
+
+With VPU-first and fastmux in (production 542fc43a), decode is bound by the controller. The same
+whole token on the fused RTL with the controller's breakdown (`OTPU_LDC_BREAK=1
+tools/decode_gaps.py ...`), % of channel 0's cycles from its first command to its last:
+
+| | Qwen3 | LFM2 | Qwen3.5 |
+|---|---|---|---|
+| cycles per token | 3,696,899 | 1,355,035 | 4,765,281 |
+| column commands (data) | 94.0 | 94.6 | 94.4 |
+| refresh | 2.7 | 2.7 | 2.7 |
+| rows opening and closing, a bank's timers | 1.65 | 1.17 | 1.22 |
+| the multiplexer | 0.82 | 0.52 | 0.85 |
+| the crossbar | 0.23 | 0.22 | 0.26 |
+| nothing asked | 0.58 | 0.81 | 0.60 |
+| of which in gaps of 24+ cycles (room for a refresh) | 0.48 | 0.75 | 0.57 |
+
+- **The controller is busy 99.2-99.4% of the token.** VPU-first took "nothing asked" from 3.6% to
+  0.6% on Qwen3. The core still leaves its ports idle in 3.2-3.7% of 16-cycle windows, but the
+  controller's queues absorb those windows. So a change in the core cannot shorten decode any
+  more: the softmax's remainder, the QACTs, two writes per bank, the window and the FIFO all drop
+  out.
+- **Refresh is the largest share and structural.** DDR3 refreshes a whole rank (no per-bank
+  refresh), and both channels already refresh at the same time. A model with no refresh
+  (`gen_ldc.py --no-refresh`, a bound only) takes -2.01 / -2.24 / -2.40%.
+
+**Refresh in the idle time** (`tools/litedram/idlerefresh.py`, `gen_ldc.py --idle-refresh
+AHEAD,BEHIND,BURST,MIN_IDLE`):
+- **How it works:** it refreshes once when no bank machine has had a request for MIN_IDLE
+  cycles, and when the balance is full it refreshes BURST times back to back.
+- **DDR3's limits:** it keeps the balance in a credit, the tREFI ticks minus the refreshes done,
+  within DDR3's limits: at most 8 refreshes owed and 8 done ahead.
+- **Checking the limits:** the BRK line counts the refresh commands on the DFI and the balance's
+  extremes (`refs`, `owe`), as a check of those limits.
+
+With 8, 8, 2, 4:
+
+| | Qwen3 | LFM2 | Qwen3.5 |
+|---|---|---|---|
+| cycles per token | 3,688,542 | 1,351,317 | 4,746,662 |
+| against LiteDRAM's refresher (postponing 2) | -0.23% | -0.27% | -0.39% |
+| nothing asked, cycles (from) | 3,928 (21,462) | 6,979 (10,986) | 12,881 (28,635) |
+
+- **The gain is the idle time it fills:** most of it already, so another setting would gain
+  little.
+- **The balance reaches DDR3's limits:** LFM2's ran from -8 to +8, so busy stretches do postpone
+  all 8. LiteDRAM's refresher (postponing 2) stays within 0 to 2. A version for the card would
+  keep a margin (BEHIND 7).
+- **Parked:** -0.2 to -0.4% is under the 1% that pays for a build, and it changes the refresh
+  timing the card's DRAM sees. It could ride along with a build that happens anyway, after a
+  card check of its own (BIST and the ECC counters through a warm soak).
+
+**What else is left in the controller:**
+- **Rows:** at most about 0.3%, the reopens two streams cause in one bank (21% of the row changes
+  on Qwen3).
+- **The multiplexer:** 0.5-0.85% after fastmux, mostly the turnarounds the PHY needs.
+- **The crossbar:** 0.2%.
+
+Together these are about 1% and none reaches it alone. Decode's remaining levers are its bytes
+per token: the formats, the KV cache and the LM head.
+
 ### The core clock at DDR3-1066: the co-simulated grid
 
 Decode, 4-bit layers, int8 head, pos 544, one port per channel (the production controller);
