@@ -583,9 +583,10 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
 
 
 def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
-    """tools/offload/moe_card.py --layer-major 2 --prefill-trace (ISA): the prompt's timeline
-    holds each run (the embed runs, the layer runs by key, the head last) and each request with
-    its ids and misses, as many as the result's prefill_time and prefill_requests count."""
+    """tools/offload/moe_card.py --layer-major 2 --layer-ahead index --prefill-trace (ISA): the
+    prompt's timeline holds each run (the embed runs, the layer runs by key, the head last) and
+    each request with its ids and misses, as many as the result's prefill_time and
+    prefill_requests count; the layer ahead called once a MoE layer."""
     import json
     import pickle
     import runpy
@@ -608,7 +609,7 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [
         "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
         "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
-        "--prefill-trace", str(tr), "--out", str(out)])
+        "--layer-ahead", "index", "--prefill-trace", str(tr), "--out", str(out)])
     runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
                    run_name="__main__")
     r, t = json.loads(out.read_text()), json.loads(tr.read_text())
@@ -621,3 +622,4 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
     assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
     assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])
+    assert r["layer_ahead"] == "index" and pt["ahead"]["calls"] == len(KINDS)  # (one chunk)
