@@ -240,20 +240,20 @@ three prompts (P tokens from p0), prompt runs / today's:
   context. A long context there costs 3-4x the passes of bucket 1 either way (below).
 - **Runs.** Qwen3-0.6B and LFM2.5-230M fit 8 rows (two passes) in one run of today's in
   bucket 1, where a prompt run takes one pass's 4: the same passes, more runs (30 tokens 8 / 5,
-  237 tokens 60 / 31). On the card that costs Qwen3-0.6B's 236-token prompt 7% more device
-  cycles and 2.2% of its TTFT (below). Next: R_max in fit_chunk's sizes (one pass, then whole
-  passes up to the image's rows where the L program fits; Qwen3.5 stays at one pass, its MTP
-  runs take R_max too), and covers() on the literal rule (R_max >= today's rows).
+  237 tokens 60 / 31). On the card that cost Qwen3-0.6B's 236-token prompt 7% more device
+  cycles and 2.2% of its TTFT (below), so R_max now takes fit_chunk's sizes: one pass, then
+  whole passes up to the image's rows where the L program fits (Qwen3.5 stays at one pass: its
+  MTP runs take R_max too, and its real layouts fit 4 rows at most).
 - **A bucket's end.** A run-time run's rows stay in its bucket, so a prompt that crosses one
   can take one pass more than today's (3 tokens from 255: runs of 1 and 2 rows, today's one of
   3), at most one per bucket crossed.
 
 **The rule (prefill.covers).** A prompt takes prompt runs when in every bucket it touches
-R_max(bucket) >= min(today's rows there, MCOLS), so no bucket streams the weights more often;
-otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route for the whole prompt.
-Today's rows are checked only where R_max is below one pass's rows (MCOLS, the image's rows, the
-cache's end): compile_rows of R_max + 1 rows at the bucket's first run-time position, which
-must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
+R_max(bucket) >= today's rows there (Qwen3.5: up to one pass), so no bucket streams the weights
+or runs more often; otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route
+for the whole prompt. Today's rows are checked only where R_max is below the largest size (the
+image's rows, the cache's end): compile_rows of the next larger size at the bucket's first
+run-time position, which must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
 
 **Card** (fmvf 542fc43a, 2026-10-02 11:04-11:13 opentpu, E2B 11:16-11:28; tree ce0f3b1, cap
@@ -290,7 +290,8 @@ prefill's runs and device Mcycles (on / off):
   runs took 3 rows (78 runs) and the prompt runs 4 (60).
 - Cold (the first prompt of a new program cache) the programs are compiled once: +0.2-1.3 s
   (E2B's first prompt 3.6 s).
-- Slower on: Qwen3-0.6B's B0, +2.2% (the 8-row runs above), and E2B's B0, +3.5% (below).
+- Slower on: Qwen3-0.6B's B0, +2.2% (the 8-row runs above, since taken by R_max: the card's
+  recheck pending), and E2B's B0, +3.5% (below).
 - **Open: more device cycles at the same runs**, +0.7-1.2% on LFM2-2.6B, SmolLM3 and Phi, and
   on E2B by position: +8.5% for rows at 0-12 (A0), +6.8% at 0-223 (B0), +0.8% at 224-236 (B1).
   A guess, not measured: a run-time row attends over its whole bucket (256 positions) with a

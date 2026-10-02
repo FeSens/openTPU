@@ -33,7 +33,7 @@ def test_prompt_runs_are_compile_time_runs(tiny, wf, host, P1, P2, monkeypatch):
     assert PF.supported(a) and a.image.ple_host == (host == "1")
     got = [a.prefill(p1), a.prefill(p2)]
     R_max = lambda blocks: PF.r_max(a, blocks)
-    assert R_max(1) == min(a.cfg.MCOLS, a.image.rows)
+    assert R_max(1) == a.image.rows             # two passes (MCOLS 4): fit_chunk's 8 rows
     b = Engine(spec, W, cap=1024, cfg=_cfg(), resident=True, **kw)
     want = [_static(b, p1, R_max), _static(b, p2, R_max)]
     assert all(np.array_equal(x, y) for x, y in zip(got, want))

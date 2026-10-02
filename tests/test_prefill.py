@@ -64,6 +64,8 @@ def _model(case):
         if case == "qwen3-emb8":
             spec = dataclasses.replace(spec, embed="int8")
         S = 2 if case.endswith("-design") else 1
+        if case.endswith("-board"):         # MCOLS 4: runs of two passes (8 rows)
+            return W, spec, CFG, {}
         return W, spec, device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S), {}
     if case == "kh16":
         _, W, spec = _tiny_model(16, 16, init=0.2)
@@ -85,6 +87,7 @@ def _model(case):
     ("qwen3", 250, 20),     # Qwen3 (qwen3_rows), one slice
     ("qwen3-design", 37, 30),
     ("qwen3-emb8", 37, 30),     # the int8 embedding (Llama-likes: SmolLM3, Phi-4-mini)
+    ("qwen3-board", 250, 20),   # the board's MXU (MCOLS 4): runs of 8 rows, two passes
     ("lfm2", 250, 20),
     ("lfm2-design", 37, 30),
 ])
@@ -100,7 +103,8 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     assert PF.supported(a)
     got = [a.prefill(p1), a.prefill(p2)]
     rm = a._prompt_rmax                      # the tiny models: every bucket's the most rows
-    assert set(rm.values()) == {(min(cfg.MCOLS, a.image.rows), True)}
+    full = a.image.rows if not hasattr(spec, "mtp") else min(cfg.MCOLS, a.image.rows)
+    assert set(rm.values()) == {(full, True)}
     R_max = lambda blocks: rm[blocks][0]
     b = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     want = [_static(b, p1, R_max), _static(b, p2, R_max)]

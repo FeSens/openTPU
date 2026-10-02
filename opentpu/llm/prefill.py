@@ -10,8 +10,9 @@ first run) are at compile-time positions, cached the same way.
 
 The runs' split depends only on the first position, the prompt's length, R_max and the attention
 block: R_max rows a run, cut where a run would cross a bucket's end (a run-time run's rows stay in
-its bucket). R_max, per bucket: the most rows of one MXU pass (MCOLS, at most the image's rows)
-whose L program in that bucket compiles and fits IMEM (a later bucket's attention makes a longer
+its bucket). R_max, per bucket: the most rows in fit_chunk's sizes (one MXU pass of MCOLS rows,
+then whole passes, at most the image's rows; Qwen3.5: one pass) whose L program in that bucket
+compiles and fits IMEM (a later bucket's attention makes a longer
 program: Phi-4-mini's mix takes 3 rows in bucket 1, 1 in bucket 16). Plain and MTP engines of a
 model take the same split, so their logits are the same bit for bit. Where today's prefill
 (compile_rows) would fit more rows in a bucket than its prompt run, a prompt that reaches the
@@ -107,10 +108,10 @@ def _prepared(eng, what, blocks: int, progs, ra):
 
 
 def r_max(eng, blocks: int = 1) -> int:
-    """The most rows of a run in bucket `blocks`: one MXU pass (MCOLS) at most, the image's
-    rows at most, and the bucket's (plain) L program compiled and fitting IMEM (kept by the
-    engine). MTP's runs take the same R_max (their programs must fit it), so plain and MTP
-    prefills of a model split alike. With the engine's program cache the answer is kept there
+    """The most rows of a run in bucket `blocks`: fit_chunk's sizes (one MXU pass, then whole
+    passes) up to the image's rows (Qwen3.5: one pass), the bucket's (plain) L program
+    compiled and fitting IMEM (kept by the engine). MTP's runs take the same R_max (their
+    programs must fit it), so plain and MTP prefills of a model split alike. With the engine's program cache the answer is kept there
     too (progcache.fact), so a new process does not try the larger R again (the 4B's R = 4,
     traced until TMEM runs out)."""
     return _fit(eng, blocks)[0]
@@ -118,9 +119,9 @@ def r_max(eng, blocks: int = 1) -> int:
 
 def covers(eng, p0: int, P: int) -> bool:
     """Prompt runs take the positions [p0, P): in every bucket they touch a run takes today's
-    rows (compile_rows, fit_chunk's) up to one MXU pass, so they stream no weight more often
-    (docs/prefill.md 7); else Engine.prefill_chunks and MTPDecoder.prefill take today's
-    route for the prompt."""
+    rows (compile_rows, fit_chunk's; Qwen3.5's up to one MXU pass), so they stream no weight
+    more often and run no more often (docs/prefill.md 7); else Engine.prefill_chunks and
+    MTPDecoder.prefill take today's route for the prompt."""
     P = min(P, eng.cap)                 # (past the cache: the route's own error)
     return all(_fit(eng, b)[1] for b in range(p0 // eng.block + 1, (P - 1) // eng.block + 2))
 
@@ -138,18 +139,26 @@ def _fit(eng, blocks: int):
 
 
 def _probe(eng, blocks: int) -> list:
-    """[R_max, covered] at the bucket's first run-time position: R_max from one pass's rows
-    down; below them, covered when compile_rows does not fit R_max + 1 rows there either (a
+    """[R_max, covered] at the bucket's first run-time position: R_max the largest of
+    fit_chunk's run sizes (up to MCOLS rows, then whole passes of MCOLS up to the image's rows;
+    Qwen3.5's, whose MTP runs take R_max too, one pass at most) whose L program fits; covered
+    when compile_rows (today's prefill) does not fit the next larger size there either (a
     prompt program larger than today's would run fewer rows)."""
-    img, block = eng.image, eng.block
+    from .qwen3 import _whole_passes
+    img, block, mc = eng.image, eng.block, eng.image.cfg.MCOLS
     p = max((blocks - 1) * block, conv_k(eng) - 1)
-    top = min(img.cfg.MCOLS, img.rows, img.cap - p)
-    for R in range(top, 0, -1):
+    n = _whole_passes(min(img.rows, img.cap - p, mc if hasattr(eng.spec, "mtp") else img.rows),
+                      mc)
+    sizes = []
+    while n:
+        sizes.append(n)
+        n = _whole_passes(n - 1, mc)
+    for i, R in enumerate(sizes):
         if _fits(lambda: programs(eng, p, R, "L")):
             break
     else:
         raise CompileError(f"no prompt run fits bucket {blocks}")
-    return [R, R == top or not _fits(lambda: _today(eng, p, R + 1))]
+    return [R, i == 0 or not _fits(lambda: _today(eng, p, sizes[i - 1]))]
 
 
 def _fits(compile) -> bool:
