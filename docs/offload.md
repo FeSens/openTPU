@@ -1705,9 +1705,13 @@ Two alternatives:
   something I change.
 
 The recommendation is A first: no bitstream, +2-3% on Gen2, and the ordering test can run on
-the current production bitstream. B later, with the next bitstream that has room for it.
+the current production bitstream. B later, with the next bitstream that has room for it
+(10.12: parked, nothing measurable after A).
 
-### 10.12 Alternative B: a host window onto DRAM (design, ld-memch)
+### 10.12 Alternative B: a host window onto DRAM (design, ld-memch; parked)
+
+Parked on 2026-10-02: after design A it gains nothing measurable ("What B is worth after A",
+below).
 
 B moves the small calls from XDMA's DMA engine to MMIO. The host's 64-byte writes (the answer,
 served, entries, clears) and the poll's reads become loads and stores on a window of BAR0, at
@@ -1782,9 +1786,67 @@ today.
   path waits for the other. B never needs that order: the card waits on the window's flag, and
   any data it then reads came in an earlier, completed call.
 
-**What B is worth after A:** offload's serve_emu, with these costs on top of design A: a
-64-byte window write 3 us of host CPU and no link time, a poll read 1.5 us. That is the number
-that decides whether B is worth a bitstream.
+**What B is worth after A** (offload's serve_emu, 2026-10-02): nothing measurable, so B is
+parked. The emulator replays g2check's Gen2 traces (35B N2, 26B gN1, two runs of each). Its
+link is calibrated to the card's calls:
+- Each pwrite costs what the card measured for its size: 162 / 298 / 330 us on the 35B
+  (lead / rest / full) and 214 / 659 / 673 us on the 26B.
+- A 64-byte call costs 35.6 / 49.3 us, and a C2H read 19.4 / 20.3 us.
+- The card's next post comes after its own compute, counted from the request's critical end.
+- In B a window write is 3 us of the worker's CPU and no link time, and a load is 1.5 us.
+
+The emulator runs 10% (35B) and 4% (26B) slower than the card, so read the deltas. Per 128
+tokens, against main's entry protocol, with a run-to-run spread of 0.05-0.1 s:
+
+| | 35B wall | 35B link busy | 26B wall | 26B link busy |
+|---|---|---|---|---|
+| main | 27.59 s | 10.97 s | 37.51 s | 17.99 s |
+| A | -0.81 | -0.44 | -0.92 | -0.57 |
+| A + B, the directory by DMA | -0.77 | -0.86 | -0.84 | -1.00 |
+| A + B, the directory as window beats | -0.66 | -1.12 | -0.91 | -1.30 |
+| B alone (entries as window writes) | -0.44 | -1.12 | -0.33 | -1.30 |
+
+- **B after A: 0 +- 0.05 s.** A already hides the answer: it goes out about 240 us after the
+  request is seen, while the first data waits about 430 us for the pool's read. What B could
+  still save is at most about 15 us a request: detection drops from 24 to 15.5 us, and the
+  row's read is about 6 us faster. That is 0.07 s on the 35B and 0.06 s on the 26B,
+  +0.3% / +0.15%.
+- **B alone is 60-65% of A on the card.** The emulator shows 0.40-0.44 / 0.32-0.33 s, but its
+  worker spends 40-55 us of Python between calls where the card's spends about 10. On the
+  card that is 13,113 entries x (41 -> 3 us) = 0.50 s on the 35B and 11,310 x (58 -> 3 us)
+  = 0.62 s on the 26B.
+- **tok/s on the card's scale:**
+
+  | | 35B | 26B |
+  |---|---|---|
+  | main | 5.10 | 3.54 |
+  | A | 5.27 | 3.59-3.63 |
+  | A + B | 5.27-5.28 | 3.59-3.64 |
+  | B alone | 5.19-5.21 | 3.57-3.60 |
+
+- **What B frees is link time.** It frees 0.86-1.30 s per 128 tokens, and nothing uses idle
+  link time today (router hints are off).
+- **The larger host lever is software.** From seen to the first data DMA takes 258 / 309 us
+  (median, 35B / 26B): 1.27 / 1.20 s per 128 tokens on the critical path. Only about 20 us of
+  it is the row's read; the rest is serve's Python and the pool's read.
+
+**Port H out of context** (omarchy, otpu_native_dram alone, 7.5 ns, D = 128):
+- **WNS +0.208 ns, against main's +0.530.** The worst paths in both are existing ones: the tag
+  RAM's head pointer fanning out into the LUTRAMs' write addresses, at 0 logic levels and
+  about 7 ns of route.
+- **H's own worst path is +1.52 ns at 5 levels:** the gather mask's all-ones detect into the
+  issue beat's load enables.
+- **Area: +879 LUTs and +1,253 flip-flops.** The gather beat and the issue beat are both
+  registered, which is why the flip-flop count is above the estimate.
+
+**Parked.** No bitstream carries B. The port is on branch hwin (8fce830):
+- otpu_native_dram's port H, tied off in otpu_board and otpu_top.
+- Its gather timeout is the HGATHER parameter, 255 idle cycles.
+- It is lint-clean and has no functional test.
+
+The window block, WIN_BASE, the CAPS bit and the host side were not written. B is worth
+reconsidering when something uses the link's idle time (router hints) or a build has spare
+area for it.
 
 ## 11. Gemma 4 26B-A4B: design note
 
