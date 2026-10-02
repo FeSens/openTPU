@@ -433,33 +433,42 @@ def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
 
 def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
     """halt_aware (docs/offload.md 13.10): no idle part starts while the running program's
-    expected end (the memory's time_left) is nearer than a part takes (part_s, or PART_S0 +
-    part / PART_GBS before any is measured), so its halt is not seen after a part; a request
-    is served at once all the same, and a run past its expected end by HOLD_LATE (a wrong
-    expectation) or with none gets parts again. Off: no hold."""
+    expected end is nearer than a part takes (part_s, or PART_S0 + part / PART_GBS before any
+    is measured), so its halt is not seen after a part. The end: the memory's run_clock (the
+    run's start and its time with no waits) plus the run's own waits (each request with misses,
+    seen to served; a new run starts them at 0). A request is served at once all the same; a
+    run past its end by HOLD_LATE, or with no clock, gets parts again. Off: no hold."""
+    import time
+
     from opentpu.host.offload import HOLD_LATE, PART_GBS, PART_S0
     lay, mem, srv, G = _hint_setup()
-    left = [None]
-    mem.time_left = lambda: left[0]
+    clock = [None]
+    mem.run_clock = lambda: clock[0]
+
+    def run(left):                                  # a run started now, `left` its time
+        clock[0] = (time.perf_counter(), left)
     srv.halt_aware = True
     _post(mem, lay, 1, [G + 3, G + 4])              # 3 and 4 hinted: 6 parts to send
     assert srv.poll() == 1 and len(srv.pending) == 2
     need = PART_S0 + srv.part / PART_GBS
-    left[0] = need / 2                              # the run ends before a part would
+    run(need / 2)                                   # the run ends before a part would
     assert srv.poll() == 0 and srv.poll() == 0 and srv.holds == 2
-    assert dict(srv.pending) == {3: 0, 4: 0}
-    _post(mem, lay, 2, [E + 0, E + 1])              # a request (layer 1): served at once
-    assert srv.poll() == 1 and _served(mem, lay) == 2.0 and srv.holds == 2
-    left[0] = 2 * need                              # time for a part: sent, and timed
+    assert dict(srv.pending) == {3: 0, 4: 0} and srv._waits == 0.0
+    _post(mem, lay, 2, [E + 0, E + 1])              # a request (layer 1, 2 misses): served at
+    assert srv.poll() == 1 and _served(mem, lay) == 2.0 and srv.holds == 2   # once, its time
+    assert srv._waits > 0                           # the run's own wait
+    srv._wait(2 * need)                             # (a wait of 2 parts: the end moves out)
     assert srv.poll() == 1 and srv.pending[3] == srv.part and srv.part_s is not None
     srv.part_s = 1.0                                # (measured parts of a second)
-    left[0] = 0.5
-    assert srv.poll() == 0 and srv.holds == 3
-    left[0] = -2 * HOLD_LATE                        # overran its expectation: parts again
+    run(0.5)                                        # a new run: its waits from 0
+    assert srv.poll() == 0 and srv._waits == 0.0 and srv.holds == 3
+    assert srv.poll() == 0 and srv.holds == 4
+    run(-2 * HOLD_LATE)                             # past its end: parts again
     assert srv.poll() == 1
-    left[0], srv.halt_aware = 0.5, False            # off: no hold
-    assert srv.poll() == 1 and srv.holds == 3
-    left[0], srv.halt_aware = None, True            # no expectation: no hold
+    run(0.5)
+    srv.halt_aware = False                          # off: no hold
+    assert srv.poll() == 1 and srv.holds == 4
+    clock[0], srv.halt_aware = None, True           # no clock: no hold
     while srv.pending:
         assert srv.poll() == 1
     assert _landed(mem, lay, srv, 3) and _landed(mem, lay, srv, 4)
@@ -488,7 +497,7 @@ def test_a_held_idle_poll_leaves_no_dma_in_flight():
     srv.load([0, 1, 8, 9, 16, 17])                  # every slot full: 20 needs a victim
     srv.begin_prefill(ahead=True)
     srv.ahead_layer(2, [20])
-    srv.halt_aware, srv.mem.time_left = True, lambda: 1e-6
+    srv.halt_aware, srv.mem.run_clock = True, lambda: (time.perf_counter(), 1e-6)
     assert srv.poll() == 0 and srv.holds == 1 and 20 in srv.pending
     assert srv.poll() == 0 and srv.holds == 2       # (its read of seq: no DMA in flight)
     srv.halt_aware = False

@@ -521,12 +521,14 @@ class ExpertServer:
         # idle parts (docs/offload.md 13.10), opt-in until the card's A/B: read_ahead, each read
         # by the poll before, beside its DMA, and sent as one DMA call per channel (a memory
         # with stage: BoardDram); halt_aware, none started when the running program's expected
-        # end (the memory's time_left) is nearer than an idle part takes (part_s: the measured
-        # parts' average)
+        # end is nearer than an idle part takes (part_s: the measured parts' average). The end:
+        # the memory's run_clock (the run's start and its time with no waits) plus the run's
+        # own waits (_waits: each of its requests with misses, seen to served)
         self.read_ahead = self.halt_aware = False
         self._staged = None                 # ((g, slot, from, to), the memory's staged part)
         self.part_s: float | None = None
         self.holds = 0                      # polls that held an idle part back (halt_aware)
+        self._run, self._waits = None, 0.0
         self.history: list | None = None    # a list: each request's ids are appended
         # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
         # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
@@ -670,6 +672,8 @@ class ExpertServer:
         self._flush()                       # (no DMA of the server's in flight after poll)
         self._touched()
         self.last = ("h" if ids[0] >= G else "d", ids[0] % G // self.L.E)
+        if self.misses > m0 and self.halt_aware:    # (the card waited for them)
+            self._wait(time.perf_counter() - t0)
         if self.events is not None:
             self.events.append((t0, time.perf_counter(), "h" if ids[0] >= G else "d",
                                 ids[0] % G // self.L.E, self.misses - m0))
@@ -898,15 +902,30 @@ class ExpertServer:
         if h is not None:
             self._staged = ((g, slot, a, b), h)
 
+    def _clock(self):
+        """The memory's run_clock (the running program's start and time with no waits), its
+        waits so far reset at a new run's start; None without one."""
+        rc = getattr(self.mem, "run_clock", None)
+        c = rc() if rc is not None else None
+        if c is not None and c[0] != self._run:
+            self._run, self._waits = c[0], 0.0
+        return c
+
+    def _wait(self, s: float) -> None:
+        """A request of the running program's with misses took s from seen to served."""
+        if self._clock() is not None:
+            self._waits += s
+
     def _hold(self) -> bool:
         """halt_aware (docs/offload.md 13.10): no idle part now if the running program is
-        expected to end before one would be done (its halt would be seen after the part); a
-        run that has overrun its expected end by HOLD_LATE gets them again (its expectation was
-        wrong). Requests are served as always."""
-        tl = getattr(self.mem, "time_left", None) if self.halt_aware else None
-        left = tl() if tl is not None else None
-        if left is None:
+        expected to end before one would be done (its halt would be seen after the part): its
+        start, its time with no waits and its own waits so far. A run past that end by
+        HOLD_LATE gets parts again (the estimate was short), as does one with no estimate.
+        Requests are served as always."""
+        c = self._clock() if self.halt_aware else None
+        if c is None:
             return False
+        left = c[0] + c[1] + self._waits - time.perf_counter()
         need = self.part_s if self.part_s is not None else PART_S0 + self.part / PART_GBS
         if -HOLD_LATE < left < need:
             self.holds += 1
@@ -1358,8 +1377,8 @@ class BoardDram:
         self.wait_s = 0.0                       # the server's waits for a free staging pair
         self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
         self._held: set = set()                 # staging pairs holding a staged part (stage)
-        # the running program's expected seconds left (BoardBackend.time_left), or None
-        self.time_left = getattr(backend, "time_left", None)
+        # the running program's start and time with no waits (BoardBackend.run_clock), or None
+        self.run_clock = getattr(backend, "run_clock", None)
         if lead is not None and not 0 < lead < 1:
             raise ValueError(f"lead {lead}: the first part's share of the expert, in (0, 1)")
         self.lead = lead

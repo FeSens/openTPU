@@ -3084,19 +3084,24 @@ both; `ExpertServer.read_ahead`, `halt_aware`):
 
 `halt_aware` (gemma4's pfhint2: a run's halt seen late behind an idle part costs the 35B's
 prefill about 0.75 s and the 26B's 0.25-0.32 s):
-- No idle part starts while the running program's expected end is nearer than a part takes:
-  `BoardBackend.time_left()` (the run's start plus `_expect`, the last run of its program's
-  length) against `part_s`, the measured idle parts' average (before the first, `PART_S0` +
-  part / `PART_GBS`: 0.2 ms + 3.15 GB/s). The poll returns 0 and the backend polls again, so
-  requests are served at once as always.
-- A run past its expected end by `HOLD_LATE` (1 ms) gets parts again (its expectation was
-  wrong), and so does one with no expectation. `holds` counts the polls held. A poll that
+- No idle part starts while the running program's expected end is nearer than a part takes.
+  The end: `BoardBackend.run_clock()`, the run's start and its time with no waits (the
+  shortest of the last 16 runs of its program's length, in seen wall seconds), plus the run's
+  own waits so far (each of its requests with misses, seen to served; gemma4's pfhint2:
+  zero-miss DeltaNet runs within about ±0.05 ms, a miss about 1 ms more). A part takes
+  `part_s`, the measured idle parts' average (before the first, `PART_S0` + part / `PART_GBS`:
+  0.2 ms + 3.15 GB/s). The poll returns 0 and the backend polls again, so requests are served
+  at once as always.
+- A run past that end by `HOLD_LATE` (1 ms) gets parts again (the estimate was short), and
+  so does one with no run of its length before. `holds` counts the polls held. A poll that
   holds after ahead_layer's next expert took a victim's slot flushes the victim's entry first,
   so the next read of seq meets no DMA in flight.
 - gemma4's estimate: 35B -0.5 to -0.7 s and 26B -0.3 to -0.4 s on the layer-ahead prefill.
 
 Predicted per part (session 16's fit: 122 us a call pair + bytes / 3.15 GB/s; pfhint's
-measured in brackets):
+measured in brackets). ld-memch's H2C sweep (docs/host.md 2) puts a placed call at 20-37 us +
+345 us a MiB in the driver, so about 25-40 us of each call is the host's (Python, the worker
+hop, the lock); with none of it a 1 MiB part would take about 0.38 ms:
 
 | part | v1 | ra (one pair, read ahead) |
 |:--|--:|--:|
