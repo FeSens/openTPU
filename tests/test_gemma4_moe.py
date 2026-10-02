@@ -396,18 +396,24 @@ def test_moe_expert_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
     layer; the next layer's runs and the head end the layer (norm_2 of the experts' sum beside
     the dense MLP's, the post-FFN norm and the layer scalar). The logits, the KV cache and the
     decode steps after equal token by token's bit for bit: 40 tokens in chunks of 24 and 16
-    rows, 6 slots a layer behind test_qwen35_moe's stand-in server (_need_server)."""
-    from test_qwen35_moe import _need_server
+    rows, 6 slots a layer behind the ExpertServer (each need landing while an expert run waits
+    on its entry, none left for end_prefill)."""
+    from test_qwen35_moe import _scratch
     monkeypatch.setattr(G, "PREFILL_CHUNK", 24)
     toks = [int(t) for t in np.random.default_rng(13).integers(0, 1000, 40)]
     a = _moe_engine(moe, wformat=wf, experts=6, layer_major=R, expert_major=True)
     b = _moe_engine(moe, wformat=wf, experts=6)
-    st = _need_server(a)
+    sc = _scratch(a.server, monkeypatch)
     la, lb = a.prefill(toks), b.prefill(toks)
     assert a.pos == b.pos == len(toks)
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    srv = a.server
+    assert len(sc) == 1 and sc[0][0] == srv.L.slots[0][0] and sc[0][1]
+    assert sc[0][2] == a.ahead_part and srv.part != a.ahead_part     # (restored)
     runs = sum(-(-n // R) for n in (24, 16))
-    assert len(st.needs) == len(KINDS) * runs and st.sent >= st.waits > 0
+    assert srv.need_lines == len(KINDS) * runs
+    assert srv.needs_landed == srv.needs_queued > 0 and srv.drained == 0
+    assert not srv.scratch_slots and not srv.expert_major
     img = a.image
     assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
                           b.backend.machine.slices[0].dram[img.layer0:img.head[0]])

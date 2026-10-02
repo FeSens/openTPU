@@ -763,110 +763,87 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch, ahead
     assert r["ahead_part"] == (2 << 20 if ahead == "hint" else None)
 
 
-def _need_server(eng):
-    """A test-only stand-in for the server's expert-major side (docs/offload.md 13.11, which
-    offload's ExpertServer work implements): begin_prefill(expert_major=True, scratch=bytes)
-    takes the slots the scratch covers (moe.em_slots: their experts leave, their entries
-    cleared); a need line (ids from 2 x layers x E: a hint's post, no answer) queues the ids no
-    slot holds. The queue goes out only while an expert run waits on an entry (the ISA
-    simulator calls the host when the card waits): up to the expert waited on, each to a free
-    slot, else the oldest expert's of a layer outside j - 1 .. j + 1 (its entry cleared first),
-    its data and tag, then its entry; so the passes wait expert by expert. end_prefill sends
-    what is left and hands the scratch's slots back with their tag beats zeroed. Returns its
-    record: the need lines' ids (each a list, as posted), the slots carved, the experts sent and
-    the entry waits served."""
-    from types import SimpleNamespace
-    from opentpu.host.offload import _f32, _tag_beat
-    from opentpu.llm.moe import em_slots
-    srv = eng.server
-    L = srv.L
-    G = L.E * L.layers
-    poll, begin, end = srv.poll, srv.begin_prefill, srv.end_prefill
-    st = SimpleNamespace(needs=[], queue=[], carved=[], sent=0, waits=0)
+def test_moe_card_runs_the_expert_major_prefill(tiny, tmp_path, monkeypatch):
+    """tools/offload/moe_card.py --layer-major 2 --expert-major --ahead-part 2048 --prefill-trace
+    (ISA; docs/offload.md 13.13): the prompt's timeline holds the embed runs, each MoE layer's
+    runs then its expert run (key ("x", layer)), the head last; no request in the prompt, a need
+    line a layer run ("n" events), every need landed during the expert runs (none drained), each
+    in one idle-poll part ("p" events: --ahead-part is more than a slot)."""
+    import json
+    import pickle
+    import runpy
+    import sys
+    from pathlib import Path
 
-    def layer_of(a):
-        return next(j for j, (a0, n) in enumerate(L.slots) if a0 <= a < a0 + n * L.pitch)
+    from safetensors.numpy import save_file
 
-    def begin_prefill(expert_major=False, scratch=0, **kw):
-        begin(**kw)
-        if not expert_major:
-            return
-        st.carved = em_slots(L, scratch)
-        carved = set(st.carved)
-        for lru in srv.lru:
-            for g, a in list(lru.items()):
-                if a in carved:
-                    del lru[g]
-                    srv.order.pop(g, None)
-                    srv._dir(g, 0)
-        for fr in srv.free:
-            fr[:] = [a for a in fr if a not in carved]
-        srv._dir_flush()
+    m = tmp_path / "model"
+    tiny[0].config.save_pretrained(m)
+    save_file({k: np.ascontiguousarray(v) for k, v in tiny[1].items()},
+              str(m / "model.safetensors"))
+    spec = tiny[2]
+    cfg = device_config(replace(spec, embed="int8"), 256, rows=1, lookup=True, S=1,
+                        experts=2 * K)
+    (tmp_path / "cfg.pkl").write_bytes(pickle.dumps(cfg))
+    ids = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 7)]
+    (tmp_path / "ref.json").write_text(json.dumps({"ids": ids, "tokens": []}))
+    tr, out = tmp_path / "tr.json", tmp_path / "out.json"
+    monkeypatch.setattr(sys, "argv", [
+        "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
+        "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
+        "--expert-major", "--ahead-part", "2048", "--prefill-trace", str(tr), "--out", str(out)])
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
+                   run_name="__main__")
+    r, t = json.loads(out.read_text()), json.loads(tr.read_text())
+    keys = [x[0] for x in t["runs"]]
+    pt = r["prefill_time"]
+    assert keys[-1] == "head" and pt["runs"] == len(keys) == pt["layer_runs"]
+    li = [k[0] for k in keys[:-1]]
+    assert li.count(-1) == len(ids) - 1                         # the embed runs, a token each
+    assert [k[1] for k in keys if k[0] == "x"] == list(range(len(KINDS)))   # (one chunk)
+    runs = li.count(0)                                          # a layer's runs (2 rows each)
+    for j in range(len(KINDS)):                                 # its expert run right after
+        assert keys[max(i for i, k in enumerate(keys) if k[0] == j) + 1] == ["x", j]
+    assert not t["requests"] and pt["requests"] == 0 and r["prefill_requests"] is None
+    assert r["expert_major"] and r["ahead_part"] == 2 << 20 and pt["ahead"] is None
+    assert all(e[2] in "np" for e in t["events"])              # need lines, idle parts
+    nd = pt["need"]
+    assert nd["need_lines"] == len(KINDS) * runs == sum(e[2] == "n" for e in t["events"])
+    assert nd["needs_landed"] == nd["needs_queued"] > 0 and nd["drained"] == 0
+    assert sum(e[2] == "p" for e in t["events"]) == nd["needs_landed"]    # (a part a need)
 
-    def send(g):
-        j = g // L.E
-        if g in srv.lru[j]:
-            return
-        fr = next((f for f in [srv.free[j]] + srv.free if f), None)
-        if fr is not None:
-            slot = srv._reuse(fr.pop(0))
-        else:
-            v = next((v for v in srv.order if not j - 1 <= v // L.E <= j + 1), None)
-            if v is None:
-                raise RuntimeError(f"no victim outside layers {j - 1}..{j + 1}")
-            del srv.order[v]
-            slot = srv._reuse(srv.lru[v // L.E].pop(v))
-            srv._dir(v, 0)
-            srv._dir_flush()
-        srv._fetch(g, slot)
-        srv.lru[j][g] = slot
-        srv.order[g] = None
-        srv._dir(g, slot)
-        srv._dir_flush()
-        st.sent += 1
 
-    def need_poll():
-        seq, n = (int(v) for v in np.frombuffer(bytes(srv.mem.read(L.mbox, 8)), np.float32))
-        if seq == srv.seq + 1:
-            ids = [int(v) for v in np.frombuffer(bytes(srv.mem.read(L.row, 4 * n)), np.float32)]
-            if ids[0] >= 2 * G:
-                st.needs.append([g - 2 * G for g in ids])
-                for g in st.needs[-1]:
-                    if g not in st.queue and g not in srv.lru[g // L.E]:
-                        st.queue.append(g)
-                srv.seq = seq
-                srv.mem.write(L.served, _f32(seq))
-                return 1
-        return poll()
+def _scratch(srv, monkeypatch):
+    """The ExpertServer's begin_prefill calls, each one's scratch as it returned and the idle
+    polls' part: (base, slots, part) (an expert-major prefill's, docs/offload.md 13.14: the
+    slot area's first slots, set aside until end_prefill)."""
+    got, begin = [], srv.begin_prefill
 
-    def host(m):
-        s0 = m.slices[0]
-        w = s0.polling
-        if w is None or w.w[0] != L.dir:            # (a fence: the line served, no expert)
-            return need_poll()
-        need_poll()
-        g = ((s0.R[w.ra] + w.w[0]) & 0xFFFFFFFF) - L.dir
-        g //= 8
-        if g in st.queue:                           # an expert run waits on expert g
-            st.waits += 1
-            while True:
-                h = st.queue.pop(0)
-                send(h)
-                if h == g:
-                    break
-        return 1
+    def begin_prefill(**kw):
+        base = begin(**kw)
+        got.append((base, list(srv.scratch_slots), srv.part))
+        return base
+    monkeypatch.setattr(srv, "begin_prefill", begin_prefill)
+    return got
 
-    def end_prefill(restore="lazy"):
-        while st.queue:
-            send(st.queue.pop(0))
-        for a in st.carved:
-            srv.mem.write(a + L.tag, _tag_beat(0))
-            srv.free[layer_of(a)].append(a)
-        end(restore)
 
-    srv.poll, srv.begin_prefill, srv.end_prefill = need_poll, begin_prefill, end_prefill
-    eng.backend.machine.host = host
-    return st
+def test_an_expert_runs_timeout_names_where_its_needs_stand(tiny, monkeypatch):
+    """Engine(expert_major=True) with a server that sends no need: the first expert run stops
+    at its WAITW's timeout (the ISA's 'never holds', the card's 'a WAITW timed out'), and the
+    error names the run's layer and the server's need_report (docs/offload.md 13.14): the
+    layer's experts without an entry, each still queued."""
+    from opentpu.llm import qwen35 as Q35
+    monkeypatch.setattr(Q35, "PREFILL_CHUNK", 24)
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=6)
+    a = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=6, layer_major=2,
+               expert_major=True)
+    monkeypatch.setattr(a.server, "_next_need", lambda: False)
+    toks = [int(t) for t in np.random.default_rng(12).integers(0, 1000, 12)]
+    want = (r"expert run of layer 0: .*never holds.* \(layer 0: \d+ experts needed, [1-9]\d* "
+            r"without an entry; \d+ \(expert \d+\): queued")
+    with pytest.raises(RuntimeError, match=want):
+        a.prefill(toks)
 
 
 @pytest.mark.parametrize("R,skew,wformat,b", [(2, False, "int8", False), (1, False, "int8", False),
@@ -879,12 +856,13 @@ def test_expert_major_prefill_is_bit_exact(tiny, R, skew, wformat, b, monkeypatc
     the head sum the outputs. The logits, the DeltaNet states and windows and the KV cache,
     and the decode steps after, equal token by token's bit for bit: 40 tokens, the first 3
     token by token (conv_k - 1), then chunks of 24 and 13 rows (odd counts), 6 slots a layer
-    behind a stand-in server (_need_server: experts sent while the expert runs wait, the
-    scratch carved from the first slots). skew: a router that knows expert 0 alone (its other
-    rows zero), so experts 0 / 1 / 2 take every row: long runs of passes of one expert. b:
-    build B's PAIR, DSTEP and STREAM (a pass's two rows one MM's)."""
+    behind the ExpertServer (each need landing while an expert run waits on its entry, none
+    left for end_prefill; the scratch the first slots), the embedding rows from the host's
+    table. skew: a router that knows expert 0 alone (its other rows zero), so experts 0 / 1 / 2
+    take every row: long runs of passes of one expert. b: build B's PAIR, DSTEP and STREAM (a
+    pass's two rows one MM's)."""
     from opentpu.llm import qwen35 as Q35
-    from opentpu.llm.moe import em_record
+    from opentpu.llm.moe import em_record, em_slots
     monkeypatch.setattr(Q35, "PREFILL_CHUNK", 24)
     spec, W = _untied(tiny)
     if skew:
@@ -897,14 +875,19 @@ def test_expert_major_prefill_is_bit_exact(tiny, R, skew, wformat, b, monkeypatc
     a, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=6,
                      wformat=wformat, **kw)
               for kw in ({"layer_major": R, "expert_major": True}, {}))
-    st = _need_server(a)
+    sc = _scratch(a.server, monkeypatch)
     toks = [int(t) for t in np.random.default_rng(11).integers(0, 1000, 40)]
     la, lb = a.prefill(toks), ref.prefill(toks)
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
-    img = a.image
-    assert len(st.carved) == -(-24 * em_record(spec.hidden, K) // img.offload.pitch)
+    img, srv = a.image, a.server
+    L = srv.L
+    assert img.embed_host and a.row_server is not None     # (the 35B's --embed-table host)
+    assert sc == [(L.slots[0][0], em_slots(L, 24 * em_record(spec.hidden, K)), a.ahead_part)]
+    assert len(sc[0][1]) == -(-24 * em_record(spec.hidden, K) // L.pitch)
     runs = sum(-(-n // R) for n in (24, 13))            # (the two chunks)
-    assert len(st.needs) == len(KINDS) * runs and st.sent >= st.waits > 0
+    assert srv.need_lines == len(KINDS) * runs
+    assert srv.needs_landed == srv.needs_queued > 0 and srv.drained == 0
+    assert not srv.scratch_slots and not srv.expert_major
     dram = [e.backend.machine.slices[0].dram[img.layer0:img.head[0]] for e in (a, ref)]
     assert np.array_equal(*dram)
     t = int(np.argmax(la))

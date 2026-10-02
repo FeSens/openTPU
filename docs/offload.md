@@ -3426,7 +3426,7 @@ prefill (`test_layer_ahead_on_a_live_card_with_idle_parts_v2`), and moe_card's `
 
 The card and Engine parts of 13.11 (opentpu/llm/moe.py, qwen35.py, gemma4.py, qwen3.py), bit for
 bit against token by token on the ISA (tiny Qwen3.5 and Gemma 4). The server parts are offload's
-(13.11); until they land, the tests run a stand-in (tests/test_qwen35_moe.py `_need_server`).
+(13.14); the tests run against that ExpertServer.
 
 The scratch is one record a chunk row, `moe.em_record(H, k)` bytes, row q's at the first slot's
 address + q x record:
@@ -3469,9 +3469,18 @@ The server's side, as the Engine calls it:
 - The expert run reads entries only after its layer's last need line has been posted.
 - end_prefill hands the slots back with their tag beats zeroed, after the head run.
 
-The stand-in streams the queued needs only while an expert run waits on an entry, up to the
-expert waited on. So the passes wait expert by expert; at 6 slots a layer, 48 experts were sent
-on 48 waits.
+The needs go in idle-poll parts of the Engine's `ahead_part` (begin_prefill's part; moe_card
+`--ahead-part`, AHEAD_PART's 1 MiB by default), as the layer-ahead hints' do. 13.11's model
+assumed whole experts a part (v2's one-call parts), so the card A/B runs `--ahead-part 4096`. An
+expert run that fails (its WAITW's timeout: the card's 'a WAITW timed out', the ISA's 'never
+holds') raises with its layer and the server's `need_report()`.
+
+In the tests (6 slots a layer, the ISA's WAITW hook `qwen3._isa_host`), every need lands while
+an expert run waits on its entry: `needs_landed` equals `needs_queued`, and `drained` is 0.
+The scratch's base is the first slot's address, and the server hands back the same slots that
+`moe.em_slots` lists. moe_card `--expert-major` on the ISA: each MoE layer's runs, then its
+expert run (key ("x", layer)); no request in the prompt, one need line per layer run, and one
+idle part per need at `--ahead-part 2048`.
 
 Compiled for the card (the board's config; the 35B fp4 with an int8 head, the 26B int8 with fp4
 experts; cap 4096): the layer runs take at most 1005 (35B) and 1525 (26B) of IMEM's 4096
