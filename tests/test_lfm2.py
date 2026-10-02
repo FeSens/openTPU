@@ -101,8 +101,39 @@ def test_tiny_formats_per_kind(tiny, monkeypatch):
     for t, want in zip(toks[:4], dev):
         assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
     assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
-    with pytest.raises(ValueError, match="weight formats"):
-        spec.image(board_config(DRAM_BYTES=1 << 26), 256, formats="conv@0=fp4")
+
+
+def test_tiny_formats_by_layer_range(tiny, monkeypatch):
+    """Weight formats per layer range (formats.py's kind@a-b): a layer block layout per
+    formats group, the layers in runs of one unit of (kind, group) keys (plan: a hardware loop
+    each, over blocks of its group's size): the device follows the emulation of the same
+    formats; resident decode and a chunked prefill give token-by-token decoding's logits bit
+    for bit, and decoding goes on from the prefill's KV cache and conv state."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, W, spec = tiny
+    # layer 0's MLP in fp4, then a loop over (attn, conv) of 4-bit mixers: not layer 0's layout
+    mix = dataclasses.replace(spec, formats="mlp@0=fp4,conv@1-4=fp4,attn@1-4=int4")
+    cfg = board_config(DRAM_BYTES=1 << 26)
+    a = Engine(mix, W, cap=256, cfg=cfg)
+    img = a.image
+    g0, g = ("int8", "int8", "fp4", "fp4"), ("fp4", "int4", "int8", "int8")
+    assert img.lf == (g0,) + (g,) * 4
+    assert img.plan == [(0, (("conv", g0),), 1), (1, (("attn", g), ("conv", g)), 2)]
+    assert img.layouts[g0].size != img.layouts[g].size
+    assert [img._off(i).const for i in range(5)] == sorted(img._off(i).const for i in range(5))
+    assert mix.image(cfg, 256).nbytes < spec.image(cfg, 256).nbytes
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    dev = np.array([a.step(t) for t in toks])
+    emu, e8 = emulated_logits(mix, W, toks), emulated_logits(spec, W, toks)
+    assert _cos(dev, emu).min() > 0.9995
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
+    r, b = Engine(mix, W, cap=256, cfg=cfg, resident=True), Engine(mix, W, cap=256, cfg=cfg)
+    assert r.resident
+    for t, want in zip(toks[:4], dev):
+        assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
+    assert np.array_equal(b.prefill(toks[:8], chunk=4).view(np.uint32), dev[7].view(np.uint32))
+    for t, want in zip(toks[8:], dev[8:]):
+        assert np.array_equal(b.step(t).view(np.uint32), want.view(np.uint32))
 
 
 def test_tiny_reset_reuses_cache_and_conv_state(tiny):
@@ -217,12 +248,13 @@ def test_tiny_mlp_loop_on_rtl(tiny_wide, have_verilator, monkeypatch):
 
 
 @pytest.mark.parametrize("resident,formats", [(False, ""), (True, ""),
-                                             (True, "conv=fp4,attn=int4,down=fp4")])
+                                             (True, "conv=fp4,attn=int4,down=fp4"),
+                                             (True, "mlp@0=fp4,conv@1-4=fp4,attn@1-4=int4")])
 def test_tiny_lfm2_on_board_model(tiny, have_verilator, resident, formats):
     """The board model through the host driver, through a full turn of the conv state ring:
     logits bit-identical to the ISA simulator. Resident: from position 2 on one program takes
     the token and position in the ARG registers (CAPS bit25). formats: per-kind weight formats
-    (int8, fp4 and int4 MMs in one model)."""
+    (int8, fp4 and int4 MMs in one model), per layer range (a loop over another layout)."""
     from opentpu.host.board import Board, BoardBackend, SimTransport
     _, W, spec = tiny
     spec = dataclasses.replace(spec, formats=formats)
@@ -264,11 +296,11 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
         p += run
     assert sorted(a._decodes) == [1, 2, 3] and not b._decodes
     ia, ib = a.image, b.image
-    assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
+    assert (ia.layer0, ia.loc) == (ib.layer0, ib.loc)
     ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.nbytes].copy() for e in (a, b))
     for li, k in enumerate(spec.kinds):     # the state rings' scratch rows (_ring_rows)
         if k == "conv":
-            o = li * ib.LS + ib.lofs["conv"]["state"]
+            o = ib._off(li).const - ib.layer0 + ib.lofs["conv"]["state"]
             ma[o:o + 4 * ib.h_loc] = mb[o:o + 4 * ib.h_loc] = 0
     assert np.array_equal(ma, mb)
 
@@ -297,6 +329,95 @@ def test_tiny_int8_embedding(tiny, head):
     dev = np.array([c.step(t) for t in toks])
     emu = emulated_logits(spec, W, toks, wformat=wf, head_format=head)
     assert _cos(dev, emu).min() > 0.999
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_tiny_filling_step_programs_are_transparent(tiny, resident):
+    """The step programs that fill their logits first (the card's streamed decode) give the
+    plain programs' logits and DRAM bit for bit, per position and resident."""
+    from conftest import assert_fill_is_transparent
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 6)]
+    assert_fill_is_transparent(lambda: Engine(spec, W, cap=256, resident=resident), toks)
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_tiny_streamed_decode_under_compile_contention(tiny, monkeypatch, resident):
+    """The card's streamed decode where the programs fill their logits themselves
+    (qwen3.fill_logits), at LFM2's shortest run (about 11 ms on the card), with the next
+    programs compiling on a thread and another one holding the GIL while the run goes on
+    (switches every 0.5 ms), the fill landing anywhere before the LM head's first piece: the
+    logits are the ISA simulator's bit for bit, token after token, with pieces taken during
+    the runs and probes held back until the fill. (mark-in-run, the host's in-run marking it
+    replaces, lost this race on the card: docs/host.md.)"""
+    import sys
+    import threading
+    import time
+
+    from conftest import IsaCard
+    from opentpu.host import regs as R
+    from opentpu.host.board import BoardBackend, sim_config
+    from opentpu.llm import qwen3 as Q
+    monkeypatch.setattr(Q, "HEAD_CHUNK", 128)          # pieces of 128 logits: 8 in the vocab
+    _, W, spec = tiny
+    cfg = sim_config(spec, 256, lookup=resident)
+    rng = np.random.default_rng(7)
+    toks = [int(t) for t in rng.integers(0, 1000, 12)]
+    ref = Engine(spec, W, cap=256, cfg=cfg, resident=resident)
+    want = [ref.step(t) for t in toks]
+
+    class Card(IsaCard):
+        computing = False                               # the simulation is not the run
+        held = 0                                        # ICOUNT reads before the fill
+
+        def reg_write(self, off, val):
+            self.computing = True
+            try:
+                super().reg_write(off, val)
+            finally:
+                self.computing = False
+
+        def reg_read(self, off):
+            v = super().reg_read(off)
+            self.held += off == R.R_ICOUNT and v == 0
+            return v
+
+    # the fill lands anywhere before the first piece (0.4 of the run); every third run waits
+    # for the host to look (IsaCard's anchor), its fill just before the first piece, so the
+    # host's probes find it still on the way however late the host gets there
+    card = Card(cfg, None, 4 * 128, run_s=0.011, gen=True, args=True,
+                fill_at=lambda r: 0.39 if r % 3 == 1 else rng.uniform(0.01, 0.39),
+                anchor=lambda r: r % 3 == 1)
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread", resident=resident,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert eng.image.stream_fill and eng.resident == resident
+    stop = threading.Event()
+
+    def hog():
+        x = 0
+        while not stop.is_set():
+            if card.computing:
+                time.sleep(1e-3)
+            x += 1
+    switch = sys.getswitchinterval()
+    sys.setswitchinterval(5e-4)
+    hogs = [threading.Thread(target=hog, daemon=True)]
+    for h in hogs:
+        h.start()
+    during = 0
+    try:
+        for t, w in zip(toks, want):
+            got = eng.step(t)
+            assert np.array_equal(w.view(np.uint32), got.view(np.uint32)), eng.pos
+            during += eng.backend.last_stream["during"]
+    finally:
+        stop.set()
+        for h in hogs:
+            h.join()
+        sys.setswitchinterval(switch)
+        eng.backend.close()
+    assert during > 0 and card.held > 0                 # pieces during the runs; the gate held
 
 
 def test_tiny_resident_decode_on_rtl(tiny, have_verilator):

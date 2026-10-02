@@ -247,6 +247,12 @@ The output follows p exactly. On the card:
 `reference_pick` grows a `verify` mode that the ISA simulator's runs are checked against, as
 the sampled generate loop is today (`test_sampled_generate_matches_the_reference_pick`).
 
+**Section 11 replaces this with an equivalent that is simpler.** Sample row i's token from p_i
+with the position's one uniform, as the plain loop does, and accept when it equals d. The
+acceptance probability is p_i(d), and a rejection's token follows the residual. It needs one
+uniform per position, no residual draw, and no separate reference: the tokens equal the
+plain sampled loop's.
+
 ## 6. Drafters
 
 ### 6.1 Qwen3.5's MTP head
@@ -607,10 +613,25 @@ p + 1):
   `slot`).
 
 **Prefill.**
-- The prompt's chunks store `hid` for every row.
-- mtp then runs over the prompt's rows, (h_i, x_(i+1)) at positions i, which fills the MTP
-  layer's KV cache.
+- The prompt runs in plain prefill's runs (`fit_chunk`), each storing `hid` for every row
+  (row by row: one row of TMEM, so the runs fit as plain prefill's do).
+- mtp then runs over the prompt's rows, (h_i, x_(i+1)) at positions i, in runs of up to 4
+  rows. This fills the MTP layer's KV cache.
 - The last row, (h_(P-1), a_0), gives the first draft.
+
+**PAIR and exactness.** With PAIR and 4-bit weights, a decode step's MMs pair (column
+reuse). A run's MMs pair only when 2R <= MCOLS. A paired MM adds each even K-block to the
+odd one before the partial sums: the same products, summed in another order. So a prefill
+run of more than MCOLS / 2 rows differs from the steps in the last bit of a sum. An int8
+activation rounding downstream can turn that into a quantization step: about 1e-2 of the
+largest logit on a tiny fp4 model (`test_prefill_pair_sum_order`).
+
+Greedy MTP therefore gives plain greedy's tokens bit for bit only when two conditions hold:
+- **The 2-row verify pairs as the steps do.** That needs MCOLS >= 4, the card's. MTPDecoder
+  refuses PAIR with 4-bit weights below that.
+- **The prompt runs in plain prefill's runs.** Plain prefill takes 4 rows per run on the
+  0.8B and 2B and 3 on the 4B, at every position up to 4K, with or without the `hid`
+  store.
 
 **Tests.** Greedy tokens must equal plain greedy decode's, bit for bit:
 - On tiny models (Mac) with three drafters:
@@ -618,6 +639,8 @@ p + 1):
   - forced-right drafts (every draft accepted, so the parity flips every iteration);
   - forced-wrong drafts.
 - After the loop, the committed slot equals plain decode's state, word for word.
+- With int8 weights, and fp4 with PAIR at MCOLS 4. The prompt runs as plain prefill's
+  runs.
 - On the real 0.8B and 2B on omarchy, a few prompts.
 
 **Measurements.**
@@ -692,6 +715,28 @@ byte-identical on this branch.
   and 1.58x on the 4B (`mtp_accept.py --summary --c2 --cdraft`).
 - **The card column** is today's device tok/s times the speedup in cycles.
 
+**On the card** (2026-10-01; build B 79c5707a at 133.33 MHz, DDR3-1066; `tools/mtp_decode.py
+--card`; the same three prompts, 48 tokens each).
+- Plain greedy decode is the production loop (`generate_card`). The MTP loop is phase 2's,
+  driven by the host.
+- **Tokens:** equal on all six prompts, to plain greedy on the card and to the ISA simulator's.
+- **Acceptance:** the simulator's, run for run.
+- **Parities:** both exercised (verify runs per slot: 2B 37 / 43, 0.8B 40 / 44).
+
+| model | plain, device tok/s | MTP, device tok/s | speedup (chat / code / summary) | co-simulated | c_2 card (co-sim) | c_draft card |
+|---|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 27.13 | 36.26 | 1.336x (1.29 / 1.39 / 1.33) | 1.347x | 1.207 (1.196) | 0.051 |
+| Qwen3.5-2B | 12.19 | 19.41 | 1.593x (1.47 / 1.70 / 1.63) | 1.593x | 1.055 (1.055) | 0.054 |
+
+Device tok/s counts the runs' CYCLES at the core clock, for the tokens after the prefill's.
+
+**Wall tok/s is host-bound.** Each iteration compiles two programs on the host.
+- 2B: plain 11.95 against MTP 7.09. The compiles are 11.8 s of the loop's 19.9 s; without
+  them, 17.47.
+- 0.8B: plain 25.80 against MTP 8.10. The compiles are 12.6 s of 17.4 s; without them, 29.42.
+
+Phase 3's loop on the card removes both the compiles and the host round trips.
+
 **Fit for phase 3** (compiled at positions 544 and 4094, board configuration, rows = 8):
 
 | model | verify (instructions, TMEM words) | draft | decode step |
@@ -703,7 +748,271 @@ byte-identical on this branch.
 IMEM holds 4,096 instructions and TMEM 64K words. The phase 3 programs are these kernels at a
 `RunPos`, with the loop's few hundred instructions on top.
 
-## 10. Open questions
+## 10. Phase 3 design: the loop on the card
+
+The phase 2 kernels run at a run-time position and chain on the card. The host then only
+prefills, writes the state block and reads `out[]`, as `generate_card` does.
+
+**Programs per attention bucket b** (positions [t0, t0 + 256); compiled once per bucket,
+in the chain area):
+
+| program | rows | what it does | chains to |
+|---|---|---|---|
+| V[b][c] | (t, d) at p, p + 1, tpos <= 254 | the verify (`qwen35_rows` fork + hidden, slot c), an ARGMAX per row on the card: a0, a1; the emission; out[]; stop | D[b], or HALT |
+| D[b] | (hid_r, a_r) at p, p + 1 | the MTP layer, draft[r]; the commit | V or E, by (bucket, parity) |
+| E[b][c] | t at p = t0 + 255 (static) | the decode step (slot c), hidden, ARGMAX a0; out[]; stop | D1[b], or HALT |
+| D1[b] | (hid_0, a0) at p | the MTP layer, one row; the commit | V[b + 1][c] |
+
+- **Rows are kept in one bucket.** A verify at tpos = 255 would put row 1 in the next
+  bucket. That position takes E instead.
+  - E steps one row and keeps the MTP layer's KV cache whole: D1 runs its row.
+  - Its draft d is dropped (one position in 256).
+- **The parity is compile-time** (section 9), so V and E have one program per c.
+- **Emission:** k = 1 + n, where n = (d == a0), but n counts only when tokens are left and
+  a0 is not a stop id.
+  - out[p + 1] = a0. With k = 2 also out[p + 2] = a1 (a LOOP of count k - 1).
+  - Then left -= k. At a stop, the host's stop word, or no tokens left, the program commits
+    the state and HALTs.
+- **The commit** (D, D1; V or E on a halt):
+  - tok = a_n, d = draft_n, c ^= n.
+  - tpos += 1 + n. 256 wraps to the next bucket.
+  - The chain offset into the table is 8 * (6 * wrap + 2 * [tpos == 255] + c), all fp32
+    arithmetic on the state block.
+
+**Kernels at a run-time position** (`qwen3.RunRows`, R rows at t0 + tpos + r):
+- **Inputs:** the embeddings at run-time tokens: tok, and tok1 for row 1 (the draft in V,
+  a1 in D). The RoPE rows come at pos.pos .. + R.
+- **Attention:** the KV appends go one row per append (V^T tiles). Row r's mask is the
+  bucket's, shifted by r positions.
+- **DeltaNet:** `_deltanet_rows` needs nothing. At p >= K - 1 its window does not depend on
+  the position (section 9).
+- **The LM head rows** feed one Greedy sink per row. `qwen35_mtp` already ends in one.
+
+**State block** (generate.py words, plus): d, a0, a1, n, c. Each program loads it and its
+run-time arguments from it (`run_words`), and stores it before the CHAIN.
+
+**Host:**
+- `MTPDecoder.generate_card`: the prefill (phase 2: plain prefill's runs, then the MTP over
+  them; a0 and the first draft).
+- The state block, the chain area for the buckets reached, then a run from V or E.
+- `run_generate` reads the tokens, 1 or 2 per iteration.
+- The final state gives the slot and the position.
+
+**Milestones:**
+1. On the ISA simulator, the 2B's three prompts give plain greedy's tokens. Tiny models
+   cross buckets with a small block and hit both parities, E, stops and max tokens.
+2. A card session against `generate_card`: tokens equal, and tok/s on the 2B, 0.8B and,
+   if it fits, the 4B.
+
+### 10.1 Milestone 1: the loop on the ISA simulator
+
+`tools/mtp_decode.py --loop device --no-plain --want <phase 2's tokens>` (fp4, int8 head,
+cap 1024, the card's MCOLS 4 / PAIR / DSTEP / STREAM), 48 tokens per prompt. Every prompt
+gives plain greedy's tokens:
+
+| model | prompt | iterations / accepted | phase 2 (host loop) |
+|---|---|---|---|
+| 2B | 0 (chat, 30 tokens) | 29 / 18 | 29 / 18 |
+| 2B | 3 (code, 35) | 25 / 22 | 25 / 22 |
+| 2B | 7 (summary, 237) | 27 / 20 | 26 / 21 |
+| 0.8B | 0 | 29 / 18 | 29 / 19 |
+| 0.8B | 3 | 27 / 20 | 27 / 20 |
+| 0.8B | 7 | 28 / 19 | 28 / 20 |
+
+- Prompt 7 runs past position 256, so it covers E, D1 and the wrap into the next bucket.
+- The loop accepts less than phase 2 in two places, both by design:
+  - With one token left, n is 0 on the card. Phase 2 counted that iteration's draft.
+  - On the 2B's prompt 7, E at position 255 verifies no draft, which costs one iteration.
+
+The first run found a compiler bug: the verify's row 1 embedded a wrong row (at 16 DeltaNet
+heads, the 0.8B's and 2B's). A run-time argument whose register an address had taken
+moved into a released register at the first release, which was before row 1's token was
+used. A moved argument now goes into a register at that register's own release
+(`Builder._move_arg`). The tiny tests' 8 heads never move an argument, so
+`test_mtp_loop_on_the_device_is_plain_greedy[kh16]` runs 16.
+
+Programs at cap 4096 (instructions; every one fits its 8K slot):
+
+| model | V | E | D | D1 |
+|---|---|---|---|---|
+| 0.8B | 2395-2688 | 1979-2125 | 423-715 | 336-482 |
+| 2B | 2165-2458 | 1749-1895 | 363-655 | 276-422 |
+| 4B | 2648-3240 | 2133-2431 | 613-1197 | 424-716 |
+
+### 10.2 Milestone 2: the loop on the card
+
+Card session 2026-10-01 19:50-19:59 (opentpu), build 72256074 (xfix: Gen1, 133.33 MHz,
+DDR3-1066), tree dfac215. Setup as 10.1: phase 0's prompts 0, 3 and 7, 48 tokens each.
+- Plain greedy is the production loop on the card (`Engine.generate_card`).
+- MTP is `MTPDecoder.generate_card`: one device run per generation.
+
+**Tokens:** every prompt on all three models gives plain greedy's tokens on the card. The 0.8B's and
+2B's also equal the ISA simulator's (10.1).
+
+| model | device tok/s, plain | device tok/s, MTP | speedup | acceptance | best prompt (code) |
+|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 27.71 | 36.64 | 1.322x | 0.68 | 1.372x |
+| Qwen3.5-2B | 12.44 | 19.62 | 1.577x | 0.74 | 1.703x |
+| Qwen3.5-4B | 6.04 | 9.91 | 1.641x | 0.81 | 1.777x (acceptance 0.96) |
+
+- The rates count decode after the prefill's token: 141 tokens per model, in the runs'
+  cycles at the core clock.
+- **The device speedup is phase 2's** (9.1, on build B): 1.336x on the 0.8B and 1.593x on
+  the 2B. The loop's own work costs nothing measurable: the state block, the emission, the
+  chain and E's one-row steps at the bucket ends.
+- **Wall tok/s follows the device's.** The host's one cost is compiling a bucket's programs,
+  once per engine (0.5-0.7 s).
+  - The code prompt, with its programs already compiled: 37.72 / 21.13 / 10.72 tok/s, against
+    the device's 38.03 / 21.19 / 10.73.
+  - Over the three prompts: 28.67 / 16.73 / 8.97 tok/s, and 36.42 / 19.57 / 9.89 without the
+    compiles. Plain greedy: 26.45 / 12.16 / 5.97.
+  - Phase 2's host-driven loop was host-bound (a compile per iteration).
+
+## 11. Phase 4 design: sampled decoding on the card
+
+**The plain loop already samples on the card.** `generate.Sampler` (docs/autodecode.md,
+"Sampling") picks each token with temperature, top-k (1 .. 64), top-p and the repetition
+penalty. The host is out of the loop: before a run it writes one uniform per position
+(`uni[]`, from the chat's seeded generator) and the penalty vectors, then only reads `out[]`.
+It costs +0.7% a token at k 20, top-p 0.95, and +2.0% with a penalty (measured on the RTL). So
+what phase 4 adds is the MTP loop's sampled mode: sampled chat on Qwen3.5 at MTP's speed.
+
+### 11.1 Speculative sampling with a one-hot draft is "sample, then compare"
+
+The MTP head's draft d is its argmax: a deterministic draft, so its distribution q is one-hot.
+For a one-hot q the speculative sampling rule (section 5.2) is:
+- accept d with probability p(d);
+- on a rejection, emit a token from p with d removed, renormalized.
+
+Here p is the target's processed distribution at that row.
+
+Sampling a0 from p and accepting when a0 = d gives the same joint law:
+- P(accept) = P(a0 = d) = p(d).
+- Given a rejection, a0 follows p conditioned on a0 ≠ d, which is the residual.
+
+So the verify's sampled mode is the greedy V of section 10 with `generate.Sampler` in place
+of the `Greedy` sink per row:
+- **Row 0** (input t at p): a0 = Sampler's pick with u[p + 1]. Accept n = (a0 == d), cut
+  as today by the tokens left and a stop id.
+- **Row 1** (input d at p + 1): a1 = Sampler's pick with u[p + 2]. It is emitted only when
+  n = 1.
+- **E** (the bucket's last position, one row): a0 with u[p + 1], n = 0.
+- **D, D1**: unchanged. The MTP head's greedy draft from the rows' hidden and tokens, now
+  a0 / a1 sampled.
+
+**The tokens equal the plain sampled loop's for the same uniforms, bit for bit.**
+- The token at position q is always `Sampler`'s pick of q's logits with u[q].
+- With an accepted draft, row 1's logits are q = p + 2's logits after a0 = d. That is what
+  plain decode computes.
+- After a rejection the next iteration's row 0 recomputes position p + 2 from a0, with the
+  same u[p + 2].
+- The rows are bit-identical to decode steps (sections 5.1 and 9: the 2-row verify pairs as
+  the step does).
+
+So phase 4 keeps phase 3's test: tokens equal the plain sampled loop's
+(`Engine.generate_card(sampling=...)`) on the ISA simulator, then on the card. That is a
+stronger check than matching a distribution. Section 5.2's two-uniform scheme would need its
+own numpy reference and a statistical test.
+
+**Acceptance** is E[p(d)], the share phase 0 measured sampled (section 7.1, 32K head): 0.67 on
+the 0.8B and 0.72 on the 2B, against 0.73 / 0.74 greedy. The 4B was not run sampled.
+
+### 11.2 What the card needs
+
+Every step maps to an instruction the ISA already has. **No RTL change.**
+
+| step | instructions | where |
+|---|---|---|
+| each row's logits, chunk by chunk | the rows LM head feeding one sink per row | `_lm_head_rows` (`m.lm_sinks`, phase 3) |
+| repetition penalty per chunk | LD `pa`, `pb`; VOP MUL, MUL, MIN | `Sampler.__call__` |
+| logits to DRAM, block maxima | ST; VOP RMAX | `Sampler.__call__` |
+| the top blocks, then the top k | VOP ARGMAX, RLD, FILL (knock-out), a register-addressed LD gather, in a LOOP of RLD count | `Sampler.token` |
+| softmax | VOP SUB, MUL, EXP2 | `Sampler.token` |
+| cumulative sums | VOP RDOT with a triangular ones matrix | `Sampler.token` |
+| top-p and the pick | VOP MIN / MAX (step), SUM; LD of `uni[q]` | `Sampler.token` |
+| the id | RLD of the pick's index, `_pick` | `Sampler.token` |
+| accept | the greedy V's compare of a0 with d | `_verify_gen` |
+| the penalty's context | ST of 1/R, R at the id's address (`Sampler.after`) for a0, and a1 when n = 1 | the commit |
+
+**Two things are new, and both are small.**
+- **Row 1's penalty must count d.** Both rows share `pa` / `pb`, the context up to t, and row
+  0 must not see d.
+  - After the head, row 1's stored logit of d is penalized once: l' = min(l / g, l * g),
+    with g = pa[d] * R. That is l itself when d is in the context already, else
+    min(l / R, l * R).
+  - Then the maximum of d's 64-wide block is taken again.
+  - In all: an RLD of d's address, two LDs, four VOPs, an ST, an LD of the block and an RMAX.
+- **Each row needs its own logits buffer.** `lg` becomes two, or a second one beside it in
+  the MTP area (1 MB each for a 248K vocabulary).
+
+**The uniforms stay on the host.** The run writes u[p + 1 .. p + n] once, as the plain loop
+does: 4 bytes a position, 16 KB for a 4096-token reply. A device RNG would not take the host
+out of anything more. The sequencer could run a 32-bit LCG in a register (RLD MUL, then a
+1-wide ARGMAX writes i2f of the register into TMEM). But its state does not survive a chain
+(an fp32 word keeps 24 bits), and a counter-based generator wants integer XOR and shifts that
+the VPU does not have. A good device RNG means an RTL op. It is not needed for chat, and the
+host's uniforms keep every run reproducible against the ISA simulator.
+
+### 11.3 Cost
+
+Per verify iteration, against greedy MTP:
+- **The serial part:** the top-k loops run twice instead of the two ARGMAX picks. That is
+  about 17K cycles a row at k 20 (docs/autodecode.md).
+- **The per-chunk work:** the stores and block maxima hide under the LM head's weight
+  stream, as they do for one row.
+- **The logits:** 2 MB of stores (two rows of 248K fp32).
+- **With the penalty:** `pa` and `pb` are read once per chunk for both rows (one load, two
+  uses), 2 MB.
+
+| model | MTP iteration (cycles, M2) | sampler, 2 rows | with the penalty |
+|---|---|---|---|
+| Qwen3.5-0.8B | 6.1 M | +34K (+0.6%) | about +70K (+1.1%) |
+| Qwen3.5-2B | 11.8 M | +34K (+0.3%) | about +70K (+0.6%) |
+
+The plain sampled loop pays about 17K a token itself, so against plain sampled decode the
+difference is under 0.1%.
+
+**Projected device speedup, sampled.** Take M2's iteration cost in decode steps, C = (1 + a) /
+speedup (0.8B 1.27, 2B 1.10, 4B 1.10). Then speedup = (1 + a_sampled) / C, with a_sampled =
+M2's greedy acceptance times phase 0's sampled / greedy ratio:
+
+| model | greedy (M2) | sampled, projected |
+|---|---|---|
+| Qwen3.5-0.8B | 1.32x, a 0.68 | about 1.28x, a 0.62 |
+| Qwen3.5-2B | 1.58x, a 0.74 | about 1.56x, a 0.72 |
+| Qwen3.5-4B | 1.64x, a 0.81 | about 1.6x (no sampled phase 0) |
+
+### 11.4 Plan
+
+1. **ISA simulator.**
+   - Changes: `_verify_gen` and E with `Sampler` sinks; the second `lg`; row 1's penalty
+     fix-up.
+   - The chain area: one table per mode. A sampled bucket holds V, E, D and D1 compiled for
+     the run's `Sampling.key`, as the plain loop's chain area keeps greedy and sampled apart.
+   - `MTPDecoder.generate_card(sampling=, rng=)` writes the uniforms and the penalty vectors.
+   - Tests:
+     - tokens equal `Engine.generate_card(sampling=...)` for the same uniforms, on the tiny
+       Qwen3.5;
+     - at 16 heads (kh16);
+     - with and without the penalty (a penalty case where d is new to the context, and one
+       where it is not);
+     - across a bucket end;
+     - at a stop id.
+   - Use the varied tiny models (test_autodecode's `_tiny`, initializer_range 0.2): the tied
+     8-head one mostly echoes its input token (phase 3's lesson).
+2. **RTL:** one sampled loop across a bucket end on the board configuration, DRAM equal to the
+   ISA simulator's, as `test_mtp_loop_on_rtl` does for greedy.
+3. **Card session:**
+   - tokens equal the plain sampled loop's on the card, for the same seed: 0.8B, 2B, 4B, three
+     prompts;
+   - device tok/s against plain sampled decode;
+   - acceptance against phase 0's sampled shares.
+4. **otpu-chat:** `Chat` runs Qwen3.5 turns through `MTPDecoder` (greedy and sampled), with
+   TTFT and tok/s on the status line.
+
+The n-gram drafter (section 6.2) is one-hot too, so it would take the same sampled mode.
+
+## 12. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:
   - the concat order is the embedding first, then the hidden;

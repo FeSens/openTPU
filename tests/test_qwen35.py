@@ -122,8 +122,43 @@ def test_tiny_formats_per_kind(tiny, monkeypatch, grouped):
     for t, want in zip(toks[:4], dev):
         assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
     assert np.array_equal(b.prefill(toks, chunk=4).view(np.uint32), dev[-1].view(np.uint32))
-    with pytest.raises(ValueError, match="weight formats"):
-        spec.image(cfg, 256, formats="delta@0=fp4")
+
+
+@pytest.mark.parametrize("grouped", [False, True], ids=["pairs", "groups"])
+def test_tiny_formats_by_layer_range(tiny, monkeypatch, grouped):
+    """Weight formats per layer range (formats.py's kind@a-b), in either DeltaNet layout: a
+    layer block layout per formats group, the layers in runs of one unit of (kind, group) keys
+    (plan: a hardware loop each, over blocks of its group's size): the device follows the
+    emulation of the same formats; resident decode and a chunked prefill give token-by-token
+    decoding's logits bit for bit, and decoding goes on from the prefill's KV cache, windows
+    and states."""
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, W, spec = tiny
+    spec = dataclasses.replace(spec, pair_loop=grouped)
+    # the first half's MLP in fp4, the second half's mixers 4-bit: a loop in each layout
+    mix = dataclasses.replace(spec, formats="mlp@0-2=fp4,delta@3-5=fp4,attn@3-5=int4")
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    a = Engine(mix, W, cap=256, cfg=cfg)
+    img = a.image
+    g0, g = ("int8", "int8", "fp4", "fp4"), ("fp4", "int4", "int8", "int8")
+    assert img.grouped == grouped and img.lf == (g0,) * 3 + (g,) * 3
+    assert img.plan == [(0, (("linear", g0),), 2), (2, (("attn", g0),), 1),
+                        (3, (("linear", g),), 2), (5, (("attn", g),), 1)]
+    assert img.layouts[g0].size != img.layouts[g].size
+    assert [img._off(i).const for i in range(6)] == sorted(img._off(i).const for i in range(6))
+    assert mix.image(cfg, 256).nbytes < spec.image(cfg, 256).nbytes
+    toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 12)]
+    dev = np.array([a.step(t) for t in toks])
+    emu, e8 = emulated_logits(mix, W, toks), emulated_logits(spec, W, toks)
+    assert _cos(dev, emu).min() > 0.999
+    assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
+    r, b = Engine(mix, W, cap=256, cfg=cfg, resident=True), Engine(mix, W, cap=256, cfg=cfg)
+    assert r.resident
+    for t, want in zip(toks[:4], dev):
+        assert np.array_equal(r.step(t).view(np.uint32), want.view(np.uint32))
+    assert np.array_equal(b.prefill(toks[:8], chunk=4).view(np.uint32), dev[7].view(np.uint32))
+    for t, want in zip(toks[8:], dev[8:]):
+        assert np.array_equal(b.step(t).view(np.uint32), want.view(np.uint32))
 
 
 def test_tiny_reset_clears_state_and_conv_ring(tiny):
@@ -257,6 +292,30 @@ def test_dstep_rows_pipeline_is_bit_exact(nk, grouped):
     assert all(np.array_equal(eng.step(t), w) for t, w in zip(toks[11:], want[11:]))
 
 
+@pytest.mark.parametrize("wf", ["fp4", "int4"])
+def test_prefill_pair_sum_order(wf):
+    """PAIR with 4-bit weights: a decode step's MMs pair (column reuse), and so do a prefill
+    run's of at most MCOLS / 2 rows -- those runs are bit-identical to the steps. A wider
+    run's MMs do not pair, and a paired MM adds each even K-block to the odd one before the
+    partial sums: the same products, summed in another order (qwen35_rows). An activation's
+    int8 rounding downstream can turn that last-bit difference into a quantization step: the
+    logits stay within the pinned tolerance (this prompt: ~1e-2 of the largest with fp4,
+    ~1e-7 with int4; 1 - cos ~1e-4 at most over the prompts tried)."""
+    _, W, spec = _tiny_model(8)
+    cfg = board_config(DRAM_BYTES=1 << 25, PAIR=True, MCOLS=4)
+    kw = dict(wformat=wf, head_format="int8")
+    toks = [int(t) for t in np.random.default_rng(17).integers(0, 1000, 17)]
+    ref = Engine(spec, W, cap=256, cfg=cfg, **kw)
+    for t in toks:
+        want = ref.step(t)
+    paired = Engine(spec, W, cap=256, cfg=cfg, **kw).prefill(toks, chunk=2)
+    assert np.array_equal(paired.view(np.uint32), want.view(np.uint32))
+    wide = Engine(spec, W, cap=256, cfg=cfg, **kw).prefill(toks)        # runs of 8 rows
+    cos = float(wide @ want / np.linalg.norm(wide) / np.linalg.norm(want))
+    assert 1 - cos < 1e-3 and np.abs(wide - want).max() < 5e-2 * np.abs(want).max()
+    assert np.argmax(wide) == np.argmax(want)
+
+
 @pytest.mark.parametrize("config", ["design", "board"])
 @pytest.mark.parametrize("unit", ["dstep", "stream"])
 def test_tiny_dstep_is_bit_exact(tiny, config, unit):
@@ -279,6 +338,16 @@ def test_tiny_dstep_is_bit_exact(tiny, config, unit):
     assert all(np.array_equal(a, b) for a, b in zip(_layers_dram(eng), _layers_dram(ref)))
     a, b = ref.prefill(toks[6:], chunk=3), eng.prefill(toks[6:], chunk=3)
     assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_tiny_filling_step_programs_are_transparent(tiny, resident):
+    """The step programs that fill their logits first (the card's streamed decode) give the
+    plain programs' logits and DRAM bit for bit, per position and resident."""
+    from conftest import assert_fill_is_transparent
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 6)]
+    assert_fill_is_transparent(lambda: Engine(spec, W, cap=256, resident=resident), toks)
 
 
 @pytest.mark.parametrize("dstep", [False, True])
@@ -306,14 +375,13 @@ def test_tiny_resident_decode_is_bit_exact(tiny, dstep):
         p += run
     assert sorted(a._decodes) == [1, 2] and not b._decodes
     ia, ib = a.image, b.image
-    assert (ia.layer0, ia.LS) == (ib.layer0, ib.LS)
-    ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.layer0 + len(spec.kinds) * ib.LS]
-              .copy() for e in (a, b))
+    assert (ia.layer0, ia.loc, ia.head) == (ib.layer0, ib.loc, ib.head)
+    ma, mb = (e.backend.machine.slices[0].dram[ib.layer0:ib.head[0]].copy() for e in (a, b))
     TP = spec.conv_k * ib.CP
     for li, k in enumerate(spec.kinds):     # row 0 of each pair's ring is scratch (_ring)
         if k == "linear":
             for q in range(ib.nl // 2):
-                o = li * ib.LS + ib.cv_offset(q) + 4 * TP
+                o = ib._off(li).const - ib.layer0 + ib.cv_offset(q) + 4 * TP
                 ma[o:o + 4 * ib.CP] = mb[o:o + 4 * ib.CP] = 0
     assert np.array_equal(ma, mb)
 
@@ -330,7 +398,7 @@ def tiny_pairs(request):
 def _pair_parts(eng, li, q):
     """Pair q's taps and window, and its two states, in layer li (either layout)."""
     im, d = eng.image, eng.backend.machine.slices[0].dram
-    o = im.layer0 + li * im.LS
+    o = im._off(li).const
     n = 4 * 2 * eng.spec.lin_dv * eng.spec.lin_dk
     st = o + (im.pair_offset(q) + im.pofs["state"] if im.grouped else
               im.lofs["linear"]["state"] + q * n)
@@ -391,13 +459,15 @@ def test_shared_qk_is_bit_exact(tiny, step):
 
 @pytest.mark.parametrize("dstep,resident,formats", [
     (False, False, ""), (True, False, ""), (True, True, ""), ("stream", False, ""),
-    (True, True, "delta=fp4,attn=int4,gateup=fp4")])
+    (True, True, "delta=fp4,attn=int4,gateup=fp4"),
+    (True, True, "mlp@0-2=fp4,delta@3-5=fp4,attn@3-5=int4")])
 def test_tiny_qwen35_on_board_model(tiny, have_verilator, dstep, resident, formats):
     """The board model through the host driver, through a full turn of the convolution window:
     logits bit-identical to the ISA simulator (with and without DSTEP; resident: from position
     3 on the resident decode program, its token and position as run arguments; "stream": each
     DeltaNet head step as a STREAM on the stream engine instead of DSTEP; formats: per-kind
-    weight formats, int8, fp4 and int4 MMs in one model)."""
+    weight formats, int8, fp4 and int4 MMs in one model, and per layer range: a loop in each
+    of two layouts)."""
     from opentpu.host.board import BoardBackend, SimTransport
     _, W, spec = tiny
     spec = dataclasses.replace(spec, formats=formats)

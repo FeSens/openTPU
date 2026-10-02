@@ -108,9 +108,13 @@ words as before (checked at several positions, both configurations, MCOLS 2 and 
 
 **Program size.** The six-fold layer unit is one hardware loop and the head pairs another: the
 program is 2,021 instructions at position 0 and 2,475 at position 4095 (board configuration,
-MCOLS=2; 1,979 and 2,287 with MCOLS=4), within the 4K-instruction IMEM. The DRAM image is
-788 MiB at any KV capacity up to 4096 tokens (the DeltaNet layer blocks set the block size), of
-which 21 MiB are KV cache, convolution ring and DeltaNet state at a 256-token capacity.
+MCOLS=2; 1,979 and 2,287 with MCOLS=4), within the 4K-instruction IMEM. The DRAM image was
+788 MiB at any KV capacity up to 4096 tokens while every layer block had the DeltaNet block's
+size, of which 21 MiB are KV cache, convolution ring and DeltaNet state at a 256-token
+capacity. Each block now has its kind's size (in its formats group: `Image.layouts`, placed
+run by run, `Image.loc` / `Image._off`): the int8 image without lookup tables goes from 787
+MiB to 763 at a 256-token capacity and to 786 at 4096; the 35B-A3B's with 16 expert slots per
+layer from 4040 to 3957 MiB at 256 tokens.
 
 ## Fewer key heads than value heads
 

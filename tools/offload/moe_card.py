@@ -55,12 +55,48 @@ def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) 
                 top=top, seconds=round(time.time() - t, 1))
 
 
+def host_mem() -> dict | None:
+    """The host's memory now, GB (Linux /proc): this process's resident (rss, its peak hwm;
+    rss_file the mapped files' pages, which the page cache holds and may drop) and swapped, its
+    children's resident and swapped, the system's available, page cache, anonymous and swap
+    used."""
+    def kb(path, keys):
+        try:
+            with open(path) as f:
+                return {k: int(v.split()[0]) for k, _, v in (ln.partition(":") for ln in f)
+                        if k in keys}
+        except OSError:
+            return {}
+    me = kb("/proc/self/status", ("VmRSS", "VmHWM", "VmSwap", "RssFile"))
+    if not me:
+        return None
+    kids = {"VmRSS": 0, "VmSwap": 0}
+    for d in Path("/proc").iterdir():           # (the Engine's compile worker)
+        try:
+            if d.name.isdigit() and int((d / "stat").read_text().rsplit(")", 1)[1].split()[1]) \
+                    == os.getpid():
+                for k, v in kb(d / "status", ("VmRSS", "VmSwap")).items():
+                    kids[k] += v
+        except (OSError, ValueError, IndexError):
+            continue
+    m = kb("/proc/meminfo", ("MemTotal", "MemAvailable", "Cached", "AnonPages", "SwapTotal",
+                             "SwapFree"))
+    gb = lambda v: round(v / 1e6, 2)            # noqa: E731 (kB)
+    return dict(rss=gb(me.get("VmRSS", 0)), hwm=gb(me.get("VmHWM", 0)),
+                rss_file=gb(me.get("RssFile", 0)), swap=gb(me.get("VmSwap", 0)),
+                children_rss=gb(kids["VmRSS"]),
+                children_swap=gb(kids["VmSwap"]), total=gb(m.get("MemTotal", 0)),
+                available=gb(m.get("MemAvailable", 0)), cached=gb(m.get("Cached", 0)),
+                anon=gb(m.get("AnonPages", 0)),
+                swap_used=gb(m.get("SwapTotal", 0) - m.get("SwapFree", 0)))
+
+
 def fit_experts(spec, cfg, cap: int, **kw) -> int:
     """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image."""
     from dataclasses import replace
     probe = spec.image(replace(cfg, DRAM_BYTES=1 << 40), cap, rows=1, experts=spec.moe.k, **kw)
     L = probe.offload
-    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.slot_bytes))
+    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.pitch))
 
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
@@ -69,7 +105,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
-         formats: str | None = None) -> dict:
+         formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
+         willneed: bool = True, pool_map: bool = True) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -97,8 +134,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         backend = lambda c, imgs: BoardBackend(c, imgs, transport=tr,      # noqa: E731
                                                model=Path(model).name)
     t = time.time()
+    if layer_major:                             # the prompt a layer at a time, runs of R rows
+        ekw["layer_major"] = layer_major        # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
-                 resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
+                 resident=True, experts=experts, pool_file=pool, backend=backend,
+                 release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
+                 **ekw)
     load_s = time.time() - t
     srv = eng.server
     srv.policy = policy                         # the slots' replacement (ExpertServer)
@@ -144,6 +185,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
             return r
         eng.backend.host = served
     warm, pf = getattr(srv, "pool_warm", None), getattr(srv, "pool_file", None)
+    if willneed and pf is not None:             # a request's misses read from the disk at once
+        srv.ahead = pf.willneed
 
     def warm_at():                              # the pool file's packed experts: read by the
         if warm is None:                        # warm thread, and in the page cache
@@ -156,6 +199,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
     prefill_s = time.time() - t
+    pre = len(per_req) if layer_major else 0    # layer-major: a request per layer run
     warm_decode = warm_at()
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
     tm0, b0, st0, calls0 = dict(tm), srv.bytes, len(eng.stats), dict(calls)
@@ -163,6 +207,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         srv.events = []
     dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
     direct0 = getattr(mem, "direct", 0)         # experts read from the file into their runs
+    wait0 = getattr(mem, "wait_s", 0.0)         # staging's waits for the DMA thread
+    if pf is not None:                          # the decode's pool reads: page cache or disk
+        pf.io = {}
+    board = getattr(eng.backend, "board", None)     # the card's free-running counters
+    snap = getattr(board, "snapshot", None)
+    snap0, mem_decode = snap() if snap else None, host_mem()
     t = time.time()
     top = []                    # host loop: the device's 8 best (id, logit) per step
 
@@ -177,6 +227,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     else:                       # the prompt's last token fed by the card's loop: every pick
         got = eng.generate_card(ids[-1], n, stop_ids=[])        # on the card
     gen_s = time.time() - t
+    snap1, mem_end, warm_end = snap() if snap0 else None, host_mem(), warm_at()
     if hint_trace:
         Path(hint_trace).write_text(json.dumps(srv.events))
         srv.events = None
@@ -187,16 +238,22 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         ds, db = mem.dma_s - dma0[0], mem.dma_bytes - dma0[1]
         host.update(dma_s=round(ds, 3), dma_gbs=round(db / ds / 1e9, 3) if ds else None,
                     memory=type(mem).__name__, direct=mem.direct - direct0)
+    if hasattr(mem, "wait_s"):                  # stage = these waits + the pool's reads + copies
+        host.update(stage_wait=round(mem.wait_s - wait0, 3))
+    if pf is not None:
+        host.update(reads={k: [v[0], round(v[1], 3), v[2], v[3]] for k, v in pf.io.items()})
+        pf.io = None
     khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
     cyc = sum(s.get("cycles", 0) for s in eng.stats[st0:])       # (the simulator: none)
     dev_s = cyc / (khz * 1e3) if khz else None
     L = eng.image.offload
     J, E = L.layers, L.E
-    T = len(per_req) // J                       # whole tokens (the last request may be unread)
-    mpt = np.array(per_req[:T * J]).reshape(T, J).sum(1)       # misses per token
-    dec = mpt[len(ids):]
+    T = (len(per_req) - pre) // J               # whole tokens (the last request may be unread)
+    mpt = np.array(per_req[pre:pre + T * J]).reshape(T, J).sum(1)  # misses per token
+    prompt = (0 if host_loop else 1) if pre else len(ids)   # the prompt's tokens among them
+    dec = mpt[prompt:]
     if trace:                                   # the card's routes, as router_trace.py's
-        req = np.array(srv.history[:T * J]).reshape(T, J, -1)
+        req = np.array(srv.history[pre:pre + T * J]).reshape(T, J, -1)
         first = spec.moe.first
         z = {f"L{first + j}_idx": (req[:, j] - j * E).astype(np.int16) for j in range(J)}
         z.update({f"L{first + j}_ok": np.float64(1.0) for j in range(J)})
@@ -223,7 +280,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 expert_uses_per_token=J * spec.moe.k,
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
-                misses_per_token=mpt.tolist(),
+                misses_per_token=mpt.tolist(), layer_major=layer_major,
+                release_weights=release_weights, willneed=willneed, pool_map=pool_map,
+                prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
                 backend="card" if on_card else "isa", cfg=cfg_file, prefill_logits_sha=lg_sha,
@@ -235,7 +294,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                                split=pf.split, resident_gb_at_open=None
                                if pf.resident_at_open is None else
                                round(pf.resident_at_open / 1e9, 2),
-                               at_load=warm_load, at_decode=warm_decode) if warm else None,
+                               at_load=warm_load, at_decode=warm_decode, at_end=warm_end)
+                if warm else None,
+                host_mem=dict(at_decode=mem_decode, at_end=mem_end),
+                device_counters={k: v - snap0[k] for k, v in snap1.items()} if snap1 else None,
+                misses_per_request_decode=per_req[pre + prompt * J:pre + T * J],
                 bytes_per_token_decode=round(host["bytes"] / max(1, len(got))),
                 top=top or None)
 
@@ -283,6 +346,22 @@ def main():
     ap.add_argument("--hints", choices=("on", "off"), default=None,
                     help="the router's prefetch hints before each mixer (docs/offload.md 12; "
                          "default: the model's, on for Qwen3.5-MoE)")
+    ap.add_argument("--layer-major", type=int, default=0, metavar="R",
+                    help="prefill a layer at a time in runs of R rows (docs/offload.md 13; "
+                         "default 0: token by token)")
+    ap.add_argument("--keep-weights", action="store_true",
+                    help="keep the checkpoint mapped after the image is built (by default "
+                         "LazyWeights.release gives its pages back: page cache for the pool; "
+                         "docs/offload.md 10.6)")
+    ap.add_argument("--no-willneed", action="store_true",
+                    help="read a request's misses from the pool one after another (by default "
+                         "PoolFile.willneed queues those not in the page cache at once)")
+    ap.add_argument("--no-pool-map", action="store_true",
+                    help="read the pool through read() only (by default each read is also "
+                         "touched through a read-only map of the pool: its page cache's standing "
+                         "under MGLRU, docs/offload.md 10.7)")
+    ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -294,7 +373,8 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace, a.wformat, a.head_format, a.formats)
+             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
+             not a.keep_weights, not a.no_willneed, not a.no_pool_map)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
