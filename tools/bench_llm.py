@@ -47,9 +47,7 @@ import argparse
 import dataclasses
 import json
 import math
-import shutil
 import sys
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -60,7 +58,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from opentpu import quant as Q  # noqa: E402
-from opentpu import rtlsim  # noqa: E402
+from opentpu import rtlsim, simtmp  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
 from opentpu.llm.qwen3 import Image, Spec, rope_tables  # noqa: E402
 
@@ -211,14 +209,11 @@ class Bench:
         if 8 * n > img.cfg.IMEM_WORDS:
             imem = 1 << (8 * n - 1).bit_length()
         cfg = self.cfg(layers, imem)[0]
-        tmp = Path(tempfile.mkdtemp(prefix="otpu_bench_"))
         t = time.time()
-        try:
+        with simtmp.tempdir("otpu_bench_") as tmp:
             _, _, st = rtlsim.run(cfg, progs, [dram], uarch=rtlsim.BOARD_UARCH, axi=True,
                                   boot=True, stall=0, bw=bw, lat=self.lat, keep=tmp,
                                   max_cycles=1 << 40)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
         if self.verbose:
             print(f"  L={layers} {kind} rows={len(rows)} pos={rows[0][1]}..{rows[-1][1]} "
                   f"head={head} bw={bw}: {st['cycles']} cycles, {n} instr"

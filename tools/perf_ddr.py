@@ -37,7 +37,6 @@ import os
 import re
 import resource
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -47,7 +46,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT), str(ROOT / "tools")]
 
 from opentpu import isa as I  # noqa: E402
-from opentpu import rtlsim  # noqa: E402
+from opentpu import rtlsim, simtmp  # noqa: E402
 from opentpu.compiler import arg_words  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
 from opentpu.llm import load_spec, model_dir  # noqa: E402
@@ -171,8 +170,7 @@ class Grid:
         ldc = ddr if self.mem == "ldc" else 0
         exe = rtlsim.build_top(cfg, 20, rtlsim.BOARD_UARCH, True,
                                2 * size if meta["grow"] else None, ldc)
-        with tempfile.TemporaryDirectory(prefix="otpu_ddr_") as d:
-            d = Path(d)
+        with simtmp.tempdir("otpu_ddr_") as d:
             (d / "dram_0.bin").symlink_to(meta["bin"])
             (d / "prog_0.hex").symlink_to(meta["hex"])
             (d / "dram_out_0.bin").symlink_to("/dev/null")

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
+from . import simtmp
+
 ROOT = Path(__file__).resolve().parent.parent
 RTL = ROOT / "rtl"
 TB = ROOT / "sim" / "verilator"
@@ -68,6 +70,7 @@ def run_sim(cmd: list, timeout: float | None = None) -> subprocess.CompletedProc
     p = subprocess.Popen(["/bin/sh", "-c", _WATCH, "sh", *map(str, cmd)], env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          start_new_session=True)
+    simtmp.track(p.pid)                 # (killed on SIGTERM / SIGHUP: simtmp)
     try:
         out, err = p.communicate(timeout=timeout)
     except BaseException:
@@ -77,6 +80,8 @@ def run_sim(cmd: list, timeout: float | None = None) -> subprocess.CompletedProc
             pass
         p.wait()
         raise
+    finally:
+        simtmp.untrack(p.pid)
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
@@ -186,11 +191,12 @@ def build_top(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = Fal
 def run(cfg, programs: list, images: list, *args, keep: Path | None = None, **kw):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). The run's
     files (DRAM images, up to the machine's DRAM size) live in a temporary directory that is
-    removed afterwards, unless `keep` names a directory to leave them in."""
+    removed afterwards, on any exit (simtmp.tempdir: on disk where /tmp is in RAM), unless
+    `keep` names a directory to leave them in."""
     if keep:
         return _run(cfg, programs, images, *args, keep=keep, **kw)
-    with tempfile.TemporaryDirectory(prefix="otpu_") as d:
-        return _run(cfg, programs, images, *args, keep=Path(d), **kw)
+    with simtmp.tempdir("otpu_") as d:
+        return _run(cfg, programs, images, *args, keep=d, **kw)
 
 
 def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int = 50_000_000,

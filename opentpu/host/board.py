@@ -31,7 +31,6 @@ import mmap
 import os
 import struct
 import sys
-import tempfile
 import threading
 import time
 from dataclasses import replace
@@ -39,6 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .. import simtmp
 from . import memcal
 from . import regs as R
 from .regs import *  # noqa: F401,F403  (the v1 names stay importable from here)
@@ -483,8 +483,7 @@ class SimTransport:
              "MEM_NATIVE": 2 if native == "ld" else 1}
         p.update(self.params)
         exe = rtlsim.build("tb_board", srcs, p)
-        with tempfile.TemporaryDirectory(prefix="otpu_board_") as d:
-            d = Path(d)
+        with simtmp.tempdir("otpu_board_") as d:
             for c in (0, 1):
                 self.ch[c].view("<u4").astype(">u4").tofile(d / f"ch{c}.bin")
             (d / "host.txt").write_text("\n".join(self.script) + "\n")
