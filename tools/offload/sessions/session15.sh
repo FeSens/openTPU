@@ -8,13 +8,14 @@
 #   same tokens and prefill sha; refs-f725c2b confirms it on the ISA simulator). Predicted: the
 #   35B -0.6 to -0.8 s per 128 tokens (+2.4-3.3%), the 26B -0.4 to -0.9 s (+1-2.5%); the 35B's
 #   64-byte calls 31,346 -> about 10,000.
-#   OLD  A's parent's tree (default O/../tree-cb3dce5: git archive of main cb3dce5)
+#   OLD     A's parent's tree (default O/../tree-cb3dce5: git archive of main cb3dce5)
+#   RF_OLD  its references (default RF; refs-cb3dce5 if its ISA runs had differed)
 # About 22 min. It stops at a mismatch, a timeout or an error.
 # Run: otpu-lock --wait 10800 -- tools/offload/sessions/session15.sh   (log: O/s15/session.log)
 set -u
 SESSION=${SESSION:-s15}; RF=${RF:-${O:-$HOME/otpu-build/offload/card2}/refs-d29bfe9}
 source "$(dirname "$0")/env.sh"             # (its RF defaults to O: set before)
-OLD=${OLD:-$(dirname "$O")/tree-cb3dce5}
+OLD=${OLD:-$(dirname "$O")/tree-cb3dce5}; RF_OLD=${RF_OLD:-$RF}
 exec > >(tee -a $R/session.log) 2>&1
 echo "session15 start $(date +%T) tree $rev old $(cat $OLD/COMMIT) mem $(mem) GB"
 bad() { sleep 1; grep -c -E "\[FAIL\]|exit 124|Traceback|STOP" $R/session.log; }
@@ -23,8 +24,9 @@ stop() { [ $(bad) -gt $b0 ] && { echo "STOP $(date +%T): a mismatch, a timeout o
 echo "--- waitw: the tag in the data's last beat"
 timeout 900 python tools/qual/waitw.py --rounds 50 --tag-rounds 2000; echo "waitw exit $?"
 run() {   # its name, runs, tree
-  echo "--- $1: $2 ($(cat $3/COMMIT 2>/dev/null || echo $3))"
-  env T=$3 RF=$RF R=$R/$1 RUNS="$2" bash "$3/tools/offload/sessions/card_moe.sh"
+  local rf=$RF; [ "$3" = "$OLD" ] && rf=$RF_OLD
+  echo "--- $1: $2 ($(cat $3/COMMIT 2>/dev/null || echo $3), RF $rf)"
+  env T=$3 RF=$rf R=$R/$1 RUNS="$2" bash "$3/tools/offload/sessions/card_moe.sh"
 }
 stop || for x in "L1 q35e128s $OLD" "A1 q35e128s $T" "L2 q35e128s $OLD" "A2 q35e128s $T" \
                  "gL1 g26s $OLD" "gA1 g26s $T" "gL2 g26s $OLD" "gA2 g26s $T"; do
