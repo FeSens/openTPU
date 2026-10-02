@@ -1639,6 +1639,27 @@ def _worker_decode(blocks: int, lo: int):
     return np.asarray(assemble(progs[0]), np.uint32), ra
 
 
+def layer_programs(image, key, block: int):
+    """Engine.prefill_layers' run of `key`: (layer (-1: the embed run), blocks, rows,
+    embedded), (layer, None, rows, True, compile-time position) or "head" -> (programs,
+    run_args)."""
+    if key == "head":
+        return image.compile_prefill_head()
+    if key[1] is None:                      # (a compile-time position)
+        return image.compile_layer_run(key[0], key[4] // block + 1, block, R=key[2],
+                                       embedded=True, at=key[4])
+    return image.compile_layer_run(key[0], key[1], block, R=key[2], embedded=key[3])
+
+
+def _worker_layer(key):
+    """The worker process: layer_programs' program, assembled (one slice), and its
+    run_args."""
+    from ..isa import assemble
+    image, block = _WORKER
+    progs, ra = layer_programs(image, key, block)
+    return np.asarray(assemble(progs[0]), np.uint32), ra
+
+
 def _worker_chunk(seq: int, p0: int, n: int, left: int, fit: int, toks=None,
                   whole: bool = True):
     """The worker process: fit_chunk's run, its program assembled (one slice)."""
@@ -1838,6 +1859,7 @@ class Engine:
         self.embed_runs = embed_runs        # (the embed and compile-time-position runs with
                                             # the embedding rows from the host: prefill_layers)
         self._layer_runs: dict = {}
+        self._layer_next: dict = {}         # their compiles in the worker processes: Futures
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
                                      and getattr(self.backend, "args", False) and batch == 1):
             raise ValueError("layer-major prefill needs an image with prefill rows and lookup "
@@ -2237,7 +2259,8 @@ class Engine:
         compile-time-position runs back on a bitstream that drops them at RUN.) The expert
         server's slots are pooled for the prompt (ExpertServer.begin_prefill: every slot serves
         the running layer) and given back to their layers before the head runs (end_prefill:
-        `restore`, "lazy" by default).
+        `restore`, "lazy" by default). With the process pipeline the runs' programs compile in
+        the worker processes ahead of their runs, in their order (_precompile_layers).
         Bit-identical to step() token by token (the states, the KV cache, the logits): only
         the slots the experts sit in move. Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
@@ -2249,12 +2272,12 @@ class Engine:
 
         def run(key, vals):
             progs, ra, words = self._layer_run(key)
-            start = getattr(self.backend, "start", None)
+            progs = progs if words is None else words   # (the board: the same words object
+            start = getattr(self.backend, "start", None)    # again loads nothing)
             if start is None:
                 self.stats.append(self.backend.run(progs, args=arg_words(ra, vals)))
-            else:                           # the board: the same words object again loads
-                start(progs if words is None else words,    # nothing (a layer's runs)
-                      args=arg_words(ra, vals))
+            else:
+                start(progs, args=arg_words(ra, vals))
                 self.stats.append(self.backend.wait())
 
         host = bool(getattr(img, "embed_host", False)) and not self.embed_runs
@@ -2265,31 +2288,39 @@ class Engine:
             tokens = tokens[n:]
             if not tokens:
                 return lg
-        srv = self.server if self.pooled else None
-        if srv is not None and hasattr(srv, "begin_prefill"):
-            srv.begin_prefill()
-        for c0 in range(0, len(tokens), img.prefill_rows):
-            part, p0 = tokens[c0:c0 + img.prefill_rows], self.pos
+        chunks, p0 = [], self.pos       # each chunk's runs: (key, run arguments, the host's rows
+        for c0 in range(0, len(tokens), img.prefill_rows):  # written before it, or None)
+            part, runs = tokens[c0:c0 + img.prefill_rows], []
             low = max(0, min(len(part), K - 1 - p0))    # rows at compile-time positions
             for i, t in enumerate([] if host else part[:len(part) if R > 1 else low]):
-                self._write_host_rows([t])              # (embed_host: the token's row)
-                run((-1, (p0 + i) // B + 1, 1, True), dict(RunPos.values(t, p0 + i, K, B), row=i))
+                runs.append(((-1, (p0 + i) // B + 1, 1, True),  # (embed_host: the token's row)
+                             dict(RunPos.values(t, p0 + i, K, B), row=i), [t]))
             for li in range(self.spec.layers):
                 i = 0
                 while i < len(part):
                     p = p0 + i
                     if i < low:
                         n = min(R, low - i)
-                        run((li, None, n, True, p), {"row": i})
+                        runs.append(((li, None, n, True, p), {"row": i}, None))
                     else:
                         n = min(R, len(part) - i, B - p % B)
                         gather = li == 0 and (R == 1 or host)   # (the run gathers its rows:
-                        if gather:                              # the host's first)
-                            self._write_host_rows(part[i:i + n])
-                        run((li, p // B + 1, n, R > 1 and not gather),
-                            dict(RunPos.values(part[i], p, K, B), row=i))
+                        runs.append(((li, p // B + 1, n, R > 1 and not gather),  # the host's)
+                                     dict(RunPos.values(part[i], p, K, B), row=i),
+                                     part[i:i + n] if gather else None))
                     i += n
-            self.pos = p0 + len(part)
+            chunks.append((part, runs))
+            p0 += len(part)
+        self._precompile_layers([k for _, runs in chunks for k, _, _ in runs] + ["head"])
+        srv = self.server if self.pooled else None
+        if srv is not None and hasattr(srv, "begin_prefill"):
+            srv.begin_prefill()
+        for part, runs in chunks:
+            for key, vals, rows in runs:
+                if rows is not None:
+                    self._write_host_rows(rows)
+                run(key, vals)
+            self.pos += len(part)
         if srv is not None and hasattr(srv, "end_prefill"):    # (the last run's request is
             srv.end_prefill(self.restore)                       # served: it has halted)
         run("head", {"row": len(part) - 1})
@@ -2298,23 +2329,35 @@ class Engine:
                                .view(np.float32) for s in range(S)])
 
     def _layer_run(self, key):
-        """prefill_layers' programs, compiled once: (layer (-1: the embed run), blocks, rows,
-        embedded), (layer, None, rows, True, compile-time position) or "head" -> (programs,
-        run_args, the program assembled for a backend that runs words, else None)."""
+        """prefill_layers' programs, compiled once (layer_programs' key) -> (programs, run_args,
+        the program assembled for a backend that runs words, else None); programs None when a
+        worker process compiled it (_precompile_layers)."""
         if key not in self._layer_runs:
-            img = self.image
-            if key == "head":
-                progs, ra = img.compile_prefill_head()
-            elif key[1] is None:                # (a compile-time position)
-                progs, ra = img.compile_layer_run(key[0], key[4] // self.block + 1, self.block,
-                                                  R=key[2], embedded=True, at=key[4])
+            fut = self._layer_next.pop(key, None)
+            if fut is not None and not fut.done() and not self._ready.done():
+                fut.cancel()                # the workers still starting: compiled here
+                fut = None
+            if fut is not None:
+                words, ra = fut.result()
+                self._layer_runs[key] = (None, ra, words)
             else:
-                progs, ra = img.compile_layer_run(key[0], key[1], self.block, R=key[2],
-                                                  embedded=key[3])
-            words = np.asarray(I.assemble(progs[0]), np.uint32) \
-                if getattr(self.backend, "runs_words", False) else None
-            self._layer_runs[key] = (progs, ra, words)
+                progs, ra = layer_programs(self.image, key, self.block)
+                words = np.asarray(I.assemble(progs[0]), np.uint32) \
+                    if getattr(self.backend, "runs_words", False) else None
+                self._layer_runs[key] = (progs, ra, words)
         return self._layer_runs[key]
+
+    def _precompile_layers(self, keys) -> None:
+        """prefill_layers' runs not compiled yet, compiled by the worker processes in the order
+        they run (the process pipeline): the card runs a layer while the next one's programs
+        compile (22-46 ms each against a layer's 200-460 ms, docs/offload.md 13.7). Queued
+        while the workers start too (a prompt right after the engine: the 26B's); until they
+        are up, _layer_run compiles a run here and drops its compile."""
+        if not self._procs:
+            return
+        for k in dict.fromkeys(keys):
+            if k not in self._layer_runs and k not in self._layer_next:
+                self._layer_next[k] = self._pool.submit(_worker_layer, k)
 
     def step_batch(self, tokens) -> np.ndarray:
         """One token for each of the first len(tokens) sequences, each at its own next

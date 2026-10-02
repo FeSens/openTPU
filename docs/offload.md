@@ -1705,7 +1705,148 @@ Two alternatives:
   something I change.
 
 The recommendation is A first: no bitstream, +2-3% on Gen2, and the ordering test can run on
-the current production bitstream. B later, with the next bitstream that has room for it.
+the current production bitstream. B later, with the next bitstream that has room for it
+(10.12: parked, nothing measurable after A).
+
+### 10.12 Alternative B: a host window onto DRAM (design, ld-memch; parked)
+
+Parked on 2026-10-02: after design A it gains nothing measurable ("What B is worth after A",
+below).
+
+B moves the small calls from XDMA's DMA engine to MMIO. The host's 64-byte writes (the answer,
+served, entries, clears) and the poll's reads become loads and stores on a window of BAR0, at
+about 1-3 us instead of a 36-58 us call. The window maps onto DRAM, so the card's programs do
+not change: WAITW still polls a DRAM word through port B.
+
+**What exists.** XDMA's AXI-Lite master (BAR0, 1 MiB) already reaches the control registers
+through `sc_ctl`, which crosses into the core clock (`M_AXI_CTL`, 64 KiB at 0). The host maps BAR0
+with `/dev/xdma0_user` (XdmaTransport.regs, 0x40000 bytes, uncached), and a register read takes
+about 1 us. otpu_ctrl decodes 12 address bits, so the CTL aperture's other 60 KiB are aliases
+today.
+
+**The RTL** (core clock only; no change to XDMA, the block design, the split or otpu_mem_ch):
+- **The window.** CTL offsets 0x8000-0xFFFF (32 KiB) go to a new block, the rest to otpu_ctrl,
+  through an AXI-Lite 1:2 split by address bit 15 in the board top. otpu_ctrl gets one register,
+  WIN_BASE: the window's DRAM base, a logical byte address, 32 KiB aligned. The host moves the
+  window with one register write. A request's answer line, served and the poll's word fit in
+  one 32 KiB window. The directory (8 x E bytes a layer) stays a DMA call, which is off the
+  critical path in A.
+- **A host port H in otpu_native_dram,** a fifth source in each channel's command mux, after B,
+  with its own tag kind, so its read data routes back like the others':
+  - Writes are 32-bit words with byte enables. They gather in a one-beat buffer, as port SW's
+    do. The beat goes out whole when all 16 words are written, when a write to another beat
+    arrives, before a read of the same beat, or after a timeout longer than the host's gap
+    between two stores (about 0.2 us, 27 cycles). A partial beat goes out with its mask, and
+    otpu_mem_ch does the read-modify-write.
+  - Reads are one beat each. The window's word comes back on AXI-Lite R.
+  - H's writes go through the adapter's own stream, so they drop port A's reused beat and runs
+    the way B's and SW's writes do. That is better than XDMA's writes, which the adapter never
+    sees.
+- **How the card sees it:** nothing changes on its side. WAITW polls the word through port B,
+  and a host write is visible once it has entered the channel's stream. The host writes a
+  line's flag word last: within a beat that is the order a partial flush keeps, and a whole
+  beat lands at once.
+- **Area:** about 1-1.5k LUTs and 1k flip-flops (a 576-bit gather buffer, an address register,
+  a 512-to-32 read select, one more mux input and tag kind per channel), no block RAM. The pa
+  build has 175k LUTs (58.8%) and 76% of its slices.
+- **Timing:**
+  - userclk1 and userclk2: no new logic in XDMA's domains (sc_ctl already crosses), so no new
+    risk at 250 / 500 MHz.
+  - Core clock at 133.33 MHz: pa's WNS there is +0.055 ns. The risk is otpu_native_dram's
+    per-channel command mux, which gains an input. Mitigations: H's command is registered and
+    has the lowest priority, and the read select is registered once more.
+  - Before a build, an OOC of otpu_native_dram with H at 7.5 ns: the tournament's
+    otpu_native_dram component flow.
+
+**The host** (no driver change, no reload, no root):
+- The window is inside the 0x40000 bytes of `/dev/xdma0_user` that XdmaTransport maps already.
+  The driver exposes the whole BAR.
+- A 64-byte line is 16 32-bit stores, flag last; on an uncached mapping each is a posted write.
+  XDMA's AXI-Lite master takes one DW per request, so no 64-bit stores.
+- A poll is one 32-bit load: about 1 us of PCIe round trip plus the DRAM read through the adapter
+  (40-60 core cycles, about 0.4 us).
+- The window replaces BoardDram's 64-byte calls and the poll's C2H read. XdmaTransport keeps
+  the DMA calls for the data.
+- CAPS gets a bit (WIN): the host uses the window only on bitstreams that have it.
+
+**Ordering:**
+- **Writes after data.** B's writes are issued after the data call has returned. XDMA has seen
+  B for every beat, so every beat is in the controller's queues (otpu_mem_ch's B comes after
+  the controller has taken a burst's beats). A window write enters later, and the card reads
+  the data only after it has seen the window's flag. Those reads queue behind the data's writes
+  on the beat's port: the WAITW contract of docs/isa.md as it is. It needs none of 10.11's
+  conditions on the order within one transfer.
+- **Design A's tag in the last beat** stays the data call's own order and needs nothing from
+  the window. With both, A's tag removes the per-miss flag and B carries the rest (answer,
+  served, directory, polls).
+- **Window writes among themselves** are in order: AXI-Lite, then one queue. **Against the
+  card's own stores** a window read follows them in the channel's stream once they have gone
+  out (the card posts with a store; the host polls with a load).
+- **A posted MMIO write and a later DMA call** are not ordered against each other: neither
+  path waits for the other. B never needs that order: the card waits on the window's flag, and
+  any data it then reads came in an earlier, completed call.
+
+**What B is worth after A** (offload's serve_emu, 2026-10-02): nothing measurable, so B is
+parked. The emulator replays g2check's Gen2 traces (35B N2, 26B gN1, two runs of each). Its
+link is calibrated to the card's calls:
+- Each pwrite costs what the card measured for its size: 162 / 298 / 330 us on the 35B
+  (lead / rest / full) and 214 / 659 / 673 us on the 26B.
+- A 64-byte call costs 35.6 / 49.3 us, and a C2H read 19.4 / 20.3 us.
+- The card's next post comes after its own compute, counted from the request's critical end.
+- In B a window write is 3 us of the worker's CPU and no link time, and a load is 1.5 us.
+
+The emulator runs 10% (35B) and 4% (26B) slower than the card, so read the deltas. Per 128
+tokens, against main's entry protocol, with a run-to-run spread of 0.05-0.1 s:
+
+| | 35B wall | 35B link busy | 26B wall | 26B link busy |
+|---|---|---|---|---|
+| main | 27.59 s | 10.97 s | 37.51 s | 17.99 s |
+| A | -0.81 | -0.44 | -0.92 | -0.57 |
+| A + B, the directory by DMA | -0.77 | -0.86 | -0.84 | -1.00 |
+| A + B, the directory as window beats | -0.66 | -1.12 | -0.91 | -1.30 |
+| B alone (entries as window writes) | -0.44 | -1.12 | -0.33 | -1.30 |
+
+- **B after A: 0 +- 0.05 s.** A already hides the answer: it goes out about 240 us after the
+  request is seen, while the first data waits about 430 us for the pool's read. What B could
+  still save is at most about 15 us a request: detection drops from 24 to 15.5 us, and the
+  row's read is about 6 us faster. That is 0.07 s on the 35B and 0.06 s on the 26B,
+  +0.3% / +0.15%.
+- **B alone is 60-65% of A on the card.** The emulator shows 0.40-0.44 / 0.32-0.33 s, but its
+  worker spends 40-55 us of Python between calls where the card's spends about 10. On the
+  card that is 13,113 entries x (41 -> 3 us) = 0.50 s on the 35B and 11,310 x (58 -> 3 us)
+  = 0.62 s on the 26B.
+- **tok/s on the card's scale:**
+
+  | | 35B | 26B |
+  |---|---|---|
+  | main | 5.10 | 3.54 |
+  | A | 5.27 | 3.59-3.63 |
+  | A + B | 5.27-5.28 | 3.59-3.64 |
+  | B alone | 5.19-5.21 | 3.57-3.60 |
+
+- **What B frees is link time.** It frees 0.86-1.30 s per 128 tokens, and nothing uses idle
+  link time today (router hints are off).
+- **The larger host lever is software.** From seen to the first data DMA takes 258 / 309 us
+  (median, 35B / 26B): 1.27 / 1.20 s per 128 tokens on the critical path. Only about 20 us of
+  it is the row's read; the rest is serve's Python and the pool's read.
+
+**Port H out of context** (omarchy, otpu_native_dram alone, 7.5 ns, D = 128):
+- **WNS +0.208 ns, against main's +0.530.** The worst paths in both are existing ones: the tag
+  RAM's head pointer fanning out into the LUTRAMs' write addresses, at 0 logic levels and
+  about 7 ns of route.
+- **H's own worst path is +1.52 ns at 5 levels:** the gather mask's all-ones detect into the
+  issue beat's load enables.
+- **Area: +879 LUTs and +1,253 flip-flops.** The gather beat and the issue beat are both
+  registered, which is why the flip-flop count is above the estimate.
+
+**Parked.** No bitstream carries B. The port is on branch hwin (8fce830):
+- otpu_native_dram's port H, tied off in otpu_board and otpu_top.
+- Its gather timeout is the HGATHER parameter, 255 idle cycles.
+- It is lint-clean and has no functional test.
+
+The window block, WIN_BASE, the CAPS bit and the host side were not written. B is worth
+reconsidering when something uses the link's idle time (router hints) or a build has spare
+area for it.
 
 ## 11. Gemma 4 26B-A4B: design note
 
@@ -2268,3 +2409,86 @@ bc546a4; `layer_major.sh` RUNS="q35t16 q35lm1 q35lm2 q35lmp2"), the 35B's 16 tok
 same prefill logits (88225ff781699291) and tokens four ways: token by token, layer-major R = 1
 and R = 2 with each layer's slots (840 and 480 requests in the prompt, 2755 and 2705 misses),
 and R = 2 pooled (480, 3027).
+
+### 13.7 Where the prompt's time goes
+
+`moe_card.py`'s result has `prefill_time`. It holds the prompt's wall time and the sums of its
+runs (start to the wait's return, the device's cycles, start to HALTED seen) and of the time
+between them. It also holds the requests' serve time, the host's parts and the card's
+free-running counters over the prompt. `--prefill-trace PATH` writes the timeline:
+- each run, with its layer run's key (None for a token step), start, done, HALTED seen and
+  counters;
+- each request, with seen, served, misses and ids.
+
+A layer run then splits into:
+- pre: the mixer and the router, up to the request seen;
+- wait: seen to served. The card computes each expert once its entry is present, so the hits
+  overlap the misses' DMA;
+- post: served to HALTED.
+
+On the card (2026-10-02, pa e4db91c9, Gen2 x8, tree 333a6c1, sessions pftime and pfpool), the
+35B took 134 tokens (wiki.txt's first paragraph in its chat template, the table on the host)
+and the 26B took 124. All runs are bit-exact (95426ebacc3b40a9 and 90e6b6e06e19da99, the
+latter q26ref16). Compute is each layer kind's device time on its zero-miss runs times the
+number of runs. The R = 2 compute comes from the pooled runs, which have the most zero-miss
+runs. Exposed misses are the rest of the layer runs' device time.
+
+| | 35B R = 1 | 35B R = 2 | 35B R = 2 pooled | 26B R = 2 | 26B R = 2 pooled |
+|:--|--:|--:|--:|--:|--:|
+| prefill | 23.14 s | 18.50 s | **14.64 s** | 24.43 s | **17.33 s** |
+| misses | 12499 | 12198 | 6241 | 9013 | 2234 |
+| layer runs' compute | 12.25 | 8.29 | 8.29 | 13.72 | 13.72 |
+| exposed misses | 8.06 | 7.24 | 3.46 | 8.99 | 2.12 |
+| token steps (35B) or embed runs (26B) | 0.87 | 0.88 | 0.90 | 0.03 | 0.03 |
+| between runs | 1.13 | 1.58 | 1.58 | 1.41 | 1.30 |
+| run start, HALTED, counters, head | 0.82 | 0.52 | 0.38 | 0.28 | 0.16 |
+
+Per run (ms):
+
+| layer | zero-miss R = 1 | zero-miss R = 2 | pre | +wait a miss |
+|:--|--:|--:|--:|--:|
+| 35B DeltaNet | 2.48 | 3.38 | 1.94 | 0.78-0.82 |
+| 35B attention | 1.98 | 2.61 | 1.18 | 0.78-0.82 |
+| 26B sliding | | 7.29 | 3.33 | 1.54 |
+| 26B global | | 7.81 | 3.85 | 1.54 |
+
+The pre column is at R = 2. The 35B's runs are close to the co-simulation in 13.5.
+
+The misses are bound by the link:
+- A miss adds the DMA of its slot to the wait: 1.67 MB at 2.1 GB/s on the 35B, 3.45 MB at
+  2.24 GB/s on the 26B.
+- Only a run's first miss overlaps the hits' compute. The device time grows 0.47 ms (35B) or
+  0.70 ms (26B) for it, then a whole slot's time for each miss after it.
+- The time between runs is the layer programs' first compile, 22 / 34 / 41-46 ms a layer
+  (35B R = 1, R = 2, the 26B). Within a layer the runs are 12-20 us apart.
+
+Over this prompt each layer uses 144 of the 35B's 256 experts (100-226) and 75 of the 26B's
+128 (49-101): 5777 and 2237 in all. Pooled slots load each of them once. That gives the 35B's
+6241 misses (with the token steps' 645) against per-layer slots' 12198.
+
+The pooled prompt leaves fewer of the decode's experts in place, so the lazy restore (13.4)
+costs the decode a re-warming of its slots: a fixed 0.16 s on the 35B and 0.24 s on the 26B. The
+16 tokens after the prompt took 3.52 s against 3.36 s and 4.78 s against 4.53 s. The 35B's
+second half missed less than the per-layer run's, 84.9 experts a token against 101.6. The
+prompt saved 3.86 s and 7.10 s.
+
+What is left:
+1. The compiles, now done. The layer runs' programs compile in the compile worker processes
+   ahead of their runs, in run order (Engine._precompile_layers), 22-46 ms each against a
+   layer's 200-460 ms. On the card (session pfcomp, same build and prompts) this took the 35B's
+   pooled R = 2 prompt from 14.64 to 13.32 s. The gap at a new layer fell from 33 ms to 16 us.
+   The 26B's was unchanged (17.30 s): its prompt starts right after the engine, before the
+   workers are up, and nothing had been queued. Now the compiles are queued anyway, and a run
+   compiles in line until the workers are up. With that (pfcomp2, tree 94e635e) the 26B's
+   prompt went from 17.33 to 16.25 s, bit-exact. Its time between runs fell from 1.28 to
+   0.18 s; the only wait left is layer 0's first run (130 ms while the workers came up).
+2. The pooled misses, 4.5 s of link on the 35B and 3.4 s on the 26B. Streamed a layer ahead
+   into the pooled slots while the layer before runs, they can hide behind the compute. A
+   layer's compute is 207 ms on the 35B and 457 ms on the 26B. All of a layer's experts take
+   200 ms (256 x 0.78 ms) and 197 ms (128 x 1.54 ms). So a static profile order, with a
+   request for an expert still in flight served first, needs no prediction of the next
+   layer's routes at this length (and no host compute): about 9.6-10.6 s for the 35B and 14 s
+   for the 26B.
+3. R = 4, if the TMEM layout for 4-bit experts at 4 rows allows it. The R = 1 / 2 runs fit
+   1.58 + 0.90 R ms (DeltaNet) and 1.35 + 0.63 R ms (attention): 6.4 s of compute for the
+   35B, against its 4.5 s of pooled misses, so about 8 s.
