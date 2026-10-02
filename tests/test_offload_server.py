@@ -1242,6 +1242,37 @@ def test_ahead_victims_spare_the_layers_the_runs_may_read():
     assert _landed(mem, lay, srv, 1) and _empty(mem, lay, 8)
 
 
+def test_a_hint_for_the_ahead_layer_adds_to_the_end_of_its_queue():
+    """A hint for ahead_layer's layer (the card's router on the layer before it) adds its ids
+    to the end of the queue in arrival order: once each, none in a slot or on its way, none
+    queued already; it takes no slot (each when its first part goes) and is served as a hint.
+    A hint for another layer is ignored (pooled), as is any hint with no queue."""
+    lay, mem, srv = _ahead_setup()
+    G = lay.E * lay.layers
+    _post_n(mem, lay, 1, [0, 1])                    # layer 0's run
+    assert srv.poll() == 1
+    srv.ahead_layer(1, [9, 8])
+    assert srv.poll() == 1 and 9 in srv.pending     # 9 on its way, 8 queued
+    _post_n(mem, lay, 2, [g + G for g in (9, 10, 8, 10, 11)])
+    assert srv.poll() == 1 and _served(mem, lay) == 2
+    assert list(srv.queue) == [8, 10, 11] and srv.hinted_ahead == 2
+    assert 10 not in srv.lru[1] and 11 not in srv.lru[1]
+    _post_n(mem, lay, 3, [11 + G, 12 + G])
+    assert srv.poll() == 1 and list(srv.queue) == [8, 10, 11, 12] and srv.hinted_ahead == 3
+    _post_n(mem, lay, 4, [17 + G, 16 + G])          # layer 2's: not the queue's layer
+    assert srv.poll() == 1 and _served(mem, lay) == 4
+    assert list(srv.queue) == [8, 10, 11, 12] and 17 not in srv.lru[2] and srv.hints == 3
+    while srv.poll():
+        pass
+    assert all(_landed(mem, lay, srv, g) for g in (9, 8, 10, 11))
+    assert 12 not in srv.lru[1] and not srv.queue   # (no slot left outside layers 0 and 1)
+    srv.end_prefill()
+    lay, mem, srv = _ahead_setup(ahead=False)       # no queue: a hint as before (pooled)
+    srv.ahead_layer(1, [9])
+    _post_n(mem, lay, 1, [9 + G, 10 + G])
+    assert srv.poll() == 1 and not srv.queue and srv.hinted_ahead == 0 and not srv.lru[1]
+
+
 def test_ahead_layer_serves_the_last_request_first_and_end_prefill_drops_the_queue():
     """ahead_layer settles first (a run's all-hit request the host has not seen). end_prefill
     drops the queue and the expert on its way and gives the server its part back; a prefill

@@ -2577,9 +2577,17 @@ first (a profile's order), so its runs find them in slots:
 - A request that names a queued expert takes it as a miss. A request that names one on its way
   sends its rest with its tag (promoted), as for a hint.
 - `end_prefill` drops the queue and the expert on its way.
+- A hint for the queue's layer adds its ids to the end of the queue, in arrival order. This is
+  the card's own router on the layer before it, gemma4's predictor (13.9).
+  - Each id is added once, and only if it is in no slot, not on its way and not queued.
+  - The append takes no slot and evicts nothing; each expert takes a slot when its first part
+    goes, as before.
+  - The hint is served as any hint.
+  - A hint for any other layer is ignored, as with pooled slots before. `hinted_ahead` counts
+    the ids added.
 - Without pooled slots, only free slots are used.
 - Tests: test_offload_server's ahead tests: idle-poll landing in order, replace, promote and
-  miss, victims outside the running layers, settle and end_prefill.
+  miss, victims outside the running layers, settle and end_prefill, and a hint's append.
 
 ### 13.5 Tests and status
 

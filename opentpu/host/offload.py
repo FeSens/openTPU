@@ -538,12 +538,14 @@ class ExpertServer:
         # a layer-major prefill's layer ahead (ahead_layer): its experts not yet given a slot,
         # most wanted first (each takes one when its first part goes on an idle poll), the ones
         # of them on their way (in `pending`), and the layers the runs until the next call may
-        # use (no victim from them); begin_prefill's part size while the prefill lasts
+        # use (no victim from them); begin_prefill's part size while the prefill lasts; the
+        # queue's layer (a hint for it adds to the queue: the card's own router, 13.4)
         self.queue: OrderedDict = OrderedDict()
         self._ahead: set = set()
         self._spare: frozenset = frozenset()
-        self._part, self._ahead_off = None, False
+        self._part, self._ahead_off, self._qlayer = None, False, None
         self.aheads = self.landed = 0       # ahead_layer's calls; its experts landed whole
+        self.hinted_ahead = 0               # ids hints added to its queue
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory, mailbox and answer, every slot's tag zero, then
@@ -755,9 +757,18 @@ class ExpertServer:
         With "lfu" each one not in a slot gets one now (a free slot, or the victim's: its entry
         cleared) and waits in `pending` for the link's idle time (step); no use counted, so
         a hinted expert no request names is the next victim. "lru" ignores hints (section
-        5.4: an LRU victim of a wrong hint is a recent expert)."""
+        5.4: an LRU victim of a wrong hint is a recent expert). A hint for ahead_layer's layer
+        (the card's router on the layer before it, in a layer-major prefill) adds to the end
+        of its queue instead (docs/offload.md 13.4)."""
         j = self._layer(ids)
         self.hints += 1
+        if j == self._qlayer:               # ahead_layer's layer: to the end of its queue, those
+            lru, q = self.lru[j], self.queue    # in no slot (on their way: in one) nor queued;
+            for g in ids:                   # no slot taken now (each when its first part goes)
+                if g not in lru and g not in q:
+                    q[g] = None
+                    self.hinted_ahead += 1
+            return
         if self.policy != "lfu" or self.pooled:
             return
         lru = self.lru[j]
@@ -974,11 +985,13 @@ class ExpertServer:
         self._spare = frozenset((j, (j - 1) % L))
         lru = self.lru[j]
         self.queue = OrderedDict((int(g), None) for g in ids if g not in lru)
+        self._qlayer = j
 
     def _drop_ahead(self) -> None:
         """ahead_layer's queue emptied, and its experts on their way dropped: their slots free
         (no tag or entry was written for them)."""
         self.queue.clear()
+        self._qlayer = None
         for g in [g for g in self.pending if g in self._ahead]:
             del self.pending[g]
             j = g // self.L.E
