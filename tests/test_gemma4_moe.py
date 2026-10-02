@@ -331,7 +331,8 @@ def test_moe_layer_major_prefill_on_a_live_card(moe):
     la, lb = isa.prefill(toks), brd.prefill(toks)
     assert card.error is None, card.error
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
-    assert brd.server.misses > 0 and card.waits > 0
+    assert brd.server.misses > 0    # (card.waits may be 0: the host can write an entry before
+                                    # the card's thread reaches its WAITW)
     assert len(loads) == 2 * spec.layers + 2        # the embed run's, each layer's two
                                                     # (2 rows, then 1), the head's
     t = int(np.argmax(la))
