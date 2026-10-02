@@ -221,9 +221,10 @@ def main(argv=None) -> int:
     def bw():
         if a.sim:
             return True, "skipped on the model"
-        w, rd = bandwidth(t, a.bw_mib << 20)
+        w, rd, wb = bandwidth(t, a.bw_mib << 20)
         ok = w > 0.5 and rd > 0.5
-        return ok, f"host->card {w:.2f} GB/s, card->host {rd:.2f} GB/s"
+        return ok, (f"host->card {w:.2f} GB/s, card->host {rd:.2f} GB/s (placed buffers; "
+                    f"host->card through the staging copy {wb:.2f})")
 
     def kernel():
         ok, msg, st = run_demo(board, cfg)
