@@ -479,6 +479,40 @@ def test_layer_hints_queue_the_next_layer_and_its_experts_land_early(tiny):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
 
 
+def test_layer_ahead_on_a_live_card_with_idle_parts_v2(tiny, tmp_path):
+    """Layer-major prefill with the layer ahead from the runs' hints (layer_ahead "hint") beside
+    a card that computes while the host serves (_LiveCard, CHASH, a split pool through one
+    BoardDram), its idle parts read ahead, one call each, and held back near a run's expected
+    end (docs/offload.md 13.12): ahead_layer's experts take their slots as they are staged,
+    each ahead_layer call and request drops a staged part. The ISA simulator's token-by-token
+    logits and the decode step after them, bit for bit."""
+    from test_lfm2_moe import _LiveCard
+    from opentpu.host.board import BoardBackend
+    from opentpu.host.offload import BoardDram
+    from opentpu.isasim import board_config
+    spec, W = _untied(tiny)
+    cfg = board_config(DRAM_BYTES=1 << 25)
+    card = _LiveCard.make(cfg, chash=True)
+    card.threaded = True
+    kw = dict(cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K)
+    isa = Engine(spec, W, **kw, embed_host=False)
+    brd = Engine(spec, W, **kw, layer_major=2, layer_ahead="hint",
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card),
+                 pool_file=tmp_path / "pool.bin")
+    s = brd.server
+    assert isinstance(s.mem, BoardDram)
+    s.read_ahead = s.halt_aware = True
+    toks = [int(t) for t in np.random.default_rng(11).integers(0, 1000, 13)]
+    la, lb = isa.prefill(toks), brd.prefill(toks)
+    assert card.error is None, card.error
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    assert s.hinted_ahead > 0 and s.mem.staged > 0 and not s.mem._held
+    t = int(np.argmax(la))
+    a, b = isa.step(t), brd.step(t)
+    assert card.error is None, card.error
+    assert np.array_equal(a.view(np.uint32), b.view(np.uint32))
+
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 
@@ -528,15 +562,16 @@ def test_hinted_experts_on_their_way_wait_on_their_tags_beat_by_beat(tiny):
     assert a.generate_card(t0, 6, stop_ids=[]) == b.generate_card(t0, 6, stop_ids=[])
 
 
-@pytest.mark.parametrize("caps", [(0, 0), (1, 1)])
-def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path, caps):
+@pytest.mark.parametrize("caps,parts", [((0, 0), "v1"), ((1, 1), "v1"), ((0, 0), "v2")])
+def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path, caps, parts):
     """Hints beside a card that computes while the host works (tests/test_lfm2_moe.py's
     _LiveCard, CHASH's map, a split-format pool), with the embedding table on the host: one
     BoardDram for the experts and the rows. The host sends the hinted experts in parts (64 KiB
     here) while the card runs its mixers, the rest of one the route names at once. Resident
     steps and the card's generate loop give the ISA simulator's logits and tokens with the
     table on the card and no hints bit for bit, with hinted experts landed before the route
-    asked; uncapped, and with each hint's best expert only (hint_n, hint_top: 12.7)."""
+    asked; uncapped, and with each hint's best expert only (hint_n, hint_top: 12.7); v2:
+    the idle parts read ahead, one call each, and held back near a run's expected end (13.12)."""
     from test_lfm2_moe import _LiveCard
     from opentpu.host.board import BoardBackend
     from opentpu.host.offload import RUN, BoardDram
@@ -555,6 +590,7 @@ def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_pat
     assert brd.server.L.slot_bytes > 16 * RUN
     brd.server.part = 16 * RUN
     brd.server.hint_n, brd.server.hint_top = caps
+    brd.server.read_ahead = brd.server.halt_aware = parts == "v2"
     toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 6)]
     for t in toks:
         a, b = isa.step(t), brd.step(t)
@@ -566,6 +602,7 @@ def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_pat
     assert got == isa.generate_card(t0, 8, stop_ids=[])
     s = brd.server
     assert s.hints >= 13 * len(KINDS) and s.prefetched > 0 and s.mem.direct > 0
+    assert (s.mem.staged > 0) == (parts == "v2")
     assert s.misses < isa.server.misses and brd.row_server.seq >= 7
 
 
@@ -605,11 +642,12 @@ def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
               "--hint-trace", str(tmp_path / "trace.json"))
     old = run("legacy", "--experts", "2", "--legacy-serve")
     capped = run("capped", "--experts", "3", "--hints", "on", "--hint-drop", "--hint-n", "1",
-                 "--hint-top", "1")                 # (docs/offload.md 12.7)
+                 "--hint-top", "1", "--idle-parts", "v2")   # (docs/offload.md 12.7, 13.12)
     assert want[2] == 0 and got[2] > 0 and old[2] > 0
     assert got[:2] == old[:2] == want[:2] == capped[:2]
     h = capped[3]["hints"]
     assert (h["n"], h["top"], h["drop"]) == (1, 1, True) and h["served"] > 0
+    assert capped[3]["idle_parts"]["mode"] == "v2" and got[3]["idle_parts"]["mode"] == "v1"
     assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
 
 
@@ -673,11 +711,13 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
     assert Path(str(b) + ".packed").read_bytes() == bytes([1] * n)
 
 
-def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
+@pytest.mark.parametrize("ahead", ["index", "hint"])
+def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch, ahead):
     """tools/offload/moe_card.py --layer-major 2 --layer-ahead index --prefill-trace (ISA): the
     prompt's timeline holds each run (the embed runs, the layer runs by key, the head last) and
     each request with its ids and misses, as many as the result's prefill_time and
-    prefill_requests count; the layer ahead called once a MoE layer."""
+    prefill_requests count; the layer ahead called once a MoE layer. With --layer-ahead hint
+    (--ahead-part 2048 KiB) each layer run but the last layer's posts a hint, an "h" event."""
     import json
     import pickle
     import runpy
@@ -700,7 +740,8 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [
         "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
         "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
-        "--layer-ahead", "index", "--prefill-trace", str(tr), "--out", str(out)])
+        "--layer-ahead", ahead, "--prefill-trace", str(tr), "--out", str(out)]
+        + (["--ahead-part", "2048"] if ahead == "hint" else []))
     runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
                    run_name="__main__")
     r, t = json.loads(out.read_text()), json.loads(tr.read_text())
@@ -712,5 +753,9 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     assert sorted(set(li) - {-1}) == list(range(len(KINDS)))
     assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
     assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
-    assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])
-    assert r["layer_ahead"] == "index" and pt["ahead"]["calls"] == len(KINDS)  # (one chunk)
+    assert sum(t["misses"]) == r["prefill_misses"]
+    assert r["layer_ahead"] == ahead and pt["ahead"]["calls"] == len(KINDS)    # (one chunk)
+    hints = [e for e in t["events"] if e[2] == "h"]
+    assert all(e[2] in "dh" for e in t["events"])
+    assert len(hints) == pt["ahead"]["hints"] == (len(KINDS) - 1) * li.count(0) * (ahead == "hint")
+    assert r["ahead_part"] == (2 << 20 if ahead == "hint" else None)

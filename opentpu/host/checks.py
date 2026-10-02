@@ -472,18 +472,33 @@ def address_lines(transport, ch: int, ch_bytes: int) -> tuple[bool, str]:
     return True, f"{len(offs)} address bits"
 
 
-def bandwidth(transport, nbytes: int) -> tuple[float, float]:
-    """H2C and C2H GB/s over both channels."""
-    buf = np.random.default_rng(0).integers(0, 256, nbytes // 2).astype(np.uint8)
+def bandwidth(transport, nbytes: int) -> tuple[float, float, float]:
+    """H2C and C2H GB/s over both channels from host buffers placed for full DMA speed
+    (board.DMA_PLACE: the link's rate), and H2C again from a buffer that is not placed: the rate an
+    unplaced caller gets, through XdmaTransport.mem_write's staging copy (docs/host.md section 2,
+    "H2C rate at PCIe Gen2 x8"). Returns (h2c, c2h, h2c through the copy)."""
+    from .board import BASE, placed
+    n = nbytes // 2
+    data = np.random.default_rng(0).integers(0, 256, n).astype(np.uint8)
+    bufs = [placed(n, BASE[c]) for c in (0, 1)]
+    for b in bufs:
+        b[:] = data
     t = time.time()
     for c in (0, 1):
-        transport.mem_write(c, 0, buf)
+        transport.mem_write(c, 0, bufs[c])
     w = nbytes / (time.time() - t) / 1e9
     t = time.time()
     for c in (0, 1):
-        transport.mem_read(c, 0, nbytes // 2)
+        transport.mem_read(c, 0, n, bufs[c])
     r = nbytes / (time.time() - t) / 1e9
-    return w, r
+    raw = np.empty(n + 128, np.uint8)                   # 16 bytes past a beat: not placed
+    src = raw[(16 - raw.ctypes.data) % 64:][:n]
+    src[:] = data
+    t = time.time()
+    for c in (0, 1):
+        transport.mem_write(c, 0, src)
+    wb = nbytes / (time.time() - t) / 1e9
+    return w, r, wb
 
 
 def model_check(t, cfg, model: str, tokens: int, sim: bool, wformat: str = "int8",

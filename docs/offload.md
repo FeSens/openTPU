@@ -2552,6 +2552,96 @@ its own programs: q35ref16 without hints, q35ref16h with them and the caps. Hint
 bit. The 26B has no decode hint programs (a gemma4.py change), so they wait for the 35B's
 result.
 
+### 12.8 An expert landing as its request is posted
+
+The card posts a request, then reads the present flag of each id it names; a missing one's
+slot comes from the request's answer word, which the host writes only for the ids it serves as
+misses. An idle poll reads seq, finds no request, and lands a hinted (or ahead_layer's) expert:
+its last part with the tag, then its entry. If the card posts a request naming that expert
+after the poll read seq, it can read the entry before it lands, as missing, and wait on its
+answer word, while the host, at the next poll, finds the expert landed and serves it as a hit:
+answer word 0, and the card's WAITW never holds. Two polls later the race is over (the poll
+between read seq after the entry had landed).
+
+Only idle polls land experts, and only hinted experts (`MoESpec.hint`, the hint programs:
+moe_card `--hints on`) and ahead_layer's queue (`Engine(layer_ahead=...)`, `--layer-ahead`) go
+on idle polls; the default paths (hints off, no layer ahead) never had a pending or queued
+expert, so they were never exposed. Exposed and passing by timing: card sessions 5-6 (the
+decode hints, 16 tokens, most hinted experts sent on request), pfahead, pfhint and pfhint2
+(the layer ahead).
+
+Found by a hang of the live fake card (test_qwen35_moe's hints test under load, 2026-10-02:
+`WAITW ... wait: its slot (the answer) never holds`). Capped hints make it likelier on the
+card: a whole expert lands about 0.9 ms after its hint, the request comes 1.6-1.7 ms after.
+The fix, host only: `poll` keeps the experts the last idle poll landed (`_fresh`); the request
+served in the next poll names their slots in its answer too (`late`), and writes the answer
+even with no miss. Their tags landed with them, so a card that read the entry as missing finds
+its slot and its data; one that read it present never reads that answer word, and zeroes the
+answer after its experts as always. test_offload_server's
+`test_an_expert_landed_in_the_poll_before_a_request_is_answered` posts the request right after
+the landing poll's read of seq; on the server before the fix its answer word is 0.
+
+### 12.9 Session 17: capped hints on the card (the default stays off)
+
+One otpu-lock, 2026-10-02 13:22-13:43 opentpu.
+- Build and tree: production fmvf 542fc43a; tree offload-s17 2ce26c5 (b16071b with 12.8's fix).
+- Length: 128 tokens.
+- References: every run bit for bit against the ISA simulator's run of its own programs. The
+  hinted runs used q35ref16h, computed on omarchy for this tree with the caps.
+- Order: a discarded warm-up run of each model's base, then the 35B in A B C C B A. A is
+  q35e128s; B is q35e128hn (pre, top 4, n 1, whole-expert parts, --hint-drop); C is
+  q35e128hn8 (top 8).
+
+| run | tok/s | misses a token | serve s | hinted landed | link GB | requests with misses (host, seen to served) |
+|:--|--:|--:|--:|--:|--:|--:|
+| W (warm-up) | 5.28 | 102.85 | 6.02 | | 21.91 | |
+| A1 / A2 | 5.31 / 5.29 | 102.85 | 5.99 / 6.09 | | 21.91 | 4649, 12.79 / 12.69 s |
+| B1 / B2 | 5.34 / 5.37 | 80.09 / 80.06 | 4.66 / 4.69 | 3945 / 3944 | 22.68 | 4350, 10.18 / 10.06 s |
+| C1 / C2 | 5.43 / 5.29 | 73.94 / 73.96 | 4.32 / 4.48 | 5557 / 5559 | 23.69 | 4018, 9.08 / 9.38 s |
+
+- B against A: +1.0%, with pairs +0.6% and +1.5%.
+- C against A: +1.1%, with pairs +2.3% and +0.0%.
+- Both are under the 2% rule, so the 35B's default stays off, and the 26B's hint programs
+  (gemma4.py) are not raised.
+
+The misses fell as predicted: -22% for B (cachesim -20.9%) and -28% for C (-30.1%). Time is
+from the host's timeline (`--hint-trace`). For each run, the run's span minus its requests' seen
+to served time gives the time the card was not waiting on a request:
+
+| | A | B | C |
+|:--|--:|--:|--:|
+| card not waiting on a request | 11.29 s | 13.66 s | 14.53 s |
+| change against A | | +2.37 s | +3.24 s |
+| request time saved against A | | -2.6 s | -3.5 s |
+
+So nearly all of the saved request time went back into the card's own time. Estimated, for B:
+- Contention: the hinted experts go while the card computes, about 3,900 whole experts and
+  6.6 GB. At 13.8's 0.17 s a GB that is about 1.1 s of card time.
+- Requests behind a part: an idle part (one whole expert) takes 1.17 ms (3.93 s in all), and
+  a request posted during one is seen after it. That is about 0.5 s.
+- The hint polls: 5120 polls at 0.21 ms each, 1.06 s of host time. Part of it is behind the
+  mixer and part delays the next post's fence.
+
+Contention and the requests behind a part come to about 1.6 s of the 2.37 s. The other ~0.8 s is
+about three quarters of the hint polls' 1.06 s. Per token: about 20 ms of requests' time saved,
+against about 12.5 ms for the parts and about 6 ms of the hint polls, which leaves the measured
+~2 ms (+1.0%). 12.7's prediction left out the requests behind a part and the hint polls' own
+time.
+
+What would change the balance:
+- v2 idle parts (13.12: one call each, read ahead, halt-aware) shorten a part and the wait
+  behind one, but not the contention.
+- A cheaper hint poll: its seq and row reads, then served, are about three DMA calls.
+- Hinting only where a miss costs more than a sent expert does.
+For now, hints stay opt-in.
+
+The other runs, all bit for bit:
+- The 26B base: 3.68 tok/s three times (warm-up, A1, A2), serve 8.66-8.68 s, 88.09 misses a
+  token.
+- LFM2-8B-A1B from /dev/shm, token-exact against its refs: 8b16 at 13.53 tok/s, 8b160 at 14.95
+  tok/s.
+- The 35B's warm-up ran 0.6% under A1 (gemma4's pfhint2 saw 5% on a prefill).
+
 ## 13. Layer-major prefill
 
 Today a prompt runs token by token through the decode step. Each token's MoE layers ask for
@@ -3025,3 +3115,276 @@ The card side (Engine(layer_ahead="hint"), moe_card --layer-ahead hint):
   by token (Qwen3.5, Gemma 4), and that each hint equals the next layer's own request for the
   same rows when the mixers' output projections are zero, so that a layer's route reads its
   input.
+
+### 13.10 The predictor on the card (sessions pfhint and pfhint2: opt-in, no gain yet)
+
+Two sessions (gemma4, 2026-10-02, one otpu-lock each, production fmvf 542fc43a), R = 2, pooled,
+16 tokens. Every run was bit-exact: the 35B gave lmtime's 95426ebacc3b40a9, the 26B q26ref16's
+90e6b6e06e19da99. The ISA references of the hinted programs match the old ones (omarchy: 35B
+q35ref16 88225ff781699291, 26B q26ref16).
+- pfhint (10:56-11:04 opentpu, tree 5051032): one pair a model, base first.
+- pfhint2 (11:29-11:48, tree ca913e4: the same programs, plus moe_card --ahead-part): base, hint
+  with 1 MiB parts, hint with 4 MiB parts (one part an expert), twice a model, in that order.
+
+Halts late is the sum over runs of the time from the run's device end (start + cycles) to the
+host seeing HALTED.
+
+| session | run | wall, s | device, s | halts late, s | serve, s | misses | landed ahead |
+|:--|:--|--:|--:|--:|--:|--:|--:|
+| pfhint | 35B base | 13.107 | 12.031 | 0.63 | 6.79 | 6241 | |
+| pfhint | 35B hint 1 MiB | 12.387 | 10.949 | 0.92 | 2.24 | 1902 | 4856 |
+| pfhint2 | 35B base 1 | 13.162 | 12.044 | 0.64 | 6.83 | 6241 | |
+| pfhint2 | 35B hint 1 MiB | 12.906 | 11.378 | 1.04 | 3.05 | 2213 | 4466 |
+| pfhint2 | 35B hint 4 MiB | 12.677 | 11.126 | 1.09 | 2.33 | 1602 | 5215 |
+| pfhint2 | 35B base 2 | 12.455 | 11.728 | 0.24 | 5.93 | 6241 | |
+| pfhint2 | 35B hint 1 MiB | 12.445 | 11.042 | 0.95 | 2.43 | 1987 | 4741 |
+| pfhint2 | 35B hint 4 MiB | 12.402 | 10.939 | 0.99 | 2.01 | 1550 | 5283 |
+| pfhint | 26B base | 15.861 | 15.547 | 0.15 | 4.18 | 2234 | |
+| pfhint | 26B hint 1 MiB | 15.676 | 15.114 | 0.39 | 0.76 | 214 | 2259 |
+| pfhint2 | 26B base 1 | 15.894 | 15.560 | 0.13 | 4.18 | 2234 | |
+| pfhint2 | 26B hint 1 MiB | 15.743 | 15.100 | 0.38 | 0.73 | 214 | 2259 |
+| pfhint2 | 26B hint 4 MiB | 15.821 | 15.116 | 0.45 | 0.74 | 213 | 2260 |
+| pfhint2 | 26B base 2 | 15.817 | 15.544 | 0.12 | 4.12 | 2234 | |
+| pfhint2 | 26B hint 1 MiB | 15.694 | 15.124 | 0.37 | 0.76 | 214 | 2259 |
+| pfhint2 | 26B hint 4 MiB | 15.777 | 15.117 | 0.44 | 0.75 | 213 | 2260 |
+
+The lead's rule, on pfhint2's means: the 35B must gain at least 0.7 s, and the 26B lose at most
+0.3 s.
+- 35B: 1 MiB -0.13 s, 4 MiB -0.27 s. It fails.
+- 26B: 1 MiB -0.14 s, 4 MiB -0.06 s.
+- The default stays off for both. The 26B's 0.9% is not enough on its own.
+
+The run order explains pfhint's -0.72 s. A model's first run after its pool is read is slow:
+35B base 1 against base 2 was 6.83 against 5.93 s of serve, because pool reads still hit the
+disk, and 0.64 against 0.24 s of halts late, because the host is busy serving when a run halts.
+pfhint's base ran first. In pfhint2's second, warm triple the 35B gains 0.01 s (1 MiB) and 0.05 s
+(4 MiB). Card A/B sessions now start with an unmeasured warm-up run and use ABBA order.
+
+Where it goes (pfhint2's warm triple, 35B base 2 against 4 MiB):
+- Device -0.79 s. The 4691 avoided misses save more card wait than contention and the router
+  cost. The router costs +47 us a 35B run, +37-41 us a 26B run, as 13.9 estimated.
+  Contention was measured again at +15% on zero-miss runs with parts in flight (13.8: 13-16%).
+- Halts late +0.75 s (0.24 to 0.99 s). 1311 runs ended with a part in flight and were seen a
+  median 0.69 ms late. At 1 MiB parts, 1925 runs were seen 0.46 ms late. The host's part DMA
+  blocks it, so it sees a run's end only after the part.
+- 26B: device -0.44 s, halts late +0.25 to 0.32 s.
+
+The 35B's link was busy 9.4 of the prompt's 12.4 s at 1 MiB parts. A part cost about 0.42 ms
+fixed plus 0.33 ms a MiB. offload traced the fixed cost:
+- each idle part goes as two DMA records (the lead cut meant for a miss), at 122 us each;
+- staging (the pool read and the iovecs) is not overlapped;
+- the last part writes the entry in a call of its own;
+- the poll's mailbox read sits between parts.
+
+Open items:
+1. Halt-aware idle parts: no idle part starts when the run's expected end (BoardBackend's
+   expected time for the program, from its start) is closer than the part's time. Requests
+   are still served at once. This would recover most of the halts' +0.75 s (35B) and +0.3 s
+   (26B), at the cost of some streaming.
+2. The part path (offload): one record an idle part, and staging read ahead under the DMA.
+   About 0.49 ms a 1 MiB part, against 0.76 now. Shorter parts also shorten the halt delay.
+3. A design with less contention. Contention is per byte written during compute (DRAM
+   bandwidth): about 1.1 s on both models. Fewer bytes per run (higher precision), or
+   streaming only in the card's DRAM-idle phases, which needs a signal from the card.
+
+The predictor stays opt-in (--layer-ahead hint, --ahead-part). Its card check repeats after
+items 1 and 2.
+
+### 13.11 Design: expert-major MoE in layer-major prefill
+
+Today a layer-major run of R = 2 rows routes its rows and runs the union of their experts on both
+rows (moe_ffn_rows). Two rows rarely share many experts, so a layer makes far more expert passes
+than it has experts. On pa's base traces (ld-memch) the 35B makes 845 passes a layer for 140
+distinct experts, and the 26B 752 for 75. A pass on two rows (PAIR) costs what a pass on one does,
+and c(M), one expert's FFN on M rows (co-sim, RTL + LiteDRAM), grows by pairs of rows:
+
+| M | 1 | 2 | 3 | 4 | 6 | 8 |
+|:--|--:|--:|--:|--:|--:|--:|
+| 35B, ms | 0.101 | 0.100 | 0.192 | 0.194 | 0.370 | 0.372 |
+| 26B, ms | 0.210 | 0.210 | 0.390 | 0.393 | 0.763 | |
+
+Expert-major splits each layer of a chunk into two parts.
+
+1. Mixer runs (R rows, as today): the previous layer's combine for their rows, the mixer, then
+   the MoE prologue. The prologue is the router and the k best with their weights (moe_ffn_rows'
+   loop), plus the shared expert (Qwen3.5) or the dense MLP beside (Gemma 4). Its outputs are
+   stored per row to a prefill scratch (below): the expert input (fp32, re-quantized when loaded:
+   per row, so bit for bit), the ids and weights, and the shared or dense output. The run ends by
+   posting its R x k ids as a need line (the protocol below).
+2. One expert run: the bucketing, then each pass, which is two entries of one expert:
+   - wait for the expert's directory entry;
+   - load the two rows' inputs, quantize, swiglu_down at the slot;
+   - store each output row at its (row, rank) place (an odd tail's second output goes to a sink).
+
+The combine, in the next layer's runs, sums each row's k outputs in its router's order, then
+adds the shared output (Qwen3.5: x + (sum + shared)), or does Gemma 4's
+norm(dense) + norm(acc) and _add_norm, in moe_ffn_rows' order. So a row's result is today's,
+bit for bit. The last layer combines only the head's row, in the head run. Token steps (rows
+before conv_k - 1), decode and its programs do not change.
+
+The kernels, measured by ld-memch (ISA against numpy, then RTL co-sim at 133.33 MHz; omarchy
+~/otpu-build/pf/kcost.py):
+- Bucketing: a loop over the N = rows x k entries (pointer register, ADDI). Per entry it RLDs
+  the id, toggles the expert's parity, and either opens a pass (FILL e, A, open[e]) or closes
+  one (FILL B), with LOOPs counted by the parity for the branches. That is 10.2 instructions
+  and 54.7 cycles an entry: 0.43 ms a layer on the 35B (N = 1040), 0.41 on the 26B, and the
+  pass counts match numpy (587 / 529).
+  - Its table is N / 2 + E rows of 4 words, so 512 rows fit.
+  - A segments variant (an E x rows table, 0.32 / 0.26 ms) does not fit TMEM at 512 rows on the
+    35B, so it is not used.
+  - Raw integer words through the VPU are denormals and FILL / COPY flush them, so registers
+    are written as 2^23 + R and corrected (ld-memch).
+- A pass costs c(2) + 4.3-4.8 us: 7 RLDs, 3 LDs and 2 STs. The directory word read from DRAM
+  overlaps the previous pass's stream. That is ~2.5 ms a layer.
+
+The model (emsim.py, scratchpad; the router traces' windows, 6 x 131 rows on the 35B and 6 x 124
+on the 26B):
+- Calibration: the base's per-miss link time is fit so its card waits match pfhint2's warm base
+  (35B 2.68 against 2.72 s, 26B 1.83 against 1.84).
+- Inputs: the card's per-run times, c(M) and the kernel costs above; contention of 0.17 s a GB
+  on every byte streamed during compute; halt-aware holds.
+- Passes a layer: 35B 840 -> 564, 26B 767 -> 517.
+
+| variant | 35B | 26B |
+|:--|--:|--:|
+| needs streamed during the mixer runs, an expert 0.79 / 1.29 ms (v2's one-call parts) | **-1.9 s** (-1.87 to -2.06) | **-2.0 s** (-1.80 to -2.05) |
+| the same, an expert 0.95 / 1.10 ms (35B) | -1.7 / -1.1 s | |
+| the same on today's part path (35B 1.55 ms) | +1.1 s | -1.9 s |
+| demand only (the expert run's misses served one after another) | +0.3 s | -1.1 s |
+
+On the 35B, the streamed variant removes about 2.6 s of waits and 1.1 s of expert passes, and
+adds 1.56 s of contention. Contention is the model's largest uncertainty, about +-0.5 s. The 35B's
+mixer phase (~150 ms a DeltaNet layer, ~105 ms an attention layer) carries its 138 experts only
+at about 0.8 ms each. So B on the 35B comes after offload's v2 parts and a card re-measure of
+their cost.
+
+The server (agreed with offload, 2026-10-02; host only, with begin_prefill(expert_major=True)):
+- Need lines: a mixer run posts its R x k ids for its own layer, offset by need_off =
+  2 x layers x E, after the fence, as a hint line. Ids from 2G up are needs, G to 2G hints, and
+  below G requests (G = layers x E).
+  - Sixteen ids fill the first line (R = 2, k = 8); up to 32 go through row2, as today.
+  - Poll writes served as for a hint: no answer, no use counted.
+- The need queue is the server's own, apart from ahead_layer's.
+  - Poll appends the ids in no slot (on their way included), not pending and not queued, in
+    arrival order.
+  - Needs stream on idle parts (v2: one call, read ahead, halt-aware), ahead of any ahead_layer
+    queue.
+  - A need is never dropped or withdrawn, and the queue is never replaced (begin_prefill,
+    end_prefill, ahead_layer and _drop_ahead leave it alone).
+  - end_prefill drains it first (settle), so nothing pending crosses into decode.
+- Victims: while expert-major is on, every slot taken during layer j's runs (a need, an ahead
+  queue's expert, a demand miss) has its victim outside layers {j - 1, j, j + 1}. A need's slot
+  is never reused before the expert run has read it. This is the one way the card could read a
+  stale entry.
+- The card waits on the entry:
+  - Each expert's data goes first, its tag in the last beat of its last part, then its directory
+    entry, in the same poll and flushed before the poll returns (unchanged by 12.8's fix).
+  - The expert run WAITWs on the entry's present word. An expert that lands between its read and
+    the wait satisfies the wait, so 12.8's race does not arise.
+  - _clear only clears victims, never a needed expert, so the wait never holds on a stale entry.
+  - A WAITW timeout stops the prefill with a clear error. It never runs on with a missing expert.
+- Tags: with no request there is no _used, so armed keeps the expert run's slots. That is
+  harmless: _reuse zeroes a slot's tag before it takes another expert. The expert run still
+  zeroes each tag after use, as slot_of does, so a later demand miss in that slot cannot see a
+  stale tag.
+- Requests and hints keep their paths (decode, token steps, other prefill).
+
+The scratch (the lead's constraint: not one decode slot), per row (k + 2) x H fp32: the k outputs,
+the expert input and the shared or dense output, plus the ids and weights and a sink row.
+- 35B: 80 KB a row, 41 MB at 512 rows; 26B: 113 KB a row, 58 MB.
+- The server owns it. begin_prefill(scratch=bytes) takes the last ceil(bytes / pitch) slots of
+  one layer's pooled region off the free lists (contiguous) for the prefill.
+  - Experts in them are evicted first: their entries are cleared and flushed before the base
+    address is handed out.
+  - end_prefill hands them back empty, with their tag beats zeroed (or armed, so _reuse zeroes
+    them). Scratch data in a tag beat would otherwise read as a landed expert.
+- At 512 rows that is 25 of the 35B's 1680 slots and 17 of the 26B's 540. It is sized to the
+  chunk's rows: 7 and 5 at a 133- / 124-row prompt.
+
+The changes:
+- moe.py: the prologue, the expert run (bucketing, passes) and the combine.
+- qwen35 / gemma4: layer runs in an expert-major variant, and an expert-run program per layer.
+- Engine.prefill_layers: per chunk and layer, the mixer runs, then the expert run; begin_prefill's
+  scratch.
+- ExpertServer (offload): need lines, the need queue, the scratch.
+
+Tests: the ISA, bit for bit, against token by token (tiny Qwen3.5 and Gemma 4, two chunks, odd
+counts, R = 2); the bucketing against numpy; the server's need path (offload); then a card
+session, with a warm-up run first and ABBA order, against the predicted column.
+
+The order: offload's v2 parts and the v2 re-measure, which confirms an expert's part cost on the
+card. Then this code, once the lead approves this note.
+
+### 13.12 Idle parts: read ahead, one call each (offload-parts)
+
+pfhint (gemma4, production fmvf 542fc43a, the 35B's layer-major prefill with the predictor,
+1 MiB parts) measured each idle poll's part: the first 1 MiB of an expert 0.757 ms (median,
+4868 parts), its 0.59 MiB rest 0.622 ms, events 0.085 ms apart; the link busy 9.4 of 12.4 s,
+6.80 s of it parts, and 700 of 5568 queued experts never sent. A line through the two gives
+about 0.42 ms a part plus 0.33 ms a MiB. Where the 0.42 ms goes:
+- The lead cut. A poll flushes before it returns, so BoardDram finds nothing in flight at the
+  next part and cuts it as it cuts a request's first miss: a fifth, then the rest, each one
+  DMA call per channel. Session 16's data calls fit 122 us + bytes / 3.15 GB/s a pair of calls
+  (1.67 MB: 622 us median; a 64-byte call 33 us), so a cut part pays 0.24 ms of calls where one
+  pair would pay 0.12. The 0.33 ms a MiB is the 3.15 GB/s.
+- The read in front of the link. The first fifth's read from the pool file and its iovecs
+  come before any DMA (pfhint's stage time: 0.32 ms a part; the pool reads at 7.3 GB/s).
+- The last part's entry, one more call (35-45 us). The 0.085 ms between events is the next
+  poll's mailbox read (one 64-byte c2h call) and the loop.
+
+Two changes, opt-in until a card A/B (`moe_card --idle-parts`: v1 as before, ra, halt, v2
+both; `ExpertServer.read_ahead`, `halt_aware`):
+
+`read_ahead`:
+- `_stage_next`: before a poll flushes, the part the next idle poll would send is read into a
+  staging pair (`BoardDram.stage`), beside the DMA in flight (the part's, or the request's
+  experts and served; a hint's first part reads while the card runs its mixer). ahead_layer's
+  next queued expert takes its slot for it then, by the same rule as at the next poll.
+- The next idle poll queues a staged part as it is, one DMA call per channel (write_slot's
+  `staged`, `cut=False`). A part that was not read ahead keeps the lead cut, and a request's
+  misses keep theirs (the first with the cut, the rest one call each).
+- A request, a hint, ahead_layer and the prefill's begin and end drop a staged part first
+  (`_unstage`: the read is lost, not the link's time); the server's reads of the card still
+  meet no DMA in flight.
+- The staging pairs are sized for an expert and its tag chunk before the first stage, so none
+  is reallocated under a staged part (BoardDram raises if one would be).
+
+`halt_aware` (gemma4's pfhint2: a run's halt seen late behind an idle part costs the 35B's
+prefill about 0.75 s and the 26B's 0.25-0.32 s):
+- No idle part starts while the running program's expected end is nearer than a part takes.
+  The end: `BoardBackend.run_clock()`, the run's start and its time with no waits (the
+  shortest of the last 16 runs of its program's length, in seen wall seconds), plus the run's
+  own waits so far (each of its requests with misses, seen to served; gemma4's pfhint2:
+  zero-miss DeltaNet runs within about ±0.05 ms, a miss about 1 ms more). A part takes
+  `part_s`, the measured idle parts' average (before the first, `PART_S0` + part / `PART_GBS`:
+  0.2 ms + 3.15 GB/s). The poll returns 0 and the backend polls again, so requests are served
+  at once as always.
+- A run past that end by `HOLD_LATE` (1 ms) gets parts again (the estimate was short), and
+  so does one with no run of its length before. `holds` counts the polls held. A poll that
+  holds after ahead_layer's next expert took a victim's slot flushes the victim's entry first,
+  so the next read of seq meets no DMA in flight.
+- gemma4's estimate: 35B -0.5 to -0.7 s and 26B -0.3 to -0.4 s on the layer-ahead prefill.
+
+Predicted per part (session 16's fit: 122 us a call pair + bytes / 3.15 GB/s; pfhint's
+measured in brackets). ld-memch's H2C sweep (docs/host.md 2) puts a placed call at 20-37 us +
+345 us a MiB in the driver, so about 25-40 us of each call is the host's (Python, the worker
+hop, the lock); with none of it a 1 MiB part would take about 0.38 ms:
+
+| part | v1 | ra (one pair, read ahead) |
+|:--|--:|--:|
+| 1 MiB, an expert's first | 0.20 lead + 0.80 rest: two pairs, ~0.75 ms (0.757) | ~0.12 + 0.33 + 0.05 = 0.50 ms |
+| 0.59 MiB rest, its tag and entry | ~0.62 ms (0.622) | ~0.12 + 0.20 + 0.05 + 0.04 entry = 0.41 ms |
+| a whole 35B expert (1.59 MiB) | two parts and a poll: 1.46 ms | ~0.12 + 0.53 + 0.05 + 0.04 = 0.74 ms |
+| a whole 26B expert (3.29 MiB) | three parts and two polls: ~2.3 ms (0.795, 0.795, 0.505) | ~0.12 + 1.09 + 0.09 = 1.3 ms |
+
+The contention (13.8) is per byte, so neither change touches it. Card measurement: with
+gemma4's whole-expert parts, as an A/B on the 35B's layer-ahead predictor and the decode
+hints (a discarded warm-up run, then A B B A).
+
+Tests: test_offload_server's `test_idle_parts_go_as_one_call_each_and_are_read_ahead` (an idle
+part's calls with and without, a request's misses with the lead cut, the staged reads, a
+request dropping one, ahead_layer's slot at its stage, the card's memories as Board.write's)
+`test_halt_aware_idle_parts_wait_near_a_runs_expected_end` and
+`test_a_held_idle_poll_leaves_no_dma_in_flight`; test_qwen35_moe's live card
+(BoardDram, CHASH, a split pool) bit for bit with v2: the decode hints and the layer-ahead
+prefill (`test_layer_ahead_on_a_live_card_with_idle_parts_v2`), and moe_card's `--idle-parts`.

@@ -1876,7 +1876,8 @@ class Engine:
     order, or per MoE layer its expert indices in the order to send them (a static profile, most
     used first; a shorter list sends fewer), or "hint": the card's own guess (13.9), each layer
     run ends with the next MoE layer's router on its output rows, posted as a hint the server
-    adds to that layer's queue (each queue started empty; idle-poll parts of AHEAD_PART).
+    adds to that layer's queue (each queue started empty; idle-poll parts of `ahead_part`
+    bytes, AHEAD_PART by default).
 
     prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
     come from opentpu/progcache.py: compiled once per process and image layout, and kept on
@@ -1978,6 +1979,7 @@ class Engine:
                                             # the embedding rows from the host: prefill_layers)
         self.layer_ahead = layer_ahead      # (the next layer's experts sent during a layer's)
         self.layer_hint = layer_ahead == "hint"     # (the runs' own guess of them: hints)
+        self.ahead_part = AHEAD_PART        # (with them: an idle poll's part, begin_prefill's)
         self._layer_runs: dict = {}
         self._layer_next: dict = {}         # their compiles in the worker processes: Futures
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
@@ -2446,7 +2448,7 @@ class Engine:
         send = getattr(srv, "ahead_layer", None) if self.layer_ahead else None
         if srv is not None and hasattr(srv, "begin_prefill"):
             srv.begin_prefill(**({} if send is None else {"ahead": True} if not self.layer_hint
-                                 else {"ahead": True, "part": AHEAD_PART}))
+                                 else {"ahead": True, "part": self.ahead_part}))
         if send is not None:
             self._send_ahead(send, 0)
             first, nm = self.spec.moe.first, img.offload.layers
