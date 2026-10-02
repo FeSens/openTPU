@@ -194,9 +194,12 @@ loss for 9% more bytes.
 Per layer ([formats.md](formats.md), 2000 tokens of docs/isa.md): the recommended mix
 (`wformat="mix"`, otpu-chat's default) is `attn@15-34=fp4,mlp@15-34=fp4`, the KV-shared layers'
 attention and MLP in fp4, an estimated 35% faster than int8 (8.88 tok/s) for dKL +3.3%; fp4
-layers are about +21%. int8 layers fit the card only beside the fp4 PLE table, which costs dKL
-+2.4% against the int8 table on the host (`OTPU_PLE_HOST=1`, 0.56% slower); the mix's image
-keeps the int8 table on the card.
+layers are about +21%. The PLE table and its lookup stay on the card: int8 where the image
+leaves room (the mix's: 3.92 GiB at 2048 tokens), else fp4. int8 layers leave none (4.52 GiB
+with the int8 table), so an explicit `wformat="int8"` takes the fp4 table: perplexity 19.15
+against 18.62 with the int8 table on the host (float 18.60), dKL +2.42% (SE 0.08). The host
+table (`OTPU_PLE_HOST=1`, 0.56% slower) is the accurate int8 the mixes are measured against, an
+opt-in reference, not a default.
 
 ## 26B-A4B: accuracy
 

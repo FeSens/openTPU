@@ -228,13 +228,15 @@ with their own K / V and the KV-shared ones, each halved at a multiple of five (
 12.611 M cycles, 1475 MB a token; the fp4 head 10.981 M for 201 MB less, k 8.11). int8 layers
 read 2351 MB a token, a projected 6.59 tok/s.
 
-**The PLE table.** int8 layers fit the card only with the fp4 PLE table (the image tries the
-int8 table on the card, then fp4 on the card, then int8 on the host), and that table is most
-of int8's error: at 2000 tokens int8 with the int8 table on the host (`OTPU_PLE_HOST=1`) has
-perplexity 18.62 (float 18.60), with the fp4 table 19.15, dKL +2.42% (SE 0.08) for the 0.56% of
-decode time the host table costs. The mixes are measured against int8 with the int8 table (on
-the host, 6.56 tok/s); their own images keep it on the card. A variant's table in the scan is
-the one its image takes at 2048 tokens.
+**The PLE table** stays on the card, with its lookup: in int8 where the image leaves room for
+it, else in fp4 (the image tries int8 on the card, then fp4 on the card; the host only with
+`OTPU_PLE_HOST=1`). int8 layers leave no room (4.52 GiB with the int8 table), so an explicit
+`wformat="int8"` takes the fp4 table, and that table is most of int8's error: at 2000 tokens
+int8 with the int8 table on the host has perplexity 18.62 (float 18.60), with the fp4 table on
+the card 19.15, dKL +2.42% (SE 0.08). The mixes are measured against the accurate int8, the
+int8 table on the host (6.56 tok/s), so that the degraded table does not loosen their bar; the
+host table is that reference only, not a default. A variant's table in the scan is the one its
+image takes at 2048 tokens (otpu-chat's capacity).
 
 At 900 tokens fp4 layers (int8 head) are dKL +18.7% against int8 with the fp4 table (about +21%
 against the int8 table) for +60% (bar 6.0). Per byte, the KV-shared layers' attention and MLP
@@ -242,21 +244,26 @@ cost least (down@15-24 +0.32%, gate / up@15-24 +0.71%, attention@15-24 and @25-3
 +0.32%); the attention of layers 10-14 (+5.5%) and the PLE kinds (ple@10-14 +3.1%) the most.
 Finals, 2000 tokens:
 
-| Formats | Runs | dKL % (SE) | Perplexity vs int8 % (SE) | MB | tok/s (est.) | Gain | Bar | Margin |
-|:--|:-:|--:|--:|--:|--:|--:|--:|--:|
-| **`attn@15-34=fp4,mlp@15-34=fp4`** | 2 | **+3.34 (0.08)** | +3.90 (0.67) | 1709 | 8.88 | +35.4% | 3.54 | 2.5 SE |
-| `mlp=fp4` | 2 | +5.90 (0.14) | +5.61 (0.94) | 1572 | 9.59 | +46.2% | 4.62 | -9.2 SE |
-| `attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | +6.01 (0.14) | +6.23 (0.93) | 1520 | 9.89 | +50.8% | 5.08 | -6.6 SE |
-| `attn@15-34=fp4,mlp=fp4` | 2 | +7.01 (0.16) | +7.56 (1.01) | 1497 | 10.03 | +53.0% | 5.30 | -10.8 SE |
-| `attn@0-9=fp4,attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | +7.41 (0.20) | +8.54 (1.00) | 1478 | 10.15 | +54.7% | 5.47 | -9.7 SE |
-| `attn@0-9=fp4,attn@15-34=fp4,mlp=fp4` | 4 | +8.57 (0.23) | +9.69 (1.08) | 1454 | 10.30 | +57.0% | 5.70 | -12.6 SE |
+| Formats | Runs | Image (PLE table) | dKL % (SE) | Perplexity vs int8 % (SE) | MB | tok/s (est.) | Gain | Bar | Margin |
+|:--|:-:|:--|--:|--:|--:|--:|--:|--:|--:|
+| int8, `OTPU_PLE_HOST=1` (the reference) | 2 | 2.24 GiB (int8, host) | 0 | 0 | 2351 | 6.56 | | | |
+| int8 | 2 | 3.42 GiB (fp4) | +2.42 (0.08) | +2.82 (0.61) | 2351 | 6.59 | +0.6% | 0.06 | -29 SE |
+| **`attn@15-34=fp4,mlp@15-34=fp4`** | 2 | 3.92 GiB (int8) | **+3.34 (0.08)** | +3.90 (0.67) | 1709 | 8.88 | +35.4% | 3.54 | 2.5 SE |
+| `mlp=fp4` | 2 | 3.79 GiB (int8) | +5.90 (0.14) | +5.61 (0.94) | 1572 | 9.59 | +46.2% | 4.62 | -9.2 SE |
+| `attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | 3.74 GiB (int8) | +6.01 (0.14) | +6.23 (0.93) | 1520 | 9.89 | +50.8% | 5.08 | -6.6 SE |
+| `attn@15-34=fp4,mlp=fp4` | 2 | 3.72 GiB (int8) | +7.01 (0.16) | +7.56 (1.01) | 1497 | 10.03 | +53.0% | 5.30 | -10.8 SE |
+| `attn@0-9=fp4,attn@15-34=fp4,gateup=fp4,down@0-9=fp4,down@15-34=fp4` | 4 | 3.70 GiB (int8) | +7.41 (0.20) | +8.54 (1.00) | 1478 | 10.15 | +54.7% | 5.47 | -9.7 SE |
+| `attn@0-9=fp4,attn@15-34=fp4,mlp=fp4` | 4 | 3.68 GiB (int8) | +8.57 (0.23) | +9.69 (1.08) | 1454 | 10.30 | +57.0% | 5.70 | -12.6 SE |
+| fp4, int8 head (900 tokens) | 2 | 3.64 GiB (int8) | about +21 | | 1412 | 10.57 | +61% | 6.1 | fails |
+
+Image: at 2048 tokens, of the card's 4 GiB, with the PLE table the image takes.
 
 The default is `attn@15-34=fp4,mlp@15-34=fp4`, 2.5 SE under its bar: the KV-shared layers'
 attention and MLP in fp4, the layers with their own K / V and every PLE weight in int8. Its
 boundary is the own / shared one, which already splits the layer loops, so it runs int8's two
-runs, and its image (3.94 GiB at 4096 tokens) keeps the int8 PLE table on the card. Against int8
-with the fp4 table the faster mixes would qualify (`attn@15-34=fp4,mlp=fp4` +4.59% for +52.1%,
-4.1 SE under); counted against the int8 table they are 7-13 SE over.
+runs, and its image keeps the int8 PLE table on the card (3.92 GiB at 2048 tokens, 3.94 at
+4096). Against int8 with the fp4 table the faster mixes would qualify (`attn@15-34=fp4,mlp=fp4`
++4.59% for +52.1%, 4.1 SE under); counted against the accurate int8 they are 7-13 SE over.
 
 ## On the card
 
