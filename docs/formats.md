@@ -17,12 +17,15 @@ In short:
   (`tools/formats_scan.py`). It is about ΔNLL against int8 (its % is about the perplexity
   change in %), without the noise of the sampled tokens.
 - **Rule.** A mix qualifies if dKL% <= 0.1 x its decode gain in % over int8, with at most two
-  layer layouts (Qwen3.5: one) and the LM head in int8. The fastest qualifying mix is chosen; a
-  dKL gap under 2 SE is a tie, which goes to the mix with fewer runs. Finals are at 2000
-  tokens.
+  layer layouts (Qwen3.5: one) and the LM head in int8. The default is the fastest mix at least
+  1 SE under its bar; a dKL gap under 2 SE is a tie, which goes to the mix with fewer runs.
+  Finals are at 2000 tokens.
 - **Choices.** Phi-4-mini: `mlp@4-27=fp4`, 28% faster than int8 for dKL 2.5% (fp4: 64% for
   16%). Qwen3.5-4B: `delta=fp4,mlp=fp4` (the attention layers int8), 56% for 5.3% (fp4: 64% for
-  6.5%, on its bar). Qwen3.5-2B: none qualifies. SmolLM3 and LFM2-2.6B: open.
+  6.5%, on its bar). SmolLM3-3B: `gateup@9-35=fp4`, 23% for 2.1%. LFM2-2.6B:
+  `conv=fp4,mlp=fp4` (the attention layers int8), 77% for 7.4% (fp4: 82% for 11.8%).
+  Qwen3.5-2B: none qualifies. On the card the mixes run at the predicted speed (within 0.1%),
+  and their images give the ISA simulator's tokens (Phi's and SmolLM3's through a proxy).
 
 ## Formats strings
 
@@ -95,12 +98,16 @@ A mix qualifies if dKL% <= 0.1 x gain%: 0.1% of perplexity for each 1% of speed.
 qualifying mixes with at most two layouts (Qwen3.5: one) the fastest wins; a dKL gap under 2
 SE is a tie, and the tie goes to fewer runs. The LM head stays int8 in every mix.
 
+A default needs at least 1 SE of margin under its bar, so that the noise of one text cannot
+flip it. A faster mix that qualifies inside 1 SE is not the default; it is listed below with
+its numbers, as an opt-in through `OTPU_FORMATS` (with `wformat="mix"` or int8).
+
 ## Choices
 
 ### Phi-4-mini
 
-int8 3.99 tok/s, fp4 6.56 (card). At 900 tokens fp4 is dKL +16.1% (SE 1.3) and no whole kind
-qualifies: gateup in every layer +3.27% for +24% (bar 2.4), attention +3.95% for +11%. The
+int8 3.99 tok/s, fp4 6.56 (card, build B). At 900 tokens fp4 is dKL +16.1% (SE 1.3) and no whole
+kind qualifies: gateup in every layer +3.27% for +24% (bar 2.4), attention +3.95% for +11%. The
 down projections of the first and last quarters are costly (+7.4% and +5.0%), the middle
 quarters cheap (+0.3% each). Finals, 2000 tokens:
 
@@ -119,11 +126,11 @@ end (2-3 and 28-29) add 6.9 points of dKL.
 
 ### Qwen3.5-4B
 
-fp4 5.88 tok/s on the card; the int8 image does not fit (4237 MiB at a 2048-token capacity), so
-its 3.58 tok/s is projected with the 2B's slope. At 900 tokens four single layouts qualified:
-fp4 (+6.27%, bar 6.42), `delta=fp4,mlp=fp4`, `mlp=fp4` and `gateup=fp4`. The others miss their
-bars (`attn=fp4,mlp=fp4` by 1.8 SE, `delta=fp4,gateup=fp4` by 1.3 SE, the rest by more) and are
-slower than `delta=fp4,mlp=fp4` anyway. Finals, 2000 tokens:
+fp4 5.88 tok/s on the card (build B); the int8 image does not fit (4237 MiB at a 2048-token
+capacity), so its 3.58 tok/s is projected with the 2B's slope. At 900 tokens four single layouts
+qualified: fp4 (+6.27%, bar 6.42), `delta=fp4,mlp=fp4`, `mlp=fp4` and `gateup=fp4`. The others
+miss their bars (`attn=fp4,mlp=fp4` by 1.8 SE, `delta=fp4,gateup=fp4` by 1.3 SE, the rest by
+more) and are slower than `delta=fp4,mlp=fp4` anyway. Finals, 2000 tokens:
 
 | Formats | dKL % (SE) | Perplexity vs int8 % (SE) | MiB | tok/s (est.) | Gain | Bar |
 |:--|--:|--:|--:|--:|--:|--:|
@@ -141,11 +148,85 @@ instructions.
 
 ### Qwen3.5-2B
 
-int8 8.02 tok/s, fp4 12.09 (card). No single layout qualifies at 900 tokens: the closest,
-`gateup=fp4`, is +2.06% (SE 0.07) for +17% (bar 1.74), 4.6 SE over; `down=fp4` +1.35% for
-+8% (bar 0.79); fp4 +7.79% for +51% (bar 5.07). The 2B has no mix: int8 or fp4.
+int8 8.02 tok/s, fp4 12.09 (card, build B). No single layout qualifies at 900 tokens: the
+closest, `gateup=fp4`, is +2.06% (SE 0.07) for +17% (bar 1.74), 4.6 SE over; `down=fp4` +1.35%
+for +8% (bar 0.79); fp4 +7.79% for +51% (bar 5.07). The 2B has no mix: int8 or fp4.
 
-### SmolLM3-3B and LFM2-2.6B
+### SmolLM3-3B
 
-Open: SmolLM3's dKL scan, and LFM2's two layouts on run boundaries (its card int8 speed is not
-measured yet).
+int8 5.00 tok/s, fp4 8.74 (card, build B; k 8.12 K cycles per MB). At 900 tokens no whole kind
+qualifies (fp4 +12.2% for +75%, `gateup=fp4` +3.30% for +33%, bar 3.28). The gate / up
+projections of the later half are the cheapest groups (+0.52% and +0.63% for a quarter, bar
+0.66), the first quarter's the costliest (+1.49%); the down projections of the middle quarters
+are cheap (+0.37%, +0.64%), the first quarter's not (+3.6%), and the attention costs +0.4-1.6%
+a quarter for +1.5% of speed. Finals, 2000 tokens:
+
+| Formats | Layouts / runs | dKL % (SE) | Perplexity vs int8 % (SE) | MiB | tok/s (est.) | Gain | Bar | Margin |
+|:--|:-:|--:|--:|--:|--:|--:|--:|--:|
+| `gateup=fp4,down@9-26=fp4` | 2 / 3 | +4.45 (0.14) | +2.80 (0.90) | 2057 | 7.23 | +44.7% | 4.47 | 0.1 SE |
+| `gateup=fp4` | 1 / 1 | +3.55 (0.13) | +2.82 (0.81) | 2250 | 6.64 | +32.8% | 3.28 | over |
+| **`gateup@9-35=fp4`** | 2 / 2 | **+2.13 (0.07)** | +2.01 (0.63) | 2444 | 6.14 | +22.7% | 2.27 | 2.0 SE |
+| `mlp@18-35=fp4` | 2 / 2 | +2.44 (0.07) | +1.87 (0.60) | 2444 | 6.14 | +22.7% | 2.27 | over |
+| `mlp@9-26=fp4` | 2 / 3 | +2.52 (0.08) | +1.24 (0.75) | 2444 | 6.14 | +22.7% | 2.27 | over |
+| `gateup@18-35=fp4` | 2 / 2 | +1.24 (0.05) | +1.18 (0.47) | 2637 | 5.70 | +14.1% | 1.41 | 3.6 SE |
+| `mlp@18-26=fp4` | 2 / 3 | +1.00 (0.04) | +0.50 (0.45) | 2734 | 5.51 | +10.2% | 1.02 | 0.5 SE |
+
+The default is `gateup@9-35=fp4`, 2.0 SE under its bar (generate 1324 / 1900 instructions).
+`gateup=fp4,down@9-26=fp4` gains twice as much (+44.7%) for twice the dKL, but only 0.1 SE
+under its bar: an opt-in, `OTPU_FORMATS=gateup=fp4,down@9-26=fp4` (generate 1911 / 2775).
+
+### LFM2-2.6B
+
+int8 6.13 tok/s, fp4 11.15 (card, build pa; k 8.04 K cycles per MB). At 900 tokens fp4 is
++11.8% for +82% (bar 8.19), and the eight attention layers in fp4 cost +3.8% for +1.6% of
+speed. The first quarter's layers are the costly ones (gate / up +1.08%, down +1.48%, conv
++1.47%); the other quarters' groups cost +0.3-1.2% each. A second layout fits only where it
+starts on a run boundary of `lfm2.plan` (layers 2, 3, 23, 29); those below keep the five runs
+and the program size (generate 1806 / 3510). Finals, 2000 tokens:
+
+| Formats | Layouts | dKL % (SE) | Perplexity vs int8 % (SE) | MiB | tok/s (est.) | Gain | Bar | Margin |
+|:--|:-:|--:|--:|--:|--:|--:|--:|--:|
+| **`conv=fp4,mlp=fp4`** | 1 | **+7.35 (0.29)** | +3.65 (1.08) | 1406 | 10.84 | +76.9% | 7.69 | 1.2 SE |
+| `conv@3-29=fp4,mlp=fp4` | 2 | +7.05 (0.39) | +0.32 (1.01) | 1422 | 10.73 | +75.0% | 7.50 | 1.2 SE |
+| `conv@2-29=fp4,mlp@2-29=fp4` | 2 | +6.66 (0.37) | +0.19 (0.97) | 1485 | 10.29 | +67.8% | 6.78 | 0.3 SE |
+| `conv@3-29=fp4,mlp@3-29=fp4` | 2 | +6.21 (0.33) | +0.30 (0.93) | 1516 | 10.08 | +64.4% | 6.44 | 0.7 SE |
+| `mlp=fp4` | 1 | +5.33 (0.22) | +1.43 (0.89) | 1582 | 9.68 | +57.8% | 5.78 | 2.1 SE |
+| `mlp@3-29=fp4` | 2 | +4.42 (0.15) | +1.83 (0.85) | 1676 | 9.15 | +49.2% | 4.92 | 3.3 SE |
+
+The default is `conv=fp4,mlp=fp4`, one layout, 1.2 SE under its bar: everything but the
+attention layers in fp4, 3% slower than fp4 for 4.1 points less dKL (900 tokens: +7.73%
+against +11.80%).
+
+## On the card
+
+Production build pa (`deploy_pa_e4db91c9`, Gen2, 133.33 MHz, DDR3-1066), 2026-10-02, sessions
+mix1 and mix2 (tree main 4e0b866, the mixes through `OTPU_FORMATS`). `tools/qual/perf.py`: a
+512-token prompt, then 64 greedy decode tokens with the host's argmax in the loop; device
+tok/s:
+
+| Model | Weights | Decode | Mcycles / token | Prefill | DRAM while decoding |
+|:--|:--|--:|--:|--:|--:|
+| Phi-4-mini | int8 | 4.05 | 32.936 | 14.0 | 95%, 4011 MB/token |
+| Phi-4-mini | **mix** `mlp@4-27=fp4` | **5.20** | 25.640 | 14.5 | 95%, 3105 MB/token |
+| Phi-4-mini | fp4, int8 head | 6.68 | 19.971 | 15.0 | 94%, 2401 MB/token |
+| SmolLM3-3B | int8 | 5.07 | 26.309 | 21.4 | 95%, 3203 MB/token |
+| SmolLM3-3B | **mix** `gateup@9-35=fp4` | **6.23** | 21.409 | 22.0 | 95%, 2594 MB/token |
+| SmolLM3-3B | fp4, int8 head | 8.90 | 14.980 | 22.8 | 94%, 1796 MB/token |
+| Qwen3.5-4B | **mix** `delta=fp4,mlp=fp4` | **5.70** | 23.384 | 12.8 | 94%, 2770 MB/token |
+| Qwen3.5-4B | fp4, int8 head | 6.00 | 22.206 | 12.9 | 94%, 2623 MB/token |
+| Qwen3.5-2B | fp4, int8 head | 12.35 | 10.800 | 42.3 | 94%, 1282 MB/token |
+| LFM2-2.6B | int8 | 6.13 | 21.764 | 21.7 | 96%, 2661 MB/token |
+| LFM2-2.6B | **mix** `conv=fp4,mlp=fp4` | **10.84** | 12.298 | 20.5 | 95%, 1486 MB/token |
+| LFM2-2.6B | fp4, int8 head | 11.15 | 11.958 | 20.6 | 94%, 1444 MB/token |
+
+- **The tok/s model holds.** With the session's own int8 and fp4 points (Phi, SmolLM3, LFM2)
+  or its fp4 point and the 2B's slope (Qwen3.5-4B) it predicts each mix within 0.1%: Phi
+  25.643 M cycles (measured 25.640), SmolLM3 21.404 (21.409), LFM2 12.296 (12.298), the 4B
+  23.403 (23.384). The estimates in the tables above came from build B's points, 1.5-2% slower
+  (Phi 3.99 / 6.56, SmolLM3 5.00 / 8.74), so they are low by as much; the gains are the same.
+- **Token-exact.** `tools/qual/refs.py card` (the ISA simulator's tokens for otpu-selftest's
+  prompt, per-position and resident) passes for the 4B's and LFM2-2.6B's mixes, the uniform
+  LFM2-2.6B (int8, fp4) and Qwen3.5-2B / 4B (fp4) images with per-kind block sizes, and
+  Qwen3-0.6B with `mlp@7-20=fp4`. Phi-4-mini's and SmolLM3's mixes were checked through that
+  proxy: the same Qwen3 image code places their two layouts in two or three runs, and their own
+  ISA references need 17-26 GB of host memory. They ran perf only.
