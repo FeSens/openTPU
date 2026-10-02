@@ -14,7 +14,8 @@ The points:
 - sizes: 64 KiB to 8 MiB, with offload's record halves (35B 0.83 MB, 26B 1.72 MB);
 - channel: 0, 1, or alternating (call k on channel k % 2: offload's two halves of a record);
 - qd: calls in flight, one thread each, each with its own buffer and card region;
-- pages: the host buffer on transparent huge pages or on 4 KiB pages (madvise);
+- pages: the host buffer private on transparent huge pages (thp) or on 4 KiB pages (4k), or shared
+  anonymous memory (shm: board.placed's and the staging buffer's, shmem on 4 KiB pages);
 - the bounced path (XdmaTransport.mem_write from a buffer 16 bytes off: the staging copy, as
   dma_bench's and the selftest's writes may take) and card->host reads, one call at a time.
 Every buffer is placed (board.DMA_PLACE) and touched before its point; the order of the points is
@@ -48,6 +49,7 @@ SPAN = 64 << 20                         # card bytes per thread
 HUGE = 2 << 20
 MADV_HUGEPAGE = getattr(mmap, "MADV_HUGEPAGE", 14)
 MADV_NOHUGEPAGE = getattr(mmap, "MADV_NOHUGEPAGE", 15)
+PAGES = ("thp", "4k", "shm")
 SIZES = [64 << 10, 256 << 10, 834_944, 1 << 20, 1_724_992, 4 << 20, 8 << 20]
 QUICK = [256 << 10, 834_944, 8 << 20]
 
@@ -56,31 +58,44 @@ def card_addr(ch: int, thread: int) -> int:
     return B.BASE[ch] + REGION + thread * SPAN
 
 
-def alloc(n: int, card: int, thp: bool) -> np.ndarray:
-    """n bytes placed for `card` (d % 4096 == DMA_PLACE) in a 2 MiB-aligned mapping, on huge pages
-    (thp) or 4 KiB pages, touched (random bytes)."""
-    m = mmap.mmap(-1, n + 2 * HUGE + 4096)
+HUGE_KB: dict[int, int] = {}            # a buffer's address -> its mapping's AnonHugePages (kB)
+
+
+def alloc(n: int, card: int, pages: str) -> np.ndarray:
+    """n bytes placed for `card` (d % 4096 == DMA_PLACE) in a 2 MiB-aligned mapping, touched (random
+    bytes): private on huge pages (thp) or 4 KiB pages (4k), or shared anonymous (shm, as
+    board.placed's: shmem, which THP leaves alone)."""
+    if pages == "shm":
+        m = mmap.mmap(-1, n + 2 * HUGE + 4096)
+    else:
+        m = mmap.mmap(-1, n + 2 * HUGE + 4096, flags=mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS)
     base = np.frombuffer(m, np.uint8)
     a0 = B._addr(base)
     start = (-a0) % HUGE
-    if hasattr(m, "madvise"):
+    if hasattr(m, "madvise") and pages != "shm":
         try:
-            m.madvise(MADV_HUGEPAGE if thp else MADV_NOHUGEPAGE)
+            m.madvise(MADV_HUGEPAGE if pages == "thp" else MADV_NOHUGEPAGE)
         except OSError:
             pass
     off = start + (card + B.DMA_PLACE - (a0 + start)) % 4096
     buf = base[off:off + n]
     buf[:] = np.random.default_rng(n ^ card).integers(0, 256, n, np.uint8)
+    HUGE_KB[B._addr(buf)] = huge_kb(B._addr(buf))
     return buf
 
 
-def anon_huge_kb() -> int:
-    """This process's AnonHugePages (kB), or -1 where /proc has none."""
+def huge_kb(addr: int) -> int:
+    """AnonHugePages (kB) of the mapping that holds addr, or -1 where /proc has no smaps."""
     try:
-        for line in Path("/proc/self/smaps_rollup").read_text().splitlines():
-            if line.startswith("AnonHugePages:"):
-                return int(line.split()[1])
-    except OSError:
+        inside = False
+        for line in Path("/proc/self/smaps").read_text().splitlines():
+            f = line.split()
+            if f and "-" in f[0] and ":" not in f[0]:
+                lo, hi = (int(x, 16) for x in f[0].split("-"))
+                inside = lo <= addr < hi
+            elif inside and line.startswith("AnonHugePages:"):
+                return int(f[1])
+    except (OSError, ValueError):
         pass
     return -1
 
@@ -202,24 +217,25 @@ def main(argv=None) -> int:
         t.close()
         raise SystemExit("the card is running a program: the sweep needs it idle")
     print(f"h2c_sweep: {out['host']}  BUILD_ID {out.get('build_id')}", flush=True)
-    grid = [(n, ch, qd, thp) for n in sizes for ch in ("0", "1", "alt") for qd in qds
-            for thp in (True, False)]
+    grid = [(n, ch, qd, pg) for n in sizes for ch in ("0", "1", "alt") for qd in qds
+            for pg in PAGES]
     order = [p for _ in range(reps) for p in grid]
     random.Random(a.seed).shuffle(order)
     bufs: dict = {}
     fail = None
     with t._dma:                                # no other DMA on this card meanwhile
         out["ecc_before"] = ecc_counts(t)
-        for n, chmode, qd, thp in order:
-            key = (n, thp)
+        for n, chmode, qd, pg in order:
+            key = (n, pg)
             have = bufs.setdefault(key, [])
             while len(have) < qd:               # per thread; placed for its card address
-                have.append(alloc(n, card_addr(0, len(have)), thp))
+                have.append(alloc(n, card_addr(0, len(have)), pg))
             p = run_point(t.h2c, have[:qd], n, chmode, a.secs)
-            p.update(bytes=n, ch=chmode, qd=qd, thp=thp, anon_huge_kb=anon_huge_kb())
+            p.update(bytes=n, ch=chmode, qd=qd, pages=pg,
+                     huge_kb=min(HUGE_KB.get(B._addr(b), -1) for b in have[:qd]))
             out["points"].append(p)
             eng = f"{p['engine_gbs']:5.2f}" if p["engine_gbs"] else "    -"
-            print(f"{n:>9} B ch {chmode:>3} qd {qd} {'thp' if thp else '4k '}  {p['gbs']:5.2f} GB/s"
+            print(f"{n:>9} B ch {chmode:>3} qd {qd} {pg:3s} {p['gbs']:5.2f} GB/s"
                   f"  call {p['wall_us']:8.1f} us (p90 {p['wall_p90_us']:8.1f})  cpu {p['cpu_us']:7.1f}"
                   f" us ({p['cpu_us_per_page']:.3f}/page)  engine {eng}  calls {p['calls']}",
                   flush=True)

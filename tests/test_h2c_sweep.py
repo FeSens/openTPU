@@ -17,8 +17,8 @@ from opentpu.host import board as B  # noqa: E402
 def test_buffers_are_placed_for_their_card_address():
     for n in (64 << 10, 834_944):
         for i in range(3):
-            for thp in (True, False):
-                b = S.alloc(n, S.card_addr(0, i), thp)
+            for pg in S.PAGES:
+                b = S.alloc(n, S.card_addr(0, i), pg)
                 assert len(b) == n
                 assert (B._addr(b) - S.card_addr(1, i)) % 4096 == B.DMA_PLACE
 
@@ -30,7 +30,7 @@ def test_points_write_every_call_where_its_channel_says_and_the_check_reads_it_b
     fd = os.open(f, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         n = 256 << 10
-        bufs = [S.alloc(n, S.card_addr(0, i), True) for i in range(3)]
+        bufs = [S.alloc(n, S.card_addr(0, i), pg) for i, pg in enumerate(S.PAGES)]
         p = S.run_point(fd, bufs, n, "alt", 0.05)
         assert p["calls"] >= 9 and p["gbs"] > 0 and p["engine_gbs"] is None
         assert all(c in (0, 1) for c in p["last_ch"])
@@ -81,8 +81,8 @@ def test_the_sweep_runs_its_grid_and_writes_its_json(tmp_path, monkeypatch):
     assert S.main(["--quick", "--secs", "0.01", "--qd", "1,2", "--json", str(tmp_path / "o.json")]) == 0
     out = json.loads((tmp_path / "o.json").read_text())
     assert out["result"] == "PASS"
-    assert len(out["points"]) == len(S.QUICK) * 3 * 2 * 2
-    assert {(p["bytes"], p["ch"], p["qd"], p["thp"]) for p in out["points"]} == \
-        {(n, c, q, h) for n in S.QUICK for c in ("0", "1", "alt") for q in (1, 2) for h in (True, False)}
+    assert len(out["points"]) == len(S.QUICK) * 3 * 2 * len(S.PAGES)
+    assert {(p["bytes"], p["ch"], p["qd"], p["pages"]) for p in out["points"]} == \
+        {(n, c, q, h) for n in S.QUICK for c in ("0", "1", "alt") for q in (1, 2) for h in S.PAGES}
     assert [r["bytes"] for r in out["bounced"]] == S.QUICK and not any(r["placed"] for r in out["bounced"])
     assert [r["bytes"] for r in out["c2h"]] == S.QUICK
