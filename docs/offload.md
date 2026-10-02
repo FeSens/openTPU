@@ -1495,6 +1495,34 @@ calls), from session 13's tree, so the programs and references (refs-d29bfe9) ar
 - the window fits near 0.45 + 1.01-1.07 ms per miss (35B) and 0.55 + 1.75-1.82 (26B);
 - tok/s as above.
 
+The card check (2026-10-02 00:31-00:37, production g2fix 0885d436 with no reload; session 13's
+tree b40fc6f with d29bfe9's programs; `g2check.sh`: q35e128s twice, then g26s). Every run
+matched the ISA simulator bit for bit (tokens, prefill sha 88225ff781699291 / 90e6b6e06e19da99).
+Gen1 is session 13's N2 / gN1 (10.8):
+
+| run | link | tok/s (device) | decode Gcycles | windows s | window fit (ms) | record, median | first miss (lead + rest) | 64-byte call | DMA_BUSY G | RUNNING - DMA_BUSY G | MXU_STARVE G | poll reads |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B | Gen1 | 4.04 (4.05) | 4.217 | 20.02 | 0.34 + 1.39 / miss | 1183 us | 371 + 972 us | 48.6 us | 2.386 | 1.831 | 0.108 | 352k |
+| 35B | Gen2 | **5.07** (5.09) | 3.355 | 13.25 | 0.33 + 0.88 | 661 | 327 + 595 | 36.6 | 1.502 | 1.853 | 0.126 | 435k |
+| 35B | Gen2 | **5.10** (5.12) | 3.336 | 13.07 | 0.37 + 0.85 | 659 | 324 + 597 | 35.6 | 1.478 | 1.858 | 0.129 | 456k |
+| 26B | Gen1 | 2.78 (2.78) | 6.138 | 31.34 | 0.52 + 2.60 | 2360 | 604 + 2032 | 61.0 | 2.256 | 3.882 | 0.284 | 456k |
+| 26B | Gen2 | **3.54** (3.55) | 4.810 | 20.68 | 0.79 + 1.56 | 1346 | 427 + 1318 | 49.3 | 0.842 | 3.968 | 0.316 | 561k |
+
+- 35B: +25.5% and +26.2%, at the top of the predicted 4.9-5.1. Its windows fell 6.8-7.0 s (-5.7
+  to -6.3 predicted).
+- 26B: +27.3%, just under the predicted 3.56-3.63. Its windows fell 10.66 s, as predicted (-10.1
+  to -10.8).
+- The link beat bound (b): a record goes 1.75-1.79x faster, not 1.70x, so part of each call's
+  fixed cost is the link's. The data calls run at 2.19-2.28 GB/s.
+- The 64-byte calls are not pure latency either: 36 us on the 35B and 49 us on the 26B, from 49
+  and 61.
+- The 26B's shortfall is on the device's side. RUNNING - DMA_BUSY, the time the card computes,
+  rose 0.086 G cycles (0.65 s per 128 tokens). Of that, MXU_STARVE accounts for 0.032 G. Without
+  that rise, the 26B makes 3.61 tok/s. The 35B's compute rose too, by only 0.02-0.03 G.
+- Two causes are possible. The expert writes now take 2.28 GB/s of the DRAM while the hits
+  compute. The spinning poll reads 23% more often, because a Gen2 read returns sooner (one every
+  ~27 us outside the windows on the 26B). The poll A/B (10.10) separates the two.
+
 ### 10.10 Pacing the poll
 
 Session 13's spinning poll reads the card's seq every ~33 us while the card computes between
@@ -1517,11 +1545,11 @@ fixed sleep of S seconds between empty polls (the legacy 50e-6), or the pacer. T
 
 Session 14 (`tools/offload/sessions/session14.sh`, session 13's tree with the pacer: 17e99eb,
 d29bfe9's programs and refs-d29bfe9) runs on the Gen2 production build:
-- q35e128s, q35e128sp: the 35B re-baselined on Gen2 (10.9: about 5.0 tok/s), then paced;
-- g26s, g26s50, g26sp, g26s, g26sp: the 26B on Gen2 (about 3.6 tok/s), and the poll A/B.
+- q35e128s, q35e128sp: the 35B spinning and paced (spinning on Gen2: 5.07-5.10 tok/s, 10.9);
+- g26s, g26s50, g26sp, g26s, g26sp: the 26B's poll A/B (spinning on Gen2: 3.54 tok/s, 561k reads).
 
 The prediction for the 26B A/B, per 128 tokens (about 3840 requests):
-- Poll reads: spin 450-550k, 50 us 110-130k, paced 120-180k.
+- Poll reads: spin about 560k (Gen2's check), 50 us 110-130k, paced 140-200k.
 - If the reads cost the MXU (session 13's 120-180 cycles each):
   - MXU_STARVE falls 0.04-0.06 G both paced and with 50 us.
   - Paced gains 0.3-0.45 s (+1%).

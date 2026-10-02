@@ -1,10 +1,11 @@
 #!/bin/bash
 # offload card session 14 (production: Gen2 x8, deploy_g2fix_0885d436; no reload), session 13's
 # programs (d29bfe9's, refs-d29bfe9) in session 13's tree with PollPacer (docs/offload.md 10.10):
-#   q35e128s, q35e128sp: the 35B with the default serving on Gen2 (Gen1, session 13: 4.01 / 4.04
-#     tok/s; predicted ~5.0, 4.9-5.1: 10.9), then with the decode's polls paced;
-#   g26s, g26s50, g26sp, g26s, g26sp: the 26B on Gen2 (Gen1 2.78; predicted ~3.6, 3.56-3.63) and
-#     the poll's A/B: spinning, a 50 us sleep, paced (MXU_STARVE rose with the spin, 10.8).
+#   q35e128s, q35e128sp: the 35B spinning (Gen2, 10.9: 5.07 / 5.10 tok/s), then with the
+#     decode's polls paced;
+#   g26s, g26s50, g26sp, g26s, g26sp: the 26B's poll A/B (spinning on Gen2: 3.54 tok/s, 561k
+#     poll reads; its compute rose 0.086 G cycles over Gen1's, 10.9): spinning, a 50 us sleep,
+#     paced.
 # Each with its timeline and DMA calls (--hint-trace). The other big files dropped before each
 # run (DROPOTHER's default). About 19 min. It stops at a mismatch, a timeout or an error.
 # Run: otpu-lock --wait 10800 -- tools/offload/sessions/session14.sh   (log: O/s14/session.log)
