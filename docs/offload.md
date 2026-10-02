@@ -1745,6 +1745,61 @@ The proof on the ISA simulator (all on the Mac):
   beat; the directory after them; served last. It also covers an armed victim's clear before
   its bytes, and a multi-row request's answer at each id's first place.
 
+On the card, session 15 (2026-10-02 04:36-04:54 opentpu):
+- Setup: production pa e4db91c9, no reload. `session15.sh` ran tree 4ae2aa9 against its
+  parent, main cb3dce5 (OLD), A B A B, q35e128s and g26s.
+- `waitw.py --tag-rounds 2000` came first: PASS (2375 MB/s), with the 50 host-write rounds and
+  the timeout check.
+- Every run matched its own ISA reference bit for bit: refs-f725c2b for A, refs-cb3dce5 for
+  OLD. Both equal refs-d29bfe9 (88225ff781699291, 90e6b6e06e19da99).
+
+Column meanings in the table below:
+- crit: seen to the request's critical end, summed over the requests with misses (4649 /
+  3661). The critical end is OLD's last new entry's call, or A's last expert's last call (the
+  tag in its last beat).
+- head: seen to the request's first data call. body: the rest of crit.
+- 64-byte calls: A adds the directory spans, two calls each.
+
+| run | tok/s (device) | decode G cycles | DMA_BUSY G | windows s | crit s (head + body) | link busy s | 64-byte calls |
+|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B OLD | 5.02 (5.04) | 3.386 | 1.535 | 13.41 | 12.58 (1.42 + 11.15) | 11.35 | 31,346 |
+| 35B A | **5.16** (5.18) | 3.297 | 1.476 | 13.00 | 11.98 (1.95 + 10.04) | 10.90 | 11,776 + 3,629 spans |
+| 35B OLD | 5.02 (5.03) | 3.391 | 1.544 | 13.48 | 12.59 (1.50 + 11.09) | 11.32 | 31,346 |
+| 35B A | **5.08** (5.10) | 3.347 | 1.537 | 13.45 | 12.37 (2.07 + 10.30) | 11.28 | 11,776 + 3,629 |
+| 26B OLD | 3.52 (3.52) | 4.842 | 0.900 | 20.98 | 20.04 (1.46 + 18.58) | 18.72 | 26,460 |
+| 26B A | **3.58** (3.59) | 4.752 | 0.802 | 20.26 | 19.30 (1.85 + 17.45) | 18.15 | 8,595 + 3,097 |
+| 26B OLD | 3.52 (3.53) | 4.836 | 0.888 | 20.93 | 19.97 (1.43 + 18.54) | 18.74 | 26,460 |
+| 26B A | **3.58** (3.59) | 4.757 | 0.814 | 20.46 | 19.40 (1.81 + 17.59) | 18.27 | 8,595 + 3,097 |
+
+- The 35B gains +1.2 to +2.8% (predicted +2.4-3.3%). The 26B gains +1.7% (predicted +1-2.5%):
+  its stall, DMA_BUSY, fell 0.09 G cycles (0.65 s).
+- The body fell as much as predicted or more: -0.85 to -1.11 s (35B) and -1.0 to -1.1 s (26B),
+  against entries plus their gaps of 0.77-0.82 and 0.93 s.
+- The head rose, by 0.45-0.65 s (35B) and 0.35-0.42 s (26B): the answer is not hidden.
+  - It goes out 232-246 us after seen, once every slot of the request is picked.
+  - As the window's first call it takes 75-90 us; a warm 64-byte call takes 35-50.
+  - The first expert's lead DMA starts 86-146 us after the answer. That is 397-472 us after
+    seen, against OLD's 294-377.
+  - In serve_emu's probe of the same code, the lead's read and staging also take ~40 us longer
+    while the DMA thread runs the answer's call, as the two threads trade the GIL.
+- OLD here (main cb3dce5 on pa) made 5.02 tok/s, against g2check's 5.07-5.10 (b40fc6f on
+  g2fix). The card's compute is the same (RUNNING - DMA_BUSY 1.85 G). The host's windows are
+  0.2-0.4 s longer: head +0.15-0.23 s, body +0.13-0.19 s.
+
+Next, host only: send the answer after the first expert's lead DMA (between its two parts on
+the link, ~35-50 us), and cut the head's own steps.
+- serve_emu's probe of the head (35B, OLD), medians from seen:
+  - the row read ends at 59 us: a 19 us read plus ~20 us of Python;
+  - picking a slot takes 18 us;
+  - building the iovec takes 25 us;
+  - `PoolFile.io`'s mincore takes 37 us;
+  - the lead's preadv takes 65 us, and its touch 22 us;
+  - the DMA thread starts the call 74 us after it is queued.
+- The lead's DMA starts about 300 us after seen, and the read itself is only 65 us of that.
+- On the card the head is 1.4-2.1 s per 128 tokens.
+- B (below) as MMIO would also take the answer off the DMA thread. serve_emu with B's costs
+  shows no gain over A, but its answer costs only ~37 us at the head, against the card's ~100.
+
 Two alternatives:
 - **B: the 64-byte writes as MMIO.** Use XDMA's bypass BAR, or an AXI-Lite window onto DRAM
   through otpu_mem_ch. A posted write is about 1-2 us, so every 64-byte call (entries, clears,
