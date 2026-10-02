@@ -161,8 +161,11 @@ days; the chain about 1 more day, then RTL and a card session.
 - The address registers of the 16-head rows kernel at a run-time position: MTP's V fit only
   with `_move_arg` (docs/mtp.md 10.1). With the token arguments gone it gains two or more
   registers, but this needs checking on the real layouts first (step 1).
-- R_max per model must come from the tightest bucket's fit, since a bucket's programs are all
-  at one R. The 4B's R = 3 is the known case; fitting R = 4 there is a separate item.
+- R_max is per bucket (its L program's fit; prefill.r_max), since a bucket's programs are all
+  at one R and a later bucket's attention makes a longer program. The Qwen3.5 models take the
+  same R in every bucket (4 / 4 / 3; the 4B's R = 4 runs out of TMEM, a separate item);
+  Phi-4-mini's mix takes 3 rows in bucket 1 and 1 in bucket 16, as fit_chunk's runs shrink
+  with the context today. Plain and MTP share it, so they split alike.
 - The gate keeps test_qwen35_moe's layer-major tests (test_layer_major_prefill_is_bit_exact,
   test_layer_major_runs_compile_in_the_worker_processes), so the MoE path is shown untouched.
 

@@ -28,6 +28,9 @@ def test_split():
     assert PF.split(250, 263, 4, 256, 4) == [(250, 4, "P"), (254, 2, "P"), (256, 4, "P"),
                                              (260, 3, "L")]
     assert PF.split(37, 38, 4, 256, 4) == [(37, 1, "L")]
+    # R_max per bucket: 3 rows in bucket 1, 1 in bucket 2
+    assert PF.split(250, 259, lambda b: 3 if b == 1 else 1, 256, 4) == [
+        (250, 3, "P"), (253, 3, "P"), (256, 1, "P"), (257, 1, "P"), (258, 1, "L")]
 
 
 def _static(eng, toks, R_max):
@@ -93,8 +96,9 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True, **kw)
     assert PF.supported(a)
     got = [a.prefill(p1), a.prefill(p2)]
-    R_max = a._prompt_rmax
-    assert R_max == min(cfg.MCOLS, a.image.rows)
+    rm = a._prompt_rmax                      # the tiny models: every bucket's the most rows
+    assert set(rm.values()) == {min(cfg.MCOLS, a.image.rows)}
+    R_max = rm.__getitem__
     b = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     want = [_static(b, p1, R_max), _static(b, p2, R_max)]
     assert all(np.array_equal(x, y) for x, y in zip(got, want))
@@ -104,7 +108,8 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     K = PF.conv_k(a)
     runs = PF.split(0, P1, R_max, 256, K) + PF.split(P1, P1 + P2, R_max, 256, K)
     keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1)
-            for p, R, k in runs} | {("L", R_max, 2)}       # (r_max's: the last bucket's L)
+            for p, R, k in runs} | {("L", R, b) for b, R in rm.items()}   # (r_max's probes)
+    assert sorted(rm) == sorted({p // 256 + 1 for p, _, _ in runs})
     assert {(k[1], k[2], k[3], k[4]) if k[3] == "at" else (k[1], k[2], k[3])
             for k in a._prompt_progs} == keys
     if case == "fp4":
@@ -157,8 +162,7 @@ def test_mtp_prompt_runs_are_compile_time_runs(P1):
     p1, p2 = [int(t) for t in r.integers(0, 1000, P1)], [int(t) for t in r.integers(0, 1000, 9)]
     a = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG, prompt_runs=True))
     b = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG))
-    R_max = PF.r_max(a.eng)
-    b.prefill = _static_mtp(b, R_max)
+    b.prefill = _static_mtp(b, lambda blocks: PF.r_max(a.eng, blocks))
     sa, sb = a.generate(p1, max_new=6), b.generate(p1, max_new=6)
     assert sa.tokens == sb.tokens and a.slot == b.slot and a.eng.pos == b.eng.pos
     plain = Engine(spec, W, cap=512, cfg=CFG, resident=True, prompt_runs=True)
