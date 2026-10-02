@@ -27,6 +27,8 @@ MIX = "mix"                 # the named choice: int8 with the model's mix (Spec.
 MIXES: dict = {
     ("phi3", 32, 3072, 200064): "mlp@4-27=fp4",                 # Phi-4-mini
     ("qwen3_5_text", 32, 2560, 248320): "delta=fp4,mlp=fp4",    # Qwen3.5-4B
+    ("smollm3", 36, 2048, 128256): "gateup@9-35=fp4",           # SmolLM3-3B
+    ("lfm2", 30, 2048, 65536): "conv=fp4,mlp=fp4",              # LFM2-2.6B
 }
 
 
