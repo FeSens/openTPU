@@ -39,6 +39,9 @@ the model's own default.
 `tools/decode_profile.py`) is int8 with `Spec.mix` unless the caller or `OTPU_FORMATS` gives a
 string. `formats.mix_for` finds a checkpoint's mix in `formats.MIXES` by its text config's
 (model_type, num_hidden_layers, hidden_size, vocab_size); a model without one refuses "mix".
+`otpu-chat`'s default, `--wformat auto` (`formats.auto`), is "mix" where the model has one and
+int8 elsewhere; it prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head
+int8`), and `otpu-smi` shows them. `Engine`'s own default stays int8.
 
 ## Layouts, runs and IMEM
 
@@ -230,3 +233,21 @@ tok/s:
   Qwen3-0.6B with `mlp@7-20=fp4`. Phi-4-mini's and SmolLM3's mixes were checked through that
   proxy: the same Qwen3 image code places their two layouts in two or three runs, and their own
   ISA references need 17-26 GB of host memory. They ran perf only.
+- **The decode loop on the card** (session mix3, tree chat-auto, `refs.py card --card-loop` with
+  wformat "mix"): the 4B's and LFM2-2.6B's mixes and the Qwen3-0.6B proxy give the ISA
+  simulator's tokens with every decode step in the card's generate loop.
+
+**otpu-chat's default** (`--wformat auto`, session mix3; one prompt, 18-85 tokens in each
+model's chat template, greedy, 64 tokens; device / wall tok/s): Phi-4-mini 5.3 / 5.26 (`mix:
+int8 + mlp@4-27=fp4`), SmolLM3 6.3 / 6.26 (`gateup@9-35=fp4`), LFM2-2.6B 10.9 / 10.75
+(`conv=fp4,mlp=fp4`), Qwen3.5-4B 5.7 / 5.67 (`delta=fp4,mlp=fp4`), and Qwen3.5-2B, which has no
+mix, 8.2 / 8.09 in int8. The wall rate is within 1.5% of the device's.
+
+**The 4B's mix under MTP** (`--mtp`, the chat prompt above, 160 tokens, greedy): 16.04 M cycles
+per token against 23.27 without the drafter (1.45x, 8.3 device tok/s), acceptance 0.61; fp4 on
+the same prompt 14.56 M cycles (1.53x over fp4's plain 22.21 from mix1, 9.2 device tok/s),
+acceptance 0.67. A single-prompt observation: at 160 tokens the acceptance's SE is about 0.05,
+so 0.61 against 0.67 is about 1 SE, and fp4's own 1.53x here against 1.62x in [mtp.md](mtp.md)
+shows how much the prompt moves it. The MTP layer takes the mix's unranged formats (attention
+int8, MLP fp4). The wall rates of these MTP runs overlapped another job on the card host and are
+not quoted; the device cycles are the card's own count.
