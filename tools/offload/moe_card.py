@@ -175,7 +175,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if eng.layer_ahead and not (pooled and hasattr(srv, "ahead_layer")):
         raise SystemExit("--layer-ahead needs pooled slots and a server that streams ahead "
                          "(ExpertServer.ahead_layer)")
-    if ahead_part:                              # (--layer-ahead hint's idle-poll part)
+    if ahead_part:                              # (the hints' and needs' idle-poll part)
         eng.ahead_part = ahead_part
     srv.policy = policy                         # the slots' replacement (ExpertServer)
     srv.history, per_req = [], []               # each request's ids and misses
@@ -423,7 +423,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 embed_runs=embed_runs if layer_major else None,
                 layer_ahead=layer_ahead if layer_major else None,
                 expert_major=expert_major if layer_major else None,
-                ahead_part=eng.ahead_part if eng.layer_hint else None,
+                ahead_part=eng.ahead_part if eng.layer_hint or eng.expert_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
                 idle_parts=dict(mode=idle_parts, holds=srv.holds,
@@ -525,8 +525,9 @@ def main():
                          "its runs, its experts in one expert run (Engine expert_major; "
                          "docs/offload.md 13.11, 13.13; the server's need lines and scratch: 13.14)")
     ap.add_argument("--ahead-part", type=int, metavar="KiB",
-                    help="--layer-ahead hint: the KiB an idle poll sends of a queued expert "
-                         "(default qwen3.AHEAD_PART, 1024; at least a slot: one part an expert)")
+                    help="--layer-ahead hint and --expert-major: the KiB an idle poll sends of "
+                         "a queued expert (default qwen3.AHEAD_PART, 1024; at least a slot: one "
+                         "part an expert)")
     ap.add_argument("--embed-runs", action="store_true",
                     help="--layer-major with the embed runs and compile-time-position runs "
                          "for an embedding table on the host (Engine embed_runs; needs a "

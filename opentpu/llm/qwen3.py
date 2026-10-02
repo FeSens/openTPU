@@ -1164,8 +1164,9 @@ COMPILE_AHEAD = 3    # decode programs compiled ahead by the worker processes (E
 DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled from this many
                      # positions before the current bucket ends (Engine)
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
-AHEAD_PART = 1 << 20  # layer_ahead "hint": an idle poll's part of a queued expert (docs/offload.md
-                      # 13.9: 1 MiB parts against 13.8's 512 KiB, the per-part cost halved)
+AHEAD_PART = 1 << 20  # layer_ahead "hint" and expert_major: an idle poll's part of a queued expert
+                      # (docs/offload.md 13.9: 1 MiB parts against 13.8's 512 KiB, the per-part
+                      # cost halved)
 
 
 def fill_logits(m) -> None:
@@ -1850,7 +1851,8 @@ class Engine:
     bytes, AHEAD_PART by default). expert_major: with layer_major and pooled slots, each MoE
     layer of a chunk routes in its runs and computes its experts in one expert run, each chosen
     expert once (docs/offload.md 13.11, 13.13); its server takes the scratch and the need lines
-    (ExpertServer.begin_prefill(expert_major=True, scratch=...)).
+    (ExpertServer.begin_prefill(expert_major=True, scratch=...)), the needs sent in idle-poll
+    parts of `ahead_part` bytes.
 
     prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
     come from opentpu/progcache.py: compiled once per process and image layout, and kept on
@@ -2438,9 +2440,9 @@ class Engine:
         if srv is not None and hasattr(srv, "begin_prefill"):
             kw = {} if send is None else {"ahead": True} if not self.layer_hint else \
                 {"ahead": True, "part": self.ahead_part}
-            if em:                          # (the scratch: the first chunk's rows' records)
-                from .moe import em_record
-                kw.update(expert_major=True, scratch=len(chunks[0][0]) *
+            if em:                          # (the scratch: the first chunk's rows' records;
+                from .moe import em_record  # the needs go in idle-poll parts, as hints')
+                kw.update(expert_major=True, part=self.ahead_part, scratch=len(chunks[0][0]) *
                           em_record(self.spec.hidden, mo.k))
             srv.begin_prefill(**kw)
         if send is not None:
@@ -2458,7 +2460,13 @@ class Engine:
                         self._send_ahead(send, j)
                 if rows is not None:
                     self._write_host_rows(rows)
-                run(key, vals)
+                try:
+                    run(key, vals)
+                except Exception as e:      # an expert run's WAITW timeout: where its needs
+                    if key[0] != "x" or not hasattr(srv, "need_report"):    # stand (13.14)
+                        raise
+                    raise RuntimeError(f"expert run of layer {key[1]}: {e} "
+                                       f"({srv.need_report()})") from e
             self.pos += len(part)
         if em:                              # (the head reads the scratch: before it goes)
             run("head", {"row": len(part) - 1})
