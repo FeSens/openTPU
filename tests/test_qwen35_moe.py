@@ -249,6 +249,27 @@ def test_hints_move_experts_early_and_change_no_logit(tiny):
     assert a.server.hints >= (len(toks) + 7) * L
 
 
+def test_hinted_experts_on_their_way_wait_on_their_tags_beat_by_beat(tiny):
+    """docs/offload.md 10.11 with hints over an adversarial link (tests/beat_link.py: the
+    server's writes land a 64-byte beat at a time, the machine running as soon as one of its
+    WAITWs holds): a route that names an expert still on its way finds its slot in the answer
+    and waits for its tag (the rest of it is sent then); per-token steps and the card's
+    generate loop give the logits and tokens of the engine without hints bit for bit."""
+    from beat_link import BeatLink
+    _, W, spec = tiny
+    cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=K + 1)
+    a, b = (Engine(s, W, cap=512, cfg=cfg, rows=1, resident=True, experts=K + 1)
+            for s in (_hinted(spec), spec))
+    link = BeatLink(a)
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 6)]
+    for t in toks:
+        x, y = a.step(t), b.step(t)
+        assert np.array_equal(x.view(np.uint32), y.view(np.uint32)), a.pos
+    assert a.server.promoted > 0 and link.held > 0
+    t0 = int(np.argmax(x))
+    assert a.generate_card(t0, 6, stop_ids=[]) == b.generate_card(t0, 6, stop_ids=[])
+
+
 def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path):
     """Hints beside a card that computes while the host works (tests/test_lfm2_moe.py's
     _LiveCard, CHASH's map, a split-format pool), with the embedding table on the host: one

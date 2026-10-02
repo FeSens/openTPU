@@ -367,11 +367,14 @@ through whole.
 - Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
   completed, every younger MM or LD reads that DMA's data: the host orders its data before its
   flag, the card its flag before its reads. The XDMA and the core meet in `otpu_mem_ch` and
-  LiteDRAM, which must keep this order.
+  LiteDRAM, which must keep this order. A flag in the last beat of the DMA that carries the
+  data (a slot's tag, docs/offload.md 10.11) also needs that DMA's writes on its channel to
+  land in order: its other channel's DMA has completed before it starts.
 
 The MoE expert streaming of docs/offload.md uses it for a fence (`served >= seq`: the host has
-finished the card's earlier requests) and for each expert's directory entry (`!= 0`: the
-expert's slot address, once its DMA has landed). The ISA simulator runs it in order (the slice
+finished the card's earlier requests), for each present expert's directory entry and each
+missing one's word of the request's answer (`!= 0`: the expert's slot address), and for a
+missing expert's slot tag (`!= 0`: its DMA has landed; docs/offload.md 10.11). The ISA simulator runs it in order (the slice
 waits) and calls the host (`Machine.host`) when every slice that can run waits; a WAITW that
 still does not hold is the timeout (SimError).
 

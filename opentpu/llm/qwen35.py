@@ -1162,8 +1162,8 @@ class Image(EmbedHost):
         dev = None
         if self.offload is not None:
             L = self.offload
-            dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt,
-                                  hint_off=L.layers * L.E)
+            dev = SimpleNamespace(mbox=L.mbox, served=L.served, answer=L.answer, dir=L.dir,
+                                  tag=L.tag, fmt=self.fmt, hint_off=L.layers * L.E)
         mtp = {}
         if spec.mtp:
             mo, ff = self.mtpo, self.mtp_fc

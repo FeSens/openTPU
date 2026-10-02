@@ -205,6 +205,25 @@ def test_small_cache_is_bit_exact(tiny, wformat):
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
 
 
+@pytest.mark.parametrize("tag_first", [False, True])
+def test_the_card_reads_an_expert_only_after_its_tag_beat_by_beat(tiny, tag_first):
+    """docs/offload.md 10.11 on the ISA simulator over an adversarial link (tests/beat_link.py:
+    the server's writes land a 64-byte beat at a time, in order, the machine running as soon
+    as one of its WAITWs holds): k slots per layer, every request streaming, give the full
+    cache's logits bit for bit. The negative control, each tag landing before its expert's
+    bytes, must break them: the card then computes experts that have not landed."""
+    from beat_link import BeatLink
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 6)]
+    full = _engine(spec, W)
+    ref = np.array([full.step(t) for t in toks])
+    small = _engine(spec, W, experts=K)
+    link = BeatLink(small, tag_first)
+    got = np.array([small.step(t) for t in toks])
+    assert small.server.misses > len(toks) and link.beats > 0 and link.held > 0
+    assert np.array_equal(got.view(np.uint32), ref.view(np.uint32)) != tag_first
+
+
 def test_experts_run_paired(tiny):
     """With column reuse (PAIR), a 4-bit expert's MMs run paired as the layers' own do: its slot
     address is a register (DevVar), but every slot is LINE-aligned, so its scale words pair
@@ -488,6 +507,25 @@ class _LiveCard:
                 return super().reg_read(off)
 
         return Live()
+
+
+@pytest.mark.parametrize("chash", [False, True])
+def test_waitw_tag_check_on_a_live_card(chash):
+    """checks.waitw_tag (tools/qual/waitw.py --tag-rounds: docs/offload.md 10.11's order on the
+    card) against a card that computes while the host writes: the record's other channel, then
+    its tag's channel ending in the tag; the card's copy of the beats before the tag and of
+    random ones is the new data, the tag on either channel."""
+    from opentpu.host.board import Board
+    from opentpu.host.checks import waitw_tag, waitw_tag_round
+    from opentpu.isasim import board_config
+    card = _LiveCard.make(board_config(DRAM_BYTES=1 << 24), chash=chash)
+    b = Board(card)
+    sizes = (1 << 16, 3 << 15)
+    ok, msg = waitw_tag(b, rounds=6, sizes=sizes, base=0x400000)
+    assert ok and card.error is None, (msg, card.error)
+    tags = {waitw_tag_round(r, sizes=sizes, base=0x400000)["tag"] // 128 for r in range(6)}
+    par = {bin(m).count("1") & 1 for m in tags}
+    assert par == ({0, 1} if chash else par)    # (the tag's chunk on both parities)
 
 
 @pytest.mark.parametrize("mode", ["sync", "threaded", "split"])

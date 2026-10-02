@@ -297,6 +297,87 @@ def waitw_host(board, rounds: int = 20, seed: int = 5, sizes=W_SIZES,
                   f"{min(sizes)}..{max(sizes)} words, {min(cyc)}..{max(cyc)} cycles")
 
 
+WT_DATA = 0x4000000             # waitw_tag's record (64 MiB up: no other check's region)
+WT_SIZES = (1 << 20, 2 << 20, 3 << 20, 4 << 20)     # bytes: an expert's 1.67-3.45 MB and more
+WT_SAMPLES = 64                 # beats the card copies on each channel's end, and at random
+
+
+def waitw_tag_round(r: int, seed: int = 5, sizes=WT_SIZES, base: int = WT_DATA) -> dict:
+    """Round r of waitw_tag: the record's address (a 128-byte chunk on either parity, so the tag
+    lands on either channel), size, and the logical beats the card copies after its WAITW (the
+    last WT_SAMPLES beats of each channel before the tag, then random ones)."""
+    rng = np.random.default_rng([seed, r, 7])
+    n = int(sizes[r % len(sizes)])
+    addr = base + 128 * int(rng.integers(0, 64))
+    tail = list(range(n // 64 - 2 * WT_SAMPLES, n // 64))
+    rand = rng.choice(n // 64 - 2 * WT_SAMPLES, WT_SAMPLES, replace=False)
+    beats = tail[::-1] + [int(b) for b in rand]       # the tag's neighbours first
+    return dict(addr=addr, n=n, tag=addr + n, beats=beats, word=(r + 1) | 1 << 31)
+
+
+def waitw_tag_program(p: dict, timeout: int = W_TIMEOUT) -> list:
+    """WAITW on round p's tag (!= 0, read back to back), then its sampled beats to TMEM and back
+    to W_RES."""
+    return ([I.waitw(p["tag"], W_T, 0, I.C_NE, interval=0, timeout=timeout)] +
+            [I.ld(p["addr"] + 64 * b, 16 * i, 16) for i, b in enumerate(p["beats"])] +
+            [I.st(W_RES, 0, 16 * len(p["beats"])), I.halt()])
+
+
+def waitw_tag(board, rounds: int = 2000, seed: int = 5, sizes=WT_SIZES,
+              base: int = WT_DATA) -> tuple[bool, str]:
+    """docs/offload.md 10.11's order: a flag in the last beat of the DMA that carries the data.
+    Each round the host fills a record of 1-4 MiB with old words and its tag chunk with zeros,
+    starts the card, which waits on the tag (read back to back), and writes the new record as
+    BoardDram does an expert with its tag: the other channel's run in one call, then the tag's
+    channel's run in a call that ends with the tag beat. The card's copy of the beats just
+    before the tag on both channels, and of random ones, must be the new data."""
+    from .board import BEAT, swapped
+    board.scrub()
+    cyc, mb = [], 0.0
+    for r in range(rounds):
+        p = waitw_tag_round(r, seed, sizes, base)
+        a, n, S = p["addr"], p["n"], len(p["beats"])
+        what = f"round {r} ({n >> 20} MiB at {a:#x}, the tag at {p['tag']:#x})"
+        rng = np.random.default_rng([seed, r, 8])
+        old, new = (rng.integers(0, 1 << 32, n // 4, dtype=np.uint32) for _ in range(2))
+        board.write(a, old)
+        board.write(p["tag"], np.zeros(32, "<u4"))
+        board.write(W_RES, np.full(16 * S, 0xDEADBEEF, "<u4"))
+        tb = np.zeros(32, "<u4")
+        tb[0] = p["word"]
+        rec = np.concatenate([new, tb]).view(np.uint8).reshape(-1, 2, BEAT)
+        m = len(rec)
+        sw = swapped(a, m) if board.chash else np.zeros(m, bool)
+        runs = [np.where(sw[:, None], rec[:, 1 - c], rec[:, c]).reshape(-1) for c in (0, 1)]
+        ct = int(sw[-1])                    # the tag: beat 0 of the last chunk
+        board.load_program(PROG_AT, np.asarray(I.assemble(waitw_tag_program(p)), np.uint32))
+        board.start()
+        if board.t.reg_read(R_STATUS) & ST_HALTED:
+            return False, f"{what}: the card halted before the host wrote the tag"
+        t0 = time.perf_counter()
+        board.t.mem_write(1 - ct, a // 2, runs[1 - ct])
+        board.t.mem_write(ct, a // 2, runs[ct])
+        mb += (n + 128) / 1e6 / max(time.perf_counter() - t0, 1e-9)
+        try:
+            st = board.wait(timeout=30.0)
+        except RuntimeError as e:
+            return False, f"{what}: {e} (a WAITW timeout: the tag not seen)"
+        got = board.read(W_RES, 64 * S).view("<u4").reshape(S, 16)
+        want = new.reshape(-1, 16)[p["beats"]]
+        bad = np.nonzero((got != want).any(1))[0]
+        if len(bad):
+            i = int(bad[0])
+            b = p["beats"][i]
+            old_ = bool((got[i] == old.reshape(-1, 16)[b]).all())
+            return False, (f"{what}: {len(bad)} of {S} beats read before they landed, first "
+                           f"logical beat {b} of {n // 64} ({'the old data' if old_ else 'mixed'}"
+                           f", {n // 64 - b} before the tag)")
+        cyc.append(st["cycles"])
+    return True, (f"{rounds} rounds of {min(sizes) >> 20}..{max(sizes) >> 20} MiB, the tag on "
+                  f"either channel, {S} beats checked each, {min(cyc)}..{max(cyc)} cycles, "
+                  f"{mb / rounds:.0f} MB/s")
+
+
 def waitw_timeout(board) -> tuple[bool, str]:
     """A WAITW that never holds stops the card at its timeout with HALTED, ERROR and WAIT_TO
     (Board.wait's 'WAITW timed out'; bitstreams before WAIT_TO: ERROR alone, 'illegal

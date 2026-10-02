@@ -15,19 +15,31 @@ DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
                            0.0 is read as k)
     mbox + 64              the global expert ids of request seq (floats): the first 16
     served                 the last request the host has finished, as a float
+    answer + 4 * n         the request's answer: the slot of its n-th id (the id's first place
+                           in the request) when that expert is missing, else 0 (u32); the card
+                           zeroes the words after its experts
     dir + 8 * g            expert g's entry: {slot address (u32), present (f32: 1.0 or 0.0)}
     row2                   ids 17-32 of a request of more than 16 (a layout of 2 lines only:
                            the 128-byte block after the directory)
+    slot + tag             the slot's tag word (u32, its tag chunk's first): nonzero once the
+                           expert the answer named has landed; the card zeroes it when it uses
+                           the slot's expert
 
 A global expert id is `j * E + e` for the j-th MoE layer's expert e (the card's ARGMAX gives it
-with base j * E). Per request the host, for each id missing from its copy of the directory:
-picks the layer's least recently used expert that the request does not name, writes the new
-expert into its slot and then {slot, 1.0} to the new entry; after the last id, {0, 0.0} to
-each victim's entry, then `served = seq`. The card fences each layer before it posts, `WAITW
-served >= seq` (its last request), so one request row is enough, and no eviction for a layer is
-in flight while it uses that layer's slots (docs/offload.md 5.2). It reads only the entries of
-the ids it posts, so a victim's entry is cleared in time if it lands before served: the card
-waits on the new entries alone (docs/offload.md 10.8).
+with base j * E). Per request (docs/offload.md 10.11) the host, for each id missing from its
+copy of the directory, picks the layer's least recently used expert that the request does not
+name; writes the answer (one 64-byte beat: the missing ids' slots); writes each missing expert
+into its slot with its tag chunk, the tag word in the DMA's last beat; then the directory: {slot,
+1.0} to the new entries and {0, 0.0} to the victims'; then `served = seq`. The card fences each
+layer before it posts, `WAITW served >= seq` (its last request), so one request row and one
+answer are enough, and no eviction for a layer is in flight while it uses that layer's slots
+(docs/offload.md 5.2). It reads the present flags of the ids it posts from the directory: a
+present expert's slot comes from its entry; a missing one's from the answer, its data once its
+tag is nonzero. An entry says present only after its expert has landed, so an expert can read
+as present (the card read the flag after the directory's write) but never the other way. The
+card zeroes the tag of every expert it uses and then the answer, before its next post: a tag
+the host writes later is a new expert's. A slot whose tag the card has not zeroed (a hinted
+expert no request used) has it cleared before the slot takes another expert (`armed`).
 
 During a layer-major prefill (docs/offload.md 13: one MoE layer at a time over the whole
 prompt) the slots are pooled (`begin_prefill`): a missing expert of the running layer takes a
@@ -40,9 +52,9 @@ cleared), and with "lazy" (the default; docs/offload.md 13) decode's misses fill
 A request whose ids are at G = layers x E and above is a hint (docs/offload.md 12: the layer's
 router on its input, before its mixer). With the "lfu" policy the host gives each hinted expert
 not in a slot one now (a free one, or the victim, its entry cleared), writes served, and moves
-the experts on the link's idle time: one part per poll that finds no request, the entry when
-the last part has landed. A request naming one still on its way sends the rest at once. "lru"
-ignores hints.
+the experts on the link's idle time: one part per poll that finds no request, the tag with the
+last part, then the entry. A request naming one still on its way names its slot in the answer
+and sends the rest at once. "lru" ignores hints.
 
 On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
 rate, in a worker thread, the host's own words without a read of the card first.
@@ -65,6 +77,7 @@ import numpy as np
 
 LINE = 64              # the mailbox's words, its row and each flag on their own 64-byte lines
 RUN = 4096             # the split pool format's block: 32 chunks, its two channel runs
+TAG = 128              # a slot's tag chunk (one beat on each channel; the tag word its first)
 SPLIT = "split4k"      # the split format's name in a pool file's <file>.format
 IOV_MAX = 1024         # buffers per os.preadv (Linux's UIO_MAXIOV)
 
@@ -372,37 +385,48 @@ class Layout:
     served: int
     dir: int
     row2: int = 0          # a request's second line of ids (0: requests of at most 16)
-    pitch: int = 0         # from a slot to the next (0: slot_bytes)
+    pitch: int = 0         # from a slot to the next (0: slot_bytes + its tag chunk)
+    answer: int = 0        # the request's answer: per id, its slot when missing (docs/offload.md
+                           # 10.11)
+    tag: int = 0           # a slot's tag word, from the slot (0: slot_bytes up to whole chunks)
 
     def __post_init__(self):
+        if not self.tag:
+            object.__setattr__(self, "tag", -(-self.slot_bytes // TAG) * TAG)
         if not self.pitch:
-            object.__setattr__(self, "pitch", self.slot_bytes)
+            object.__setattr__(self, "pitch", self.tag + TAG)
 
     @staticmethod
     def build(base: int, E: int, k: int, slots_per_layer, slot_bytes: int,
               lines: int = 1) -> "Layout":
         """The words from `base` up (64-byte aligned), then the slots, layer after layer, from
-        the next 4 KiB page, each slot_bytes rounded up to whole RUN blocks from the last (the
-        split pool format's blocks land on the card's: BoardDram reads an expert straight into
-        its DMA runs only at a RUN-aligned slot; a slot under RUN keeps its size, which keeps
-        them D-byte aligned: the MXU streams whole chunks). lines=2: requests of up to 32 ids
-        (a layer-major prefill's runs of 4 rows),
-        their second line after the directory on a 128-byte block of its own (outside
-        BoardDram's shadow of the host's words); 1 leaves every address as it was."""
+        the next 4 KiB page. A slot is the expert's slot_bytes, then its tag chunk (TAG bytes
+        from the first whole chunk after them: the tag word that says the expert's DMA has
+        landed, docs/offload.md 10.11), rounded up to whole RUN blocks from the last (the split
+        pool format's blocks land on the card's: BoardDram reads an expert straight into its
+        DMA runs only at a RUN-aligned slot), or under RUN to the alignment slot_bytes has (a
+        power of two up to RUN: D-byte aligned slots, the MXU streams whole chunks). lines=2:
+        requests of up to 32 ids (a layer-major prefill's runs of 4 rows), their answer two
+        lines, their second line after the directory on a 128-byte block of its own (outside
+        BoardDram's shadow of the host's words)."""
         if base % LINE or slot_bytes % LINE or not 0 < k <= LINE // 4 or lines not in (1, 2):
             raise ValueError("unaligned base or slot size, k too large, or not 1 or 2 lines")
         mbox = base
         served = mbox + 2 * LINE
-        d = served + LINE
+        answer = served + LINE
+        d = answer + lines * LINE
         end = d + 8 * E * len(slots_per_layer)
         row2 = -(-end // (2 * LINE)) * 2 * LINE if lines == 2 else 0
         a = -(-(row2 + LINE if row2 else end) // 4096) * 4096        # slots page-aligned
-        pitch = -(-slot_bytes // RUN) * RUN if slot_bytes > RUN else slot_bytes
+        tag = -(-slot_bytes // TAG) * TAG
+        g = min(RUN, slot_bytes & -slot_bytes)                         # its alignment
+        pitch = -(-(tag + TAG) // RUN) * RUN if tag + TAG > RUN else -(-(tag + TAG) // g) * g
         slots = []
         for n in slots_per_layer:
             slots.append((a, int(n)))
             a += int(n) * pitch
-        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d, row2, pitch)
+        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d, row2, pitch, answer,
+                      tag)
 
     @property
     def max_ids(self) -> int:
@@ -416,7 +440,11 @@ class Layout:
     @property
     def end(self) -> int:
         a, n = self.slots[-1]
-        return a + (n - 1) * self.pitch + self.slot_bytes if n else a
+        return a + (n - 1) * self.pitch + self.tag + TAG if n else a
+
+    def all_slots(self):
+        """Every slot's address, layer after layer."""
+        return [a + i * self.pitch for a, n in self.slots for i in range(n)]
 
     def entry(self, g: int) -> int:
         return self.dir + 8 * g
@@ -476,15 +504,31 @@ class ExpertServer:
         self.last = None                    # what the last poll served: ("d" / "h", its layer),
                                             # None for a hinted expert's part (PollPacer's key)
         self.clear_late = True              # (False: each at once, before its slot is written)
+        # the host's copy of the directory ({slot, present's bits} per expert) and the entries
+        # this request changed (written together after its experts' data: _dir_flush)
+        self.dirv = np.zeros((layout.E * layout.layers, 2), np.uint32)
+        self._dirty: set = set()
+        # slots whose tag word may be nonzero: written with a tag the card has not yet zeroed
+        # (it zeroes the tags of the experts it uses before its next post: _used, the last
+        # request's slots, are clear once a later request is seen)
+        self.armed: set = set()
+        self._used: set = set()
 
     def load(self, warm=()) -> None:
-        """At image load: an empty directory and mailbox, then the experts `warm` names (global
-        ids, most wanted first, e.g. a profile's order) in their layers' slots while slots
-        last."""
+        """At image load: an empty directory, mailbox and answer, every slot's tag zero, then
+        the experts `warm` names (global ids, most wanted first, e.g. a profile's order) in
+        their layers' slots while slots last."""
         L = self.L
         self.mem.write(L.mbox, np.zeros(2 * LINE // 4, np.float32))
         self.mem.write(L.served, _f32(0.0))
-        self.mem.write(L.dir, np.zeros(2 * L.E * L.layers, np.uint32))
+        self.mem.write(L.answer, np.zeros(L.max_ids, np.uint32))
+        self.dirv[:] = 0
+        self._dirty.clear()
+        self.mem.write(L.dir, self.dirv)
+        for a in L.all_slots():
+            self.mem.write(a + L.tag, _tag_beat(0))
+        self.armed.clear()
+        self._used.clear()
         for lru, fr in zip(self.lru, self.free):
             fr.extend(lru.values())
             lru.clear()
@@ -536,7 +580,12 @@ class ExpertServer:
         raw = bytes(self.mem.read(self.L.row, 4 * min(n, h)))
         if n > h:
             raw += bytes(self.mem.read(self.L.row2, 4 * (n - h)))
-        ids = list(dict.fromkeys(int(g) for g in np.frombuffer(raw, np.float32)))
+        pos: dict = {}                      # each id's first place: its answer word
+        for i, v in enumerate(np.frombuffer(raw, np.float32)):
+            pos.setdefault(int(v), i)
+        ids = list(pos)
+        self.armed -= self._used            # the card zeroed their tags before this post
+        self._used = set()
         G = self.L.E * self.L.layers
         m0 = self.misses
         if ids[0] >= G:
@@ -544,7 +593,8 @@ class ExpertServer:
         else:
             if self.history is not None:
                 self.history.append(ids)
-            self.serve(ids)
+            self.serve(ids, [pos[g] for g in ids])
+            self._used = {self.lru[g // self.L.E][g] for g in ids}
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
         self._flush()                       # (no DMA of the server's in flight after poll)
@@ -566,9 +616,13 @@ class ExpertServer:
             raise ValueError(f"request {ids} is not one layer's experts")
         return j
 
-    def serve(self, ids) -> None:
-        """One request: its k global ids, all of one MoE layer."""
+    def serve(self, ids, pos=None) -> None:
+        """One request: its k global ids, all of one MoE layer; pos: each one's answer word
+        (its first place in the request; default its index). The missing ones' slots are
+        chosen first, then the answer goes, then each one's bytes with its tag, then the
+        directory's new and cleared entries (docs/offload.md 10.11)."""
         j = self._layer(ids)
+        pos = list(range(len(ids))) if pos is None else pos
         self.t[j] += 1
         lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
         for g in ids:                       # the decayed use count, kept as log2 + t / half
@@ -577,18 +631,32 @@ class ExpertServer:
             miss = [g for g in ids if g not in lru]
             if miss:
                 self.ahead(miss)
-        for g in ids:
+        plan = []                           # (id, its answer word, slot, its rest only)
+        for g, p in zip(ids, pos):
             if g in lru:
                 lru.move_to_end(g)
                 if g in self.pending:       # hinted, on its way: the rest now
                     self.misses += 1
                     self.promoted += 1
-                    self._send(g, self.L.slot_bytes)
+                    plan.append((g, p, lru[g], True))
                 else:
                     self.hits += 1
                 continue
             self.misses += 1
-            self._insert(j, g, self._pool_slot(j, ids) if self.pooled else self._slot(j, ids))
+            slot = self._pool_slot(j, ids) if self.pooled else self._slot(j, ids)
+            lru[g] = slot                   # (no victim of this request: they are not in ids)
+            plan.append((g, p, slot, False))
+        if plan:
+            ans = np.zeros(self.L.max_ids, np.uint32)
+            for g, p, slot, _ in plan:
+                ans[p] = slot
+            self.mem.write(self.L.answer, ans)
+            for g, p, slot, rest in plan:
+                if rest:
+                    self._send(g, self.L.slot_bytes, entry=False)
+                else:
+                    self._fetch(g, slot)
+                self._dir(g, slot)
         if self.pooled:
             for g in ids:
                 self.order[g] = None
@@ -601,18 +669,43 @@ class ExpertServer:
         self._clear()
 
     def _clear(self) -> None:
-        """The request's victims' entries cleared, after its experts (the card waits on their
-        entries, not these: it reads a victim's entry only in a later request, after served)."""
+        """The request's victims' entries cleared, with its new entries, after its experts (the
+        card waits on their tags, not these: it reads a victim's entry only in a later request,
+        after served)."""
         # Safe late because of moe.moe_ffn's contract (its steps 3-5): the card reads the
-        # present flag and WAITWs on the entry of the ids it posted only, and a victim is never
-        # one of them (_slot / _pool_slot pick outside ids); its next request (the only one that
-        # could name a victim) is posted after its fence, WAITW served >= seq, and served is
-        # written after these clears on the same in-order queue. A card program that read any
-        # other entry during a request would need the clear before the victim's slot is written
-        # (clear_late False).
+        # present flag and the entry of the ids it posted only, and a victim is never one of
+        # them (_slot / _pool_slot pick outside ids); its next request (the only one that could
+        # name a victim) is posted after its fence, WAITW served >= seq, and served is written
+        # after these on the same in-order queue. A new entry is written after its expert's
+        # data, so it never says present before the expert has landed. A card program that
+        # read any other entry during a request would need the clear before the victim's slot
+        # is written (clear_late False).
         for g in self._victims:
-            self.mem.write(self.L.entry(g), np.zeros(2, np.uint32))
+            self._dir(g, 0)
         self._victims.clear()
+        self._dir_flush()
+
+    def _dir(self, g: int, slot: int) -> None:
+        """Expert g's entry in the host's copy: {slot, 1.0}, or {0, 0.0} for slot 0."""
+        self.dirv[g] = (slot, np.float32(1.0).view(np.uint32)) if slot else (0, 0)
+        self._dirty.add(g)
+
+    def _dir_flush(self) -> None:
+        """The changed entries to the card: each changed 64-byte beat of the directory, or, from
+        three beats of one layer, the layer's span of them as one write (BoardDram: one DMA
+        call per channel)."""
+        if not self._dirty:
+            return
+        E, per = self.L.E, LINE // 8
+        by: dict = {}
+        for g in self._dirty:
+            by.setdefault(g // E, set()).add(g // per)
+        self._dirty.clear()
+        for beats in by.values():
+            spans = [(b, b + 1) for b in sorted(beats)] if len(beats) <= 2 else \
+                [(min(beats), max(beats) + 1)]
+            for b0, b1 in spans:
+                self.mem.write(self.L.entry(b0 * per), self.dirv[b0 * per:b1 * per])
 
     def hint(self, ids) -> None:
         """A hint: the k global ids the layer's router picks on its input (docs/offload.md 12).
@@ -633,15 +726,15 @@ class ExpertServer:
 
     def step(self) -> None:
         """The next part of the oldest hinted expert on its way (the link is idle: no request
-        since the last served); its entry once its last part is sent."""
+        since the last served); its tag with the last part, then its entry."""
         g, a = next(iter(self.pending.items()))
         n = self.L.slot_bytes
         if self._send(g, min(a + self.part, n)) == n:
             self.prefetched += 1
 
-    def _send(self, g: int, b: int) -> int:
-        """Hinted expert g's bytes from where it stands to b; its entry when that is the end.
-        Returns b."""
+    def _send(self, g: int, b: int, entry: bool = True) -> int:
+        """Hinted expert g's bytes from where it stands to b; its tag with them when that is
+        the end, then (entry) its entry. Returns b."""
         slot, a = self.lru[g // self.L.E][g], self.pending[g]
         data = self.pool(g)
         n = len(data)
@@ -654,21 +747,53 @@ class ExpertServer:
         else:
             part = (np.ascontiguousarray(data).view(np.uint8).reshape(-1) if isinstance(
                 data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))[a:b]
-        getattr(self.mem, "write_slot", self.mem.write)(slot + a, part)
+        self._write(slot, a, part, g if b == n else None)
         self.bytes += b - a
         if b < n:
             self.pending[g] = b
             return b
         del self.pending[g]
-        self.mem.write(self.L.entry(g), np.array([slot], np.uint32).tobytes() + _f32(1.0))
+        if entry:
+            self._dir(g, slot)
+            self._dir_flush()
         return b
+
+    def _write(self, slot: int, at: int, data, tag: int | None = None) -> None:
+        """data to slot + at; with tag (expert g's), the slot's tag word {g + 1} after it, in
+        the same DMA's last beat (memories without write_slot: a write after it)."""
+        t = None if tag is None else (slot + self.L.tag, _tag_beat(tag + 1))
+        w = getattr(self.mem, "write_slot", None)
+        if w is not None:
+            w(slot + at, data, t)
+        else:
+            self.mem.write(slot + at, data)
+            if t is not None:
+                self.mem.write(*t)
+        if t is not None:
+            self.armed.add(slot)
+
+    def _fetch(self, g: int, slot: int) -> None:
+        """A missing expert into its slot, with its tag (the card waits on that)."""
+        data = self.pool(g)
+        if len(data) != self.L.slot_bytes:
+            raise ValueError(f"expert {g}: {len(data)} bytes, slots hold {self.L.slot_bytes}")
+        self._write(slot, 0, data, g)
+        self.bytes += len(data)
+
+    def _reuse(self, slot: int) -> int:
+        """A slot about to take another expert: its tag cleared first if the card may not have
+        zeroed it (a hinted expert no request used)."""
+        if slot in self.armed:
+            self.armed.discard(slot)
+            self.mem.write(slot + self.L.tag, _tag_beat(0))
+        return slot
 
     def _slot(self, j: int, ids) -> int:
         """A slot of layer j for one of the request's experts: a free one, or the victim's (its
         entry cleared at the request's end, _clear; a hinted expert still on its way is
         dropped)."""
         if self.free[j]:
-            return self.free[j].pop(0)
+            return self._reuse(self.free[j].pop(0))
         lru, use = self.lru[j], self.use[j]
         if self.policy == "lfu":
             victim = min((v for v in lru if v not in ids),
@@ -683,14 +808,14 @@ class ExpertServer:
             self._victims.append(victim)
             if not self.clear_late:
                 self._clear()
-        return lru.pop(victim)
+        return self._reuse(lru.pop(victim))
 
     def _pool_slot(self, j: int, ids) -> int:
         """Pooled: a free slot of layer j, else of any layer, else the slot of the least
         recently used expert of any layer the request does not name (its entry cleared)."""
         for fr in [self.free[j]] + self.free:
             if fr:
-                return fr.pop(0)
+                return self._reuse(fr.pop(0))
         victim = next((v for v in self.order if v not in ids), None)
         if victim is None:
             raise RuntimeError(f"{len(self.order)} slots for a request of {len(ids)}")
@@ -698,7 +823,7 @@ class ExpertServer:
         self._victims.append(victim)
         if not self.clear_late:
             self._clear()
-        return self.lru[victim // self.L.E].pop(victim)
+        return self._reuse(self.lru[victim // self.L.E].pop(victim))
 
     def begin_prefill(self) -> None:
         """A layer-major prefill starts (docs/offload.md 13): every slot serves the layer its
@@ -720,6 +845,8 @@ class ExpertServer:
         layer's experts of most use not in a slot are loaded now."""
         if restore not in ("lazy", "eager"):
             raise ValueError(f"restore {restore!r}")
+        self.armed -= self._used            # (the prefill's runs are done: the card zeroed
+        self._used = set()                  # the last request's tags)
         spare = [a for fr in self.free for a in fr]
         for fr in self.free:
             fr.clear()
@@ -728,8 +855,9 @@ class ExpertServer:
             if len(lru) > n:
                 keep = set(sorted(lru, key=lambda g: use.get(g, -math.inf), reverse=True)[:n])
                 for g in [g for g in lru if g not in keep]:
-                    self.mem.write(self.L.entry(g), np.zeros(2, np.uint32))
+                    self._dir(g, 0)
                     spare.append(lru.pop(g))
+        self._dir_flush()
         for j, (_, n) in enumerate(self.L.slots):
             while len(self.lru[j]) + len(self.free[j]) < n:
                 self.free[j].append(spare.pop())
@@ -746,13 +874,23 @@ class ExpertServer:
         self._flush()
 
     def _insert(self, j: int, g: int, slot: int) -> None:
+        """Expert g into a slot outside a request (load's warm experts, an eager restore): its
+        bytes, then its entry; no tag (no request waits on it: the card finds it present)."""
         data = self.pool(g)
         if len(data) != self.L.slot_bytes:
             raise ValueError(f"expert {g}: {len(data)} bytes, slots hold {self.L.slot_bytes}")
-        getattr(self.mem, "write_slot", self.mem.write)(slot, data)
-        self.mem.write(self.L.entry(g), np.array([slot], np.uint32).tobytes() + _f32(1.0))
+        self._write(slot, 0, data)
+        self._dir(g, slot)
+        self._dir_flush()
         self.lru[j][g] = slot
         self.bytes += len(data)
+
+
+def _tag_beat(v: int) -> np.ndarray:
+    """A slot's tag beat: the tag word v (u32), then zeros."""
+    b = np.zeros(LINE // 4, np.uint32)
+    b[0] = v
+    return b
 
 
 @dataclass(frozen=True)
@@ -994,6 +1132,9 @@ class BoardDram:
             a0, a1 = a // self.blk * self.blk, -(-(a + len(b)) // self.blk) * self.blk
             out, at = self.shadow[a0:a1].copy(), self.lo + a0
             self._put(lambda: self._blocks(at, out))
+        elif len(b) == self.blk // 2 and addr % len(b) == 0:   # a whole beat (a slot's tag):
+            out = b.copy()                                      # no read, one DMA call
+            self._put(lambda: self._beat(addr, out))
         else:                                                   # the card's words: in order
             self.flush()
             self.board.write(addr, b)
@@ -1067,14 +1208,34 @@ class BoardDram:
         c = sorted(set(c))
         return list(zip(c[:-1], c[1:]))
 
-    def write_slot(self, addr: int, data) -> None:
+    def _tag_channel(self, at: int) -> int:
+        """The channel that holds the beat at `at` (64-byte aligned)."""
+        m, c = at // self.blk, at // (self.blk // 2) % 2
+        return c ^ (m.bit_count() & 1) if self.board.chash else c
+
+    def write_slot(self, addr: int, data, tag=None) -> None:
+        """An expert's bytes (or a part's) to addr; tag: (address, its 64-byte beat), the slot's
+        tag beat, which goes in the same DMA, last: right after the bytes (the slot's tag chunk
+        starts there), the other channel's call first and the tag's channel's after it, the tag
+        its last beat (docs/offload.md 10.11); elsewhere, a call of its own after them."""
         from .board import swapped
+        n = data.nbytes if isinstance(data, np.ndarray) else len(data)
+        if tag is not None and (tag[0] != addr + n or n % self.blk):
+            self.write_slot(addr, data)
+            self.write(*tag)
+            return
         if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
                 and len(data) % self.blk == 0):
-            n = len(data)
-            self._staging(n)                    # the file's runs, read in place
+            self._staging(n + (self.blk if tag else 0))     # the file's runs, read in place
             i = self._pair()
             nb, h, bufs = -(-n // RUN), RUN // 2, self._bufs[i]
+            order, e = (0, 1), n // 2
+            if tag is not None:                 # the tag chunk after the runs: its tag beat on
+                ct = self._tag_channel(tag[0])  # its channel, a zero beat on the other
+                tb = np.ascontiguousarray(tag[1]).view(np.uint8).reshape(-1)
+                bufs[ct][e:e + len(tb)] = tb
+                bufs[1 - ct][e:e + len(tb)] = 0
+                order, e = (1 - ct, ct), e + len(tb)
             par = self._par.get((addr, nb))
             if par is None:                     # (CHASH: where each block lands)
                 par = self._par[addr, nb] = _parity(addr // RUN + np.arange(nb)).astype(bool)
@@ -1095,15 +1256,25 @@ class BoardDram:
             self._lead = False
             for j0, j1 in self._cuts(nb, lead):
                 read(j0, j1)
-                self._put(lambda a=j0 * h, b=min(j1 * h, n // 2):
-                          self._dma(addr // 2, bufs, a, b), i if j1 == nb else None)
+                last = j1 == nb
+                self._put(lambda a=j0 * h, b=e if last else j1 * h, o=order if last else (0, 1):
+                          self._dma(addr // 2, bufs, a, b, o), i if last else None)
             self.direct += 1
             return
         src = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
                if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
-        n = len(src) // self.blk
         if addr % self.blk or len(src) % self.blk:
-            return self.write(addr, src)
+            self.write(addr, src)
+            if tag is not None:
+                self.write(*tag)
+            return
+        order = (0, 1)
+        if tag is not None:                     # the tag chunk after the bytes, in their DMA
+            tb = np.ascontiguousarray(tag[1]).view(np.uint8).reshape(-1)
+            src = np.concatenate([src, tb, np.zeros(self.blk - len(tb), np.uint8)])
+            ct = self._tag_channel(tag[0])
+            order = (1 - ct, ct)
+        n = len(src) // self.blk
         self._staging(len(src))
         i0 = self._idx.get((addr, n))
         if i0 is None:                          # once per slot: CHASH's swaps at its address
@@ -1115,7 +1286,7 @@ class BoardDram:
         bufs, beats, h = self._bufs[i], src.view("V64"), n * self.blk // 2
         np.take(beats, i0, out=bufs[0][:h].view("V64"))       # channel 0's run
         np.take(beats, i1, out=bufs[1][:h].view("V64"))       # channel 1's
-        self._put(lambda: self._dma(addr // 2, bufs, 0, h), i)
+        self._put(lambda: self._dma(addr // 2, bufs, 0, h, order), i)
 
     def _beat(self, at: int, data: np.ndarray) -> None:
         """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds
@@ -1141,10 +1312,11 @@ class BoardDram:
         if self.calls is not None:
             self.calls.append((t0, time.perf_counter(), len(data)))
 
-    def _dma(self, off: int, bufs, a: int = 0, b: int | None = None) -> None:
-        """bufs[c][a:b] to channel c's run from channel offset off + a."""
+    def _dma(self, off: int, bufs, a: int = 0, b: int | None = None, order=(0, 1)) -> None:
+        """bufs[c][a:b] to channel c's run from channel offset off + a, the channels in
+        `order` (a tag's channel last: each call ends before the next starts)."""
         t0 = time.perf_counter()
-        for c in (0, 1):
+        for c in order:
             self.board.t.mem_write(c, off + a, bufs[c][a:b])
         t1 = time.perf_counter()
         self.dma_s += t1 - t0

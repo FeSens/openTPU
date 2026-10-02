@@ -1665,8 +1665,8 @@ entries, so perhaps 50-100% of the 26B's saving reaches the card: -0.4 to -0.9 s
 tok/s.
 
 With the directory as one call per channel, the 35B's 64-byte calls fall from 31,346 to about
-19,000 per 128 tokens. That leaves more of the link's idle time for hints. The 35B's +4 KiB per slot could cost
-a few of its 1680 slots: about 0.3% more misses, under 0.03 s.
+19,000 per 128 tokens. That leaves more of the link's idle time for hints. The 35B's +4 KiB per
+slot keeps its 42 slots a layer (42.66 fit, from 42.77).
 
 The proof:
 - `test_offload_server`, the host's contract:
@@ -1690,6 +1690,46 @@ Program sha impact: every MoE model's programs change (moe_ffn, moe_ffn_rows; Qw
 Gemma 4 26B-A4B, LFM2-8B-A1B, the tiny test MoEs). So do their images: the slot pitch, the
 answer line, and the directory one line further. Dense models' programs do not change. The
 program cache's keys change with them.
+
+The implementation (branch offload-onecall):
+- `Layout`: the answer line after served (two lines for a two-line layout), the directory one
+  line further, and each slot's 128-byte tag chunk at `tag` (its bytes rounded up to whole
+  chunks); the pitch rounds the slot and its chunk up to RUN blocks, or under RUN to the
+  slot's own alignment.
+- `ExpertServer`:
+  - `serve` picks every missing expert's slot first, writes the answer, then each expert with
+    its tag (`_write`), then the directory (`_dir_flush`: each changed beat, or from three
+    beats of a layer its span as one write);
+  - `armed` holds the slots whose tag the card may not have zeroed; `_reuse` clears one before
+    its slot takes another expert;
+  - `load` zeroes every tag and the answer.
+- `BoardDram.write_slot(addr, data, tag)` puts the tag beat after the expert's runs in their
+  staging buffers, and the last part's DMA goes on the other channel first, then on the tag's
+  channel. A whole beat outside the shadow (a tag's clear) is one call with no read.
+- `moe.slot_of`, used by moe_ffn and moe_ffn_rows: the present path WAITWs on the entry; the
+  missing path WAITWs on the answer word (pe's ANS row: 4 x the id's place), then on the tag.
+  Both store 0 to the tag; after the experts, the answer's words are stored 0.
+- `checks.waitw_tag` (`tools/qual/waitw.py --tag-rounds N`) is the card's check of the order.
+- `serve_emu.py` times crit to the last tag landed.
+
+The proof on the ISA simulator (all on the Mac):
+- `tests/beat_link.py` is the adversarial link. The server's writes land one 64-byte beat at a
+  time, in order. The machine runs again as soon as a WAITW holds, so the card computes while
+  later experts' beats are still queued.
+- Over it, with k slots a layer, the logits match the full cache bit for bit:
+  - LFM2-MoE;
+  - Qwen3.5-MoE with hints (an expert still on its way, waited for by its tag), plus its
+    generate loop;
+  - Gemma 4 26B-A4B's block with its dense MLP beside, token by token and layer-major R = 2
+    (moe_ffn_rows).
+- The negative control lands each tag before its expert's bytes. It breaks the logits on
+  LFM2-MoE and on Gemma 4's layer-major prefill.
+- The three models' existing MoE tests all pass on the new programs (63). That includes the
+  live-card ones, BoardDram's threaded and split modes, and the layer-major prefill.
+- `test_offload_server` checks the contract call by call on the link: the answer first; each
+  expert's last part on the other channel and then the tag's, with the tag as that call's last
+  beat; the directory after them; served last. It also covers an armed victim's clear before
+  its bytes, and a multi-row request's answer at each id's first place.
 
 Two alternatives:
 - **B: the 64-byte writes as MMIO.** Use XDMA's bypass BAR, or an AXI-Lite window onto DRAM
