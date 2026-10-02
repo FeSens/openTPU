@@ -108,7 +108,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          formats: str | None = None, layer_major: int = 0, pooled: bool = True,
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
          legacy_serve: bool = False, embed_runs: bool = False,
-         poll_idle: str | None = None) -> dict:
+         poll_idle: str | None = None, prefill_trace: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -207,9 +207,50 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         return dict(read_gb=round(warm.bytes / 1e9, 2), done=not warm.is_alive(),
                     resident_gb=None if r is None else round(r / 1e9, 2))
     warm_load = warm_at()
+    board = getattr(eng.backend, "board", None)     # the card's free-running counters
+    snap = getattr(board, "snapshot", None)
+    b, runs, cur = eng.backend, [], [None]      # the prompt's runs: the layer run's key (None:
+    card_ = hasattr(b, "start")                 # a token step), started, done, halted, counters
+    undo = [(o, k, vars(o).get(k)) for o, k in
+            [(eng, "_layer_run")] + [(b, k) for k in (("start", "wait") if card_ else ("run",))]]
+    lr = eng._layer_run
+
+    def layer_run(key):
+        cur[0] = key
+        return lr(key)
+
+    def begun(f):
+        def g(*a, **k):
+            runs.append([cur[0], time.perf_counter()])
+            return f(*a, **k)
+        return g
+
+    def ended(f):
+        def g(*a, **k):
+            st = f(*a, **k)
+            ic = st.get("instructions")
+            runs[-1] += [time.perf_counter(), getattr(board, "t_seen", None), st.get("cycles"),
+                         sum(ic) if isinstance(ic, list) else ic] + \
+                [st.get(c) for c in ("b_reads", "b_writes", "a_reads", "a_writes", "b_stall")]
+            cur[0] = None
+            return st
+        return g
+    eng._layer_run = layer_run
+    if card_:                                   # the card (BoardBackend.run: start + wait)
+        b.start, b.wait = begun(b.start), ended(b.wait)
+    else:                                       # the simulator
+        b.run = begun(ended(b.run))
+    srv.events, snap_pre = [], snap() if snap else None
     ids = ref["ids"]
-    t = time.time()
+    t, t_pre = time.time(), time.perf_counter()
     lg = eng.prefill(ids if host_loop else ids[:-1])
+    t_end = time.perf_counter()
+    snap_end, pev, srv.events = snap() if snap else None, srv.events, None
+    for o, k, v in undo:                        # the decode as before
+        if v is None:
+            delattr(o, k)
+        else:
+            setattr(o, k, v)
     pacer = None
     if poll_idle == "predict" and callable(getattr(eng.backend, "host", None)):
         from opentpu.host.offload import PollPacer   # the decode's polls sleep through the
@@ -225,6 +266,30 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
             t_.host_idle = 0.0
     prefill_s = time.time() - t
     pre = len(per_req) if layer_major else 0    # layer-major: a request per layer run
+    khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
+    done = [r for r in runs if len(r) > 2]
+    run_s = sum(r[2] - r[1] for r in done)      # each run's start .. its wait's return
+    req = [e for e in pev if e[2] == "d"]
+    prefill_time = dict(
+        wall_s=round(t_end - t_pre, 3), runs=len(done),
+        layer_runs=sum(r[0] is not None for r in done), run_s=round(run_s, 3),
+        device_s=round(sum(r[4] or 0 for r in done) / (khz * 1e3), 3) if khz else None,
+        halted_s=round(sum(r[3] - r[1] for r in done), 3) if card_ and board else None,
+        between_s=round(t_end - t_pre - run_s, 3),  # the host's between runs: programs, rows,
+        requests=len(req),                          # slots, the logits' read
+        serve_s=round(sum(e[1] - e[0] for e in req), 3),
+        host={k: round(v, 3) for k, v in tm.items()},   # (all the prompt's: none before)
+        counters={k: v - snap_pre[k] for k, v in snap_end.items()} if snap_end else None)
+    if prefill_trace:                           # the prompt's timeline (s from its start)
+        z = lambda v: None if v is None else round(v - t_pre, 6)    # noqa: E731
+        Path(prefill_trace).write_text(json.dumps(dict(
+            core_khz=khz, wall_s=t_end - t_pre,
+            run_fields=["key", "start", "done", "halted", "cycles", "instructions", "b_reads",
+                        "b_writes", "a_reads", "a_writes", "b_stall"],
+            runs=[[r[0], z(r[1]), z(r[2]), z(r[3])] + r[4:] for r in done],
+            event_fields=["seen", "done", "kind", "layer or expert", "misses or bytes"],
+            events=[[z(e[0]), z(e[1])] + list(e[2:]) for e in pev],
+            requests=srv.history[:len(per_req)], misses=per_req[:])))
     warm_decode = warm_at()
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
     tm0, b0, st0, calls0 = dict(tm), srv.bytes, len(eng.stats), dict(calls)
@@ -237,8 +302,6 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     wait0 = getattr(mem, "wait_s", 0.0)         # staging's waits for the DMA thread
     if pf is not None:                          # the decode's pool reads: page cache or disk
         pf.io = {}
-    board = getattr(eng.backend, "board", None)     # the card's free-running counters
-    snap = getattr(board, "snapshot", None)
     snap0, mem_decode = snap() if snap else None, host_mem()
     t = time.time()
     top = []                    # host loop: the device's 8 best (id, logit) per step
@@ -273,7 +336,6 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if pf is not None:
         host.update(reads={k: [v[0], round(v[1], 3), v[2], v[3]] for k, v in pf.io.items()})
         pf.io = None
-    khz = (getattr(eng.backend, "info", None) or {}).get("core_khz")
     cyc = sum(s.get("cycles", 0) for s in eng.stats[st0:])       # (the simulator: none)
     dev_s = cyc / (khz * 1e3) if khz else None
     L = eng.image.offload
@@ -318,6 +380,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
                            kinds=len(pacer.gaps)) if pacer is not None else None,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
+                prefill_time=prefill_time,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
                 backend="card" if on_card else "isa", cfg=cfg_file, prefill_logits_sha=lg_sha,
@@ -378,6 +441,9 @@ def main():
     ap.add_argument("--hint-drop", action="store_true",
                     help="a request withdraws its layer's hinted experts it does not name")
     ap.add_argument("--hint-trace", help="the decode's hint and request timeline as JSON")
+    ap.add_argument("--prefill-trace",
+                    help="the prompt's timeline as JSON: each run (its layer run, start, done, "
+                         "halted, counters) and each request (seen, served, misses, ids)")
     ap.add_argument("--hints", choices=("on", "off"), default=None,
                     help="the router's prefetch hints before each mixer (docs/offload.md 12; "
                          "default: the model's, on for Qwen3.5-MoE)")
@@ -424,7 +490,7 @@ def main():
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
-             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle)
+             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
