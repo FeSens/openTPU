@@ -40,8 +40,9 @@ class BeatLink:
     def write(self, addr: int, data) -> None:
         self._queue(addr, data)
 
-    def write_slot(self, addr: int, data, tag=None, then=None) -> None:
-        """As BoardDram's: then (the request's answer) after the expert's first fifth."""
+    def write_slot(self, addr: int, data, tag=None, then=None, cut=True, staged=None) -> None:
+        """As BoardDram's: then (the request's answer) after the expert's first fifth (cut: an
+        idle part's, ignored; no stage, so never staged)."""
         b = np.frombuffer(np.ascontiguousarray(data).tobytes() if isinstance(data, np.ndarray)
                           else bytes(data), np.uint8)
         c = len(b) // 5 // 64 * 64

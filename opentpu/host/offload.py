@@ -81,6 +81,10 @@ RUN = 4096             # the split pool format's block: 32 chunks, its two chann
 TAG = 128              # a slot's tag chunk (one beat on each channel; the tag word its first)
 SPLIT = "split4k"      # the split format's name in a pool file's <file>.format
 IOV_MAX = 1024         # buffers per os.preadv (Linux's UIO_MAXIOV)
+# halt_aware idle parts (docs/offload.md 13.12): a part's time before any is measured (a call
+# pair's 122 us and the pairs' 3.15 GB/s, session 16, and the poll), and how far past its
+# expected end a run gets idle parts again
+PART_S0, PART_GBS, HOLD_LATE = 0.2e-3, 3.15e9, 1e-3
 
 
 def _parity(x: np.ndarray) -> np.ndarray:
@@ -514,6 +518,17 @@ class ExpertServer:
         # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
         # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
         self.hint_n = self.hint_top = 0
+        # idle parts (docs/offload.md 13.12), opt-in until the card's A/B: read_ahead, each read
+        # by the poll before, beside its DMA, and sent as one DMA call per channel (a memory
+        # with stage: BoardDram); halt_aware, none started when the running program's expected
+        # end is nearer than an idle part takes (part_s: the measured parts' average). The end:
+        # the memory's run_clock (the run's start and its time with no waits) plus the run's
+        # own waits (_waits: each of its requests with misses, seen to served)
+        self.read_ahead = self.halt_aware = False
+        self._staged = None                 # ((g, slot, from, to), the memory's staged part)
+        self.part_s: float | None = None
+        self.holds = 0                      # polls that held an idle part back (halt_aware)
+        self._run, self._waits = None, 0.0
         self.history: list | None = None    # a list: each request's ids are appended
         # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
         # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
@@ -604,13 +619,19 @@ class ExpertServer:
         if seq == self.seq:
             if not self.pending and not self._next_ahead():
                 return 0
+            if self._hold():
+                self._flush()               # (a victim's entry _next_ahead cleared)
+                return 0
             g = next(iter(self.pending))
             self.step()
             if g not in self.pending:       # landed: its entry after this poll read seq
                 self._fresh.add(g)
+            self._stage_next()              # (the next part's read beside this one's DMA)
             self._flush()
             self._touched()
             self.last = None
+            dt = time.perf_counter() - t0
+            self.part_s = dt if self.part_s is None else 0.8 * self.part_s + 0.2 * dt
             if self.events is not None:
                 self.events.append((t0, time.perf_counter(), "p", g,
                                     self.pending.get(g, self.L.slot_bytes)))
@@ -647,9 +668,12 @@ class ExpertServer:
             self._used = {self.lru[g // self.L.E][g] for g in ids}
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
+        self._stage_next()                  # (a hint's first part: read while the card computes)
         self._flush()                       # (no DMA of the server's in flight after poll)
         self._touched()
         self.last = ("h" if ids[0] >= G else "d", ids[0] % G // self.L.E)
+        if self.misses > m0 and self.halt_aware:    # (the card waited for them)
+            self._wait(time.perf_counter() - t0)
         if self.events is not None:
             self.events.append((t0, time.perf_counter(), "h" if ids[0] >= G else "d",
                                 ids[0] % G // self.L.E, self.misses - m0))
@@ -680,6 +704,7 @@ class ExpertServer:
         (_racy) gets its slot in the answer as well (12.8): the card may have read its entry as
         missing."""
         j = self._layer(ids)
+        self._unstage()
         pos = list(range(len(ids))) if pos is None else pos
         self.t[j] += 1
         lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
@@ -790,6 +815,7 @@ class ExpertServer:
         (the card's router on the layer before it, in a layer-major prefill) adds to the end
         of its queue instead (docs/offload.md 13.4)."""
         j = self._layer(ids)
+        self._unstage()
         self.hints += 1
         if j == self._qlayer:               # ahead_layer's layer: to the end of its queue, those
             lru, q = self.lru[j], self.queue    # in no slot (on their way: in one) nor queued;
@@ -812,7 +838,7 @@ class ExpertServer:
         since the last served); its tag with the last part, then its entry."""
         g, a = next(iter(self.pending.items()))
         n = self.L.slot_bytes
-        if self._send(g, min(a + self.part, n)) == n:
+        if self._send(g, min(a + self.part, n), idle=True) == n:
             self.prefetched += 1
             if g in self._ahead:            # (ahead_layer's: landed, now an expert in a slot)
                 self._ahead.discard(g)
@@ -820,22 +846,20 @@ class ExpertServer:
                 if self.pooled:
                     self.order[g] = None
 
-    def _send(self, g: int, b: int, entry: bool = True, then=None) -> int:
+    def _send(self, g: int, b: int, entry: bool = True, then=None, idle: bool = False) -> int:
         """Hinted expert g's bytes from where it stands to b; its tag with them when that is
-        the end, then (entry) its entry. Returns b."""
+        the end, then (entry) its entry. idle (step's part): its bytes as _stage_next read
+        them, if it did, in one DMA call per channel. Returns b."""
         slot, a = self.lru[g // self.L.E][g], self.pending[g]
-        data = self.pool(g)
-        n = len(data)
-        if n != self.L.slot_bytes:
-            raise ValueError(f"expert {g}: {n} bytes, slots hold {self.L.slot_bytes}")
-        if a == 0 and b == n:
-            part = data
-        elif isinstance(data, SplitRecord):
-            part = data.part(a, b)
-        else:
-            part = (np.ascontiguousarray(data).view(np.uint8).reshape(-1) if isinstance(
-                data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))[a:b]
-        self._write(slot, a, part, g if b == n else None, then)
+        n, part = self.L.slot_bytes, self._part_of(g, a, b)
+        st, kw = self._staged, {}
+        self._staged = None
+        if st is not None and st[0] != (g, slot, a, b):
+            self.mem.unstage(st[1])
+            st = None
+        if idle and st is not None:         # read already: one DMA call per channel
+            kw = dict(cut=False, staged=st[1])
+        self._write(slot, a, part, g if b == n else None, then, **kw)
         self.bytes += b - a
         if b < n:
             self.pending[g] = b
@@ -846,14 +870,84 @@ class ExpertServer:
             self._dir_flush()
         return b
 
-    def _write(self, slot: int, at: int, data, tag: int | None = None, then=None) -> None:
+    def _part_of(self, g: int, a: int, b: int):
+        """Expert g's bytes a..b from the pool (a split record's part: read when written)."""
+        data = self.pool(g)
+        n = len(data)
+        if n != self.L.slot_bytes:
+            raise ValueError(f"expert {g}: {n} bytes, slots hold {self.L.slot_bytes}")
+        if a == 0 and b == n:
+            return data
+        if isinstance(data, SplitRecord):
+            return data.part(a, b)
+        return (np.ascontiguousarray(data).view(np.uint8).reshape(-1) if isinstance(
+            data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))[a:b]
+
+    def _stage_next(self) -> None:
+        """Read-ahead (docs/offload.md 13.12): the part the next idle poll would send, read into
+        a staging pair now (the memory's stage), while this poll's DMA runs (a part's, or a
+        request's experts and served); the next queued expert of ahead_layer takes its slot for
+        it now, as it would then. A request first drops it (_unstage): the read is lost, not
+        the link's time."""
+        stage = getattr(self.mem, "stage", None)
+        if stage is None or not self.read_ahead or self._staged is not None:
+            return
+        if not self.pending and not self._next_ahead():
+            return
+        g, a = next(iter(self.pending.items()))
+        n, slot = self.L.slot_bytes, self.lru[g // self.L.E][g]
+        b = min(a + self.part, n)
+        t = (slot + self.L.tag, _tag_beat(g + 1)) if b == n else None
+        h = stage(slot + a, self._part_of(g, a, b), t)
+        if h is not None:
+            self._staged = ((g, slot, a, b), h)
+
+    def _clock(self):
+        """The memory's run_clock (the running program's start and time with no waits), its
+        waits so far reset at a new run's start; None without one."""
+        rc = getattr(self.mem, "run_clock", None)
+        c = rc() if rc is not None else None
+        if c is not None and c[0] != self._run:
+            self._run, self._waits = c[0], 0.0
+        return c
+
+    def _wait(self, s: float) -> None:
+        """A request of the running program's with misses took s from seen to served."""
+        if self._clock() is not None:
+            self._waits += s
+
+    def _hold(self) -> bool:
+        """halt_aware (docs/offload.md 13.12): no idle part now if the running program is
+        expected to end before one would be done (its halt would be seen after the part): its
+        start, its time with no waits and its own waits so far. A run past that end by
+        HOLD_LATE gets parts again (the estimate was short), as does one with no estimate.
+        Requests are served as always."""
+        c = self._clock() if self.halt_aware else None
+        if c is None:
+            return False
+        left = c[0] + c[1] + self._waits - time.perf_counter()
+        need = self.part_s if self.part_s is not None else PART_S0 + self.part / PART_GBS
+        if -HOLD_LATE < left < need:
+            self.holds += 1
+            return True
+        return False
+
+    def _unstage(self) -> None:
+        """A staged part dropped (the server changes its slots or serves a request first)."""
+        if self._staged is not None:
+            self.mem.unstage(self._staged[1])
+            self._staged = None
+
+    def _write(self, slot: int, at: int, data, tag: int | None = None, then=None,
+               **kw) -> None:
         """data to slot + at; with tag (expert g's), the slot's tag word {g + 1} after it, in
         the same DMA's last beat (memories without write_slot: a write after it). then():
-        called once data's first part is on its way (the request's answer: write_slot)."""
+        called once data's first part is on its way (the request's answer: write_slot); kw:
+        write_slot's cut and staged (an idle part)."""
         t = None if tag is None else (slot + self.L.tag, _tag_beat(tag + 1))
         w = getattr(self.mem, "write_slot", None)
         if w is not None:
-            w(slot + at, data, t, then)
+            w(slot + at, data, t, then, **kw)
         else:
             self.mem.write(slot + at, data)
             if t is not None:
@@ -1019,6 +1113,7 @@ class ExpertServer:
     def _drop_ahead(self) -> None:
         """ahead_layer's queue emptied, and its experts on their way dropped: their slots free
         (no tag or entry was written for them)."""
+        self._unstage()
         self.queue.clear()
         self._qlayer = None
         for g in [g for g in self.pending if g in self._ahead]:
@@ -1243,7 +1338,8 @@ class BoardDram:
       iovec array, preadv_iov, where the record has readiov), and when nothing is in flight
       (a request's first miss) in `pieces` parts, the first `lead` of it (None: equal parts),
       each DMAed as soon as it is read: the link starts after a fifth of the expert is read,
-      not half (docs/offload.md 10.8);
+      not half (docs/offload.md 10.8); an idle part read ahead (stage, beside the DMA before
+      it) goes whole (docs/offload.md 13.12);
     - the host's own words (served and the directory: the card only reads them) are kept in a
       shadow and written with no read first: a write within one 64-byte beat (an entry,
       served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
@@ -1277,8 +1373,12 @@ class BoardDram:
         self._thread: threading.Thread | None = None
         self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
         self.direct = 0                         # experts read from the file into their runs
+        self.staged = 0                         # of them, idle parts read ahead (stage)
         self.wait_s = 0.0                       # the server's waits for a free staging pair
         self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
+        self._held: set = set()                 # staging pairs holding a staged part (stage)
+        # the running program's start and time with no waits (BoardBackend.run_clock), or None
+        self.run_clock = getattr(backend, "run_clock", None)
         if lead is not None and not 0 < lead < 1:
             raise ValueError(f"lead {lead}: the first part's share of the expert, in (0, 1)")
         self.lead = lead
@@ -1347,6 +1447,8 @@ class BoardDram:
         write, a hint's part, uses their first bytes)."""
         if self._bufs is not None and len(self._bufs[0][0]) >= nbytes // 2:
             return
+        if self._held:
+            raise RuntimeError(f"staging pairs for {nbytes} bytes with a staged part held")
         self.flush()
         n = nbytes // self.blk
         self._bufs = [[_page_buf(nbytes // 2) for _ in (0, 1)] for _ in range(self.depth)]
@@ -1416,48 +1518,97 @@ class BoardDram:
         m, c = at // self.blk, at // (self.blk // 2) % 2
         return c ^ (m.bit_count() & 1) if self.board.chash else c
 
-    def write_slot(self, addr: int, data, tag=None, then=None) -> None:
+    def _in_place(self, addr: int, data, n: int) -> bool:
+        """data is read from its file straight into the runs (a split record on a CHASH card,
+        at a RUN-aligned address, of whole chunks)."""
+        return (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
+                and n % self.blk == 0)
+
+    def _runs(self, addr: int, data, n: int, tag):
+        """A free staging pair i for a split record's n bytes to addr (and the slot's tag beat
+        in the chunk after them): (i, its blocks, the runs' end, the channels' order, read(j0,
+        j1): blocks j0..j1 from the file into the pair's runs)."""
+        self._staging(n + (self.blk if tag else 0))     # the file's runs, read in place
+        i = self._pair()
+        nb, bufs = -(-n // RUN), self._bufs[i]
+        order, e = (0, 1), n // 2
+        if tag is not None:                     # the tag chunk after the runs: its tag beat on
+            ct = self._tag_channel(tag[0])      # its channel, a zero beat on the other
+            tb = np.ascontiguousarray(tag[1]).view(np.uint8).reshape(-1)
+            bufs[ct][e:e + len(tb)] = tb
+            bufs[1 - ct][e:e + len(tb)] = 0
+            order, e = (1 - ct, ct), e + len(tb)
+        par = self._par.get((addr, nb))
+        if par is None:                         # (CHASH: where each block lands)
+            par = self._par[addr, nb] = _parity(addr // RUN + np.arange(nb)).astype(bool)
+        if data.readiov is not None:            # an iovec array: no buffer objects (each
+            t = self._iov(n)[i]                 # part's built as it is read)
+
+            def read(j0, j1):
+                p = par[j0:j1, None, None]
+                data.readiov(np.where(p, t[j0:j1, ::-1], t[j0:j1]).reshape(-1, 2), j0 * RUN)
+        else:
+            pv = self._split_pieces(n)[i][np.arange(nb), par.astype(np.intp)]
+
+            def read(j0, j1):
+                data.readv(pv[j0:j1].reshape(-1).tolist(), j0 * RUN)
+        return i, nb, e, order, read
+
+    def stage(self, addr: int, data, tag=None):
+        """Read-ahead (ExpertServer's next idle part, docs/offload.md 13.12): data's bytes read
+        into a free staging pair now, while the DMA ahead of it runs, for write_slot(addr, data,
+        tag, staged=it) to queue as one DMA call per channel later; None where write_slot
+        would not read it in place. The pair stays the server's until then, or unstage."""
+        n = len(data)
+        if not self._in_place(addr, data, n) or (tag is not None and tag[0] != addr + n):
+            return None
+        self._staging(self.L.slot_bytes + self.blk)     # (no larger write after: the pairs
+        i, nb, e, order, read = self._runs(addr, data, n, tag)  # are never reallocated
+        read(0, nb)                                     # under a staged one)
+        self._held.add(i)
+        return (addr, n, None if tag is None else tag[0], i, e, order)
+
+    def unstage(self, staged) -> None:
+        """A staged part not sent (a request came first): its pair back."""
+        self._held.discard(staged[3])
+        self._free.put(staged[3])
+
+    def write_slot(self, addr: int, data, tag=None, then=None, cut: bool = True,
+                   staged=None) -> None:
         """An expert's bytes (or a part's) to addr; tag: (address, its 64-byte beat), the slot's
         tag beat, which goes in the same DMA, last: right after the bytes (the slot's tag chunk
         starts there), the other channel's call first and the tag's channel's after it, the tag
         its last beat (docs/offload.md 10.11); elsewhere, a call of its own after them. then():
         called once the first part's DMA is queued (ExpertServer: the request's answer, so the
-        link starts on the expert's lead)."""
+        link starts on the expert's lead). cut False: one DMA call per channel even with nothing
+        in flight (an idle part: no request waits on its first bytes); staged: stage's read of
+        these bytes, queued as they are."""
         from .board import swapped
         n = data.nbytes if isinstance(data, np.ndarray) else len(data)
+        if staged is not None:
+            if staged[:3] != (addr, n, None if tag is None else tag[0]):
+                raise ValueError(f"a staged part of {staged[1]} bytes to {staged[0]:#x} written "
+                                 f"as {n} bytes to {addr:#x}")
+            _, _, _, i, e, order = staged
+            self._held.discard(i)
+            bufs = self._bufs[i]
+            self._lead = False
+            self._put(lambda: self._dma(addr // 2, bufs, 0, e, order), i)
+            if then is not None:
+                then()
+            self.direct += 1
+            self.staged += 1
+            return
         if tag is not None and (tag[0] != addr + n or n % self.blk):
-            self.write_slot(addr, data, None, then)
+            self.write_slot(addr, data, None, then, cut)
             self.write(*tag)
             return
-        if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
-                and len(data) % self.blk == 0):
-            self._staging(n + (self.blk if tag else 0))     # the file's runs, read in place
-            i = self._pair()
-            nb, h, bufs = -(-n // RUN), RUN // 2, self._bufs[i]
-            order, e = (0, 1), n // 2
-            if tag is not None:                 # the tag chunk after the runs: its tag beat on
-                ct = self._tag_channel(tag[0])  # its channel, a zero beat on the other
-                tb = np.ascontiguousarray(tag[1]).view(np.uint8).reshape(-1)
-                bufs[ct][e:e + len(tb)] = tb
-                bufs[1 - ct][e:e + len(tb)] = 0
-                order, e = (1 - ct, ct), e + len(tb)
-            par = self._par.get((addr, nb))
-            if par is None:                     # (CHASH: where each block lands)
-                par = self._par[addr, nb] = _parity(addr // RUN + np.arange(nb)).astype(bool)
-            if data.readiov is not None:        # an iovec array: no buffer objects (each
-                t = self._iov(n)[i]             # part's built as it is read)
-
-                def read(j0, j1):
-                    p = par[j0:j1, None, None]
-                    data.readiov(np.where(p, t[j0:j1, ::-1], t[j0:j1]).reshape(-1, 2), j0 * RUN)
-            else:
-                pv = self._split_pieces(n)[i][np.arange(nb), par.astype(np.intp)]
-
-                def read(j0, j1):
-                    data.readv(pv[j0:j1].reshape(-1).tolist(), j0 * RUN)
+        if self._in_place(addr, data, n):
+            i, nb, e, order, read = self._runs(addr, data, n, tag)
+            h, bufs = RUN // 2, self._bufs[i]
             # nothing in flight: the link waits for this read, so it goes in parts, a short
             # one first (each part one DMA call per channel more)
-            lead = self._lead or not self._q.unfinished_tasks
+            lead = cut and (self._lead or not self._q.unfinished_tasks)
             self._lead = False
             for j0, j1 in self._cuts(nb, lead):
                 read(j0, j1)
