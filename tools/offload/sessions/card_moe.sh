@@ -14,10 +14,10 @@
 #   q35eht, q35ehd, q35ehs, q35ehds: q35eh with the decode's hint timeline (--hint-trace), and
 #     with a request withdrawing its layer's unnamed hints (--hint-drop) and/or 128 KiB parts
 #   q35e128a/b, q35c128a/b: q35e and q35c at 128 tokens (their first 16 against the reference)
-#   q35e128t, q35e128r, q35e128rw: q35e128a with each request's window and misses
-#     (--hint-trace), then with the checkpoint's pages given back after the build
-#     (--release-weights) and a request's pool reads queued at once (--willneed; docs/offload.md
-#     10.6); g26r: g26a with --release-weights
+#   q35e128t: q35e128a with each request's window and misses (--hint-trace); q35e128k: the same
+#     with the checkpoint kept mapped and the pool read one expert after another (--keep-weights
+#     --no-willneed: before session 10; docs/offload.md 10.6); q35e128r, q35e128rw, g26r:
+#     session 10's names for the defaults since
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
 #     layer), 128 tokens after wiki.txt's first paragraph (q26-hf.json, q26ref16.json: 16 tokens)
 #   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
@@ -30,6 +30,9 @@ set -u
 source "$(dirname "$0")/env.sh"
 PSFX=${PSFX-.split}       # the pool files: the split format (.split.bin), or "" for the slot format
 G26POOL=${G26POOL:-../g26/pool-g26-fp4.split.bin}     # (relative to O)
+# before each run every other file of 100 MB or more under these leaves the page cache (MGLRU
+# keeps once-mmapped checkpoints over the pool's reads: docs/offload.md 10.6); "" for none
+DROPOTHER=${DROPOTHER-$HOME/openTPU/models:$O:$O/$(dirname $G26POOL)}
 echo "card_moe start $(date +%T) tree $rev mem $(mem) GB"
 timeout 1800 python -m opentpu.host.selftest 2>&1 | grep -E "\[(PASS|FAIL)\]|config" | tail -12
 timeout 300 python tools/qual/refs.py cfg $R/cfg-dev.pkl > /dev/null 2>&1; echo "cfg exit $?"
@@ -60,6 +63,7 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35e128a]="$Q35 128 q35-hf.json q35ref16 q35card128ea 0 lfu --embed-table host --hints off"
   [q35e128b]="$Q35 128 q35-hf.json q35ref16 q35card128eb 0 lfu --embed-table host --hints off"
   [q35e128t]="$Q35 128 q35-hf.json q35ref16 q35card128et 0 lfu --embed-table host --hints off --hint-trace $R/q35card128et.trace.json"
+  [q35e128k]="$Q35 128 q35-hf.json q35ref16 q35card128ek 0 lfu --embed-table host --hints off --keep-weights --no-willneed --hint-trace $R/q35card128ek.trace.json"
   [q35e128r]="$Q35 128 q35-hf.json q35ref16 q35card128er 0 lfu --embed-table host --hints off --release-weights --hint-trace $R/q35card128er.trace.json"
   [q35e128rw]="$Q35 128 q35-hf.json q35ref16 q35card128erw 0 lfu --embed-table host --hints off --release-weights --willneed --hint-trace $R/q35card128erw.trace.json"
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"
@@ -83,6 +87,27 @@ for f in set(map(os.path.realpath, sys.argv[2:])) - {os.path.realpath(sys.argv[1
         os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         os.close(fd)
 PY
+  if [ -n "${DROPOTHER:-}" ]; then            # every other checkpoint's pages out too (session
+    python - $O/$md $O/$pool $DROPOTHER <<'PY'  # 10: MGLRU kept the mmapped checkpoints of the
+import os, sys                                # session before, 13.6 GB, over the pool's reads)
+keep = {os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])}
+gb = n = 0
+seen = set()
+for d in sys.argv[3].split(":"):
+    for root, _, files in os.walk(os.path.expanduser(d)):     # (links to files followed,
+        for f in files:                                      # to directories not)
+            r = os.path.realpath(os.path.join(root, f))
+            if (r in seen or not os.path.isfile(r) or os.path.getsize(r) < 100 << 20
+                    or r in keep or os.path.dirname(r) in keep):
+                continue
+            seen.add(r)
+            fd = os.open(r, os.O_RDONLY)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            os.close(fd)
+            gb, n = gb + os.path.getsize(r) / 1e9, n + 1
+print(f"  dropped from the page cache: {n} other files of {gb:.1f} GB")
+PY
+  fi
   t0=$SECONDS; cat $O/$pool > /dev/null      # the RAM tier warm before each timed run, and how
   python - $O/$pool <<'PY'                    # much of the pool the page cache holds
 import os, sys
