@@ -114,11 +114,15 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     assert all(np.array_equal(x, y) for x, y in zip(_drams(a, P1 + P2), _drams(b, P1 + P2)))
     K = PF.conv_k(a)
     runs = PF.split(0, P1, R_max, 256, K) + PF.split(P1, P1 + P2, R_max, 256, K)
-    keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1) for p, R, k in runs} | \
-        {("L", R, "at", 0) if b == 0 else ("L", R, b) for b, (R, _) in rm.items()}  # (probes)
+    keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1) for p, R, k in runs}
     assert sorted(rm) == sorted({0 if p < K - 1 else p // 256 + 1 for p, _, _ in runs})
-    assert {(k[1], k[2], k[3], k[4]) if k[3] == "at" else (k[1], k[2], k[3])
-            for k in a._prompt_progs} == keys
+    # the programs: the runs', and r_max's (every kind at every R' <= R_max of the bucket),
+    # none per prompt
+    have = {(k[1], k[2], k[3], k[4]) if k[3] == "at" else (k[1], k[2], k[3])
+            for k in a._prompt_progs}
+    assert keys <= have == {(k, r, "at", p) if b == 0 else (k, r, b) for b, (R, _) in rm.items()
+                           for r in range(1, R + 1) for k in "PL"
+                           for p in (range(K - 1) if b == 0 else [None])}
     if case == "fp4":
         return
     # int8 weights: a row's arithmetic is the decode kernel's in any split, so today's prefill
@@ -157,7 +161,8 @@ def test_todays_route_where_it_fits_more_rows(monkeypatch):
     assert np.array_equal(a.prefill(p2), c.prefill(p2))
     assert a._prompt_rmax == {1: (R, True), 2: (2, False)}
     assert [s["rows"] for s in a.stats[na:]] == [s["rows"] for s in c.stats[nc:]]
-    assert {k for k in a._prompt_progs if k[3] == 2} == {("prompt", "L", 2, 2, False, 0)}
+    assert {k[1:3] for k in a._prompt_progs if k[3] == 2} == {(k, r) for k in "PL"
+                                                                for r in (1, 2)}  # r_max's
     assert np.array_equal(a.step(5), c.step(5))
 
 
@@ -185,6 +190,44 @@ def test_a_new_contexts_first_run_is_sized_on_its_own(monkeypatch):
                                            (20, 8, "P"), (28, 2, "L")]
     b = Engine(spec, W, cap=512, cfg=cfg, resident=True)
     assert np.array_equal(a.prefill(toks), _static(b, toks, rm))
+
+
+def test_r_max_holds_every_run_a_prompt_asks_for(monkeypatch):
+    """prefill.r_max: the bucket's R_max is the largest size at which every run a prompt can
+    ask for fits (P and L at every R' <= R: the split cuts runs at the prompt's and the
+    bucket's end), not its L program alone (here bucket 1's P held to 2 rows, bucket 2's L
+    at 3 rows)."""
+    from opentpu.compiler import CompileError
+    W, spec, cfg, _ = _model("qwen3")
+    a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True)
+    real = a.image.compile_prompt_run
+
+    def held(blocks, R, kind, *args, **kw):
+        if (blocks, kind) == (1, "P") and R > 2 or (blocks, kind, R) == (2, "L", 3):
+            raise CompileError("TMEM exhausted (the test's)")
+        return real(blocks, R, kind, *args, **kw)
+    monkeypatch.setattr(a.image, "compile_prompt_run", held)
+    assert a.image.rows > 3
+    assert PF.r_max(a, 1) == 2 and PF.r_max(a, 2) == 2
+
+
+@pytest.mark.parametrize("fp4", [True, False], ids=["fp4", "int8"])
+def test_odd_rows_take_one_less_where_pair_makes_it_cheaper(fp4):
+    """qwen3.prefer_rows: with PAIR a 4-bit MM of at most MCOLS / 2 rows streams two blocks a
+    cycle, so 3 rows (MCOLS 4) take a 4-row run's MXU time and 2 cost less per row (the 4B:
+    -13.8% a row in the RTL co-sim); an int8 MM streams once per MCOLS rows, so 3 rows cost
+    less per row than 2. Even sizes stay."""
+    from opentpu.llm.qwen3 import mxu_time, prefer_rows
+    _, W, spec = _tiny_model(16, 16, init=0.2)
+    a = Engine(spec, W, cap=512, cfg=CFG, resident=True, **(FP4 if fp4 else {}))
+    img = a.image
+
+    def rows(r):
+        return img.compile_rows([(0, j) for j in range(r)], [], a.block,
+                                tokens=list(range(1, r + 1)))
+    t2, t3 = (mxu_time(rows(r)) / r for r in (2, 3))
+    assert (t2 < 0.95 * t3) == fp4
+    assert prefer_rows(img, 3, rows) == (2 if fp4 else 3) and prefer_rows(img, 4, rows) == 4
 
 def _static_mtp(dec, R_max):
     """MTPDecoder.prefill as compile-time runs of the prompt runs' split: the rows (hidden,
@@ -294,7 +337,8 @@ def test_bucket_1_programs_are_warmed_at_start(tmp_path, monkeypatch):
                  prog_cache=True)
     eng._prompt_warm.join(timeout=600)
     warmed = set(eng._prompt_progs)
-    assert len(warmed) == 3 + PF.r_max(eng, 1)  # first run's P and L (r_max's), P, L of every R
+    K, R0, R1 = PF.conv_k(eng), PF.r_max(eng, 0), PF.r_max(eng, 1)
+    assert len(warmed) == 2 * (K - 1) * R0 + 2 * R1     # r_max's: P and L of every R' <= R
     lg = eng.prefill(prompt)
     assert set(eng._prompt_progs) == warmed
     assert np.array_equal(lg, Engine(spec, W, cap=512, cfg=CFG, resident=True,

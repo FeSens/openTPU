@@ -136,8 +136,11 @@ programs come on top (0.2-0.8 s, then the disk cache):
 
 - A chat's later turns feed only what the template added, often 10-40 tokens: their TTFT
   becomes 0.2-0.8 s (0.8B, 2B).
-- The 4B stays device-bound. Fitting R = 4 rows (one more MXU column's worth of TMEM) would
-  take its prefill from 79 runs to 60 for 237 tokens, about -24%. That is a separate item.
+- The 4B stays device-bound. Fitting R = 4 rows would buy nothing: with PAIR a 4-bit MM of
+  at most MCOLS / 2 rows streams two blocks a cycle, so R = 4 costs R = 2's MXU time a row,
+  and R = 3 pays R = 4's (ld-memch's RTL co-sim, LDC DDR3-1066, 133.33 MHz, position 544: the
+  4B 278.0K cycles a row-layer at R = 2, 322.3K at R = 3). The 4B runs R = 2 instead (section
+  7, prefer_rows). (Retired: the -24% item this line had.)
 
 ## 5. Plan
 
@@ -163,7 +166,7 @@ days; the chain about 1 more day, then RTL and a card session.
   registers, but this needs checking on the real layouts first (step 1).
 - R_max is per bucket (its L program's fit; prefill.r_max), since a bucket's programs are all
   at one R and a later bucket's attention makes a longer program. The Qwen3.5 models take the
-  same R in every bucket (4 / 4 / 3; the 4B's R = 4 runs out of TMEM, a separate item);
+  same R in every bucket (4 / 4 / 3; the 4B now 2, section 7);
   Phi-4-mini's mix takes 3 rows in bucket 1 and 1 in bucket 16, as fit_chunk's runs shrink
   with the context today. Plain and MTP share it, so they split alike.
 - The gate keeps test_qwen35_moe's layer-major tests (test_layer_major_prefill_is_bit_exact,
@@ -250,12 +253,31 @@ three prompts (P tokens from p0), prompt runs / today's:
   can take one pass more than today's (3 tokens from 255: runs of 1 and 2 rows, today's one of
   3), at most one per bucket crossed.
 
+**Which runs R_max must hold.** The split cuts a run at the prompt's end and at a bucket's end,
+so a prompt asks for every R' <= R_max of a bucket, as P and as L (an MTP engine: its rows with
+their hidden, and the MTP layer's M), and with convolutions for the first run at every
+compile-time position 0 .. conv_k - 2. The probe takes the largest size at which all of those
+fit, not the L program alone: main's L-only probe had LFM2-2.6B (int8 and the mix) at R = 4
+from position 1 out of TMEM (a prompt after a one-token one); every other kind and size of
+the 14 real layouts (the 12 above, Qwen3.5's MTP images, E2B) fit. Their programs land in the
+program cache, so a later prompt compiles none.
+
+**Odd R.** PAIR exists only for 4-bit MMs (of at most MCOLS / 2 rows): at MCOLS 4 a 4-bit run
+of 3 rows takes 4 rows' MXU time and 2 rows cost 25% less a row by the MXU stream (13.8% in the
+co-sim, the rest is attention and the vector unit), while an int8 MM streams once per MCOLS
+rows, so 3 rows cost 33% less a row than 2. prefer_rows (qwen3) takes R - 1 rows for an odd
+R > 1 where the compiled runs' MXU time a row (mxu_time: each MM's streamed rows x K blocks,
+half of it PAIRed, times its loops' counts) is at least 5% lower; both routes use it (the
+probe and fit_chunk), so they compare alike. A mix falls between, at about 2/3 of its MXU
+blocks 4-bit (by the weights' shapes: Phi-4-mini's mix about 56% fp4 blocks, SmolLM3's
+about 43%, both keep 3); the 4B, fp4 and its mix, goes from 3 rows to 2.
+
 **The rule (prefill.covers).** A prompt takes prompt runs when in every bucket it touches
 R_max(bucket) >= today's rows there (Qwen3.5: up to one pass), so no bucket streams the weights
 or runs more often; otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route
 for the whole prompt. Today's rows are checked only where R_max is below the largest size (the
 image's rows, the cache's end): compile_rows of the next larger size at the bucket's first
-run-time position, which must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
+run-time position must not fit, or take no more rows than R_max by prefer_rows. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
 
 **Card** (fmvf 542fc43a, 2026-10-02 11:04-11:13 opentpu, E2B 11:16-11:28; tree ce0f3b1, cap

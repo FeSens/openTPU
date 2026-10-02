@@ -72,10 +72,19 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
     a run of another program loads its words, not an assembly of them (3-5 ms a run; MTP's
     rows and M runs alternate). hidden, slot: MTP's rows (their hidden stored, the states'
     slot); M's take neither."""
+    done = eng.__dict__.setdefault("_prompt_progs", {})
+    what, blocks, compile = _what(eng, p, R, kind, hidden, slot)
+    with _lock(eng):
+        if what not in done:
+            done[what] = _prepared(eng, what, blocks, *eng.cached(what, compile))
+    return done[what]
+
+
+def _what(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0):
+    """A run's (program cache key, bucket (0: compile-time positions), compile())."""
     img, block = eng.image, eng.block
     if kind == "M":
         hidden, slot = False, 0
-    done = eng.__dict__.setdefault("_prompt_progs", {})
     kw = dict(hidden=hidden, slot=slot) if hidden or slot else {}
     if p < conv_k(eng) - 1:
         blocks, kw["p0"] = 0, p
@@ -83,13 +92,7 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
     else:
         blocks = p // block + 1
         what = ("prompt", kind, R, blocks, hidden, slot)
-
-    def compile():
-        return img.compile_prompt_run(blocks, R, kind, block, **kw)
-    with _lock(eng):
-        if what not in done:
-            done[what] = _prepared(eng, what, blocks, *eng.cached(what, compile))
-    return done[what]
+    return what, blocks, lambda: img.compile_prompt_run(blocks, R, kind, block, **kw)
 
 
 def _prepared(eng, what, blocks: int, progs, ra):
@@ -141,28 +144,50 @@ def _fit(eng, blocks: int):
 
 
 def _probe(eng, blocks: int) -> list:
-    """[R_max, covered] at the bucket's first run-time position: R_max the largest of
-    fit_chunk's run sizes (up to MCOLS rows, then whole passes of MCOLS up to the image's rows;
-    Qwen3.5's, whose MTP runs take R_max too, one pass at most) whose L program fits; covered
-    when compile_rows (today's prefill) does not fit the next larger size there either (a
-    prompt program larger than today's would run fewer rows). blocks 0: a new context's first
-    run, at compile-time positions from 0 (convolutions), sized on its own (LFM2.5-230M's fits
-    8 rows at a run-time position, 4 from position 0), covered."""
-    from .qwen3 import _whole_passes
-    img, block, mc = eng.image, eng.block, eng.image.cfg.MCOLS
-    p = max((blocks - 1) * block, conv_k(eng) - 1) if blocks else 0
-    n = _whole_passes(min(img.rows, img.cap - p, mc if hasattr(eng.spec, "mtp") else img.rows),
-                      mc)
+    """[R_max, covered] of bucket `blocks`: the largest of fit_chunk's run sizes (up to MCOLS
+    rows, then whole passes of MCOLS up to the image's rows; Qwen3.5's, whose MTP runs take
+    R_max too, one pass at most) at which every run a prompt can ask for in the bucket fits
+    (_kinds: P and L, MTP's rows and M, at every R' <= R: the split cuts a run at the prompt's
+    and the bucket's end), then prefer_rows' choice (an odd R's R - 1 where PAIR makes it
+    cheaper per row); covered when compile_rows (today's prefill) does not fit the next larger
+    size there either, or would take no more rows by the same choice (a prompt program larger
+    than today's would run fewer rows). blocks 0: a new context's first run, at compile-time
+    positions 0 .. conv_k - 2 (convolutions), sized on its own (LFM2.5-230M's fits 8 rows at a
+    run-time position, 4 from position 0; LFM2-2.6B's 4 from 0, not from 1), covered."""
+    from .qwen3 import _whole_passes, prefer_rows
+    img, block, mc, K = eng.image, eng.block, eng.image.cfg.MCOLS, conv_k(eng)
+    ps = range(K - 1) if not blocks else [max((blocks - 1) * block, K - 1)]
+    n = _whole_passes(min(img.rows, img.cap - ps[-1],
+                          mc if hasattr(eng.spec, "mtp") else img.rows), mc)
     sizes = []
     while n:
         sizes.append(n)
         n = _whole_passes(n - 1, mc)
+    kinds = _kinds(eng)
     for i, R in enumerate(sizes):
-        if _fits(lambda: programs(eng, p, R, "L")):
+        if all(_fits(lambda: programs(eng, p, r, k, h)) for r in range(R, 0, -1)
+               for k, h in kinds for p in ps):
             break
     else:
         raise CompileError(f"no prompt run fits bucket {blocks}")
-    return [R, i == 0 or not blocks or not _fits(lambda: _today(eng, p, sizes[i - 1]))]
+
+    def cost(r):                    # a run of r rows without logits, its programs
+        what, _, compile = _what(eng, ps[0], r, "P")
+        return eng.cached(what, compile)[0]
+    R = prefer_rows(img, R, cost)
+    if i == 0 or not blocks:
+        return [R, True]
+    up = sizes[i - 1]               # today's next larger size: fits, and would take more rows?
+    return [R, not _fits(lambda: _today(eng, ps[0], up)) or
+            prefer_rows(img, up, lambda r: _today(eng, ps[0], r, logits=False)) <= R]
+
+
+def _kinds(eng) -> list:
+    """The (kind, hidden) of the runs a prompt asks for: P and L; an MTP engine's rows (their
+    hidden) and its MTP layer's M."""
+    if getattr(eng.spec, "mtp", False):
+        return [("L", True), ("P", True), ("M", False)]
+    return [("L", False), ("P", False)]
 
 
 def _fits(compile) -> bool:
@@ -176,14 +201,15 @@ def _fits(compile) -> bool:
     return True
 
 
-def _today(eng, p: int, n: int) -> None:
-    """Today's run of n rows at p, the prompt's last (compile_rows); CompileError where it
-    does not fit."""
+def _today(eng, p: int, n: int, logits: bool = True):
+    """Today's run of n rows at p (compile_rows), the prompt's last with logits; its programs,
+    CompileError where they do not fit."""
     img = eng.image
-    progs = img.compile_rows([(0, p + j) for j in range(n)], [n - 1], eng.block,
-                             **eng._tokens_kw([0] * n))
+    progs = img.compile_rows([(0, p + j) for j in range(n)], [n - 1] if logits else [],
+                             eng.block, **eng._tokens_kw([0] * n))
     if not G.fits(img, progs):
         raise CompileError(f"rows at {p}: {max(map(len, progs))} instructions, IMEM")
+    return progs
 
 
 def _lock(eng):

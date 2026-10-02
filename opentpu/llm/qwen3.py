@@ -1742,15 +1742,18 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
     programs or None for R = 1, the rows that fit TMEM as far as known). `tokens` (at least n):
     the run's inputs come from the image's tables (compile_rows tokens). whole: R is at most
     MCOLS or a multiple of it (_whole_passes): each weight streams once per MCOLS rows, so 5
-    rows at MCOLS 4 cost what 8 do. kw: compile_rows' own (MTP decoding's hidden, slot)."""
+    rows at MCOLS 4 cost what 8 do; and an odd R takes R - 1 rows where they cost less MXU
+    time per row (prefer_rows: PAIR). kw: compile_rows' own (MTP decoding's hidden, slot)."""
     imem, mc = image.cfg.IMEM_WORDS, image.cfg.MCOLS if whole else 1 << 30
+
+    def rows(r, logits):
+        return image.compile_rows([(seq, p0 + j) for j in range(r)], [r - 1] if logits else [],
+                                  block, **({} if tokens is None else {"tokens": tokens[:r]}),
+                                  **kw)
     n = _whole_passes(min(n, fit, left), mc)
     while n > 1:
         try:
-            progs = image.compile_rows([(seq, p0 + j) for j in range(n)],
-                                       [n - 1] if n == left else [], block,
-                                       **({} if tokens is None else {"tokens": tokens[:n]}),
-                                       **kw)
+            progs = rows(n, n == left)
         except CompileError as e:
             if "TMEM" not in str(e) and "ACT RAM full" not in str(e):
                 raise
@@ -1759,9 +1762,52 @@ def fit_chunk(image, block: int, seq: int, p0: int, n: int, left: int, fit: int,
             continue
         size = max(map(len, progs))
         if size * 8 <= imem:
-            return n, progs, fit
+            m = prefer_rows(image, n, lambda r: rows(r, False)) if whole else n
+            if m == n:
+                return n, progs, fit
+            return m, rows(m, False), fit
         n = _whole_passes(min(n - 1, n * imem // (8 * size)), mc)  # ~ proportional to the rows
     return 1, None, fit
+
+
+def mxu_time(progs) -> float:
+    """A run's MXU time, statically, in weight blocks: each MM's streamed rows times its K
+    blocks, half of that PAIRed (two 4-bit blocks a cycle), times its loops' counts (a loop
+    with a run-time count once); the slowest slice's."""
+    best = 0.0
+    for prog in progs:
+        t, loops = 0.0, []                      # loops: (last instruction, count)
+        for pc, ins in enumerate(prog):
+            while loops and loops[-1][0] < pc:
+                loops.pop()
+            if ins.op == I.LOOP:
+                loops.append((pc + ins.w[0], ins.w[1] if ins.ra == 0 else 1))
+            elif ins.op == I.MM:
+                mult = math.prod(c for _, c in loops)
+                t += mult * (ins.w[3] & 0xFFFF) * (ins.w[3] >> 16) * \
+                    (0.5 if ins.flags & I.F_PAIR else 1.0)
+        best = max(best, t)
+    return best
+
+
+PREFER_MARGIN = 0.05        # prefer_rows: R - 1 rows take over at 5% less MXU time per row
+
+
+def prefer_rows(image, n: int, compile) -> int:
+    """The rows of a prefill run where n fit: n, or n - 1 for an odd n > 1 whose n - 1 rows
+    cost PREFER_MARGIN less MXU time per row (mxu_time of compile(r), a run of r rows without
+    logits). With PAIR a 4-bit MM of at most MCOLS / 2 rows streams two blocks a cycle, so 3
+    rows at MCOLS 4 pay 4's time and 2 cost less per row (the 4B: -13.8% a row in the co-sim);
+    an int8 MM streams once per MCOLS rows, so 3 rows cost less per row than 2 (Phi-4-mini),
+    and a mix falls between (docs/prefill.md 7). Kept per image and n, so a prompt run's
+    probe (prefill.r_max) and today's runs (fit_chunk) choose alike."""
+    if n < 3 or n % 2 == 0:
+        return n
+    done = image.__dict__.setdefault("_prefer_rows", {})
+    if n not in done:
+        a, b = mxu_time(compile(n)) / n, mxu_time(compile(n - 1)) / (n - 1)
+        done[n] = n - 1 if b <= (1 - PREFER_MARGIN) * a else n
+    return done[n]
 
 
 def _whole_passes(n: int, mc: int) -> int:
