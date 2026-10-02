@@ -1318,6 +1318,73 @@ The mapped pool held its page cache against the other process's checkpoints: 3.7
 against session 10's 3.79 with them dropped (10.6), where read() lost 19-30%. B's `rss_file` at
 decode was 16.2-16.7 GB: the pool, mapped (page cache, not the process's own memory).
 
+### 10.8 Each request's own cost
+
+After 10.6 and 10.7 the decode's windows still run about 5 s over the DMA thread's time per 128
+tokens on both models: the 35B's 21.5 s against 16.6 (session 12's B2), the 26B's 32.0 against
+27.2 (session 11). That is why the 26B made 2.69 tok/s and not the 2.8 that 10.6 expected. The
+per-request traces (`--hint-trace`; session 12's B2: 5120 requests, 13,113 misses) fit 0.27 ms
++ 1.50 ms per miss, against 1.26 ms per miss of DMA. The excess is about 0.14 ms per request
+with no miss, 0.4 ms more for a request's first miss, and 0.2 ms for each miss after it.
+
+The card can't tell where that goes, so `tools/offload/serve_emu.py` runs the host side alone on the
+card's host. It drives the real ExpertServer, BoardDram, PoolFile and XdmaTransport code,
+replacing the XDMA calls with waits of the card's costs: 20 us per call plus the bytes at 1.365
+GB/s for a write, and 22 us for a beat read. It replays a session's requests (layer, misses, the
+device's gap), reads the real pool file, and logs every DMA call. On opentpu it fits 0.30-0.33 ms
++ 1.65 ms per miss, close to the card's fit, so its breakdown is used below. The 35B, per
+request with misses (1296 of 1500):
+
+| | before | now |
+|:--|:--|:--|
+| post -> seen (poll loop period / 2 + its read) | 82 us | 26 us |
+| seen -> the link's first expert DMA (row read, serve's Python, the first part's read) | 500 us | 330 us |
+| link idle between calls, per miss (Python, the GIL, flock) | 160 us | 115 us on the critical path |
+| victims' entry clears (a 64-byte call each, plus its gap) | before each expert | after the last entry |
+| device-side stall, post -> last entry landed (mean over all 1500 requests) | 4.01 ms | 3.60 ms |
+
+Four host-side changes:
+- `preadv_iov`: BoardDram reads a split expert through libc's preadv on an iovec array
+  (addresses, lengths) instead of os.preadv on a list of buffers. os.preadv holds the GIL while
+  it gets each buffer (816 per 35B expert, 1684 per 26B expert; about 170 us per expert on
+  opentpu's i7-4790), and the DMA thread waits for that GIL between its calls. Records get
+  `readiov` from `PoolFile.get`, and a hint's part keeps it.
+- `BoardDram.lead` (0.2): a request's first miss is sent in a fifth plus the rest, not two
+  halves. The link starts after 334 KB is read (35B), not 835 KB. Reading runs at about 4.5x the
+  link, so the second part is read before the first one's DMA ends.
+- The victims' entries are cleared at the end of the request, after its last new entry and
+  before served (`ExpertServer._clear`). The card reads only the entries of the ids it posts,
+  so a victim's entry is read only in a later request, after served. The link no longer spends
+  a 64-byte call, about 70 us with its gap, before each miss.
+- The poll loop spins (`XdmaTransport.host_idle` 0; other transports keep HOST_IDLE's 50 us).
+  Each poll's seq read is a DMA call of about 30 us, and that read paces the loop. The 50 us
+  sleep slept about 110 us on the card's host, making the loop period about 140 us. With a
+  host hook, run_generate reads out[] at most every ms (`HOST_TAKE`); its two DMA calls would
+  double the period.
+
+moe_card `--legacy-serve` restores all four for an A/B (halves, buffer lists, each clear
+first, the sleep, out[] every poll).
+
+The emulator compares legacy against now, three runs each of 1500 requests (35B: session 12's
+trace; 26B: session 11's misses at a 1.5 ms gap). Device stall is post -> last entry landed;
+window is seen -> poll returns:
+
+| model | device stall, legacy | now | window, legacy | now |
+|:--|:--|:--|:--|:--|
+| 35B | 6.01-6.07 s | 5.39-5.42 | 6.03-6.09 | 5.67-5.74 |
+| 26B | 13.08-13.26 | 12.14-12.17 | 13.08-13.25 | 12.52-12.53 |
+
+That is -0.42 ms per request on the 35B and -0.63 on the 26B. The emulator's link is about 10%
+slower per miss than the card's, so scaled by 0.85 the prediction is:
+- 35B: -1.9 s per 128 tokens, 3.76 -> about 4.0 tok/s.
+- 26B: -2.0 s, 2.69 -> about 2.8 tok/s.
+
+What remains of the excess is the link's own cost. Each expert takes two calls (one per
+channel) plus its entry's 64-byte call, about 60 us with their gaps. On top of that come the
+row read and served, plus the first part's read. Only a faster link (PCIe Gen2, on hold) or
+fewer calls on the card's side (an expert's present flag in its slot, a program change) would
+remove these.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
