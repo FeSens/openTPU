@@ -350,10 +350,12 @@ def test_tiny_streamed_decode_under_compile_contention(tiny, monkeypatch, reside
             self.held += off == R.R_ICOUNT and v == 0
             return v
 
-    # the fill lands anywhere before the first piece (0.4 of the run), every third run just
-    # before it (so the host's probes find it still on the way)
+    # the fill lands anywhere before the first piece (0.4 of the run); every third run waits
+    # for the host to look (IsaCard's anchor), its fill just before the first piece, so the
+    # host's probes find it still on the way however late the host gets there
     card = Card(cfg, None, 4 * 128, run_s=0.011, gen=True, args=True,
-                fill_at=lambda r: 0.39 if r % 3 == 1 else rng.uniform(0.01, 0.39))
+                fill_at=lambda r: 0.39 if r % 3 == 1 else rng.uniform(0.01, 0.39),
+                anchor=lambda r: r % 3 == 1)
     eng = Engine(spec, W, cap=256, cfg=cfg, pipeline="thread", resident=resident,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
     card.late = (eng.image.io["logits"], 4 * spec.vocab)

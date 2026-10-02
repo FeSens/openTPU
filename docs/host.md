@@ -652,7 +652,8 @@ goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)
   The stores move 8 words a cycle from TMEM (3.6-3.95 GB/s). The fake card that runs the ISA
   simulator models the fill landing late and the old logits until then; the tests check the
   logits bit for bit under that, and under compile and GIL contention at LFM2's 11 ms run
-  (tests/test_lfm2.py). Without the gate the first chunk read is stale. The transparency tests
+  (tests/test_lfm2.py; every third run waits for the host's first look, so the host polls
+  before the fill however late it gets there). Without the gate the first chunk read is stale. The transparency tests
   start every filling step from random TMEM: no step program reads what an earlier run left
   there, so the fill's tile takes nothing a step keeps across tokens.
 
