@@ -10,14 +10,19 @@ A MoE layer on the device (`moe_ffn`), one token:
    (the layer's base j * E + index) and weights: LFM2's sigmoid scores, chosen with the
    expert bias, renormalized and scaled; Qwen's softmax of the k largest logits;
 3. the fence, WAITW served >= seq (the host has finished every earlier request: none of this
-   layer's slots is being replaced, and the one request row is free), then the ids and
-   seq + 1 to the mailbox;
+   layer's slots is being replaced, and the one request row and answer are free), then the
+   ids and seq + 1 to the mailbox;
 4. the directory: each id's present flag;
 5. the experts present (a LOOP over the k ids, a LOOP R[present] inside), then the others
-   (LOOP R[1 - present]); each takes its slot address from its directory entry by WAITW
-   (!= 0: at once for an expert present; for the others once the host has written the entry
-   after the expert's DMA) to a TMEM word and RLD (raw) into a register, runs
+   (LOOP R[1 - present]). A present one takes its slot address from its directory entry, a
+   missing one from its word of the request's answer (docs/offload.md 10.11), each by WAITW
+   (!= 0: at once for an expert present; for the others once the host has written the
+   answer) to a TMEM word and RLD (raw) into a register; a missing one then waits for its
+   slot's tag word (WAITW != 0: the host writes it in its expert's DMA's last beat). Each
+   zeroes its slot's tag (the next nonzero tag there is a later expert's), runs
    kernels.mlp.swiglu_down there and writes its weighted output to its row of a [k, H] tile;
+   then the answer's words are zeroed (the host writes the next request's answer only after
+   its post);
 6. the rows summed in the router's order (the result does not depend on what the cache held),
    then a shared expert (a dense SwiGLU of the layer block, times sigmoid of its gate's
    logit), and added to the residual.
@@ -270,8 +275,8 @@ def moe_hint(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
     weights), posted as a request whose global ids are offset by dev.hint_off (layers x E: the
     host's mark of a hint). The host writes served once it has replaced the hinted experts'
     victims, before their transfers, so the route's fence (moe_ffn) waits for no expert; an
-    expert still on its way reads as missing there and is waited for by its entry. lw and dev
-    as moe_ffn's. One register."""
+    expert still on its way reads as missing there and is waited for by its answer word and
+    its tag. lw and dev as moe_ffn's. One register."""
     b = current()
     E, k = mo.E, mo.k
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), eps))
@@ -303,6 +308,24 @@ def moe_hint(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float) -> None:
     ol.store(Tensor(Affine(dev.mbox), (1,), (1,)), seq)
 
 
+def slot_of(r: int, word, off: int, dev: SimpleNamespace, missing: bool) -> None:
+    """R[r] = the slot of the expert whose offset (TMEM word `off`: its directory entry's, or
+    for a missing one its answer word's) the loop has at column 0, its data landed, and the
+    slot's tag zeroed. Present: WAITW on its entry (at once). Missing: WAITW on its answer
+    word (once the host has written the answer), then on the slot's tag (once the expert's
+    DMA has landed: the host writes the tag in its last beat). The tag is zeroed for every
+    expert the card uses, so a nonzero tag is always a later expert's (docs/offload.md 10.11).
+    word: a one-word TMEM tile."""
+    b = current()
+    b.emit(I.rld(r, off, comment="answer word" if missing else "entry offset"))
+    b.waitw(word, dev.answer if missing else dev.dir, 0, I.C_NE, ra=r,
+            comment="wait: its slot (the answer)" if missing else "its slot")
+    b.rld(r, word, raw=True, comment="its slot")
+    if missing:
+        b.waitw(word, dev.tag, 0, I.C_NE, ra=r, comment="wait: its data (the slot's tag)")
+    ol.store(Tensor(Affine(dev.tag) + DevVar("expert slot", r), (1,), (1,)), ol.zeros((1,)))
+
+
 def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
             residual: bool = True, y_first: bool = False):
     """x + the MoE FFN of one token (module docstring). lw: the layer's g_post [H], router
@@ -311,8 +334,9 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     wg, wu, wd; with g_exp [H] (Gemma 4: pre_feedforward_layernorm_2's gain) the routed
     experts read their own quantized input, the norm times g_exp, and the router the norm (the
     norm alone, quantized, has its blocks scaled by the residual's outlier channels, which the
-    gain zeroes: docs/offload.md 11.2). dev: the offload words (mbox, served, dir: static DRAM addresses) and `fmt`,
-    the ExpertFormat.
+    gain zeroes: docs/offload.md 11.2). dev: the offload words (mbox, served, answer, dir:
+    static DRAM addresses), `tag` (a slot's tag word, from the slot) and `fmt`, the
+    ExpertFormat.
 
     beside(): emits work that needs no expert (Gemma 4's dense MLP) right after the request is
     posted, so that it runs while the host streams the missing experts (docs/offload.md 5.3);
@@ -348,12 +372,12 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     # never passes through the VPU, which would flush it as a denormal: WAITW copies it from
     # the directory to the word `word`, at once for an expert present, and RLD raw takes its
     # bits into r.)
-    EP, MISS, OFF, WT, ROW = range(5)               # pe's rows
-    pe, tmp, ids, pr = ol.empty((5, k)), ol.empty((5, k)), ol.empty((k,)), ol.empty((2,))
+    EP, MISS, OFF, WT, ROW, ANS = range(6)          # pe's rows
+    pe, tmp, ids, pr = ol.empty((6, k)), ol.empty((6, k)), ol.empty((k,)), ol.empty((2,))
     word = ol.empty((1,))
     wt = pe[WT, :]
 
-    def rotate(rows=slice(0, 5)):
+    def rotate(rows=slice(0, 6)):
         a, e = rows.start, rows.stop
         if k > 1:
             tmp[a:e, 0:k - 1].set(pe[a:e, 1:k])
@@ -386,8 +410,9 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
     pe[OFF, :].set(gid * 8.0)                           # their directory entries' offsets
     if y is None:
         y = ol.empty((k, H))
-    for i in range(k):                                  # y's rows (ol.empty may pad them)
+    for i in range(k):              # y's rows (ol.empty may pad them), the answer's words
         pe[ROW, i:i + 1].set(float(i * y.rs))
+        pe[ANS, i:i + 1].set(float(4 * i))
     # the fence, then the request: seq + 1 and the ids
     seq = ol.load(Tensor(Affine(dev.mbox), (1,), (1,)))
     b.rld(r, seq, raw=True, comment="seq (bits)")
@@ -422,15 +447,13 @@ def moe_ffn(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=None,
         lp = b.begin_loop(k)
         b.emit(I.rld(r, col(flag), comment="missing" if wait else "present"))
         inner = b.begin_loop(0, rcount=r)               # (the count is read here: r is free)
-        b.emit(I.rld(r, col(OFF), comment="entry offset"))
-        b.waitw(word, dev.dir, 0, I.C_NE, ra=r, comment="its slot" if not wait else
-                "wait: its slot")
-        b.rld(r, word, raw=True, comment="its slot")
+        slot_of(r, word, col(ANS) if wait else col(OFF), dev, wait)
         expert()
         b.end_loop(inner)
         rotate()
         b.end_loop(lp)
     b.unscratch(r)
+    ol.store(Tensor(Affine(dev.answer), (k,), (1,)), ol.zeros((k,)))   # (for the next request)
     acc = y[0:1, :]
     for i in range(1, k):
         acc = acc + y[i:i + 1, :]
@@ -512,7 +535,7 @@ def moe_ffn_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=No
     # pe's rows (columns: the entries; every loop over them rotates pe left by one, so entry
     # n is at column 0 in iteration n): present and computed here, missing, the directory
     # offset, and per row q the byte offset of the entry's output for q in the scratch
-    EP, MISS, OFF, TG = 0, 1, 2, 3
+    EP, MISS, OFF, ANS, TG = 0, 1, 2, 3, 4
     RB, SINK = 4 * H, N * 4 * H
     pe, tpe = ol.empty((TG + R, N)), ol.empty((TG + R, N))
     rank = ol.empty((k,))
@@ -532,6 +555,8 @@ def moe_ffn_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=No
             dup[(q + 1) * k:N].set(dup[(q + 1) * k:N] + found[(q + 1) * k:N])
         del found, at
     pe[OFF, :].set(gf * 8.0)
+    for n in range(N):                                  # each entry's word of the answer
+        pe[ANS, n:n + 1].set(float(4 * n))
 
     def rotate():
         tpe[:, 0:N - 1].set(pe[:, 1:N])
@@ -575,15 +600,13 @@ def moe_ffn_rows(x, lw, mo: MoESpec, dev: SimpleNamespace, eps: float, beside=No
         lp = b.begin_loop(N)
         b.emit(I.rld(r, col(flag), comment="missing" if wait else "present"))
         inner = b.begin_loop(0, rcount=r)               # (the count is read here: r is free)
-        b.emit(I.rld(r, col(OFF), comment="entry offset"))
-        b.waitw(word, dev.dir, 0, I.C_NE, ra=r, comment="its slot" if not wait else
-                "wait: its slot")
-        b.rld(r, word, raw=True, comment="its slot")
+        slot_of(r, word, col(ANS) if wait else col(OFF), dev, wait)
         expert()
         b.end_loop(inner)
         rotate()
         b.end_loop(lp)
     b.unscratch(r)
+    ol.store(Tensor(Affine(dev.answer), (N,), (1,)), ol.zeros((N,)))   # (for the next request)
     out = ol.empty((R, H))
     for q in range(R):                                  # each row's sum in its router's order
         acc = None

@@ -1638,16 +1638,30 @@ than the card's next post, so it lands before the host can pick the slot as a vi
 nonzero tag then means this load's data. The answer works the same way: zeroed by the card
 before its next post, written by the host only after it sees that post.
 
-The new ordering contract, and the risk: the tag is the last beat of the last call. The card
-must not see it before that call's earlier beats on the same channel. The other channel's call
-has completed before then, which is the current ordering contract. Within one XDMA transfer,
-the writes reach otpu_mem_ch in order (AXI writes are not interleaved), and LiteDRAM keeps a
-port's commands in order per bank. ld-memch should confirm that nothing on the path (the Gen2
-register slices, otpu_mem_ch's arbitration, the native adapter) lets a later beat of a transfer
-become visible before an earlier one. A card test checks it on the bitstream:
-`tools/qual/waitw.py` grows a case where the host sends 1-4 MB with a flag in its last beat
-while the card waits on the flag and checksums the data, thousands of times on both channel
-orders.
+The new ordering contract: the tag is the last beat of the last call, and the card must not
+see it before that call's earlier beats on the same channel. The other channel's call has
+completed before then, which is the old contract. ld-memch confirmed the new one (2026-10-02)
+for g2fix 0885d436 and for the porta-flush build; otpu_mem_ch is the same in both. Three
+conditions:
+1. The bitstream has xdma_rnum_rids 8 (xfix, g2fix, pa). On the 32-RID builds, XDMA could lap
+   its 8 KiB completion ring under write backpressure, which the WAITW's polls create, and data
+   from 8 KiB later appeared mid-burst.
+2. One pwrite is one transfer on h2c_0, inside one channel's window, with the tag at its
+   highest address.
+   - XDMA emits a transfer's bursts in ascending address order. otpu_axi_split2 and otpu_mem_ch
+     keep AW order per channel, and W follows AW.
+   - LiteDRAM's two bank-parity ports may write the tag before an earlier beat. But the core
+     reads that beat only after its tag read has returned, and the read goes to the same port,
+     behind XDMA's write.
+3. Port A, on g2fix only: an expert's scale arrays must not start in the beat of the last
+   port-A read before the WAITW, nor in the next channel beat of a live port-A run. Every slot
+   meets this, since each scale array follows its own port-B data. On porta-flush there is no
+   condition: the WAITW's hold drops port A's reused beat and its runs.
+
+`tools/qual/waitw.py --tag-rounds 2000` checks it on the bitstream. Each round sends 1-4 MiB with
+the tag in either channel and bank parity, while the card's WAITW reads the tag's channel back
+to back. The card then copies the 64 beats before the tag on each channel, and 64 random beats,
+and all must be the new data.
 
 The prediction, from the Gen2 traces (g2check). Entries removed, plus one answer call per
 request with misses where it is not hidden (the upper bound):
@@ -1665,8 +1679,8 @@ entries, so perhaps 50-100% of the 26B's saving reaches the card: -0.4 to -0.9 s
 tok/s.
 
 With the directory as one call per channel, the 35B's 64-byte calls fall from 31,346 to about
-19,000 per 128 tokens. That leaves more of the link's idle time for hints. The 35B's +4 KiB per slot could cost
-a few of its 1680 slots: about 0.3% more misses, under 0.03 s.
+19,000 per 128 tokens. That leaves more of the link's idle time for hints. The 35B's +4 KiB per
+slot keeps its 42 slots a layer (42.66 fit, from 42.77).
 
 The proof:
 - `test_offload_server`, the host's contract:
@@ -1690,6 +1704,107 @@ Program sha impact: every MoE model's programs change (moe_ffn, moe_ffn_rows; Qw
 Gemma 4 26B-A4B, LFM2-8B-A1B, the tiny test MoEs). So do their images: the slot pitch, the
 answer line, and the directory one line further. Dense models' programs do not change. The
 program cache's keys change with them.
+
+The implementation (branch offload-onecall):
+- `Layout`: the answer line after served (two lines for a two-line layout), the directory one
+  line further, and each slot's 128-byte tag chunk at `tag` (its bytes rounded up to whole
+  chunks); the pitch rounds the slot and its chunk up to RUN blocks, or under RUN to the
+  slot's own alignment.
+- `ExpertServer`:
+  - `serve` picks every missing expert's slot first, writes the answer, then each expert with
+    its tag (`_write`), then the directory (`_dir_flush`: each changed beat, or from three
+    beats of a layer its span as one write);
+  - `armed` holds the slots whose tag the card may not have zeroed; `_reuse` clears one before
+    its slot takes another expert;
+  - `load` zeroes every tag and the answer.
+  - `settle`: begin_prefill and end_prefill first serve the card's last request if it is
+    still unserved. A request whose experts are all present does not wait for the host, so a
+    run can halt before the host sees it, as a layer-major prefill's last run can. Served
+    after the restore, such a request could name misses. Its answer line would then stay
+    nonzero, because the card is done with that request, and the next request would read it
+    as its own. Main's Qwen3.5 layer-major test, merged in, caught this.
+- `BoardDram.write_slot(addr, data, tag)` puts the tag beat after the expert's runs in their
+  staging buffers, and the last part's DMA goes on the other channel first, then on the tag's
+  channel. A whole beat outside the shadow (a tag's clear) is one call with no read.
+- `moe.slot_of`, used by moe_ffn and moe_ffn_rows: the present path WAITWs on the entry; the
+  missing path WAITWs on the answer word (pe's ANS row: 4 x the id's place), then on the tag.
+  Both store 0 to the tag; after the experts, the answer's words are stored 0.
+- `checks.waitw_tag` (`tools/qual/waitw.py --tag-rounds N`) is the card's check of the order.
+- `serve_emu.py` times crit to the last tag landed.
+
+The proof on the ISA simulator (all on the Mac):
+- `tests/beat_link.py` is the adversarial link. The server's writes land one 64-byte beat at a
+  time, in order. The machine runs again as soon as a WAITW holds, so the card computes while
+  later experts' beats are still queued.
+- Over it, with k slots a layer, the logits match the full cache bit for bit:
+  - LFM2-MoE;
+  - Qwen3.5-MoE with hints (an expert still on its way, waited for by its tag), plus its
+    generate loop;
+  - Gemma 4 26B-A4B's block with its dense MLP beside, token by token and layer-major R = 2
+    (moe_ffn_rows).
+- The negative control lands each tag before its expert's bytes. It breaks the logits on
+  LFM2-MoE and on Gemma 4's layer-major prefill.
+- The three models' existing MoE tests all pass on the new programs (63). That includes the
+  live-card ones, BoardDram's threaded and split modes, and the layer-major prefill.
+- `test_offload_server` checks the contract call by call on the link: the answer first; each
+  expert's last part on the other channel and then the tag's, with the tag as that call's last
+  beat; the directory after them; served last. It also covers an armed victim's clear before
+  its bytes, and a multi-row request's answer at each id's first place.
+
+On the card, session 15 (2026-10-02 04:36-04:54 opentpu):
+- Setup: production pa e4db91c9, no reload. `session15.sh` ran tree 4ae2aa9 against its
+  parent, main cb3dce5 (OLD), A B A B, q35e128s and g26s.
+- `waitw.py --tag-rounds 2000` came first: PASS (2375 MB/s), with the 50 host-write rounds and
+  the timeout check.
+- Every run matched its own ISA reference bit for bit: refs-f725c2b for A, refs-cb3dce5 for
+  OLD. Both equal refs-d29bfe9 (88225ff781699291, 90e6b6e06e19da99).
+
+Column meanings in the table below:
+- crit: seen to the request's critical end, summed over the requests with misses (4649 /
+  3661). The critical end is OLD's last new entry's call, or A's last expert's last call (the
+  tag in its last beat).
+- head: seen to the request's first data call. body: the rest of crit.
+- 64-byte calls: A adds the directory spans, two calls each.
+
+| run | tok/s (device) | decode G cycles | DMA_BUSY G | windows s | crit s (head + body) | link busy s | 64-byte calls |
+|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B OLD | 5.02 (5.04) | 3.386 | 1.535 | 13.41 | 12.58 (1.42 + 11.15) | 11.35 | 31,346 |
+| 35B A | **5.16** (5.18) | 3.297 | 1.476 | 13.00 | 11.98 (1.95 + 10.04) | 10.90 | 11,776 + 3,629 spans |
+| 35B OLD | 5.02 (5.03) | 3.391 | 1.544 | 13.48 | 12.59 (1.50 + 11.09) | 11.32 | 31,346 |
+| 35B A | **5.08** (5.10) | 3.347 | 1.537 | 13.45 | 12.37 (2.07 + 10.30) | 11.28 | 11,776 + 3,629 |
+| 26B OLD | 3.52 (3.52) | 4.842 | 0.900 | 20.98 | 20.04 (1.46 + 18.58) | 18.72 | 26,460 |
+| 26B A | **3.58** (3.59) | 4.752 | 0.802 | 20.26 | 19.30 (1.85 + 17.45) | 18.15 | 8,595 + 3,097 |
+| 26B OLD | 3.52 (3.53) | 4.836 | 0.888 | 20.93 | 19.97 (1.43 + 18.54) | 18.74 | 26,460 |
+| 26B A | **3.58** (3.59) | 4.757 | 0.814 | 20.46 | 19.40 (1.81 + 17.59) | 18.27 | 8,595 + 3,097 |
+
+- The 35B gains +1.2 to +2.8% (predicted +2.4-3.3%). The 26B gains +1.7% (predicted +1-2.5%):
+  its stall, DMA_BUSY, fell 0.09 G cycles (0.65 s).
+- The body fell as much as predicted or more: -0.85 to -1.11 s (35B) and -1.0 to -1.1 s (26B),
+  against entries plus their gaps of 0.77-0.82 and 0.93 s.
+- The head rose, by 0.45-0.65 s (35B) and 0.35-0.42 s (26B): the answer is not hidden.
+  - It goes out 232-246 us after seen, once every slot of the request is picked.
+  - As the window's first call it takes 75-90 us; a warm 64-byte call takes 35-50.
+  - The first expert's lead DMA starts 86-146 us after the answer. That is 397-472 us after
+    seen, against OLD's 294-377.
+  - In serve_emu's probe of the same code, the lead's read and staging also take ~40 us longer
+    while the DMA thread runs the answer's call, as the two threads trade the GIL.
+- OLD here (main cb3dce5 on pa) made 5.02 tok/s, against g2check's 5.07-5.10 (b40fc6f on
+  g2fix). The card's compute is the same (RUNNING - DMA_BUSY 1.85 G). The host's windows are
+  0.2-0.4 s longer: head +0.15-0.23 s, body +0.13-0.19 s.
+
+Next, host only: send the answer after the first expert's lead DMA (between its two parts on
+the link, ~35-50 us), and cut the head's own steps.
+- serve_emu's probe of the head (35B, OLD), medians from seen:
+  - the row read ends at 59 us: a 19 us read plus ~20 us of Python;
+  - picking a slot takes 18 us;
+  - building the iovec takes 25 us;
+  - `PoolFile.io`'s mincore takes 37 us;
+  - the lead's preadv takes 65 us, and its touch 22 us;
+  - the DMA thread starts the call 74 us after it is queued.
+- The lead's DMA starts about 300 us after seen, and the read itself is only 65 us of that.
+- On the card the head is 1.4-2.1 s per 128 tokens.
+- B (below) as MMIO would also take the answer off the DMA thread. serve_emu with B's costs
+  shows no gain over A, but its answer costs only ~37 us at the head, against the card's ~100.
 
 Two alternatives:
 - **B: the 64-byte writes as MMIO.** Use XDMA's bypass BAR, or an AXI-Lite window onto DRAM

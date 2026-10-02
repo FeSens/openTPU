@@ -2270,8 +2270,9 @@ class Engine:
                     self._write_host_rows(rows)
                 run(key, vals)
             self.pos += len(part)
-        if srv is not None and hasattr(srv, "end_prefill"):    # (the last run's request is
-            srv.end_prefill(self.restore)                       # served: it has halted)
+        if srv is not None and hasattr(srv, "end_prefill"):    # (the last run has halted; an
+            srv.end_prefill(self.restore)                       # all-hit request it posted is
+                                                                # served first: settle)
         run("head", {"row": len(part) - 1})
         io, S, v_loc = img.io, self.cfg.S, img.v_loc
         return np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc)
