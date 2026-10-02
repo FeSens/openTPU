@@ -282,13 +282,21 @@ class Layout:
     served: int
     dir: int
     row2: int = 0          # a request's second line of ids (0: requests of at most 16)
+    pitch: int = 0         # from a slot to the next (0: slot_bytes)
+
+    def __post_init__(self):
+        if not self.pitch:
+            object.__setattr__(self, "pitch", self.slot_bytes)
 
     @staticmethod
     def build(base: int, E: int, k: int, slots_per_layer, slot_bytes: int,
               lines: int = 1) -> "Layout":
         """The words from `base` up (64-byte aligned), then the slots, layer after layer, from
-        the next 4 KiB page (slot_bytes keeps them D-byte aligned: the MXU streams whole
-        chunks). lines=2: requests of up to 32 ids (a layer-major prefill's runs of 4 rows),
+        the next 4 KiB page, each slot_bytes rounded up to whole RUN blocks from the last (the
+        split pool format's blocks land on the card's: BoardDram reads an expert straight into
+        its DMA runs only at a RUN-aligned slot; a slot under RUN keeps its size, which keeps
+        them D-byte aligned: the MXU streams whole chunks). lines=2: requests of up to 32 ids
+        (a layer-major prefill's runs of 4 rows),
         their second line after the directory on a 128-byte block of its own (outside
         BoardDram's shadow of the host's words); 1 leaves every address as it was."""
         if base % LINE or slot_bytes % LINE or not 0 < k <= LINE // 4 or lines not in (1, 2):
@@ -299,11 +307,12 @@ class Layout:
         end = d + 8 * E * len(slots_per_layer)
         row2 = -(-end // (2 * LINE)) * 2 * LINE if lines == 2 else 0
         a = -(-(row2 + LINE if row2 else end) // 4096) * 4096        # slots page-aligned
+        pitch = -(-slot_bytes // RUN) * RUN if slot_bytes > RUN else slot_bytes
         slots = []
         for n in slots_per_layer:
             slots.append((a, int(n)))
-            a += int(n) * slot_bytes
-        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d, row2)
+            a += int(n) * pitch
+        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d, row2, pitch)
 
     @property
     def max_ids(self) -> int:
@@ -317,7 +326,7 @@ class Layout:
     @property
     def end(self) -> int:
         a, n = self.slots[-1]
-        return a + n * self.slot_bytes
+        return a + (n - 1) * self.pitch + self.slot_bytes if n else a
 
     def entry(self, g: int) -> int:
         return self.dir + 8 * g
@@ -356,7 +365,7 @@ class ExpertServer:
         self.lru = [OrderedDict() for _ in range(layout.layers)]    # g -> slot address
         self.t = [0] * layout.layers                                # requests per layer
         self.use: list = [{} for _ in range(layout.layers)]          # g -> log2 use + t / half
-        self.free = [[a + i * layout.slot_bytes for i in range(n)] for a, n in layout.slots]
+        self.free = [[a + i * layout.pitch for i in range(n)] for a, n in layout.slots]
         self.pending: OrderedDict = OrderedDict()   # hinted, in a slot, not landed: g -> bytes sent
         self.pooled = False                 # a layer-major prefill: every slot serves its layer
         self.order: OrderedDict = OrderedDict()      # pooled: the experts in slots, oldest first

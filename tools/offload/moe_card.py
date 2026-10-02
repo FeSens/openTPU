@@ -96,7 +96,7 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
     from dataclasses import replace
     probe = spec.image(replace(cfg, DRAM_BYTES=1 << 40), cap, rows=1, experts=spec.moe.k, **kw)
     L = probe.offload
-    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.slot_bytes))
+    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.pitch))
 
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
