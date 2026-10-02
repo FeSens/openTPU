@@ -415,3 +415,44 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
         run(stripped, b, "recv", stdin=f)
     assert a.read_bytes() == b.read_bytes()
     assert Path(str(b) + ".packed").read_bytes() == bytes([1] * n)
+
+
+def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
+    """tools/offload/moe_card.py --layer-major 2 --prefill-trace (ISA): the prompt's timeline
+    holds each run (the embed runs, the layer runs by key, the head last) and each request with
+    its ids and misses, as many as the result's prefill_time and prefill_requests count."""
+    import json
+    import pickle
+    import runpy
+    import sys
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    m = tmp_path / "model"
+    tiny[0].config.save_pretrained(m)
+    save_file({k: np.ascontiguousarray(v) for k, v in tiny[1].items()},
+              str(m / "model.safetensors"))
+    spec = tiny[2]
+    cfg = device_config(replace(spec, embed="int8"), 256, rows=1, lookup=True, S=1,
+                        experts=2 * K)
+    (tmp_path / "cfg.pkl").write_bytes(pickle.dumps(cfg))
+    ids = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 7)]
+    (tmp_path / "ref.json").write_text(json.dumps({"ids": ids, "tokens": []}))
+    tr, out = tmp_path / "tr.json", tmp_path / "out.json"
+    monkeypatch.setattr(sys, "argv", [
+        "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
+        "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
+        "--prefill-trace", str(tr), "--out", str(out)])
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
+                   run_name="__main__")
+    r, t = json.loads(out.read_text()), json.loads(tr.read_text())
+    keys = [x[0] for x in t["runs"]]
+    pt = r["prefill_time"]
+    assert keys[-1] == "head" and pt["runs"] == len(keys) == pt["layer_runs"]
+    li = [k[0] for k in keys[:-1]]
+    assert li.count(-1) == len(ids) - 1                         # the embed runs, a token each
+    assert sorted(set(li) - {-1}) == list(range(len(KINDS)))
+    assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
+    assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
+    assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])
