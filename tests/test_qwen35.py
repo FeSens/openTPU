@@ -32,9 +32,10 @@ def _chat_ids(tok, text):
     return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
 
-def _tiny_model(nk: int, nv: int = 8):
+def _tiny_model(nk: int, nv: int = 8, init: float = 0.02):
     """A random tiny Qwen3.5 (HF model, weights, Spec) with nv DeltaNet value heads, nk key
-    heads."""
+    heads. init: the initializer range (0.2: tokens that vary; at 0.02 the tied head mostly
+    gives back the input token)."""
     torch.manual_seed(0)
     hc = transformers.Qwen3_5TextConfig(
         hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=8,
@@ -42,7 +43,7 @@ def _tiny_model(nk: int, nv: int = 8):
         layer_types=["full_attention" if k == "attn" else "linear_attention" for k in KINDS],
         linear_num_key_heads=nk, linear_num_value_heads=nv, linear_key_head_dim=128,
         linear_value_head_dim=128, linear_conv_kernel_dim=4, tie_word_embeddings=True,
-        max_position_embeddings=4096, rms_norm_eps=1e-6,
+        max_position_embeddings=4096, rms_norm_eps=1e-6, initializer_range=init,
         rope_parameters={"rope_type": "default", "rope_theta": 1e7, "partial_rotary_factor": 0.25})
     m = transformers.Qwen3_5ForCausalLM(hc).float().eval()
     with torch.no_grad():

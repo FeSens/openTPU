@@ -937,11 +937,12 @@ Every step maps to an instruction the ISA already has. **No RTL change.**
 **Two things are new, and both are small.**
 - **Row 1's penalty must count d.** Both rows share `pa` / `pb`, the context up to t, and row
   0 must not see d.
-  - After the head, row 1's stored logit of d is penalized once: l' = min(l / g, l * g),
-    with g = pa[d] * R. That is l itself when d is in the context already, else
-    min(l / R, l * R).
+  - After the head, row 1's stored logit x of d stays when d is in the context already
+    (pb[d] = R), else becomes min(x / R, x * R). A select by MIN / MAX against +-2^127
+    picks between the two exactly; scaling x by R and back would round (section 11.5).
   - Then the maximum of d's 64-wide block is taken again.
-  - In all: an RLD of d's address, two LDs, four VOPs, an ST, an LD of the block and an RMAX.
+  - In all: an RLD of d's address, two LDs, about ten one-word VOPs, an ST, an LD of the
+    block and an RMAX.
 - **Each row needs its own logits buffer.** `lg` becomes two, or a second one beside it in
   the MTP area (1 MB each for a 248K vocabulary).
 
@@ -1011,6 +1012,188 @@ M2's greedy acceptance times phase 0's sampled / greedy ratio:
    TTFT and tok/s on the status line.
 
 The n-gram drafter (section 6.2) is one-hot too, so it would take the same sampled mode.
+
+### 11.5 Phase 4, step 1: the sampled loop on the ISA simulator and the RTL
+
+**What changed.**
+- `_verify_gen(samp=)` gives each row its own `generate.Sampler`:
+  - row 0 uses u[p + 1] and the loop's `lg`;
+  - row 1 uses u[p + 2] and the second `lg`, in the MTP area (`gen_alloc`; `gen_build` pads
+    it with -inf as `lg` is);
+  - `after(a0)` runs at once, and `after(a1)` inside the accepted branch;
+  - E has one Sampler.
+- **Row 1 reuses row 0's penalty factors** (`Sampler(pen_from=)`). Each chunk loads `pa` and
+  `pb` once. Each row then writes l * pa to its own tile and l * pb in place over the head's
+  output, then takes the MIN. That is 8 instructions a chunk for both rows instead of 10, so
+  a 4B verify is 122 instructions shorter (61 chunks at 2 rows). The plain loop's Sampler is
+  unchanged: the plain sampled generate programs hash the same before and after (0.8B, three
+  samplings, buckets 1 and 3).
+- **Row 1's draft penalty is exact** (`_penalize_draft`). With the stored logit x of d and
+  y = min(x / R, x * R):
+  - s = +2^127 when pb[d] > 1 (d in the context already), else -2^127;
+  - the result is max(min(y, -s), min(x, s)), which is x or y exactly for finite logits.
+  - 11.2's first form, min(x * pb[d] / R, x * pa[d] * R), rounds when d is in the context:
+    x * R / R is not always x in fp32.
+- **The host side.**
+  - `MTPDecoder.generate_card(sampling=, rng=, context=)` draws a0 =
+    `reference_pick(prefill logits)` with the generator's first uniform.
+  - `Engine._generate_inputs` then writes u[P + 1 .. P + n] and the penalty vectors over the
+    context and a0.
+  - u[P + n + 1] = 0.5 is a stand-in for the last verify's row 1. That row is never emitted,
+    and the stand-in is not drawn from the generator, which stays aligned with plain decode's.
+- **Programs.** The chain area is rewritten when the mode (forced, `Sampling.key`) changes,
+  and the program cache keys V and E by `Sampling.key`.
+- **The tool.** `tools/mtp_decode.py --loop device --sample T,K,P,R --seed S` runs plain
+  sampled decode and the sampled MTP loop from the same uniforms and checks that their
+  tokens are equal.
+
+**Tests on the ISA simulator** (`test_mtp_sampled_loop_is_plain_sampling`, 8 cases, all
+pass). Each case checks two things against plain sampled decode for the same uniforms
+(`reference_pick` on resident decode's logits): the tokens are equal, and the committed
+DeltaNet states and windows are equal word for word. The cases:
+- across bucket 256 with the right drafts, every third wrong, and the MTP's own drafts (E at
+  255);
+- with no penalty (T 1.5, top-k 20);
+- greedy with penalty 3.0;
+- the varied model with penalty 1.1;
+- a stop id;
+- 16 DeltaNet heads.
+
+**The model choice matters for the penalty.** The varied tiny model (initializer range 0.2)
+never let the penalty of the token before decide a pick in 16 tokens, at penalties 1.1 to
+3.0, because its next token rarely repeats the last. The tied model (0.02) mostly echoes its
+input, so the draft's penalty decides 7 picks in 16 tokens at penalty 1.5 (T 0.8, top-k 5,
+top-p 0.9) and 14 at greedy 3.0. Those are the penalty cases. With `_penalize_draft` turned off,
+both fail; with it, they pass.
+
+**RTL.** `test_mtp_sampled_loop_on_rtl` (Verilator, the board's memory path) starts from a
+251-token prefill with a0 sampled. It runs one sampled loop with penalty 1.5 across the
+bucket end, every third draft wrong. The tokens and the image's DRAM equal the ISA
+simulator's. The greedy `test_mtp_loop_on_rtl` passes too.
+
+**IMEM on the real layouts** (fp4, cap 4096). Each cell is V's instructions at bucket 1 / 16;
+IMEM holds 4096.
+
+| model | greedy | T 0.7, top-k 20, top-p 0.8 (chat) | top-k 64, penalty 1.1 |
+|---|---|---|---|
+| Qwen3.5-0.8B | 2395 / 2687 | 2625 / 2917 | 3150 / 3442 |
+| Qwen3.5-2B | 2165 / 2457 | 2395 / 2687 | 2920 / 3212 |
+| Qwen3.5-4B | 2648 / 3239 | 2879 / 3469 | 3404 / 3994 |
+
+- E is shorter in every case: at most 2679, the 4B at top-k 64 with the penalty.
+- Before row 1 shared the penalty factors, the 4B's bucket-16 V at top-k 64 with the
+  penalty was 4116 instructions, so it did not fit.
+- A V that does not fit raises `CompileError` (`_gen_programs`). A caller then falls back to
+  plain sampled decode.
+
+### 11.6 Phase 4, step 4: otpu-chat (ISA simulator)
+
+A chat needs the context to go on after a reply: the next turn's prefill and `/continue`
+start where the loop stopped. Two changes make that work.
+
+**The loop's last D runs before the HALT.**
+- V no longer halts. It records the end in a state word (S_END: a stop id, the host's stop
+  word, or no tokens left) and chains to D or D1 as always.
+- D halts instead of chaining when S_END is set.
+- The MTP layer's KV cache then holds every position before Engine.pos, the pair (h, the last
+  token) included. `MTPDecoder.draft` holds the draft after the last token.
+- Before, the last iteration's D did not run. Its KV position kept an older iteration's
+  values, so a next turn drafted from a wrong cache: still the same tokens, but fewer
+  accepted drafts.
+- The cost is one D run a reply.
+
+**`MTPDecoder.prefill` continues from Engine.pos.**
+- It feeds the new tokens with the committed state slot and pairs them in the MTP layer
+  (h_q, x_(q + 1)) as a first prefill does.
+- `on_run` reports each run and can stop the prefill between runs. The pairs then end at the
+  next prompt token, so a later prefill continues.
+
+**Chat.**
+- `Chat` on an MTP engine (`otpu-chat --mtp`, `mtp_engine` with `load_weights(mtp=True)`)
+  prefills through the MTP decoder. The host's sampler picks the first token inside it,
+  because the draft after that token needs it.
+- Each reply is one `loop_card` run from that token and `MTPDecoder.draft`, polled with the
+  chat's stop.
+- `/continue` resumes from the cut reply's last token and the kept draft.
+- The plain status line gains the iterations' acceptance.
+- Settings the device sampler does not take decode on the host without the drafter, as they
+  do on a plain engine.
+
+**Tests on the ISA simulator.**
+- `test_mtp_continues_its_context` (greedy and sampled, penalty 1.1): two turns on one
+  decoder against one fresh decoder over the whole conversation. Equal: the tokens, the final
+  draft, and the MTP layer's KV cache below Engine.pos, bit for bit.
+- Negative control: without the last D, the KV cache's K differs at the position before the
+  first turn's last token (position 50), and the draft after the turn differs (229 against
+  463).
+- `test_chat_with_mtp` (greedy, and sampled with seed 3 and penalty 1.1): a turn cut at
+  max_new, `/continue`, then a second turn. The replies, the fed tokens, the context and the
+  token counts equal plain Chat's, and the second turn does not restart the context.
+- The phase 3 and 4 loop tests pass with the last D (test_mtp: 36 passed).
+
+**RTL.** With the last D, `test_mtp_loop_on_rtl` and `test_mtp_sampled_loop_on_rtl` pass
+(omarchy, Verilator).
+
+**Real models on the ISA simulator.** `tools/mtp_decode.py --loop device --sample ...`, seed 0,
+prompts 0, 3 and 7, 48 tokens: sampled MTP's tokens equal plain sampled decode's.
+- The 2B at chat's default (T 0.7, top-k 20, top-p 0.8): 3/3.
+- The 2B with penalty 1.1: 2/2. Prompt 7 was stopped by omarchy's memory guard.
+- The 0.8B at chat's default: 3/3. Its acceptance per prompt, 0.62 / 0.68 / 0.47, equals the
+  card's below.
+
+### 11.7 Phase 4 on the card
+
+Production build e4db91c9 (Gen2 x8, pa), 133.33 MHz, fp4 with an int8 head, cap 1024, phase
+0's prompts 0, 3 and 7, 48 tokens, seed 0, one otpu-lock window (2026-10-02 02:58-03:17
+opentpu).
+
+**Sampled, chat's default (T 0.7, top-k 20, top-p 0.8): 9/9 prompts give plain sampled
+decode's tokens.** The 2B with penalty 1.1 gives them too, 3/3. Device tok/s over the 141
+tokens after the first:
+
+| model | plain sampled | MTP sampled | speedup | projected (11.3) | acceptance |
+|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 27.55 | 34.21 | 1.242x | about 1.28x | 0.58 |
+| Qwen3.5-2B | 12.41 | 19.49 | 1.571x | about 1.56x | 0.74 |
+| Qwen3.5-4B | 6.03 | 9.74 | 1.616x | about 1.6x | 0.78 |
+| Qwen3.5-2B, penalty 1.1 | 12.37 | 19.45 | 1.572x | | 0.74 |
+
+- The 0.8B lands under its projection because its sampled acceptance on these prompts is
+  0.58, against the 0.62 projected (phase 0's sampled share applied to M2's 0.68). The 2B and
+  4B meet or pass theirs.
+- The sampler costs little. Plain sampled decode runs within 0.6% of plain greedy (27.55 /
+  12.41 / 6.03 against 27.72 / 12.44 / 6.04 tok/s). The penalty costs the 2B's MTP loop 0.2%.
+
+**The program cache (1a): first and second token times,** greedy, prompt 0, the card's wall
+clock in seconds. Cold is a fresh `OTPU_PROG_CACHE` directory; warm is the next process with
+it.
+
+| model | plain TTFT | plain t2 - TTFT, cold / warm | MTP TTFT | MTP t2 - TTFT, cold / warm |
+|---|---|---|---|---|
+| Qwen3.5-0.8B | 1.17 | 0.179 / 0.058 | 2.33 | 0.586 / 0.113 |
+| Qwen3.5-2B | 1.40 | 0.211 / 0.099 | 2.79 | 0.612 / 0.146 |
+| Qwen3.5-4B | 3.23 | 0.277 / 0.175 | 5.41 | 0.909 / 0.252 |
+
+- The cache takes the bucket compiles out of the second token: 0.10-0.12 s for plain decode's
+  program, and 0.47-0.66 s for MTP's six.
+- Warm, the second token comes one device iteration after the first (a step: 36 / 80 / 166 ms;
+  an MTP iteration: about 46 / 88 / 183 ms), plus 0.01-0.02 s for plain and 0.06-0.07 s for
+  MTP. MTP's extra is the host setting up the run, which includes writing its six programs to
+  the card.
+- TTFT does not change; it is the prefill's. The MTP prefill compiles its runs on the host one
+  after another (1.85-2.9 s, against plain prefill's pipelined compile), which puts MTP's TTFT
+  1.2-2.2 s above plain's. (1b), run-time-position prefill programs, takes that out.
+
+**otpu-chat on the card** (the 2B, fp4, sampled at chat's default, seed 0, a 23-token prompt,
+64 tokens). `--mtp` gives plain chat's reply, compared byte for byte.
+
+| | TTFT | decode tok/s, wall (device) |
+|---|---|---|
+| plain | 1.32 s | 12.15 (12.4) |
+| `--mtp` | 2.23 s | 15.73 (18.1), acceptance 0.62 |
+
+The wall rate trails the device's by MTP's bucket compiles. otpu-chat does not turn the program
+cache on, so a cold process pays them in its first reply.
 
 ## 12. Open questions
 
