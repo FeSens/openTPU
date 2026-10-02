@@ -85,9 +85,9 @@ def test_register_map(have_verilator):
     assert ident == 0x4F545055
     assert ver == (CFG.D << 16) | (CFG.MCOLS << 8) | CFG.LANES
     assert regmap == 3
-    # log2 256, log2 1024; STREAM (with DSTEP), run arguments, ACT_ROWS, chash, DSTEP, PAIR, 4-bit,
-    # ddr, i2c, temp, trace
-    assert caps == (7 << 24) | (8 << 16) | (10 << 8) | 0x80 | 0b1111111
+    # log2 256, log2 1024; WAITW, GEN, STREAM (with DSTEP), run arguments, ACT_ROWS, chash, DSTEP,
+    # PAIR, 4-bit, ddr, i2c, temp, trace
+    assert caps == (0xC7 << 24) | (8 << 16) | (10 << 8) | 0x80 | 0b1111111
     assert a3 == 0xCAFE_F00D and a4 == 0                      # ARG3 kept, ARG4 reset
     assert khz == 75294 and bid == TB_BUILD_ID and mts == 1066
     assert temp == (1 << 31) | TB_TEMP
@@ -100,9 +100,9 @@ def test_register_map(have_verilator):
 def test_register_map_board_defaults(have_verilator):
     t = SimTransport(ch_bytes=1 << 20)
     caps, khz, mts = t.reg_read_many([R_CAPS, R_CORE_KHZ, R_DDR_MTS])
-    # 1024-cycle windows, 16384 records; STREAM (with DSTEP), run arguments, ACT_ROWS, chash, DSTEP,
-    # PAIR, 4-bit, temp, trace
-    assert caps == (7 << 24) | (10 << 16) | (14 << 8) | 0x80 | 0b1110111
+    # 1024-cycle windows, 16384 records; WAITW, GEN, STREAM (with DSTEP), run arguments, ACT_ROWS,
+    # chash, DSTEP, PAIR, 4-bit, temp, trace
+    assert caps == (0xC7 << 24) | (10 << 16) | (14 << 8) | 0x80 | 0b1110111
     assert khz == 100000 and mts == 0                     # no DDR_MTS given: CAPS bit3 clear
 
 
@@ -273,7 +273,7 @@ def test_trace_long_wait_is_exact(have_verilator):
     n = 60000
     prog = [I.ld(0, 0, n), I.ld(0, 61000, 64), I.st(0x40000, 61000, 64), I.halt()]
     img = np.random.default_rng(3).integers(0, 256, 4 * n).astype(np.uint8)
-    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=98, seed=2,
+    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=99, seed=2,
                      plusargs=["+trace", "+bucket=1000000"], params={"TRACE_DEPTH": 1024})
     r = run_traced(t, img, prog, nrec=64)
     sim = r["sim"]

@@ -105,8 +105,10 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
-         formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
-         willneed: bool = True, pool_map: bool = True, legacy_serve: bool = False) -> dict:
+         formats: str | None = None, layer_major: int = 0, pooled: bool = True,
+         release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
+         legacy_serve: bool = False, embed_runs: bool = False,
+         poll_idle: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -135,7 +137,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                                                model=Path(model).name)
     t = time.time()
     if layer_major:                             # the prompt a layer at a time, runs of R rows
-        ekw["layer_major"] = layer_major        # (docs/offload.md 13)
+        ekw.update(layer_major=layer_major, pooled=pooled,  # (docs/offload.md 13)
+                   embed_runs=embed_runs)           # (13.6: a bitstream with port A's fix)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
                  release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
@@ -175,11 +178,11 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         mem.write_slot = timed("stage", mem.write_slot)     # waiting for the DMA thread
         mem.flush = timed("flush", mem.flush)
     if callable(getattr(eng.backend, "host", None)):
-        polled = eng.backend.host
+        polled = [eng.backend.host]             # (the decode's may be a PollPacer's)
 
         def served():                           # the polls that served a request: the card
             t0 = time.perf_counter()            # waits from its post to served (with the
-            r = polled()                        # poll's own latency)
+            r = polled[0]()                     # poll's own latency)
             if r:
                 tm["poll"] += time.perf_counter() - t0
             return r
@@ -207,6 +210,19 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     ids = ref["ids"]
     t = time.time()
     lg = eng.prefill(ids if host_loop else ids[:-1])
+    pacer = None
+    if poll_idle == "predict" and callable(getattr(eng.backend, "host", None)):
+        from opentpu.host.offload import PollPacer   # the decode's polls sleep through the
+        pacer = PollPacer([x for x in (srv, eng.row_server) if x is not None])  # gaps (10.10)
+        polled[0] = pacer.poll
+    elif poll_idle not in (None, "spin", "predict"):    # a fixed sleep between empty polls
+        t_ = getattr(getattr(eng.backend, "board", None), "t", None)
+        if t_ is not None:
+            t_.host_idle = float(poll_idle)
+    elif poll_idle == "spin":
+        t_ = getattr(getattr(eng.backend, "board", None), "t", None)
+        if t_ is not None:
+            t_.host_idle = 0.0
     prefill_s = time.time() - t
     pre = len(per_req) if layer_major else 0    # layer-major: a request per layer run
     warm_decode = warm_at()
@@ -295,8 +311,12 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
+                pooled=pooled if layer_major else None,
+                embed_runs=embed_runs if layer_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
-                legacy_serve=legacy_serve,
+                legacy_serve=legacy_serve, poll_idle=poll_idle,
+                pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
+                           kinds=len(pacer.gaps)) if pacer is not None else None,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
@@ -364,6 +384,12 @@ def main():
     ap.add_argument("--layer-major", type=int, default=0, metavar="R",
                     help="prefill a layer at a time in runs of R rows (docs/offload.md 13; "
                          "default 0: token by token)")
+    ap.add_argument("--per-layer-slots", action="store_true",
+                    help="--layer-major with each layer's own slots (default: pooled)")
+    ap.add_argument("--embed-runs", action="store_true",
+                    help="--layer-major with the embed runs and compile-time-position runs "
+                         "for an embedding table on the host (Engine embed_runs; needs a "
+                         "bitstream whose port A drops its beats at RUN: docs/offload.md 13.6)")
     ap.add_argument("--keep-weights", action="store_true",
                     help="keep the checkpoint mapped after the image is built (by default "
                          "LazyWeights.release gives its pages back: page cache for the pool; "
@@ -379,6 +405,10 @@ def main():
                     help="serve as before docs/offload.md 10.8 (A/B): a request's first miss in "
                          "halves, its reads through buffer lists, each victim's entry cleared "
                          "before its slot is written, a 50 us sleep between empty polls")
+    ap.add_argument("--poll-idle", default=None, metavar="spin|S|predict",
+                    help="the decode's polls that find nothing: spin (the card's default), "
+                         "sleep S seconds, or predict (PollPacer: sleep most of each gap's "
+                         "expected length, then spin; docs/offload.md 10.10)")
     ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
@@ -393,7 +423,8 @@ def main():
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
-             not a.keep_weights, not a.no_willneed, not a.no_pool_map, a.legacy_serve)
+             not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
+             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

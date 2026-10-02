@@ -20,10 +20,16 @@
 #     session 10's names for the defaults since
 #   q35e128s, q35e128sl: q35e128r with its timeline and DMA calls (--hint-trace), served as now
 #     and as before docs/offload.md 10.8 (--legacy-serve); g26s, g26sl: g26r's the same
+#   q35e128sp, g26sp: q35e128s / g26s with the decode's polls paced (--poll-idle predict:
+#     PollPacer, docs/offload.md 10.10); g26s50: g26s with a 50 us sleep between empty polls
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
 #     layer), 128 tokens after wiki.txt's first paragraph (q26-hf.json, q26ref16.json: 16 tokens)
 #   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
 #     by layer in runs of 1 or 2 rows (--layer-major; docs/offload.md 13)
+#   q35t16, q35lm1, q35lm2: the same for the 35B as q35e (the table on the host, no hints)
+#   (lm1, lm2: each layer's own slots, --per-layer-slots; g26lmp2, q35lmp2: layer-major R = 2
+#   with the slots pooled, every slot serving the running layer; q35lm1e: q35lm1 with the embed
+#   runs, --embed-runs, for a bitstream with port A's fix: docs/offload.md 13.6)
 # Before each run the other pools leave the page cache and the run's pool is read into it. A run
 # whose files are not staged in O is skipped. Selftest before and after.
 # Run: otpu-lock --wait 3600 -- tools/offload/sessions/card_moe.sh   (RUNS="8b16 8b160 q35";
@@ -73,6 +79,7 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35e128rw]="$Q35 128 q35-hf.json q35ref16 q35card128erw 0 lfu --embed-table host --hints off --release-weights --willneed --hint-trace $R/q35card128erw.trace.json"
   [q35e128s]="$Q35 128 q35-hf.json q35ref16 q35card128es 0 lfu --embed-table host --hints off --hint-trace $R/q35card128es.trace.json"
   [q35e128sl]="$Q35 128 q35-hf.json q35ref16 q35card128esl 0 lfu --embed-table host --hints off --legacy-serve --hint-trace $R/q35card128esl.trace.json"
+  [q35e128sp]="$Q35 128 q35-hf.json q35ref16 q35card128esp 0 lfu --embed-table host --hints off --poll-idle predict --hint-trace $R/q35card128esp.trace.json"
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"
   [q35c128b]="$Q35 128 q35-hf.json q35ref16 q35card128cb 0 lfu --embed-table card --hints off"
   [g26a]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128a 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
@@ -80,9 +87,17 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [g26r]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128r 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --release-weights"
   [g26s]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128s 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --hint-trace $R/g26card128s.trace.json"
   [g26sl]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128sl 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --legacy-serve --hint-trace $R/g26card128sl.trace.json"
+  [g26s50]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128s50 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --poll-idle 50e-6 --hint-trace $R/g26card128s50.trace.json"
+  [g26sp]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128sp 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --poll-idle predict --hint-trace $R/g26card128sp.trace.json"
   [g26t16]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
-  [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1"
-  [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2")
+  [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1 --per-layer-slots"
+  [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2 --per-layer-slots"
+  [g26lmp2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lmp2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2"
+  [q35t16]="$Q35 16 q35-hf.json q35ref16 q35card16t 0 lfu --embed-table host --hints off"
+  [q35lm1]="$Q35 16 q35-hf.json q35ref16 q35card16lm1 0 lfu --embed-table host --hints off --layer-major 1 --per-layer-slots"
+  [q35lm2]="$Q35 16 q35-hf.json q35ref16 q35card16lm2 0 lfu --embed-table host --hints off --layer-major 2 --per-layer-slots"
+  [q35lmp2]="$Q35 16 q35-hf.json q35ref16 q35card16lmp2 0 lfu --embed-table host --hints off --layer-major 2"
+  [q35lm1e]="$Q35 16 q35-hf.json q35ref16 q35card16lm1e 0 lfu --embed-table host --hints off --layer-major 1 --per-layer-slots --embed-runs")
 for name in ${RUNS:-8b16 8b160 q35}; do
   read -r md pool n hf ref out ex pol extra <<< "${RUN[$name]}"
   if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $RF/$ref.json ]; then
@@ -170,7 +185,8 @@ print(f"  [{'PASS' if same and c['prefill_logits_sha'] == r['prefill_logits_sha'
 k = ("tok_s_wall", "tok_s_device", "hits", "misses", "misses_per_token_decode",
      "misses_per_token_decode_2nd_half", "bytes_per_token_decode", "host_decode_s", "load_s",
      "prefill_s", "generate_s", "experts_per_layer", "policy", "pool_warm", "embed_host",
-     "hints", "layer_major", "prefill_requests", "prefill_misses", "host_mem", "device_counters")
+     "hints", "layer_major", "pooled", "embed_runs", "prefill_requests", "prefill_misses",
+     "host_mem", "device_counters")
 print("  " + json.dumps({x: c.get(x) for x in k}))
 PY
 done
