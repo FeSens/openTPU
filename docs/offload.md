@@ -1438,6 +1438,63 @@ row read and served, plus the first part's read. Only a faster link (PCIe Gen2, 
 fewer calls on the card's side (an expert's present flag in its slot, a program change) would
 remove these.
 
+### 10.9 PCIe Gen2 x8: the prediction
+
+The Gen2 build (g2fix 0885d436, production since 2026-10-02 00:03) moves 2.29 GB/s host->card in
+the selftest, against 1.35 on Gen1: 1.70x. Session 13's DMA calls give the Gen1 link as offload
+uses it during a run:
+- an expert's whole record (two calls, one per channel): 1183 us for the 35B's 1.67 MB (a fit of
+  ~132 us fixed + 1.59 GB/s), 2360 us for the 26B's 3.45 MB;
+- a request's first miss: 371 + 972 us (35B), 604 + 2032 us (26B);
+- a 64-byte call (entry, clear, served): 49 us (35B), 61 us (26B).
+
+Two bounds for Gen2: (a) only the bytes go 1.70x faster, and each call keeps its fixed cost
+(`serve_emu.py --h2c-call 66e-6 --h2c-bps 2.70e9`); (b) the whole call goes 1.70x faster
+(`--h2c-call 39e-6`). Either way the 64-byte calls stay 49-61 us (latency).
+
+`serve_emu.py` replayed session 13's own traces (N2, gN1) with the Gen1 link calibrated to the
+card's calls (`--h2c-call 66e-6 --h2c-bps 1.59e9 --beat-call 49e-6`; the 26B's 1.547e9 and 61e-6;
+two runs each). Device stall is crit + detect:
+
+| model | Gen1 (calibrated) | Gen2 (a) | Gen2 (b) | change |
+|:--|:--|:--|:--|:--|
+| 35B | 20.63-20.70 s | 14.58-14.59 | 13.85-13.92 | -29.5 to -32.8% |
+| 26B | 31.30-31.48 s | 20.93-21.11 | 20.36-20.40 | -33 to -35% |
+
+The emulator runs 5-11% slower than the card on Gen1 (its windows 22.3 against the card's 20.0;
+33.1 against 31.3), so its relative change is applied to the card's windows. Session 13's N2 /
+gN1 at 4.05 / 2.78 device tok/s then go to:
+- 35B: -5.7 to -6.3 s per 128 tokens, about **5.0 tok/s** (4.9-5.1, +23-26%). The per-record
+  arithmetic alone (102.85 misses a token, 36.6 of them a request's first) gives -45 to -52 ms a
+  token: 4.95-5.13.
+- 26B: -10.1 to -10.8 s, about **3.6 tok/s** (3.56-3.63, +28-31%). Per record: -78 to -89 ms a
+  token: 3.55-3.69.
+
+Below that, look at MXU_STARVE first. Session 13 already showed the expert DMA overlapping the
+MXU's weight reads (10.8), and at 1.7x the writes take more of the DRAM.
+
+What the 35B's pool in RAM costs at each rate: cachesim's disk reads per token (10.6), scaled to
+the card's 102.85 misses per token (x1.21), each 3.8 ms on the critical path:
+
+| pool GB in RAM | disk reads / token | Gen1 tok/s | Gen2 tok/s |
+|:--|:--|:--|:--|
+| 17.1 (all) | 0 | 4.05 | 5.0 |
+| 14 | 2.7 | 3.89 | 4.76 |
+| 12 | 5.4 | 3.73 | 4.53 |
+| 10 | 11.7 | 3.43 | 4.09 |
+| 8 | 22.4 | 3.01 | 3.51 |
+
+At Gen2 the SSD costs relatively more: 8 GB of RAM loses 30% there, against 26% on Gen1. The 26B's
+13.2 GB pool fits. With 8 GB of it in RAM (1.9 disk reads a token) it would make about 3.5 tok/s
+on Gen2.
+
+The check on the card is q35e128s and g26s (the default serving, `--hint-trace` with the DMA
+calls), from session 13's tree, so the programs and references (refs-d29bfe9) are the same:
+- tokens and prefill sha bit for bit;
+- a whole expert's record about 0.70-0.75 ms (35B) and 1.39-1.49 ms (26B), from 1.18 and 2.36;
+- the window fits near 0.45 + 1.01-1.07 ms per miss (35B) and 0.55 + 1.75-1.82 (26B);
+- tok/s as above.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
