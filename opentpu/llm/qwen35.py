@@ -62,6 +62,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from .. import fp32 as F
+from .. import isa as I
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
@@ -76,7 +77,8 @@ from .lfm2 import _place, plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, RunRows, _attention, _attention_rows, _Bump,
+from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, _attention,
+                    _attention_rows, _Bump,
                     _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
                     _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
                     _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables,
@@ -1139,6 +1141,31 @@ class Image(EmbedHost):
                 raise ValueError("fork / hidden rows need an MTP image (Spec.mtp)")
         return self._run_rows(qwen35_rows, blocks, lo, R, block, slot,
                               logit_rows=list(logit_rows), fork=fork, hidden=hidden)
+
+    def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK,
+                           hidden: bool = False, slot: int = 0, p0: int | None = None):
+        """qwen35_prompt_run's programs (docs/prefill.md), one per slice: R rows of a prompt
+        at a run-time position of bucket `blocks` (from conv_k - 1; the position in the state's
+        tpos word), or at the compile-time position p0 (the rows before conv_k - 1)."""
+        spec = self.spec
+        if spec.moe is not None:
+            raise ValueError("a MoE model's prompt runs layer by layer (compile_layer_run)")
+        if not self.lookup:
+            raise ValueError("a prompt run needs lookup tables (lookup=True)")
+        if (hidden or kind == "M") and not spec.mtp:
+            raise ValueError("MTP's prompt runs need an MTP image (Spec.mtp)")
+        if kind not in ("P", "L", "M"):
+            raise ValueError(f"prompt run kind {kind!r}")
+        if p0 is None:
+            lo = max((blocks - 1) * block, spec.conv_k - 1)
+            pos = RunRows(blocks, block, lo, self.lookup["zmask"], self.cap, R,
+                          1 if kind == "M" else 0)
+        else:
+            pos = p0
+        return [qwen35_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s, slot),
+                                                      "pos": pos, "R": R, "kind": kind,
+                                                      "block": block, "hidden": hidden}).finish()
+                for s in range(self.cfg.S)]
 
     def compile_mtp_run(self, blocks: int, lo: int, R: int, block: int = ATTN_BLOCK,
                         h0: int = 0):
@@ -2206,6 +2233,32 @@ def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, 
     for r, t in enumerate(drafts):
         ol.store(m.draft[r:r + 1], t)
     return drafts
+
+
+@ol.jit
+def qwen35_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK, hidden: bool = False):
+    """A prompt run of R rows (docs/prefill.md), its tokens from out[]: kind "P" (qwen35_rows),
+    "L" (the prompt's last run: its last row's logits too) or "M" (qwen35_mtp over the rows: the
+    tokens of the positions after them). pos: a RunRows (toks_at 0, M's 1) at the run-time
+    position in the generate state's tpos word (run_words: no host arguments), or the run's
+    first position, a compile-time one (the rows before conv_k - 1). hidden: MTP's rows."""
+    b = current()
+    run = isinstance(pos, RunRows)
+    if run:
+        tw = ol.load(m.gen.state[G.S_TPOS:G.S_TPOS + 1])
+        at = b.stack[-1][-1]
+        b.run_words = {"tpos": tw.base}
+    toks = None if run else OutTokens(1 if kind == "M" else 0)
+    if kind == "M":
+        qwen35_mtp.fn(m, pos, R, block, tokens=toks)
+    else:
+        qwen35_rows.fn(m, pos, R, [R - 1] if kind == "L" else [], block, toks, False, hidden)
+    if run:                     # the arguments from the tpos word, at the program's start
+        body = b.stack[-1]
+        i = next(j for j, x in enumerate(body) if x is at) + 1
+        body[i:i] = [I.rld(15 - k, tw.base, mul=int(c), comment=f"argument {c}*{v.name}")
+                     for k, (v, c) in enumerate(b.run_args)]
+        b.run_words = None
 
 
 @ol.jit
