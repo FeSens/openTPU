@@ -279,11 +279,20 @@ class Sampler:
     largest of all slices' (all_gather); p = exp2((l - l0) * log2(e) / T), the cumulative sums
     (RDOT with a triangular matrix), top-p (keep the first i with sum(p[:i]) < P * sum(p)), the
     pick = #{cum <= u * cum[last kept]} for the position's uniform u (at most the last kept),
-    its id. after(tok): tok joins the penalty's context."""
+    its id. after(tok): tok joins the penalty's context. lg: the DRAM of this sink's logits
+    (default the loop's lg; MTP's verify has one per row), u_at: its uniform's position (default
+    pos.pos + 1, the next token's). pen_from (MTP's verify): the sink of the chunk's row before,
+    whose factors this one takes (loaded once per chunk; both then keep them)."""
 
-    def __init__(self, b, m, g, samp: Sampling, st, pos, consts):
+    def __init__(self, b, m, g, samp: Sampling, st, pos, consts, lg: int | None = None,
+                 u_at=None, pen_from: "Sampler | None" = None):
         self.b, self.m, self.g, self.samp, self.st, self.pos = b, m, g, samp, st, pos
         self.U, self.iota = consts
+        self.lg = g.addr["lg"] if lg is None else lg
+        self.u_at = pos.pos + 1 if u_at is None else u_at
+        self.pen_from, self.shared = pen_from, False
+        if pen_from is not None:
+            pen_from.shared = True
         self.chunk_seen = 0
         v = m.v_loc
         self.o = ol.program_id() * v             # this slice's first vocabulary row
@@ -307,14 +316,14 @@ class Sampler:
         return U, iota
 
     def __call__(self, y, col0: int) -> None:
-        b, g, m = self.b, self.g, self.m
+        b, g = self.b, self.g
         self.chunk_seen += 1
         y = y[0, :] if len(y.shape) == 2 else y
         n = y.cols
         c0 = col0 - self.o                       # this slice's row
         a = y.base
-        if self.samp.pen:                        # in place in the penalty's tiles
-            if self.pt is None:
+        if self.samp.pen and not (self.shared or self.pen_from):     # in place in the
+            if self.pt is None:                                          # penalty's tiles
                 # two for the whole LM head: fresh ones per chunk would be freed under the
                 # next chunk's MM output, which then waits for this chunk's work (a TMEM write
                 # after read), and the MXU with it
@@ -327,7 +336,21 @@ class Sampler:
             b.emit(I.vop(I.V_MUL, pb, y.base, pb, 1, n, n, n, n, comment="l * pb"))
             b.emit(I.vop(I.V_MIN, pa, pa, pb, 1, n, n, n, n, comment="the penalty"))
             a = pa
-        b.emit(I.st(g.addr["lg"] + 4 * c0, a, n, comment="lg"))
+        elif self.samp.pen:          # shared factors: the product, then l * pb in place in l
+            if self.pt is None:
+                self.pt = (b.alloc((n,)),) + ((b.alloc((n,)), b.alloc((n,)))
+                                               if self.pen_from is None else ())
+            assert n <= self.pt[0].cols, "LM head chunks of different sizes"
+            fa, fb = (t.base for t in (self.pen_from or self).pt[-2:])
+            if self.pen_from is None:
+                b.emit(I.ld(g.addr["pa"] + 4 * col0, fa, n, comment="pa"))
+                b.emit(I.ld(g.addr["pb"] + 4 * col0, fb, n, comment="pb"))
+            t = self.pt[0].base
+            b.emit(I.vop(I.V_MUL, t, y.base, fa, 1, n, n, n, n, comment="l * pa"))
+            b.emit(I.vop(I.V_MUL, y.base, y.base, fb, 1, n, n, n, n, comment="l * pb"))
+            b.emit(I.vop(I.V_MIN, t, t, y.base, 1, n, n, n, n, comment="the penalty"))
+            a = t
+        b.emit(I.st(self.lg + 4 * c0, a, n, comment="lg"))
         nf, k0 = n // BLK, c0 // BLK
         if nf:
             b.emit(I.vop(I.V_RMAX, self.bm.base + k0, a, 0, nf, BLK, 1, BLK, 0,
@@ -359,7 +382,7 @@ class Sampler:
             I.vop(I.V_ADD, base.base, base.base, 0, 1, 1, 0, 0, 0, I.B_SCALAR, float(self.o),
                   comment="+ the slice's first row"),
             I.rld(ro, off.base),
-            I.ld(g.addr["lg"], cand.base, BLK, ra=ro, rb=rj, comment="the block's logits"),
+            I.ld(self.lg, cand.base, BLK, ra=ro, rb=rj, comment="the block's logits"),
             I.vop(I.V_ADD, ids.base, self.iota.base, base.base, 1, BLK, 0, 0, 0, I.B_ROW,
                   ra=rj, comment="their ids"),
             I.addi(rj, rj, BLK)])
@@ -385,7 +408,7 @@ class Sampler:
         pz = cumx[km:km + 1] * st[S_TOPP:S_TOPP + 1]
         kept = _step(pz - prev)
         zk = ol.max(cum * kept)
-        u = ol.load(g.uni[self.pos.pos + 1:self.pos.pos + 2])
+        u = ol.load(g.uni[self.u_at:self.u_at + 1])
         t = u * zk
         le = ol.sum(_step(cum - t)) * -1.0 + float(km)
         pick = ol.minimum(le, ol.sum(kept) - 1.0)

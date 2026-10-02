@@ -744,6 +744,105 @@ def test_axi_scale_runs_beside_dma_writes(have_verilator, stall, seed):
     assert ar_a < scale_beats // 3, (ar_a, scale_beats)
 
 
+# The host's writes reach DRAM through its own master (XDMA), which the adapter does not see:
+# port A's reused beat and runs must not outlive the points where the host may have written
+# (otpu_native_dram a_flush: between runs, a program load, a WAITW that held). The 35B's
+# back-to-back embed runs took the previous run's scale beat over the host's rewrite. Each case:
+# an MM whose scales are in one beat, the host rewriting the beat the next MM reads first (the
+# reused beat, or the next channel beat of the run the first MM's miss fetched), then that MM;
+# bit-exact against the ISA simulator, which has no such state.
+_PA_SC, _PA_W, _PA_FLAG = 0x20000, 0x40000, 0x60000
+
+
+def _pa_beat(b: int, rest: int = 0) -> int:
+    """Byte address of logical beat b (+ rest bytes)."""
+    return 64 * b + rest
+
+
+def _pa_next(b: int) -> int:
+    """The logical beat after b in its channel's run (otpu_native_dram's map, CHASH: logical beat
+    b = 2 m + ((b % 2) ^ parity(m)) is channel beat m of channel b % 2 ^ parity(m))."""
+    par = lambda m: bin(m).count("1") & 1                  # noqa: E731
+    m, c = b // 2, (b % 2) ^ par(b // 2)
+    return 2 * (m + 1) + (c ^ par(m + 1))
+
+
+def _pa_setup(cfg, rng):
+    D, KB = cfg.D, 4
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 2 * KB * D] = rng.standard_normal(2 * KB * D).astype(np.float32).view(np.uint8)
+    img[_PA_SC:_PA_SC + 4 * 4096] = (rng.random(4096, dtype=np.float32) + 0.5).view(np.uint8)
+    img[_PA_FLAG:_PA_FLAG + 64] = 0
+    head = [I.ld(0, 0, 2 * KB * D), I.qact(0, 2, 0, KB, KB * D)]
+    # 2 rows x KB scales (8 words, 32 bytes) at R8 + sc: one beat
+    mm = lambda sc, out: I.mm(_PA_W, sc, out, 2, KB, KB * D, 4, 2, 0, 4 * KB, rb=8)  # noqa: E731
+    return img, head, mm
+
+
+def _pa_new_scales(rng, at):
+    v = (rng.random(8, dtype=np.float32) * 3 + 4).view(np.uint32)
+    return [(at + 4 * k, int(x)) for k, x in enumerate(v)]
+
+
+@pytest.mark.parametrize("case", ["reuse", "run"])
+@pytest.mark.parametrize("reload", [False, True])
+def test_porta_host_writes_between_runs(have_verilator, case, reload):
+    """Two runs of one program in one simulation (the memory path not reset between them, as on
+    the card), the host rewriting scales between them: run 2's first A read is the beat run 1
+    read last (reuse), or the next channel beat of run 1's run (run: R8 moves the MM's scales
+    there); with the program loaded again or not."""
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    rng = np.random.default_rng(8800 + 2 * (case == "run") + reload)
+    img, head, mm = _pa_setup(cfg, rng)
+    b0 = _PA_SC // 64 + 3
+    b1 = b0 if case == "reuse" else _pa_next(b0)
+    prog = head + [mm(_pa_beat(b0), 8192), I.st(0x70000, 8192, 4 * 128), I.halt()]
+    args1, args2 = [0], [_pa_beat(b1) - _pa_beat(b0)]
+    pokes = _pa_new_scales(rng, _pa_beat(b1))
+    m1 = Machine(cfg, [prog], [img.copy()], args=args1).run()
+    d1 = m1.slices[0].dram.copy()
+    for a, v in pokes:
+        d1[a:a + 4] = np.array([v], "<u4").view(np.uint8)
+    m2 = Machine(cfg, [prog], [d1], args=args2)
+    m2.slices[0].tmem[:] = m1.slices[0].tmem
+    m2.run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=30,
+                                  seed=5, uarch=rtlsim.BOARD_UARCH, args=args1, reload=reload,
+                                  again=[{"args": args2, "pokes": {0: pokes}}])
+    assert np.array_equal(tmems[0], m2.slices[0].tmem)
+    assert np.array_equal(drams[0], m2.slices[0].dram)
+
+
+@pytest.mark.parametrize("case", ["reuse", "run"])
+def test_porta_host_writes_before_a_waitw(have_verilator, case):
+    """In one run: an MM, a WAITW on a flag the host sets after rewriting scales, an MM whose
+    first A read is the rewritten beat (the one the first MM read last, or the next channel beat
+    of its run); the WAITW's footprint orders the MM after it, and its end drops port A's beats."""
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    rng = np.random.default_rng(8810 + (case == "run"))
+    img, head, mm = _pa_setup(cfg, rng)
+    b0 = _PA_SC // 64 + 5
+    b1 = b0 if case == "reuse" else _pa_next(b0)
+    prog = head + [mm(_pa_beat(b0), 8192), I.waitw(_PA_FLAG, 4000, 1, I.C_EQ, interval=40),
+                   mm(_pa_beat(b1), 12288), I.st(0x70000, 8192, 4 * 128),
+                   I.st(0x71000, 12288, 4 * 128), I.halt()]
+    pokes = [(20000, a, v) for a, v in _pa_new_scales(rng, _pa_beat(b1))] + \
+        [(20010, _PA_FLAG, 1)]
+    m = Machine(cfg, [prog], [img.copy()], args=[0])
+
+    def host(mach):
+        for _, a, v in pokes:
+            mach.slices[0].m32[a // 4] = np.uint32(v)
+    m.host = host
+    m.run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=30,
+                                  seed=7, uarch=rtlsim.BOARD_UARCH, args=[0],
+                                  pokes={0: pokes})
+    assert st["cycles"] > 20010
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+
+
 @pytest.mark.parametrize("stall,seed", [(0, 1), (40, 2), (70, 3), (40, 4), (30, 5)])
 def test_axi_write_bursts(have_verilator, stall, seed):
     """Port B writes (a DMA ST's chunk runs): STs of whole and partial chunks at various offsets

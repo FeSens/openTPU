@@ -1,5 +1,9 @@
 // Simulation harness: memories load prog_<s>.hex / dram_<s>.bin from +dir=..., the machine runs
 // until every slice halts, then TMEM and DRAM of every slice are dumped for comparison.
+// +runs=N: N runs in one simulation, as the host runs a program again (the memory path, sys_rst,
+// is not reset between them): after a run halts, the core's reset (AXI = 1: the memory model
+// writes the next run's pokeb lines, the host's writes between the runs), +reload: the program
+// loaded again, +r<k>_arg<j>=N: run k's arguments (else the run before's), then the next run.
 module tb_top;
   parameter int S          = 1;
   parameter int D          = 32;
@@ -67,6 +71,33 @@ module tb_top;
     while (!all_halted && cycles < max_cycles) begin
       @(negedge clk);
       cycles++;
+    end
+    begin
+      int runs = 1;
+      string nm;
+      void'($value$plusargs("runs=%d", runs));
+      for (int r = 1; r < runs && all_halted && !any_error; r++) begin
+        repeat (256) @(negedge clk);     // the halted run's last writes land
+        rst = 1'b1;                      // (the memory model: the host's writes between them)
+        for (int k = 0; k < 8; k++) begin
+          nm = $sformatf("r%0d_arg%0d=%%d", r, k);
+          void'($value$plusargs(nm, rinit[k]));
+        end
+        repeat (4) @(negedge clk);
+        if ($test$plusargs("reload")) begin
+          ld_start = 1'b1;
+          @(negedge clk);
+          ld_start = 1'b0;
+          while (ld_busy) @(negedge clk);
+        end
+        @(negedge clk);
+        rst = 1'b0;
+        @(negedge clk);
+        while (!all_halted && cycles < max_cycles) begin
+          @(negedge clk);
+          cycles++;
+        end
+      end
     end
     // the memory path finishes what it took before the dump: a halted slice's last writes are
     // counted once the channel takes their commands, their data a few cycles later

@@ -104,7 +104,8 @@ def model_image(kind, M, spec, prefix, variant, R, cfg, cap, **kw):
     if variant == "dense":
         s = dataclasses.replace(s, moe=None)
         return s, s.image(cfg, cap, rows=R, wformat="fp4", head_format="int8")
-    return s, s.image(cfg, cap, rows=R, wformat="fp4", head_format="int8", experts=s.moe.k)
+    return s, s.image(cfg, cap, rows=R, wformat="fp4", head_format="int8", experts=s.moe.k,
+                      **kw)
 
 
 def timing_hack(img, dram):
@@ -162,10 +163,10 @@ def cmd_layer(a):
     cfg = cfg_of()
     for prefix in a.prefix.split(":"):
         s, img = model_image(kind, M, spec, prefix, "moe", 1, cfg, a.cap, lookup=True)
-        li = s.layers - 1
-        progs, ra = img.compile_layer_run(li, a.pos // img.block + 1, img.block, R=a.R,
+        li, block = s.layers - 1, getattr(img, "block", 256)
+        progs, ra = img.compile_layer_run(li, a.pos // block + 1, block, R=a.R,
                                           embedded=a.R > 1)
-        args = arg_words(ra, dict(RunPos.values(791, a.pos, 1, img.block), row=3))
+        args = arg_words(ra, dict(RunPos.values(791, a.pos, 1, block), row=3))
         dram = np.zeros(img.nbytes, np.uint8)
         timing_hack(img, dram)
         t = time.time()

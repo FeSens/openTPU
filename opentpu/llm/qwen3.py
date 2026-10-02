@@ -1020,6 +1020,16 @@ class RunPos:
     def values(token: int, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
         return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
 
+    def offset(self, r: int) -> "RunPos":
+        """Row r of a run of rows from this position, in its attention block (a layer-major
+        prefill run, Engine.prefill_layers): position p + r, its mask row r entries on (the
+        same run-time values)."""
+        q = object.__new__(type(self))
+        q.__dict__.update(self.__dict__)
+        q.tpos, q.pos = self.tpos + r, self.pos + r
+        q.bucket = Bucket(self.blocks, self.bucket.z - 4 * r)
+        return q
+
 
 class RunRows(RunPos):
     """R consecutive rows at a run-time position (MTP's verify and draft runs, docs/mtp.md 10):
@@ -1365,7 +1375,8 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     flash-attention stream (_attend_heads). Per row the arithmetic is _attention's, so the
     results are bit-identical to R decode steps: heads narrower than D (LFM2) are padded, RoPE
     may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
-    and a query group wider than the MXU attends in parts of MCOLS heads."""
+    and a query group wider than the MXU attends in parts of MCOLS heads. A row's position may
+    be a run-time one (RunPos.offset: a layer-major prefill run), its K / V appended row by row."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     R = rows.R if isinstance(rows, RunRows) else len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
@@ -1385,8 +1396,12 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
         if run:                                 # V^T at a run-time position: a row at a time
             for r in range(R):
                 ol.kv_append(lw.kvs[0], hh, rows.pos + r, kj[r:r + 1, :], vj[r:r + 1, :])
-        for sq, p0, r0, n in [] if run else _runs(rows):
-            ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
+        elif isinstance(rows[0][1], RunPos):    # (rows of their own RunPos, likewise)
+            for r, (sq, p) in enumerate(rows):
+                ol.kv_append(lw.kvs[sq], hh, p.pos, kj[r:r + 1, :], vj[r:r + 1, :])
+        else:
+            for sq, p0, r0, n in _runs(rows):
+                ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
         del kj, vj
     del k, v
     # queries as [R * nq, dk]: (row r, KV head j) is the G contiguous rows r*nq + j*G ...
@@ -1405,10 +1420,15 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
         r, j, g0, g1 = ent[i]
         o[r, (j * G + g0) * d:(j * G + g1) * d].reshape(g1 - g0, d).set(acc / l[:, None])
 
+    def seq(r):                                 # row r's extent: its bucket, or pos + 1
+        if run:
+            return rows.bucket_row(r)
+        p = rows[r][1]
+        return p.bucket if isinstance(p, RunPos) else p + 1
+
     _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
                   [lw.kvs[0 if run else rows[r][0]] for r, *_ in ent],
-                  [heads[j] for _, j, _, _ in ent],
-                  [rows.bucket_row(r) if run else rows[r][1] + 1 for r, *_ in ent], block,
+                  [heads[j] for _, j, _, _ in ent], [seq(r) for r, *_ in ent], block,
                   scale, depth=ATTN_DEPTH, emit=emit)
     del Q
     if gated:                                   # after the heads: o * sigmoid(gate), rounded
@@ -1653,6 +1673,12 @@ class Engine:
     read reopens its file). Default on; False keeps them. pool_map: the pool file's reads
     touched through a read-only map (PoolFile's mapped, docs/offload.md 10.7). Default on.
 
+    layer_major: a MoE model's prompt layer by layer, runs of that many rows (prefill_layers,
+    docs/offload.md 13); pooled: the expert slots pooled for it, given back by `restore`
+    ("lazy" or "eager"); embed_runs: with the embedding rows from the host's table, its embed
+    runs and compile-time-position runs (default off while the card's port A keeps its beats
+    across runs, 13.6: token steps first, and layer 0's runs gather their rows).
+
     prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
     come from opentpu/progcache.py: compiled once per process and image layout, and kept on
     disk for the next process. Default: on when OTPU_PROG_CACHE is set (to a directory, or 1
@@ -1665,9 +1691,9 @@ class Engine:
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
-                 embed_host: bool | None = None, layer_major: int = 0,
-                 release_weights: bool = True, pool_map: bool = True,
-                 prog_cache: bool | None = None):
+                 embed_host: bool | None = None, layer_major: int = 0, pooled: bool = True,
+                 restore: str = "lazy", embed_runs: bool = False, release_weights: bool = True,
+                 pool_map: bool = True, prog_cache: bool | None = None):
         self.spec, self.cap, self.block = spec, cap, block
         self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
         self.batch, self.rows = batch, max(rows, batch)
@@ -1740,6 +1766,9 @@ class Engine:
         # token by token): its programs, (layer, blocks, rows, embedded) and "head" ->
         # (programs, run_args)
         self.layer_major = int(layer_major)
+        self.pooled, self.restore = pooled, restore     # (the expert slots during it)
+        self.embed_runs = embed_runs        # (the embed and compile-time-position runs with
+                                            # the embedding rows from the host: prefill_layers)
         self._layer_runs: dict = {}
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
                                      and getattr(self.backend, "args", False) and batch == 1):
@@ -2124,8 +2153,21 @@ class Engine:
         `layer_major` rows (the image's compile_layer_run: the first row's position and chunk
         row as run arguments; a run stays in one attention block), so that the expert slots
         serve one layer at a time; then the LM head of the last row. Runs of more than one row
-        start from the chunk's embedding rows (one embed run a token). Bit-identical to step()
-        token by token (the KV cache, the logits). Returns the logits after the last token."""
+        start from the chunk's embedding rows (one embed run a token). A model with
+        convolutions (conv_k > 1) runs its rows before position conv_k - 1 at compile-time
+        positions, from their embedding rows too. With the embedding rows from the host's table
+        (embed_host) and not `embed_runs`, there are no embed runs: the rows before conv_k - 1
+        run token by token (prefill_chunks) and layer 0's runs gather their rows from the
+        host's slot. (The card's port A keeps the beat of its last read and its prefetch run
+        across runs, and the host's writes do not drop them: embed runs back to back read the
+        slot's scale beat first and got the first row's scales, docs/offload.md 13.6. A run
+        whose first scale read follows a layer's is safe; embed_runs=True brings the embed and
+        compile-time-position runs back on a bitstream that drops them at RUN.) The expert
+        server's slots are pooled for the prompt (ExpertServer.begin_prefill: every slot serves
+        the running layer) and given back to their layers before the head runs (end_prefill:
+        `restore`, "lazy" by default).
+        Bit-identical to step() token by token (the states, the KV cache, the logits): only
+        the slots the experts sit in move. Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
         self._drain()
         tokens = [int(t) for t in tokens]
@@ -2143,21 +2185,41 @@ class Engine:
                       args=arg_words(ra, vals))
                 self.stats.append(self.backend.wait())
 
+        host = bool(getattr(img, "embed_host", False)) and not self.embed_runs
+        if host and self.pos < K - 1:   # the rows before conv_k - 1 token by token (no embed
+            n = min(len(tokens), K - 1 - self.pos)          # or compile-time-position runs)
+            for _, lg in self.prefill_chunks(tokens[:n], 0, None):
+                pass
+            tokens = tokens[n:]
+            if not tokens:
+                return lg
+        srv = self.server if self.pooled else None
+        if srv is not None and hasattr(srv, "begin_prefill"):
+            srv.begin_prefill()
         for c0 in range(0, len(tokens), img.prefill_rows):
             part, p0 = tokens[c0:c0 + img.prefill_rows], self.pos
-            if R > 1:
-                for i, t in enumerate(part):
-                    run((-1, (p0 + i) // B + 1, 1, True),
-                        dict(RunPos.values(t, p0 + i, K, B), row=i))
+            low = max(0, min(len(part), K - 1 - p0))    # rows at compile-time positions
+            for i, t in enumerate([] if host else part[:len(part) if R > 1 else low]):
+                self._write_host_rows([t])              # (embed_host: the token's row)
+                run((-1, (p0 + i) // B + 1, 1, True), dict(RunPos.values(t, p0 + i, K, B), row=i))
             for li in range(self.spec.layers):
                 i = 0
                 while i < len(part):
                     p = p0 + i
-                    n = min(R, len(part) - i, B - p % B)
-                    run((li, p // B + 1, n, R > 1),
-                        dict(RunPos.values(part[i], p, K, B), row=i))
+                    if i < low:
+                        n = min(R, low - i)
+                        run((li, None, n, True, p), {"row": i})
+                    else:
+                        n = min(R, len(part) - i, B - p % B)
+                        gather = li == 0 and (R == 1 or host)   # (the run gathers its rows:
+                        if gather:                              # the host's first)
+                            self._write_host_rows(part[i:i + n])
+                        run((li, p // B + 1, n, R > 1 and not gather),
+                            dict(RunPos.values(part[i], p, K, B), row=i))
                     i += n
             self.pos = p0 + len(part)
+        if srv is not None and hasattr(srv, "end_prefill"):    # (the last run's request is
+            srv.end_prefill(self.restore)                       # served: it has halted)
         run("head", {"row": len(part) - 1})
         io, S, v_loc = img.io, self.cfg.S, img.v_loc
         return np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc)
@@ -2165,12 +2227,18 @@ class Engine:
 
     def _layer_run(self, key):
         """prefill_layers' programs, compiled once: (layer (-1: the embed run), blocks, rows,
-        embedded) or "head" -> (programs, run_args, the program assembled for a backend that
-        runs words, else None)."""
+        embedded), (layer, None, rows, True, compile-time position) or "head" -> (programs,
+        run_args, the program assembled for a backend that runs words, else None)."""
         if key not in self._layer_runs:
             img = self.image
-            progs, ra = img.compile_prefill_head() if key == "head" else \
-                img.compile_layer_run(key[0], key[1], self.block, R=key[2], embedded=key[3])
+            if key == "head":
+                progs, ra = img.compile_prefill_head()
+            elif key[1] is None:                # (a compile-time position)
+                progs, ra = img.compile_layer_run(key[0], key[4] // self.block + 1, self.block,
+                                                  R=key[2], embedded=True, at=key[4])
+            else:
+                progs, ra = img.compile_layer_run(key[0], key[1], self.block, R=key[2],
+                                                  embedded=key[3])
             words = np.asarray(I.assemble(progs[0]), np.uint32) \
                 if getattr(self.backend, "runs_words", False) else None
             self._layer_runs[key] = (progs, ra, words)

@@ -312,10 +312,10 @@ def test_moe_resident_and_the_card_loop(moe):
 def test_moe_layer_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
     """The prompt layer by layer (Engine.prefill_layers: every row of a chunk through a layer
     before the next, in runs of R rows at their run-time position and chunk row; R > 1: the
-    MoE block moe.moe_ffn_rows, one request for the run's rows) gives the logits and the KV
-    cache of token-by-token runs bit for bit, with as few slots per layer as a run's union
-    can need: chunks of 100 rows, the last crossing an attention bucket (runs split at the
-    block's end); then the next decode steps."""
+    MoE block moe.moe_ffn_rows, one request for the run's rows; the slots pooled) gives the
+    logits and the KV cache of token-by-token runs bit for bit, with as few slots per layer
+    as a run's union can need: chunks of 100 rows, the last crossing an attention bucket
+    (runs split at the block's end); then the next decode steps."""
     monkeypatch.setattr(G, "PREFILL_CHUNK", 100)
     toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 262)]
     slots = min(8, R * K)
@@ -329,6 +329,28 @@ def test_moe_layer_major_prefill_is_bit_exact(moe, wf, R, monkeypatch):
     assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
                           b.backend.machine.slices[0].dram[img.layer0:img.head[0]])
     assert a.server.misses > 0 or slots == 8          # (R = 4: every expert in a slot)
+    t = int(np.argmax(la))
+    for _ in range(3):
+        ga, gb = a.step(t), b.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))
+
+
+@pytest.mark.parametrize("restore", ["lazy", "eager"])
+def test_moe_pooled_slots_cut_the_prompts_misses(moe, restore):
+    """Layer-major prefill with the slots pooled (ExpertServer.begin_prefill / end_prefill:
+    every slot serves the running layer, then each layer gets its own number back, `restore`)
+    against each layer's own slots: the same logits and decode steps bit for bit, under half
+    the misses in the prompt, and every layer back to its own number of slots."""
+    toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 60)]
+    a = _moe_engine(moe, experts=2 * K, layer_major=2, restore=restore)
+    b = _moe_engine(moe, experts=2 * K, layer_major=2, pooled=False)
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    assert 0 < 2 * a.server.misses < b.server.misses
+    srv = a.server
+    assert not srv.pooled and all(len(srv.lru[j]) + len(srv.free[j]) == n
+                                  for j, (_, n) in enumerate(a.image.offload.slots))
     t = int(np.argmax(la))
     for _ in range(3):
         ga, gb = a.step(t), b.step(t)

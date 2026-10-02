@@ -367,9 +367,15 @@ through whole.
 - Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
   completed, every younger MM or LD reads that DMA's data: the host orders its data before its
   flag, the card its flag before its reads. The XDMA and the core meet in `otpu_mem_ch` and
-  LiteDRAM, which must keep this order. A flag in the last beat of the DMA that carries the
-  data (a slot's tag, docs/offload.md 10.11) also needs that DMA's writes on its channel to
-  land in order: its other channel's DMA has completed before it starts.
+  LiteDRAM, which must keep this order. The board's DRAM adapter keeps port A's last beat and
+  read runs (the MXU's scales), which the host's writes do not reach: a WAITW that holds drops
+  them, as a run's start and a program load do (`otpu_native_dram` `a_flush`). Bitstreams before
+  the port-A flush (production up to g2fix 0885d436) did not: an MM whose first scale read after
+  a WAITW, or in a new run, fell in the beat of the last scale read, or in the next channel beat
+  of its read run, took the old data (the 35B's back-to-back embed runs). A flag in the last
+  beat of the DMA that carries the data (a slot's tag, docs/offload.md 10.11) also needs that
+  DMA's writes on its channel to land in order: its other channel's DMA has completed before
+  it starts.
 
 The MoE expert streaming of docs/offload.md uses it for a fence (`served >= seq`: the host has
 finished the card's earlier requests), for each present expert's directory entry and each

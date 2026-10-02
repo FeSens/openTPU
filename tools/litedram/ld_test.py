@@ -124,7 +124,9 @@ class WLCRG(LiteXModule):
     PLL: the 200 MHz IDELAYCTRL reference. clk50 as CRG's. rst_reg: sys's reset through a plain
     register after its synchronizer (whose ASYNC_REG flip-flop Vivado does not replicate), with
     max_fanout, a cycle later: the production core's sys reset reaches both channels' ends of the
-    die (3,794 loads, 6.8 ns of route in the 812bb01 build)."""
+    die (3,794 loads, 6.8 ns of route in the 812bb01 build). max_fanout 64 (256 until g2fix
+    0885d436, whose worst sys path, +0.009 ns, was a replica into a bankmachine's level register
+    across the die: 0 levels, 97% route): more replicas, each placed nearer its loads."""
     def __init__(self, platform, f, clk50=None, rst_reg=False):
         self.rst = Signal()
         self.cd_sys = ClockDomain()
@@ -139,7 +141,7 @@ class WLCRG(LiteXModule):
         if rst_reg:
             self.cd_sys_ars = ClockDomain()
             rst = Signal(reset=1, reset_less=True)
-            rst.attr.add(("max_fanout", 256))
+            rst.attr.add(("max_fanout", 64))
             self.comb += [self.cd_sys_ars.clk.eq(self.cd_sys.clk), self.cd_sys.rst.eq(rst)]
             self.specials += AsyncResetSynchronizer(self.cd_sys_ars, ~mmcm.locked)
             self.sync.sys_ars += rst.eq(ResetSignal("sys_ars"))

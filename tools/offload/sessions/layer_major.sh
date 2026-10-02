@@ -1,31 +1,59 @@
 #!/bin/bash
 # Layer-major prefill on the card (production build B, Gen1, no reload; docs/offload.md 13):
-# gemma-4-26B-A4B as session 8's g26a (int8 layers, fp4 experts and head, 18 slots a layer by
-# decayed use, wiki.txt's first paragraph), 16 tokens, its prompt token by token (g26t16), then
-# layer by layer in runs of 1 and 2 rows (g26lm1, g26lm2). The three runs' prefill logits and
-# tokens must be the same (layer-major is bit-exact with token by token on the ISA simulator),
-# and each against the ISA simulator's reference (q26ref16: reference.sh, made after PAIR) and
-# HF's. Per-layer slots (not pooled yet): the layer-major runs move as many experts as token by
-# token; their prefill_s is the card's compute and the runs' overheads. About 25 min.
-# Run: otpu-lock --wait 10800 -- tools/offload/sessions/layer_major.sh   (log: O/lm/session.log)
+# 16 tokens of gemma-4-26B-A4B as session 8's g26a (int8 layers, fp4 experts and head, 18 slots
+# a layer by decayed use, wiki.txt's first paragraph) and of Qwen3.5-35B-A3B as q35e (the
+# table on the host, no hints), each prompt token by token (g26t16, q35t16) or layer by layer
+# in runs of 1 or 2 rows (g26lm1/2, q35lm1/2: each layer's own slots; g26lmp2, q35lmp2: R = 2
+# with the slots pooled). RUNS picks the runs (default: the 35B's three and the 26B's R = 2
+# with per-layer slots, then the pooled ones last, so that a pooled failure costs only its own
+# runs; the 26B's must give O/lm's 90e6b6e06e19da99).
+# A model's runs must give the same prefill logits and tokens (layer-major is bit-exact with
+# token by token on the ISA simulator, pooled or not); each is also checked against the ISA
+# simulator's reference (reference.sh; RF, default O/refs-d29bfe9: q35ref16 88225ff781699291,
+# after moe-pair's expert sum order) and HF's; and against the runs of an earlier session in
+# O/lm (678b976: g26t16 / lm1 / lm2, per-layer slots). prefill_s: the prompt's time.
+# Run: otpu-lock --wait 10800 -- tools/offload/sessions/layer_major.sh   (log: O/lm2/session.log)
 set -u
-SESSION=lm; source "$(dirname "$0")/env.sh"
+SESSION=${SESSION:-lm2}; RF=${RF:-${O:-$HOME/otpu-build/offload/card2}/refs-d29bfe9}
+source "$(dirname "$0")/env.sh"             # (its RF defaults to O, whose q35ref16 is 7d879e6's)
 exec > >(tee -a $R/session.log) 2>&1
 [ -e $O/gemma-4-26B-A4B ] || ln -s ${G26:-$HOME/openTPU/models/gemma-4-26B-A4B} $O/gemma-4-26B-A4B
 echo "layer_major start $(date +%T) tree $rev mem $(mem) GB"
-RUNS="${RUNS:-g26t16 g26lm1 g26lm2}" bash "$here/card_moe.sh"
+check() {      # the model's runs so far (and O/lm's) agree, and this run wrote its result
+  python - $R $1 <<'PY'
+import glob, json, sys
+o, run = sys.argv[1:]
+m = run[:3]
+fs = glob.glob(f"{o}/{m}card16*.json") + glob.glob(f"{o}/../lm/{m}card16*.json")
+n = len(glob.glob(f"{o}/{m}card16*.json"))
+same = len({(json.load(open(f))["prefill_logits_sha"], tuple(json.load(open(f))["tokens"]))
+            for f in fs}) == 1
+sys.exit(0 if same and n else 1)
+PY
+}
+for run in ${RUNS:-q35t16 q35lm1 q35lm2 g26lm2 q35lmp2 g26lmp2}; do   # one at a time: stop at the
+  n0=$(ls $R/${run:0:3}card16*.json 2>/dev/null | wc -l)        # first failed or differing run
+  RUNS=$run bash "$here/card_moe.sh"
+  n1=$(ls $R/${run:0:3}card16*.json 2>/dev/null | wc -l)
+  if [ "$n1" -le "$n0" ] || ! check $run; then echo "STOP after $run: no result, or it differs"; break; fi
+done
 echo "layer_major end $(date +%T)"
 python - $R <<'PY'
-import json, os, sys
+import glob, json, os, sys
 o = sys.argv[1]
-r = {n: json.load(open(f"{o}/g26card16{n}.json")) for n in ("", "lm1", "lm2")
-     if os.path.exists(f"{o}/g26card16{n}.json")}
-same = len({(x["prefill_logits_sha"], tuple(x["tokens"])) for x in r.values()}) == 1
-print(f"  [{'PASS' if len(r) == 3 and same else 'FAIL'}] the runs' prefill logits and tokens "
-      f"the same: {same} ({len(r)} runs)")
-for n, x in r.items():
-    print(f"  g26{n or 't16'}: prefill {x['prefill_s']} s, layer-major requests "
-          f"{x.get('prefill_requests')} misses {x.get('prefill_misses')}, decode "
-          f"{x['tok_s_wall']} tok/s")
+for m in ("g26", "q35"):
+    r = {(d + " " if d else "") + (os.path.basename(f)[len(m) + 6:-5] or "t16"): json.load(open(f))
+         for d in ("", "lm") for f in sorted(glob.glob(f"{o}/{'../' + d + '/' if d else ''}"
+                                                       f"{m}card16*.json"))
+         if d != "lm" or os.path.realpath(f"{o}/../lm") != os.path.realpath(o)}
+    if not r:
+        continue
+    same = len({(x["prefill_logits_sha"], tuple(x["tokens"])) for x in r.values()}) == 1
+    print(f"  [{'PASS' if same else 'FAIL'}] {m}: {len(r)} runs, prefill logits and tokens the "
+          f"same: {same}")
+    for n, x in r.items():
+        print(f"  {m} {n}: prefill {x['prefill_s']} s, sha {x['prefill_logits_sha']}, pooled "
+              f"{x.get('pooled')}, layer-major requests {x.get('prefill_requests')} misses "
+              f"{x.get('prefill_misses')}, decode {x['tok_s_wall']} tok/s")
 PY
 date > $R/DONE
