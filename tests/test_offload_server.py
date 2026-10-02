@@ -745,6 +745,27 @@ def test_a_request_withdraws_its_layers_unnamed_hints_with_drop():
     assert set(srv.lru[0]) == {0, 4, 7} and _landed(mem, lay, srv, 7)
 
 
+def test_hint_caps_send_the_first_n_of_its_top_ids_not_in_a_slot():
+    """hint_n / hint_top (docs/offload.md 12.7): of a hint's first hint_top ids (the router's
+    best first), the first hint_n not in a slot get one, at once (the victim's entry cleared
+    before served covers the hint), the others nothing: no slot, no eviction."""
+    lay, mem, srv, G = _hint_setup()                # layer 0: 0, 1, 2 in slots
+    srv.hint_n, srv.hint_top = 1, 3
+    _post(mem, lay, 1, [G + 1, G + 3, G + 4, G + 5])    # top 3: 1 (in a slot), 3, 4: 3 only
+    assert srv.poll() == 1 and _served(mem, lay) == 1.0
+    assert list(srv.pending) == [3] and 4 not in srv.lru[0] and 5 not in srv.lru[0]
+    assert _entry(mem, lay, 2) == (0, 0.0) and set(srv.lru[0]) == {0, 1, 3}
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 3) and srv.prefetched == 1
+    srv.hint_top = 1                                # top 1: 0, in a slot: nothing
+    _post(mem, lay, 2, [G + 0, G + 6])
+    assert srv.poll() == 1 and not srv.pending and 6 not in srv.lru[0]
+    srv.hint_n = srv.hint_top = 0                   # uncapped: every one not in a slot
+    _post(mem, lay, 3, [G + 6, G + 7])
+    assert srv.poll() == 1 and list(srv.pending) == [6, 7]
+
+
 @pytest.mark.parametrize("chash", [False, True])
 def test_board_dram_reads_a_beat_as_board_read_does(chash):
     """BoardDram.read of bytes within one 64-byte beat (a poll's seq, a request's row) reads that

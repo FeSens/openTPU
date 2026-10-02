@@ -82,6 +82,47 @@ def test_lfu_layer_is_the_servers_lfu():
     assert abs(r["demand"] * T - sum(got)) < 1e-9
 
 
+def test_prefetch_is_the_servers_capped_hints():
+    """prefetch (docs/offload.md 12.7) replays ExpertServer's capped hints (hint_n / hint_top),
+    each landed before its layer's request: the same misses and experts sent on a noisy
+    prediction. A perfect prediction's experts are all used; a wrong one's cost misses."""
+    from opentpu.host.offload import ExpertServer, Layout, SimDram
+    rng = np.random.default_rng(7)
+    T, L, E, k, cap, half = 300, 3, 16, 2, 5, 4.0
+    p = 1.0 / np.arange(1, E + 1) ** 1.2
+    perm = [rng.permutation(E) for _ in range(L)]
+    req = np.array([[perm[j][rng.choice(E, k, replace=False, p=p / p.sum())] + j * E
+                     for j in range(L)] for _ in range(T)])
+    noisy = req.copy()                  # the router on the layer's input: each id right with
+    for t in range(T):                  # p 0.6, else another of the layer's
+        for j in range(L):
+            for i in range(k):
+                if rng.random() > 0.6:
+                    noisy[t, j, i] = rng.choice([g for g in range(j * E, (j + 1) * E)
+                                                 if g not in noisy[t, j]])
+    pred = [noisy[:, j] for j in range(L)]
+    warm = cs.top_set(cs.freq(req[:60], E * L), E * L)
+    lay = Layout.build(4096, E, k, (cap,) * L, 128)
+    for n, top in ((1, 2), (1, 1), (2, 2)):
+        srv = ExpertServer(SimDram(np.zeros(lay.end + 4096, np.uint8)), lay,
+                           lambda g: bytes(128), policy="lfu", half=half)
+        srv.load(warm)
+        srv.hint_n, srv.hint_top = n, top
+        for t in range(T):
+            for j in range(L):
+                srv.hint([int(e) for e in noisy[t, j]])
+                while srv.pending:
+                    srv.step()
+                srv.serve([int(e) for e in req[t, j]])
+        m, s, _ = cs.prefetch(req, pred, E, cap * L, warm, n, top, half)
+        assert (round(m * T), round(s * T)) == (srv.misses, srv.prefetched)
+    none = cs.prefetch(req, None, E, cap * L, warm, 0, 0, half)[0]
+    good = cs.prefetch(req, [req[:, j] for j in range(L)], E, cap * L, warm, 1, k, half)
+    bad = cs.prefetch(req, [(req[:, j] + 7) % E + j * E for j in range(L)], E, cap * L, warm, 1,
+                      k, half)
+    assert good[0] < none < bad[0] and good[1] == good[2] > 0 and bad[2] < bad[1]
+
+
 def _hw(pcie=1.3e9):
     return dict(dram=14e9, call=30e-6, req=30e-6, done=15e-6, ssd=0.5e9, pcie_one=pcie)
 

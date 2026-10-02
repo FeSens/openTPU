@@ -52,10 +52,10 @@ cleared), and with "lazy" (the default; docs/offload.md 13) decode's misses fill
 
 A request whose ids are at G = layers x E and above is a hint (docs/offload.md 12: the layer's
 router on its input, before its mixer). With the "lfu" policy the host gives each hinted expert
-not in a slot one now (a free one, or the victim, its entry cleared), writes served, and moves
-the experts on the link's idle time: one part per poll that finds no request, the tag with the
-last part, then the entry. A request naming one still on its way names its slot in the answer
-and sends the rest at once. "lru" ignores hints.
+not in a slot one now (a free one, or the victim, its entry cleared; hint_n / hint_top cap them,
+docs/offload.md 12.7), writes served, and moves the experts on the link's idle time: one part
+per poll that finds no request, the tag with the last part, then the entry. A request naming one
+still on its way names its slot in the answer and sends the rest at once. "lru" ignores hints.
 
 On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
 rate, in a worker thread, the host's own words without a read of the card first.
@@ -511,6 +511,9 @@ class ExpertServer:
         # hints served; hinted experts landed on idle time, sent by the request that named
         # them, replaced before they landed, withdrawn by their layer's request (drop)
         self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
+        # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
+        # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
+        self.hint_n = self.hint_top = 0
         self.history: list | None = None    # a list: each request's ids are appended
         # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
         # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
@@ -756,8 +759,12 @@ class ExpertServer:
         """A hint: the k global ids the layer's router picks on its input (docs/offload.md 12).
         With "lfu" each one not in a slot gets one now (a free slot, or the victim's: its entry
         cleared) and waits in `pending` for the link's idle time (step); no use counted, so
-        a hinted expert no request names is the next victim. "lru" ignores hints (section
-        5.4: an LRU victim of a wrong hint is a recent expert). A hint for ahead_layer's layer
+        a hinted expert no request names is the next victim. hint_n / hint_top cap them: of the
+        first hint_top ids the first hint_n not in a slot (docs/offload.md 12.7). The slot is
+        taken here, not when the first part goes: the victim's entry must be cleared before
+        `served` covers the hint, since the card may post the layer's request (and read the
+        victim's entry) as soon as it sees served. "lru" ignores hints (section 5.4: an LRU
+        victim of a wrong hint is a recent expert). A hint for ahead_layer's layer
         (the card's router on the layer before it, in a layer-major prefill) adds to the end
         of its queue instead (docs/offload.md 13.4)."""
         j = self._layer(ids)
@@ -772,10 +779,10 @@ class ExpertServer:
         if self.policy != "lfu" or self.pooled:
             return
         lru = self.lru[j]
-        for g in ids:
-            if g not in lru:
-                lru[g] = self._slot(j, ids)
-                self.pending[g] = 0
+        want = [g for g in (ids[:self.hint_top] if self.hint_top else ids) if g not in lru]
+        for g in want[:self.hint_n] if self.hint_n else want:
+            lru[g] = self._slot(j, ids)
+            self.pending[g] = 0
         self._clear()
 
     def step(self) -> None:

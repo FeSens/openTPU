@@ -2488,6 +2488,70 @@ writes the decode's timeline (when each hint, request and part was seen and done
   3. a future bitstream: the card writing its request's seq where the host sees it without a
      DMA read (a doorbell register or an MSI), so that the host waits on no read at all.
 
+### 12.7 Capped hints (offload-hintcap)
+
+Since session 6 the request's path changed (designs A and A', 10.11 and 10.13), the link runs at
+Gen2 (2.29 GB/s: a 1.67 MB 35B expert in 0.73 ms), and a hinted expert can go as one DMA call.
+Session 6's timeline has its request 1.6-1.7 ms (median) after a hint is seen: room for one
+expert, not for every hinted one. Capped hints send only the best:
+
+- `ExpertServer.hint_n` and `hint_top` (moe_card `--hint-n`, `--hint-top`): of a hint's first
+  hint_top ids (its router's best first), the first hint_n not in a slot get one. The others get
+  nothing: no slot, no eviction. 0, the default, leaves a hint uncapped, as before. Hints stay
+  off by default.
+- The slot is still taken at the hint, not when the expert's first part goes (as ahead_layer's
+  queue does in a prefill). In decode the victim is one of the hinted layer's own slots, and the
+  card posts that layer's request as soon as served covers the hint, then reads the entries of
+  the ids it names. The victim's cleared entry has to go before served, or a request naming the
+  victim could read its old entry while its slot is overwritten. ahead_layer can wait because
+  its victims are outside the two layers the runs read.
+- `cachesim.py --prefetch PRED:TOP:N` replays this offline (`prefetch`: the server's capped
+  hints, each landed before its request; test_offload checks it against ExpertServer, miss for
+  miss). Tests: test_offload_server (the caps), test_qwen35_moe (the live card with caps 1 / 1
+  bit for bit, and moe_card's `--hint-n` / `--hint-top` end to end).
+
+Offline, on the four 2048-token traces: lfu_layer at the card's slots, each text warmed by the
+other texts' profile. A prefetched expert takes the slot of least decayed use and gets no use,
+so a wrong one evicts an expert a later request may want; that cost is in the misses. `pre` is
+the layer's router on its input (the hint programs' post), `prev_r` the router on the layer
+before's output (a layer ahead).
+
+| prediction, top, n | 35B (1680 slots): misses a token | sent | precision | 26B (540 slots): misses a token | sent | precision |
+|:--|--:|--:|--:|--:|--:|--:|
+| none | 84.0 | | | 67.5 | | |
+| pre, 4, 1 | 66.4 (-20.9%) | 20.7 | 0.88 | 49.8 (-26.3%) | 20.8 | 0.89 |
+| pre, 4, 2 | 59.6 (-29.0%) | 29.9 | 0.85 | 41.4 (-38.6%) | 32.3 | 0.85 |
+| pre, 8, 1 | 58.7 (-30.1%) | 34.6 | 0.76 | 45.9 (-32.0%) | 27.7 | 0.82 |
+| prev_r, 4, 1 | 70.9 (-15.6%) | 22.4 | 0.64 | 54.0 (-20.1%) | 19.0 | 0.78 |
+| prev_r, 4, 2 | 66.4 (-20.9%) | 33.1 | 0.59 | 48.6 (-28.0%) | 28.7 | 0.73 |
+
+The time per 128 tokens comes from session 16's runs of A' through the W0 card model (10.13),
+each saved miss taken off its request's critical window. Every byte sent while the card computes
+costs it 0.13-0.18 s a GB of compute (13.8's contention):
+
+| prediction, top, n | 35B: misses | contention, 0.13 / 0.17 s a GB | net at 0.17 | 26B: misses | contention | net at 0.17 |
+|:--|--:|--:|--:|--:|--:|--:|
+| pre, 4, 1 | -2.09 to -2.15 s | +0.58 / +0.75 s | -1.34 to -1.40 s (+5.8 to +6.0%) | -4.72 to -4.74 s | +1.19 / +1.56 s | -3.16 to -3.18 s (+9.9 to +10.0%) |
+| pre, 8, 1 | -3.01 to -3.10 s | +0.96 / +1.26 s | -1.75 to -1.84 s (+7.7 to +8.0%) | -5.68 to -5.72 s | +1.59 / +2.08 s | -3.60 to -3.64 s (+11.5 to +11.6%) |
+
+At n = 2 a second expert no longer fits the window, and its contention takes most of the gain.
+`prev_r` nets less than `pre` at every setting.
+
+Two costs are not in the table. The hint's own card time: each MoE layer reads its router again
+(int8, 257 x 2048 bytes; 21 MB a token over 40 layers, about 0.2 s per 128 tokens at the
+decode's DRAM rate). And its post waits for served, which the host writes inside the mixer's
+window. So the 35B's prediction is about +5% (-1.15 to -1.2 s) with top 4 and about +7% with
+top 8. Contention is the main uncertainty: at twice the measured rate (0.34 s a GB) top 4 nets
+about +1.6% and top 8 about +1.2%, under the 2% rule below.
+
+The card A/B (session 17, in one lock with the re-baseline on the fused build and LFM2-8B's
+token-exact check): q35e128s (no hints) and q35e128hn (pre, top 4, n 1) A B A B, then one
+q35e128hn8 (top 8) if the slot allows. Each run is checked against the ISA simulator's run of
+its own programs: q35ref16 without hints, q35ref16h with them and the caps. Hints become the
+35B's default only if top 4 gains at least 2% over the same lock's base with every run bit for
+bit. The 26B has no decode hint programs (a gemma4.py change), so they wait for the 35B's
+result.
+
 ## 13. Layer-major prefill
 
 Today a prompt runs token by token through the decode step. Each token's MoE layers ask for
