@@ -430,7 +430,8 @@ def test_one_sequence_one_slice(tiny):
 
 
 def test_named_mix(tiny, monkeypatch):
-    """wformat "mix": int8 with Spec.mix (formats.named), in the image and emulated_logits."""
+    """wformat "mix": int8 with Spec.mix (formats.named), in the image, emulated_logits and an
+    Engine (its logits those of int8 with the mix as OTPU_FORMATS)."""
     monkeypatch.delenv("OTPU_FORMATS", raising=False)
     _, W, spec = tiny
     spec = replace(spec, mix="attn@6-8=fp4,mlp@6-8=fp4")
@@ -440,6 +441,12 @@ def test_named_mix(tiny, monkeypatch):
     toks = [5, 6, 7, 8, 9]
     assert np.array_equal(G.emulated_logits(spec, W, toks, wformat="mix"),
                           G.emulated_logits(spec, W, toks, formats=spec.mix))
+    a = Engine(spec, W, cap=1024, cfg=_cfg(), wformat="mix", resident=True)
+    monkeypatch.setenv("OTPU_FORMATS", spec.mix)
+    b = Engine(spec, W, cap=1024, cfg=_cfg(), resident=True)
+    assert a.image.formats == b.image.formats == spec.mix
+    assert np.array_equal(a.prefill(toks), b.prefill(toks))
+    assert np.array_equal(a.step(10), b.step(10))
 
 
 def _tool(name):
