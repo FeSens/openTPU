@@ -131,7 +131,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          legacy_serve: bool = False, embed_runs: bool = False,
          poll_idle: str | None = None, prefill_trace: str | None = None,
          layer_ahead: str | None = None, ahead_part: int | None = None,
-         idle_parts: str = "ra") -> dict:
+         idle_parts: str = "v2") -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -503,11 +503,11 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
-    ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="ra",
+    ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="v2",
                     help="the hinted / ahead experts' parts on idle polls (docs/offload.md "
-                         "13.12): ra (the default since pfv2) read ahead, one call each; v1 "
-                         "as before (cut in two, each read after the last one's DMA); halt "
-                         "none started near a run's expected end; v2 both")
+                         "13.12): ra read ahead, one call each; v1 as before (cut in two, "
+                         "each read after the last one's DMA); halt none started near a run's "
+                         "expected end; v2 both (the default since session 18)")
     ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
                     help="--layer-major with pooled slots: the next MoE layer's experts sent "
                          "while a layer runs (docs/offload.md 13.7), each layer's in index "

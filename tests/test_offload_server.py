@@ -437,7 +437,8 @@ def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
     is measured), so its halt is not seen after a part. The end: the memory's run_clock (the
     run's start and its time with no waits) plus the run's own waits (each request with misses,
     seen to served; a new run starts them at 0). A request is served at once all the same; a
-    run past its end by HOLD_LATE, or with no clock, gets parts again. Off: no hold."""
+    run past its end by HOLD_LATE, or with no clock, gets parts again. Off: no hold. On by
+    default."""
     import time
 
     from opentpu.host.offload import HOLD_LATE, PART_GBS, PART_S0
@@ -447,7 +448,7 @@ def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
 
     def run(left):                                  # a run started now, `left` its time
         clock[0] = (time.perf_counter(), left)
-    srv.halt_aware = True
+    assert srv.read_ahead and srv.halt_aware        # (the defaults: v2, since session 18)
     _post(mem, lay, 1, [G + 3, G + 4])              # 3 and 4 hinted: 6 parts to send
     assert srv.poll() == 1 and len(srv.pending) == 2
     need = PART_S0 + srv.part / PART_GBS

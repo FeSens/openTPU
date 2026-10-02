@@ -645,12 +645,12 @@ def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
               "--hint-trace", str(tmp_path / "trace.json"))
     old = run("legacy", "--experts", "2", "--legacy-serve")
     capped = run("capped", "--experts", "3", "--hints", "on", "--hint-drop", "--hint-n", "1",
-                 "--hint-top", "1", "--idle-parts", "v2")   # (docs/offload.md 12.7, 13.12)
+                 "--hint-top", "1", "--idle-parts", "ra")   # (docs/offload.md 12.7, 13.12)
     assert want[2] == 0 and got[2] > 0 and old[2] > 0
     assert got[:2] == old[:2] == want[:2] == capped[:2]
     h = capped[3]["hints"]
     assert (h["n"], h["top"], h["drop"]) == (1, 1, True) and h["served"] > 0
-    assert capped[3]["idle_parts"]["mode"] == "v2" and got[3]["idle_parts"]["mode"] == "ra"
+    assert capped[3]["idle_parts"]["mode"] == "ra" and got[3]["idle_parts"]["mode"] == "v2"
     assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
 
 

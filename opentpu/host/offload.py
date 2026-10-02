@@ -553,12 +553,12 @@ class ExpertServer:
         self.hint_n = self.hint_top = 0
         # idle parts (docs/offload.md 13.12): read_ahead (the default since pfv2), each read by
         # the poll before, beside its DMA, and sent as one DMA call per channel (a memory with
-        # stage: BoardDram); halt_aware (opt-in), none started, nor read ahead, when the running
-        # program's expected end is nearer than an idle part takes (part_s: the measured parts'
-        # average). The end: the memory's run_clock (the run's start and its time with no
-        # waits) plus the run's own waits (_waits: each of its requests with misses, seen to
-        # served)
-        self.read_ahead, self.halt_aware = True, False
+        # stage: BoardDram); halt_aware (the default since session 18), none started, nor read
+        # ahead, when the running program's expected end is nearer than an idle part takes
+        # (part_s: the measured parts' average). The end: the memory's run_clock (the run's
+        # start and its time with no waits) plus the run's own waits (_waits: each of its
+        # requests with misses, seen to served)
+        self.read_ahead, self.halt_aware = True, True
         self._staged = None                 # ((g, slot, from, to), the memory's staged part)
         self.part_s: float | None = None
         self.holds = 0                      # polls that held an idle part back (halt_aware)
