@@ -1086,6 +1086,51 @@ IMEM holds 4096.
 - A V that does not fit raises `CompileError` (`_gen_programs`). A caller then falls back to
   plain sampled decode.
 
+### 11.6 Phase 4, step 4: otpu-chat (ISA simulator)
+
+A chat needs the context to go on after a reply: the next turn's prefill and `/continue`
+start where the loop stopped. Two changes make that work.
+
+**The loop's last D runs before the HALT.**
+- V no longer halts. It records the end in a state word (S_END: a stop id, the host's stop
+  word, or no tokens left) and chains to D or D1 as always.
+- D halts instead of chaining when S_END is set.
+- The MTP layer's KV cache then holds every position before Engine.pos, the pair (h, the last
+  token) included. `MTPDecoder.draft` holds the draft after the last token.
+- Before, the last iteration's D did not run. Its KV position kept an older iteration's
+  values, so a next turn drafted from a wrong cache: still the same tokens, but fewer
+  accepted drafts.
+- The cost is one D run a reply.
+
+**`MTPDecoder.prefill` continues from Engine.pos.**
+- It feeds the new tokens with the committed state slot and pairs them in the MTP layer
+  (h_q, x_(q + 1)) as a first prefill does.
+- `on_run` reports each run and can stop the prefill between runs. The pairs then end at the
+  next prompt token, so a later prefill continues.
+
+**Chat.**
+- `Chat` on an MTP engine (`otpu-chat --mtp`, `mtp_engine` with `load_weights(mtp=True)`)
+  prefills through the MTP decoder. The host's sampler picks the first token inside it,
+  because the draft after that token needs it.
+- Each reply is one `loop_card` run from that token and `MTPDecoder.draft`, polled with the
+  chat's stop.
+- `/continue` resumes from the cut reply's last token and the kept draft.
+- The plain status line gains the iterations' acceptance.
+- Settings the device sampler does not take decode on the host without the drafter, as they
+  do on a plain engine.
+
+**Tests on the ISA simulator.**
+- `test_mtp_continues_its_context` (greedy and sampled, penalty 1.1): two turns on one
+  decoder against one fresh decoder over the whole conversation. Equal: the tokens, the final
+  draft, and the MTP layer's KV cache below Engine.pos, bit for bit.
+- Negative control: without the last D, the KV cache's K differs at the position before the
+  first turn's last token (position 50), and the draft after the turn differs (229 against
+  463).
+- `test_chat_with_mtp` (greedy, and sampled with seed 3 and penalty 1.1): a turn cut at
+  max_new, `/continue`, then a second turn. The replies, the fed tokens, the context and the
+  token counts equal plain Chat's, and the second turn does not restart the context.
+- The phase 3 and 4 loop tests pass with the last D (test_mtp: 36 passed).
+
 ## 12. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:

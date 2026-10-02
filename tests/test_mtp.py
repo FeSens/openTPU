@@ -325,6 +325,43 @@ def test_mtp_sampled_loop_is_plain_sampling(P, drafter, how, N, stop):
                zip(_states(eng, spec, dec.slot), _states(ref, spec, 0)))
 
 
+def _mtp_kv(eng, n):
+    """The MTP layer's KV cache at positions [0, n): K, its scales and V's, per head."""
+    kv = eng.image.descriptors(0, 0).mtp.layer.kv
+    d, D, rd = kv.d, kv.D, eng.backend.read
+    return [x for _, r in sorted(kv.heads.items())
+            for x in (rd(0, Affine.of(r["k"]).const, n * d),
+                      rd(0, Affine.of(r["ks"]).const, n * 4 * (d // D)),
+                      rd(0, Affine.of(r["vs"]).const, 4 * n))]
+
+
+@pytest.mark.parametrize("sampled", [False, True])
+def test_mtp_continues_its_context(sampled):
+    """A chat's next turn: after the loop's run, a prefill from Engine.pos (the last token,
+    then the new ones) and a second run continue the context. The loop's last D (it runs
+    before the HALT) fills the MTP layer's KV cache at the position before the last token, so
+    the cache, the drafts and the tokens equal those of one fresh decoder over the whole
+    conversation, bit for bit (without it, that position's K differs)."""
+    _, W, spec = _tiny_model(8, init=0.2)
+    W = _mtp_weights(W, spec)
+    r = np.random.default_rng(3)
+    p1, p2 = [int(t) for t in r.integers(0, 1000, 40)], [int(t) for t in r.integers(0, 1000, 9)]
+    samp = G.Sampling(0.8, 5, 0.9, 1.1) if sampled else None
+
+    def kw(seed):
+        return {} if samp is None else dict(sampling=samp, rng=np.random.default_rng(seed))
+    dec = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG))
+    t1 = dec.generate_card(p1, max_new=12, stop=[], **kw(1)).tokens
+    ctx = p1 + t1 + p2
+    st = dec.generate_card([t1[-1]] + p2, max_new=12, stop=[], context=ctx, **kw(2))
+    fresh = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG))
+    want = fresh.generate_card(ctx, max_new=12, stop=[], **kw(2))
+    assert st.tokens == want.tokens and len(set(st.tokens)) > 6
+    assert dec.eng.pos == fresh.eng.pos == len(ctx) + 11 and dec.draft == fresh.draft
+    assert all(np.array_equal(a, b) for a, b in
+               zip(_mtp_kv(dec.eng, dec.eng.pos), _mtp_kv(fresh.eng, fresh.eng.pos)))
+
+
 def test_mtp_loop_on_rtl(have_verilator):
     """The MTP loop on the Verilator RTL (the board's memory path): from the same DRAM state (a
     251-token prefill on the ISA simulator), one run of the loop across the first bucket's end (V, E, D, D1 and the next
@@ -391,3 +428,42 @@ def test_mtp_sampled_loop_on_rtl(have_verilator):
     got = dec.loop_card(a0, d, N, rng=rng(), **kw)
     assert got.tokens == want
     assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
+
+
+class _Chars:
+    """One token per character, both ways: a reply's text gives back its ids, so the next
+    turn's template starts with the fed tokens (the context continues)."""
+
+    def apply_chat_template(self, history, add_generation_prompt, enable_thinking, tokenize):
+        return [ord(c) for m in history for c in m["content"]]
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "".join(map(chr, ids))
+
+
+@pytest.mark.parametrize("sampled", [False, True])
+def test_chat_with_mtp(sampled):
+    """otpu-chat --mtp: Chat on an MTP engine decodes with MTPDecoder (its prefill, the host
+    picking the first token, then the loop on the device), turn after turn. The replies, what
+    is fed and the context equal those of Chat on a plain engine with the same sampler and
+    seed: a reply cut at max_new resumes from its last token (the draft after it kept), and
+    the next turn's prefill continues the context."""
+    from opentpu.host.chat import Chat, sampler
+    _, W, spec = _tiny_model(8, init=0.2)
+    W = _mtp_weights(W, spec)
+    args = (0.8, 5, 0.9, 3, 1.1) if sampled else (0, 0, 1.0, None)
+    plain, mtp = (Chat(e, _Chars(), False, sampler(*args), 10) for e in (
+        Engine(spec, W, cap=512, cfg=CFG, resident=True), mtp_engine(spec, W, cap=512, cfg=CFG)))
+    assert mtp.use_mtp and not plain.use_mtp and plain.on_card
+    got = {}
+    for c in (plain, mtp):
+        shown = []
+        r1, t1 = c.ask("hello there", lambda d, turn: shown.append(d))
+        r2, t2 = c.resume()
+        r3, t3 = c.ask("and then?")
+        assert t1.end == "max_new" and not t3.restarted and r1 == "".join(shown)
+        got[c is mtp] = (r1, r2, r3, list(c.fed), c.eng.pos, [t.gen_tokens for t in (t1, t2, t3)])
+        if c is mtp:
+            assert t1.mtp_iters and "MTP acceptance" in t3.line()
+    assert got[True] == got[False]
+    assert len(set(got[True][2])) > 4

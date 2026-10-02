@@ -8,6 +8,7 @@
     otpu-chat --backend board-sim             # the Verilator board model (very slow)
     otpu-chat --prompt "Why is the sky blue?" # one-shot
     otpu-chat --think                         # Qwen3 thinking mode
+    otpu-chat --model qwen35-2b --mtp         # Qwen3.5 with its MTP drafter (docs/mtp.md)
 
 The interactive mode is a full-screen interface (opentpu/host/chat_tui.py): the conversation,
 and under the input a status line with TTFT, prefill and decode tokens/s (wall and device) and
@@ -19,7 +20,9 @@ the reply token by token; the host only tokenizes, looks up the embedding rows, 
 chat template and samples from the logits. The KV cache stays in device DRAM
 across turns; only the new turn's tokens are fed. On the card the tool holds the device lock
 and publishes its status (model, DRAM, tokens/s) for otpu-smi; the next token's program is
-compiled while the card runs the current one (Engine pipelining).
+compiled while the card runs the current one (Engine pipelining). --mtp (Qwen3.5) decodes with
+the model's MTP drafter, the loop on the device (opentpu/llm/mtp.py: a verify of two rows and a
+draft per iteration): the same replies, greedy or sampled, in fewer runs of the model.
 """
 from __future__ import annotations
 
@@ -211,6 +214,10 @@ def sampling(spec, args) -> dict:
     return d
 
 
+class _Picked(int):
+    """A first token MTP's prefill picked (Chat._prefill_mtp): shown, not fed yet."""
+
+
 @dataclass
 class Turn:
     """The numbers of one reply. Wall times are seconds from the submit; device numbers come
@@ -233,6 +240,8 @@ class Turn:
     context: int = 0                  # KV positions filled
     restarted: bool = False           # the template changed the history: KV rebuilt
     end: str = ""
+    mtp_iters: int = 0                # MTP's verify iterations (--mtp)
+    mtp_accepted: int = 0             # ... whose draft was accepted
 
     def _dev(self, n: int, cycles: int) -> float | None:
         return n * self.clock_mhz * 1e6 / cycles if self.clock_mhz and cycles else None
@@ -269,10 +278,12 @@ class Turn:
             f", {self.mcycles_per_token:.2f} Mcycles/token at {self.clock_mhz:.0f} MHz"
         end = {"max_new": ", stopped at max_new", "cap": ", context full",
                "stopped": ", stopped"}.get(self.end, "")
+        mtp = f", MTP acceptance {self.mtp_accepted / self.mtp_iters:.2f}" \
+            if self.mtp_iters else ""
         return (f"[TTFT {ttft}; prefill {self.prefill_tokens} tokens, "
                 f"{r(self.prefill_tok_s, self.prefill_dev_tok_s)} tok/s; decode "
                 f"{self.gen_tokens} tokens, {r(self.decode_tok_s, self.decode_dev_tok_s)} tok/s"
-                f"{mc}; context {self.context}/{self.cap}{end}]")
+                f"{mc}{mtp}; context {self.context}/{self.cap}{end}]")
 
 
 class Detok:
@@ -337,6 +348,10 @@ class Chat:
         self.last: Turn | None = None
         self._next = None                   # logits after a reply cut at max_new (resume())
         self._reply: list[int] = []         # the last reply's tokens
+        self.mtp = None                     # an MTP engine's decoder (opentpu/llm/mtp.py)
+        if getattr(engine.spec, "mtp", False):
+            from opentpu.llm.mtp import MTPDecoder
+            self.mtp = MTPDecoder(engine)
         warm = getattr(pick, "warm", None)
         if warm is not None:                # the first pick then costs what the others do
             warm()
@@ -379,18 +394,20 @@ class Chat:
             self.eng.reset()
             self.fed, n, turn.restarted = [], 0, True
         turn.prefill_total = len(ids) - n
-        k0 = len(self.eng.stats)
         logits = None
-        for part, logits in self.eng.prefill_chunks(ids[n:]):   # up to Engine.rows per run
-            self.fed += part
-            turn.prefill_tokens += len(part)
-            turn.prefill_s = time.perf_counter() - t0
-            turn.prefill_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
-            turn.context = self.eng.pos
-            on_update("", turn)
-            if stop() and len(self.fed) < len(ids):
-                turn.end = "stopped"
-                break
+        if self.use_mtp:
+            logits = self._prefill_mtp(ids, n, turn, t0, on_update, stop)
+        else:
+            for part, logits in self.eng.prefill_chunks(ids[n:]):   # up to Engine.rows a run
+                self.fed += part
+                turn.prefill_tokens += len(part)
+                turn.prefill_s = time.perf_counter() - t0
+                turn.prefill_cycles += (self.eng.stats[-1] or {}).get("cycles", 0)
+                turn.context = self.eng.pos
+                on_update("", turn)
+                if stop() and len(self.fed) < len(ids):
+                    turn.end = "stopped"
+                    break
         reply = self._decode(logits, [], turn, t0, on_update, stop)
         self.history.append({"role": "assistant", "content": reply})
         self.session.add(turn)
@@ -421,6 +438,49 @@ class Chat:
         sp = getattr(self.pick, "params", None)
         return bool(getattr(self.pick, "greedy", False)) or (sp is not None
                                                              and G.Sampling.fits(**sp))
+
+    @property
+    def use_mtp(self) -> bool:
+        """An MTP engine decodes with its drafter when the loop runs on the device."""
+        return self.mtp is not None and self.on_card
+
+    def _prefill_mtp(self, ids, n: int, turn: Turn, t0: float, on_update, stop):
+        """ids[n:] through the MTP decoder's prefill (each run's rows' hidden, then the MTP
+        layer over them): the first token is picked from the last row's logits inside it (the
+        draft after it needs it), so this returns it, _Picked; None when stopped."""
+        from opentpu.llm.mtp import MTPStats
+        st, k = MTPStats(), [0]
+
+        def on_run(part) -> bool:
+            self.fed += part
+            turn.prefill_tokens += len(part)
+            turn.prefill_s = time.perf_counter() - t0
+            turn.prefill_cycles += sum((r or {}).get("cycles", 0) for _, _, r in st.runs[k[0]:])
+            k[0] = len(st.runs)
+            turn.context = len(self.fed)
+            on_update("", turn)
+            if stop() and len(self.fed) < len(ids):
+                turn.end = "stopped"
+                return True
+            return False
+        a0, _ = self.mtp.prefill(ids[n:], st, pick=lambda lg: self.pick(lg, ids), on_run=on_run)
+        return None if a0 is None else _Picked(a0)
+
+    def _mtp_run(self, t: int, left: int, take, stop, samp, turn: Turn) -> tuple[list, int]:
+        """One device run of the MTP loop from t (fed, shown already) with up to `left` tokens
+        after it; (the tokens, the run's cycles)."""
+        first = [True]
+
+        def shown(x: int) -> None:
+            if not first[0]:
+                take(x)
+            first[0] = False
+        st = self.mtp.loop_card(t, self.mtp.draft, left + 1, stop=self.eng.spec.eos,
+                                on_token=shown, samp=samp, context=list(self.fed),
+                                rng=getattr(self.pick, "rng", None), halt=stop)
+        turn.mtp_iters += st.iterations
+        turn.mtp_accepted += sum(st.accepted)
+        return st.tokens[1:], sum((r or {}).get("cycles", 0) for _, _, r in st.runs)
 
     def _decode(self, logits, out: list[int], turn: Turn, t0: float, on_update, stop) -> str:
         """Generate after `out` (the reply so far) from `logits` (or, after a reply cut on the
@@ -514,7 +574,12 @@ class Chat:
             shown += delta
             on_update(delta, turn)
 
-        if isinstance(logits, int):
+        if isinstance(logits, _Picked):     # by MTP's prefill
+            t = int(logits)
+            if t in eng.spec.eos:
+                turn.end = "eos"
+            take(t)
+        elif isinstance(logits, int):
             t = logits
         elif logits is not None and not turn.end:
             t = self.pick(logits, self.fed)
@@ -523,11 +588,12 @@ class Chat:
             take(t)
         else:
             t = None
+        room = eng.cap - (2 if self.use_mtp else 0)     # (a verify's two rows)
         while t is not None and not turn.end:
             left = self.max_new - (len(out) - n0)
             if left <= 0:
                 turn.end = "max_new"
-            elif eng.pos >= eng.cap:
+            elif eng.pos >= room:
                 turn.end = "cap"
             elif stop():
                 turn.end = "stopped"
@@ -536,15 +602,19 @@ class Chat:
             k1 = len(eng.stats)
             self.fed.append(t)
             try:
-                got = eng.generate_card(t, left, stop_ids=eng.spec.eos, on_token=take,
-                                        stop=stop, sampling=samp, context=self.fed,
-                                        rng=getattr(self.pick, "rng", None))
+                if self.use_mtp:
+                    got, cycles = self._mtp_run(t, left, take, stop, samp, turn)
+                else:
+                    got = eng.generate_card(t, left, stop_ids=eng.spec.eos, on_token=take,
+                                            stop=stop, sampling=samp, context=self.fed,
+                                            rng=getattr(self.pick, "rng", None))
+                    cycles = sum((st or {}).get("cycles", 0) for st in eng.stats[k1:])
             except BaseException:
                 self.fed.pop()
                 raise
             self.fed += got[:-1]                  # the last one is fed by the next run
             turn.decode_steps += len(got)
-            turn.decode_cycles += sum((st or {}).get("cycles", 0) for st in eng.stats[k1:])
+            turn.decode_cycles += cycles
             turn.context = eng.pos
             if not got:
                 break
@@ -654,6 +724,10 @@ def main(argv=None):
                          "with 4-bit MM support)")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
                     help="weight format of the LM head (default: --wformat)")
+    ap.add_argument("--mtp", action="store_true",
+                    help="Qwen3.5: decode with the model's MTP drafter, the loop on the device "
+                         "(docs/mtp.md): the same replies, greedy or sampled, 1.3-1.6x the "
+                         "decode tok/s")
     a = ap.parse_args(argv)
     from transformers import AutoTokenizer
     path = model_dir(a.model)
@@ -666,10 +740,17 @@ def main(argv=None):
                                     lookup=not a.per_position)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
+    if a.mtp and (not hasattr(spec, "mtp") or a.per_position):
+        raise SystemExit("otpu-chat: --mtp takes a Qwen3.5 model and resident decode")
     try:
-        eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
-                     wformat=a.wformat, head_format=a.head_format,
-                     resident=not a.per_position)
+        if a.mtp:
+            from opentpu.llm.mtp import mtp_engine
+            eng = mtp_engine(spec, load_weights(path, mtp=True), cap=a.cap, cfg=cfg,
+                             backend=backend, wformat=a.wformat, head_format=a.head_format)
+        else:
+            eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
+                         wformat=a.wformat, head_format=a.head_format,
+                         resident=not a.per_position)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     sp = sampling(spec, a)
@@ -679,7 +760,13 @@ def main(argv=None):
     if a.backend.startswith("board"):
         khz = eng.backend.info.get("core_khz")
         clock = a.clock_mhz or (khz / 1e3 if khz else 100.0)
-    chat = Chat(eng, tok, a.think, pick, a.max_new, clock_mhz=clock)
+    try:
+        chat = Chat(eng, tok, a.think, pick, a.max_new, clock_mhz=clock)
+    except ValueError as e:                 # MTPDecoder's checks (one slice; PAIR, MCOLS)
+        raise SystemExit(f"otpu-chat: --mtp: {e}") from None
+    if a.mtp and not chat.use_mtp:
+        print("otpu-chat: --mtp: these sampling settings stay on the host; plain decode",
+              flush=True)
     if a.prompt:
         chat.ask_plain(a.prompt)
         return

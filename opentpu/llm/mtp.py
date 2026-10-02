@@ -93,6 +93,7 @@ class MTPDecoder:
                              "would not be plain decode's bit for bit")
         self.eng, self.img = engine, img
         self.slot = 0
+        self.draft = None           # the draft after the token at Engine.pos (prefill, the loop)
 
     # ---- runs
     def _run(self, progs, kind: str, rows: int, st: MTPStats) -> None:
@@ -125,30 +126,38 @@ class MTPDecoder:
         return self._drafts(len(toks))
 
     # ---- generation
-    def prefill(self, prompt, st: MTPStats, chunk: int = MTP_ROWS, pick=None):
-        """The prompt in plain prefill's runs (qwen3.fit_chunk, Engine.prefill's: their rows
-        and so their MMs' pairing are its), each storing its rows' hidden, then the MTP layer
-        over them in runs of up to `chunk` rows; returns (a0, the first draft). pick(logits)
-        -> a0 (default the argmax)."""
-        prompt = [int(t) for t in prompt]
-        P, p = len(prompt), self.eng.pos
-        if p != 0:
-            raise ValueError("MTP decoding starts from an empty context (Engine.reset)")
-        self.slot = 0
+    def prefill(self, tokens, st: MTPStats, chunk: int = MTP_ROWS, pick=None, on_run=None):
+        """Feed `tokens` from Engine.pos in plain prefill's runs (qwen3.fit_chunk,
+        Engine.prefill's: their rows and so their MMs' pairing are its), each storing its rows'
+        hidden, then the MTP layer over them, (h_q, x_(q + 1)), in runs of up to `chunk` rows;
+        returns (a0, the first draft), also in self.draft. pick(logits) -> a0 (default the
+        argmax). From Engine.pos 0 a new context; from a later one, the context this decoder
+        left (its prefill, or the loop's run: the MTP layer's KV cache holds every position
+        before Engine.pos, the committed slot the states). on_run(tokens): after each prefill
+        run; a true return stops the prefill there (-> None, None; a later prefill feeds the
+        rest)."""
+        toks = [int(t) for t in tokens]
+        p0 = p = self.eng.pos
+        P = p0 + len(toks)
+        if not toks or P > self.img.cap - 1:
+            raise ValueError(f"{len(toks)} tokens at position {p0}: the cache holds "
+                             f"{self.img.cap}, and the next token needs a position")
+        if p0 == 0:
+            self.slot = 0
         a0 = draft = None
         fit = self.img.rows
         while p < P:
-            left = P - p
+            left, i = P - p, p - p0
             t0 = time.perf_counter()
             n, progs, fit = fit_chunk(self.img, self.eng.block, 0, p, self.img.rows, left, fit,
-                                      prompt[p:], hidden=True, slot=self.slot)
+                                      toks[i:], hidden=True, slot=self.slot)
             if progs is None:           # one row: the rows kernel (plain prefill's decode step)
                 progs = self.img.compile_rows([(0, p)], [0] if n == left else [],
-                                              self.eng.block, tokens=prompt[p:p + 1],
+                                              self.eng.block, tokens=toks[i:i + 1],
                                               slot=self.slot, hidden=True)
             st.compile_s += time.perf_counter() - t0
             self._run(progs, "prefill", n, st)
-            nxt = prompt[p + 1:p + n + 1]
+            nxt = toks[i + 1:i + n + 1]
             if n == left:
                 lg = self._logits(n)[n - 1]
                 a0 = int(np.argmax(lg)) if pick is None else int(pick(lg))
@@ -157,7 +166,11 @@ class MTPDecoder:
                 k = min(chunk, n - j)
                 draft = self._draft(p + j, nxt[j:j + k], st, "mtp prefill", h0=j)[k - 1]
             p += n
+            if on_run is not None and on_run(toks[i:i + n]) and p < P:
+                self.eng.pos, self.draft = p, None
+                return None, None
         self.eng.pos = P
+        self.draft = draft
         return a0, draft
 
     def generate(self, prompt, max_new: int = 32, stop=None, drafts=None) -> MTPStats:
@@ -170,7 +183,7 @@ class MTPDecoder:
         t0 = time.perf_counter()
         a0, d = self.prefill(prompt, st)
         st.prefill_s, st.prefill_compile_s = time.perf_counter() - t0, st.compile_s
-        out, p, t = st.tokens, len(prompt), a0
+        out, p, t = st.tokens, self.eng.pos, a0
         out.append(a0)
         while len(out) < max_new and out[-1] not in stop and p + 1 < self.img.cap:
             if drafts is not None:
@@ -277,11 +290,12 @@ class MTPDecoder:
     def loop_card(self, a0: int, d: int, max_new: int = 32, stop=None, on_token=None,
                   drafts=None, st: MTPStats | None = None,
                   deadline: float | None = None, samp: G.Sampling | None = None,
-                  context=(), rng=None) -> MTPStats:
+                  context=(), rng=None, halt=None) -> MTPStats:
         """generate_card after its prefill: a0 (the token at Engine.pos, emitted) and d (the
-        draft of the next position) -> the device's run of the MTP loop from the committed
-        slot (see generate_card); sampled with samp, the uniforms from rng and the penalty's
-        context (the ids so far, a0 with them)."""
+        draft of the next position: self.draft after a prefill or a run) -> the device's run
+        of the MTP loop from the committed slot (see generate_card); sampled with samp, the
+        uniforms from rng and the penalty's context (the ids so far, a0 with them). halt()
+        (polled while a card runs): true writes the host's stop word, as the deadline does."""
         eng, img = self.eng, self.img
         spec, block = img.spec, eng.block
         ids = list(spec.eos if stop is None else stop)
@@ -316,14 +330,15 @@ class MTPDecoder:
             end = None if deadline is None else time.perf_counter() + deadline
 
             def late() -> bool:
-                now = time.perf_counter()
-                if now > end + 10.0:
-                    raise TimeoutError(f"the MTP loop runs {deadline + 10:.0f} s, its stop "
-                                       f"word unanswered")
-                st.timed_out = st.timed_out or now > end
-                return st.timed_out
+                if end is not None:
+                    now = time.perf_counter()
+                    if now > end + 10.0:
+                        raise TimeoutError(f"the MTP loop runs {deadline + 10:.0f} s, its "
+                                           f"stop word unanswered")
+                    st.timed_out = st.timed_out or now > end
+                return st.timed_out or (halt is not None and bool(halt()))
             stats, got = run(first, g["out"] + 4 * (P + 1), n, on_token,
-                             None if end is None else late, g["state"])
+                             None if end is None and halt is None else late, g["state"])
         else:
             stats = eng.backend.run(first)
             w = eng.backend.read(0, g["out"] + 4 * (P + 1), 4 * n).view(np.uint32)
@@ -335,7 +350,7 @@ class MTPDecoder:
         st.runs.append(("generate", len(got), stats))
         st.tokens += got
         sw = eng.backend.read(0, g["state"], 4 * G.STATE_WORDS).view(np.float32)
-        self.slot = int(sw[S_PAR])
+        self.slot, self.draft = int(sw[S_PAR]), int(sw[S_DRAFT])
         it, acc = int(sw[S_ITER]), int(sw[S_ACC])
         st.accepted = [1] * acc + [0] * (it - acc)
         eng.pos = P + len(got)
@@ -345,6 +360,7 @@ class MTPDecoder:
 # ---- the loop on the card (docs/mtp.md 10)
 # the state block: generate.py's words, and the iteration's
 S_DRAFT, S_A0, S_A1, S_N, S_PAR, S_TPOS0, S_ITER, S_ACC = 20, 21, 22, 23, 24, 25, 26, 27
+S_END = 28          # 1.0: the iteration's D halts (a stop id, the host's word, no tokens left)
 # a bucket's programs, in its chain table's order: the verify (V) and the bucket's last
 # position (E) per parity, the MTP layer over two rows (D) and over one (D1)
 KINDS = ("V0", "V1", "E0", "E1", "D", "D1")
@@ -410,7 +426,7 @@ def _args(b, at, words: dict) -> None:
 def _store_state(g, st) -> None:
     """The state block to DRAM, but the host's stop word and the sampler's."""
     ol.store(g.state[:G.S_HALT], st[:G.S_HALT])
-    ol.store(g.state[S_DRAFT:S_ACC + 1], st[S_DRAFT:S_ACC + 1])
+    ol.store(g.state[S_DRAFT:S_END + 1], st[S_DRAFT:S_END + 1])
 
 
 def _verify_gen(m, pos, block: int, c: int, R: int, samp: G.Sampling | None = None):
@@ -419,9 +435,10 @@ def _verify_gen(m, pos, block: int, c: int, R: int, samp: G.Sampling | None = No
     loop's pick (generate.Sampler: row r with the uniform of position p + 1 + r, row 1's
     logits in the MTP area's lg); a0 -> out[p + 1], and with the draft accepted (d == a0,
     tokens left, a0 not a stop id) a1 -> out[p + 2]; the iteration's words and the commit (the
-    penalty's context gets the emitted ids); HALT at a stop id, the host's stop word or no
-    tokens left, else HALT CHAIN to the bucket's D or D1. Sampled, accepting d iff the pick a0
-    equals it is speculative sampling for the one-hot draft (docs/mtp.md 11.1)."""
+    penalty's context gets the emitted ids); S_END at a stop id, the host's stop word or no
+    tokens left; then HALT CHAIN to the bucket's D or D1 (which halts at S_END). Sampled,
+    accepting d iff the pick a0 equals it is speculative sampling for the one-hot draft
+    (docs/mtp.md 11.1)."""
     from .qwen35 import qwen35_rows
     b = current()
     g, a = m.gen, m.mtpgen
@@ -477,15 +494,10 @@ def _verify_gen(m, pos, block: int, c: int, R: int, samp: G.Sampling | None = No
     left.set(left - n - 1.0)
     st[S_ITER:S_ITER + 1].set(st[S_ITER:S_ITER + 1] + 1.0)
     st[S_ACC:S_ACC + 1].set(st[S_ACC:S_ACC + 1] + n)
-    halt = ol.maximum(ol.maximum(stop, ol.load(g.state[G.S_HALT:G.S_HALT + 1])),
-                      _flag(left * -1.0 + 1.0))
+    st[S_END:S_END + 1].set(ol.maximum(ol.maximum(stop, ol.load(g.state[G.S_HALT:G.S_HALT + 1])),
+                                       _flag(left * -1.0 + 1.0)))
     _args(b, at, words)
     _store_state(g, st)
-    r = b.scratch()
-    b.rld(r, halt, comment="stop")
-    b.emit(I.loop(1, 0, rcount=r, comment="stop: halt"))
-    b.emit(I.halt())
-    b.unscratch(r)
     G._chain(b, ptab_addr(a, pos.blocks, D2 if R > 1 else D1), what="the draft")
 
 
@@ -522,8 +534,11 @@ def _draft_gen(m, pos, block: int, R: int, forced: bool = False):
     """D (R = 2) or D1 (R = 1): the MTP layer over the iteration's rows (hid_r, a_r) at p ..
     (qwen35_mtp), the next draft d = draft[n]; the position moves on (to the next bucket at
     its end), then HALT CHAIN to the next iteration's program: V or E (tpos = block - 1) of
-    the committed parity, in this bucket or the next. forced (tests): the draft of the next
-    iteration's row 1 (position p + 2 + n) from the host's table (dtab) instead."""
+    the committed parity, in this bucket or the next; HALT when the verify ended the loop
+    (S_END): the MTP layer's KV cache then holds every position before the last token's, and
+    S_DRAFT the draft after it, so a later run or prefill continues from there. forced
+    (tests): the draft of the next iteration's row 1 (position p + 2 + n) from the host's
+    table (dtab) instead."""
     from .qwen35 import qwen35_mtp
     b = current()
     g, a = m.gen, m.mtpgen
@@ -546,7 +561,9 @@ def _draft_gen(m, pos, block: int, R: int, forced: bool = False):
     end = _flag(tp - float(block - 2))                  # block - 1: the bucket's E
     off = (wrap * float(NK) + end * 2.0 + st[S_PAR:S_PAR + 1]) * 8.0
     _store_state(g, st)
-    G._chain(b, ptab_addr(a, pos.blocks), off=off, what="the next iteration")
+    G._chain(b, ptab_addr(a, pos.blocks), cond=st[S_END:S_END + 1] * -1.0 + 1.0, off=off,
+             what="the next iteration")
+    b.emit(I.halt())
 
 
 def compile_gen(image, blocks: int, kind: int, block: int = ATTN_BLOCK,

@@ -488,6 +488,21 @@ a691ea98, 100 MHz), before (main at e639ecd) and after the host changes in secti
 
 While a chat runs, `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
 
+**`--mtp`** (Qwen3.5) decodes with the model's MTP drafter, the loop on the device
+([mtp.md](mtp.md) sections 10 and 11). Each iteration verifies the token and a draft in one
+two-row run and drafts the next with the MTP layer, so a reply needs fewer runs of the model.
+The replies, greedy or sampled, are those without `--mtp` for the same seed. Turns, `/continue`
+and `/reset` work as without it: the prompt goes through the MTP decoder's prefill (the host
+picks the first token from its last row), and each reply is one device run. Sampling settings
+the device does not take (top-k above 64) decode on the host without the drafter. The image is
+the model's plus the MTP layer (`load_weights(mtp=True)`); `--plain` adds the iterations'
+acceptance to its line. On the card, MTP's device tok/s was 1.32x / 1.58x / 1.64x plain
+decode's for the 0.8B / 2B / 4B, greedy ([mtp.md](mtp.md) 10.2).
+
+```
+otpu-chat --backend board --model qwen35-2b --wformat fp4 --head-format int8 --mtp
+```
+
 `--backend board-sim` runs the same driver against the Verilator board model (bit-exact, but
 minutes per token for the real model; use it with small models).
 
