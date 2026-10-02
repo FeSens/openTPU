@@ -169,6 +169,78 @@ module otpu_ldc_mem #(
         end
       end
     end
+    // +ldc_break: the controller's cycles by what it does, each under the first that holds: a
+    // column command on the DFI (data); refresh; a bank with a column command not issued (the
+    // multiplexer); a bank with a command at its head and none of those (rows opening and
+    // closing, a bank's timers); commands at the ports or in the banks' lookahead queues and none
+    // at any bank's head (the crossbar); nothing (idle). From the first command to the last.
+    // The idle gaps: their lengths, and the gaps after which the next command reads the next
+    // channel beat of one of the last 4 read streams (a sequential prefetch could have filled
+    // the gap with it: the cycles, up to 256 per gap).
+`define OTPU_LDC_COL(p) (!u_ctl.core_dfi_p``p``_cs_n && !u_ctl.core_dfi_p``p``_cas_n && u_ctl.core_dfi_p``p``_ras_n)
+`define OTPU_LDC_CR(n) (u_ctl.core_bankmachine``n``_cmd_valid && (u_ctl.core_bankmachine``n``_cmd_payload_is_read || u_ctl.core_bankmachine``n``_cmd_payload_is_write))
+`define OTPU_LDC_HD(n) u_ctl.core_bankmachine``n``_pipe_valid_source_valid
+`define OTPU_LDC_LV(n) (u_ctl.core_bankmachine``n``_level != 0)
+    logic b_col, b_cr, b_hd, b_lv;
+    assign b_col = `OTPU_LDC_COL(0) || `OTPU_LDC_COL(1) || `OTPU_LDC_COL(2) || `OTPU_LDC_COL(3);
+    assign b_cr = `OTPU_LDC_CR(0) || `OTPU_LDC_CR(1) || `OTPU_LDC_CR(2) || `OTPU_LDC_CR(3) ||
+                  `OTPU_LDC_CR(4) || `OTPU_LDC_CR(5) || `OTPU_LDC_CR(6) || `OTPU_LDC_CR(7);
+    assign b_hd = `OTPU_LDC_HD(0) || `OTPU_LDC_HD(1) || `OTPU_LDC_HD(2) || `OTPU_LDC_HD(3) ||
+                  `OTPU_LDC_HD(4) || `OTPU_LDC_HD(5) || `OTPU_LDC_HD(6) || `OTPU_LDC_HD(7);
+    assign b_lv = `OTPU_LDC_LV(0) || `OTPU_LDC_LV(1) || `OTPU_LDC_LV(2) || `OTPU_LDC_LV(3) ||
+                  `OTPU_LDC_LV(4) || `OTPU_LDC_LV(5) || `OTPU_LDC_LV(6) || `OTPU_LDC_LV(7);
+    longint bk [6];                      // data, refresh, mux, rows, crossbar, idle
+    longint bk_tail [6];                 // since the last command (not counted unless one follows)
+    longint g_n [4], g_cyc [4];          // idle gaps of 1-7, 8-63, 64-255, 256+ cycles
+    longint g_cont, g_cont_cyc;          // gaps of 8+ followed by a stream's next beat
+    longint gap;
+    bit     started, brk;
+    int     sh [4];                      // the last 4 read streams' next channel beats
+    initial begin
+      brk = $test$plusargs("ldc_break");
+      started = 0; gap = 0; g_cont = 0; g_cont_cyc = 0;
+      for (int i = 0; i < 6; i++) begin bk[i] = 0; bk_tail[i] = 0; end
+      for (int i = 0; i < 4; i++) begin g_n[i] = 0; g_cyc[i] = 0; sh[i] = -1; end
+    end
+    always @(posedge uclk) if (brk && !urst) begin
+      int k;
+      bit cmd;
+      cmd = (cv[0] && cr[0]) || (cv[1] && cr[1]);
+      k = b_col ? 0 : u_ctl.refresher_state != 0 ? 1 : b_cr ? 2 : b_hd ? 3 : (cv != 0 || b_lv) ? 4 : 5;
+      if (started) bk_tail[k]++;
+      if (k == 5) gap++;
+      if (cmd) begin
+        if (gap != 0) begin               // the gap ends with this cycle's command
+          int j, a, hit;
+          j = gap < 8 ? 0 : gap < 64 ? 1 : gap < 256 ? 2 : 3;
+          if (started) begin g_n[j]++; g_cyc[j] += gap; end
+          hit = 0;
+          for (int p = 0; p < 2; p++)
+            if (cv[p] && cr[p] && !cwe[p])
+              for (int s = 0; s < 4; s++) if (int'(ca[p]) == sh[s]) hit = 1;
+          if (started && gap >= 8 && hit != 0) begin
+            g_cont++;
+            g_cont_cyc += gap < 256 ? gap : 256;
+          end
+          gap = 0;
+        end
+        started = 1;
+        for (int i = 0; i < 6; i++) begin bk[i] += bk_tail[i]; bk_tail[i] = 0; end
+        for (int p = 0; p < 2; p++)       // the read streams: a read continuing one moves it up
+          if (cv[p] && cr[p] && !cwe[p]) begin
+            int s;
+            s = 3;
+            for (int i = 0; i < 4; i++) if (sh[i] == int'(ca[p])) s = i;
+            for (int i = s; i > 0; i--) sh[i] = sh[i - 1];
+            sh[0] = int'(ca[p]) + 1;
+          end
+      end
+    end
+`undef OTPU_LDC_COL
+`undef OTPU_LDC_CR
+`undef OTPU_LDC_HD
+`undef OTPU_LDC_LV
+
     // the counts (row changes: each port's own, as the controller sees a master's commands)
     int pbr [2] = '{-1, -1};
     always @(posedge uclk) if (!urst)
@@ -211,6 +283,18 @@ module otpu_ldc_mem #(
   always @(posedge clk) if (dump) begin
     for (int c = 0; c < 2; c++)
       $display("MEM ch%0d rd=%0d wr=%0d row_miss=%0d rmw=0", c, n_rd[c], n_wr[c], n_miss[c]);
+    if (g_ch[0].brk) begin
+      $display("BRK ch0 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d",
+               g_ch[0].bk[0], g_ch[0].bk[1], g_ch[0].bk[2], g_ch[0].bk[3], g_ch[0].bk[4], g_ch[0].bk[5],
+               g_ch[0].g_n[0], g_ch[0].g_n[1], g_ch[0].g_n[2], g_ch[0].g_n[3],
+               g_ch[0].g_cyc[0], g_ch[0].g_cyc[1], g_ch[0].g_cyc[2], g_ch[0].g_cyc[3],
+               g_ch[0].g_cont, g_ch[0].g_cont_cyc);
+      $display("BRK ch1 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d",
+               g_ch[1].bk[0], g_ch[1].bk[1], g_ch[1].bk[2], g_ch[1].bk[3], g_ch[1].bk[4], g_ch[1].bk[5],
+               g_ch[1].g_n[0], g_ch[1].g_n[1], g_ch[1].g_n[2], g_ch[1].g_n[3],
+               g_ch[1].g_cyc[0], g_ch[1].g_cyc[1], g_ch[1].g_cyc[2], g_ch[1].g_cyc[3],
+               g_ch[1].g_cont, g_ch[1].g_cont_cyc);
+    end
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");
       for (int i = 0; i < WORDS; i++) $fwrite(fd, "%u", rdw(i));

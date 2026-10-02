@@ -24,7 +24,9 @@ cached in CACHE.json (one entry per layer count and point, with the DRAM command
 run resumes. --table prints Mcycles/token, tokens/s, the
 DRAM bytes read and written per token and GB/s. The configuration comes from the environment
 (the board's: OTPU_MCOLS=4 OTPU_MXU=systolic OTPU_PAIR=1 OTPU_DSTEP=1 OTPU_STREAM=1). The KV cache
-holds --cap positions (default 2048), the LM head is int8 (--head).
+holds --cap positions (default 2048), the LM head is int8 (--head). OTPU_LDC_BREAK=1 (--mem ldc)
+adds each channel's cycle breakdown (BRK lines: sim/verilator/otpu_ldc_mem.sv +ldc_break; cached
+under the point's key + "|brk"; docs/litedram.md section 11, "What is left after memeff").
 """
 from __future__ import annotations
 
@@ -180,8 +182,11 @@ class Grid:
             args += ["+axi_stall=0", f"+axi_seed={rtlsim.MEMORY['SEED']}", "+axi_bw=100",
                      f"+axi_lat={round(0.3 * mhz)}"]
             args += ["+boot", f"+boot_addr={meta['at']}", f"+boot_n={meta['boot_n']}"]
+            if ldc and os.environ.get("OTPU_LDC_BREAK"):
+                args += ["+ldc_break"]     # the controller's cycle breakdown (otpu_ldc_mem.sv)
             r = rtlsim.run_sim(args, timeout=3600)
         out = r.stdout + r.stderr
+        self.brk = re.findall(r"^BRK .*$", out, re.M)
         m = re.search(r"RESULT cycles=(\d+) halted=(\d+) error=(\d+)", out)
         if not m or m.group(2) != "1" or m.group(3) != "0":
             raise RuntimeError(f"RTL simulation failed:\n{out[-3000:]}")
@@ -226,6 +231,9 @@ class Grid:
                     t = time.time()
                     cyc, mem = self.simulate(metas[n], mhz, ddr)
                     self.cache[k], self.cache[k + "|mem"] = cyc, mem
+                    if getattr(self, "brk", None):
+                        self.cache[k + "|brk"] = self.brk
+                        print("\n".join(self.brk), flush=True)
                     self.cache_p.write_text(json.dumps(self.cache, indent=1))
                     print(f"  {name} {wf} {mhz} MHz DDR3-{ddr}: {n} layers: {cyc} cycles "
                           f"({time.time() - t:.0f} s) rd/wr/row_miss/rmw {mem}", flush=True)
