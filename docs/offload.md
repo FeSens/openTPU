@@ -2961,3 +2961,46 @@ The card side (Engine(layer_ahead="hint"), moe_card --layer-ahead hint):
   by token (Qwen3.5, Gemma 4), and that each hint equals the next layer's own request for the
   same rows when the mixers' output projections are zero, so that a layer's route reads its
   input.
+
+### 13.10 The predictor on the card (session pfhint)
+
+Session pfhint (gemma4, 2026-10-02 10:56-11:04 opentpu, one otpu-lock): production fmvf
+542fc43a, tree 5051032 (main with offload-head, offload-ahint's queue append and the hint
+programs). R = 2, pooled, 16 tokens. All four runs were bit-exact: the 35B gave lmtime's
+95426ebacc3b40a9, the 26B q26ref16's 90e6b6e06e19da99. The ISA references of the hinted programs
+match the old ones too (omarchy, 35B q35ref16 88225ff781699291, 26B q26ref16).
+
+| | 35B base | 35B predictor | 26B base | 26B predictor |
+|:--|--:|--:|--:|--:|
+| prefill wall, s | 13.107 | **12.387 (-0.72)** | 15.861 | **15.676 (-0.19)** |
+| predicted (13.9) | | -1.4 (+-0.7) | | 0 to -1 |
+| device, s | 12.031 | 10.949 | 15.547 | 15.114 |
+| demand serve, s | 6.79 | 2.24 | 4.18 | 0.76 |
+| misses | 6241 | 1902 | 2234 | 214 |
+| hints / ids queued / landed | | 2535 / 5568 / 4856 | | 1798 / 2273 / 2259 |
+
+The README's rule (the lead's) was: a 35B gain of at least 0.7 s, and a 26B loss of at most
+0.3 s, each against its base in the same lock. Both pass, the 35B by 0.02 s on one pair.
+
+Paired run by run (the same runs, zero misses in both):
+- The hint's own cost is as predicted: +47 us a DeltaNet run on the 35B, +37 to 41 us a run on
+  the 26B.
+- Contention, measured again: a zero-miss run with parts in flight is +15% (35B DeltaNet
+  +0.54 ms on 3.30; 26B +1.1 ms on 7.26). 13.8 had 13-16%.
+
+Where the 35B's predicted -1.4 s went:
+- The link is the limit. It was busy 9.4 of the prompt's 12.4 s (parts 6.80 s, requests 2.24,
+  hints 0.38).
+- About 700 of the 5568 queued experts were never sent before their layer's queue was
+  replaced, and became misses. The model had 918 misses where the card had 1902.
+- An expert takes two 1 MiB parts: 0.76 ms, then 0.62 ms for the 0.59 MiB rest, with 0.085 ms
+  gaps between link events. A fit gives about 0.42 ms fixed a part plus 0.33 ms a MiB, so the
+  fixed cost is most of it.
+- Contention costs about 1 s of compute. Halts are seen later: the host's time beyond device
+  and between-run time rose 0.29 s, as in 13.8.
+
+The 26B's misses already overlapped its dense MLP (beside the request), so removing them
+saved little of its wall time, and contention takes most of what is left.
+
+Next: whole-expert parts (one fixed cost an expert instead of two). On the 35B that is about
+2.2 s of link time back. Offload has the per-part figure for its own part path.
