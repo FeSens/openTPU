@@ -473,6 +473,8 @@ class ExpertServer:
         # the reads of those not in the page cache queued at once)
         self.ahead = None
         self._victims: list = []            # this request's victims: entries cleared at its end
+        self.last = None                    # what the last poll served: ("d" / "h", its layer),
+                                            # None for a hinted expert's part (PollPacer's key)
         self.clear_late = True              # (False: each at once, before its slot is written)
 
     def load(self, warm=()) -> None:
@@ -518,6 +520,7 @@ class ExpertServer:
             g = next(iter(self.pending))
             self.step()
             self._flush()
+            self.last = None
             if self.events is not None:
                 self.events.append((t0, time.perf_counter(), "p", g,
                                     self.pending.get(g, self.L.slot_bytes)))
@@ -545,6 +548,7 @@ class ExpertServer:
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
         self._flush()                       # (no DMA of the server's in flight after poll)
+        self.last = ("h" if ids[0] >= G else "d", ids[0] % G // self.L.E)
         if self.events is not None:
             self.events.append((t0, time.perf_counter(), "h" if ids[0] >= G else "d",
                                 ids[0] % G // self.L.E, self.misses - m0))
@@ -783,6 +787,7 @@ class RowServer:
         self.seq = 0                        # the last request served
         self.bytes = 0
         self.history: list | None = None    # a list: each request's id is appended
+        self.last = "row"                   # (PollPacer's key: every request one kind)
 
     def load(self) -> None:
         """At image load: an empty mailbox."""
@@ -808,6 +813,57 @@ class RowServer:
         self.seq = seq
         self.mem.write(self.L.served, _f32(seq))
         return 1
+
+
+class PollPacer:
+    """BoardBackend.host for its servers (an ExpertServer, a RowServer) that sleeps through the
+    quiet part of each gap (docs/offload.md 10.10). After a request is served the card computes
+    before it posts the next one (the layer's last experts, the next layer's attention and
+    router): no sooner, so far, than the shortest of the last `keep` gaps that followed a request
+    of the same kind (server, layer). poll sleeps `share` of that (at most `cap`, less the
+    sleep's own lateness `late`), then polls at the loop's pace, so a request is seen as soon as
+    with the loop spinning, with fewer of its card reads (a DMA call each, every ~33 us). A gap
+    is measured from served to the poll that saw the next request: a sleep that ran past a post
+    makes the next one shorter. It never sleeps while hinted experts wait for idle polls (their
+    parts go then)."""
+
+    def __init__(self, servers, share: float = 0.75, keep: int = 8, cap: float = 5e-3,
+                 late: float = 100e-6, sleep=time.sleep, clock=time.perf_counter):
+        if not 0 < share < 1:
+            raise ValueError(f"share {share}: of the shortest recent gap, in (0, 1)")
+        self.servers, self.share, self.keep, self.cap, self.late = (list(servers), share, keep,
+                                                                   cap, late)
+        self.sleep, self.clock = sleep, clock
+        self.gaps: dict = {}            # a request's kind -> the gaps after its last ones (s)
+        self.key, self.t_served, self.until = None, 0.0, 0.0
+        self.slept, self.sleeps = 0.0, 0
+
+    def poll(self) -> int:
+        t = self.clock()
+        if t < self.until:              # (a poll that sleeps polls nothing: the next one does)
+            d, self.until = self.until - t, 0.0
+            self.sleep(d)
+            self.slept += d
+            self.sleeps += 1
+            return 0
+        for i, srv in enumerate(self.servers):
+            if not srv.poll():
+                continue
+            kind = getattr(srv, "last", None)
+            if kind is None:            # a hinted expert's part, on idle time
+                return 1
+            if self.key is not None:
+                g = self.gaps.setdefault(self.key, [])
+                g.append(t - self.t_served)
+                del g[:-self.keep]
+            self.key, self.t_served = (i, kind), self.clock()
+            g = self.gaps.get(self.key)
+            if g and not any(getattr(x, "pending", None) for x in self.servers):
+                d = min(self.share * min(g), self.cap) - self.late
+                if d > self.late:
+                    self.until = self.t_served + d
+            return 1
+        return 0
 
 
 class SimDram:

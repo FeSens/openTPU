@@ -1495,6 +1495,47 @@ calls), from session 13's tree, so the programs and references (refs-d29bfe9) ar
 - the window fits near 0.45 + 1.01-1.07 ms per miss (35B) and 0.55 + 1.75-1.82 (26B);
 - tok/s as above.
 
+### 10.10 Pacing the poll
+
+Session 13's spinning poll reads the card's seq every ~33 us while the card computes between
+requests: 346k reads per 128 tokens on the 35B (98k with the 50 us sleep), 456k on the 26B (64k).
+MXU_STARVE rose with it (+0.03 G and +0.07 G cycles), about 120-180 cycles per extra read if the
+reads are the cause. The other candidate is the expert DMA, which now starts earlier and overlaps
+the hits' compute (10.8).
+
+`PollPacer` (`opentpu.host.offload`) wraps the servers' polls for the decode. For each kind of
+request it keeps the last 8 gaps between serving a request and seeing the next one. The kind is
+(server, layer, demand or hint), or a row. After serving, it sleeps 0.75 x the shortest of
+those gaps (at most 5 ms), minus 100 us for the sleep's late wake-up, and then spins. The sleep
+is skipped when it would be under 100 us or when a server has hints pending, and a hint's part
+step is not a request. Detection stays the spin's ~26 us unless a gap comes in shorter than 0.75
+x the shortest of its last 8.
+
+moe_card `--poll-idle spin | S | predict` sets the decode's poll: spin (the card's default), a
+fixed sleep of S seconds between empty polls (the legacy 50e-6), or the pacer. The JSON records
+`poll_idle`, plus `pacer` (sleeps, seconds slept, kinds).
+
+Session 14 (`tools/offload/sessions/session14.sh`, session 13's tree with the pacer: 17e99eb,
+d29bfe9's programs and refs-d29bfe9) runs on the Gen2 production build:
+- q35e128s, q35e128sp: the 35B re-baselined on Gen2 (10.9: about 5.0 tok/s), then paced;
+- g26s, g26s50, g26sp, g26s, g26sp: the 26B on Gen2 (about 3.6 tok/s), and the poll A/B.
+
+The prediction for the 26B A/B, per 128 tokens (about 3840 requests):
+- Poll reads: spin 450-550k, 50 us 110-130k, paced 120-180k.
+- If the reads cost the MXU (session 13's 120-180 cycles each):
+  - MXU_STARVE falls 0.04-0.06 G both paced and with 50 us.
+  - Paced gains 0.3-0.45 s (+1%).
+  - 50 us gains 0.1-0.25 s, because its detection costs 56 us per request (82 against 26 us),
+    0.2 s in all.
+- If the reads don't cost the MXU:
+  - MXU_STARVE stays within 0.01 G.
+  - Paced equals spin within noise (0.1 s).
+  - 50 us loses about 0.2 s (-0.6%).
+
+The pacer becomes the decode's default if MXU_STARVE falls and it is not slower. Otherwise
+spinning stays, and the RUNNING - DMA_BUSY rise is the expert DMA's overlap, a matter for the
+DRAM's arbitration.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
