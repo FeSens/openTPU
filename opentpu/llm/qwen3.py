@@ -1581,6 +1581,11 @@ class Engine:
     Python, and in a thread it would hold the GIL the step's host work needs -- else on a worker
     thread; pipeline="thread" forces the thread. The process starts with the engine; until it
     is ready, steps compile in line.
+
+    release_weights: with the experts streamed from a pool file, the checkpoint's files are
+    released once the image is written and the slots warm (W.release(), a LazyWeights': its
+    mapped pages would stay in the page cache over the pool's, docs/offload.md 10.6; a later
+    read reopens its file). Default on; False keeps them.
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1588,7 +1593,8 @@ class Engine:
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
-                 embed_host: bool | None = None, layer_major: int = 0):
+                 embed_host: bool | None = None, layer_major: int = 0,
+                 release_weights: bool = True):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
@@ -1638,6 +1644,8 @@ class Engine:
         self.server = None
         if getattr(self.image, "offload", None) is not None:
             self.server = self.image.serve(W, self.backend, pool_file)
+            if release_weights and pool_file is not None and hasattr(W, "release"):
+                W.release()                 # (the pool holds the experts; the image is written)
         # rows of tables the host keeps, asked for by the generate loop (Gemma 4 E4B: each
         # token's PLE record into the slot, opentpu.host.offload.RowServer)
         rs = getattr(self.image, "row_server", None)
