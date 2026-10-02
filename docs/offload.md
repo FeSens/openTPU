@@ -3447,8 +3447,9 @@ gemma4's.
   zeroed the tag of every expert its need lines named. Those slots leave `armed`, so reusing
   one later costs no zero-tag write first (one DMA call each: about 138 a layer on the 35B).
 - `begin_prefill(expert_major=True, scratch=bytes)` returns the scratch's base: the slot
-  region's last ceil(bytes / pitch) slots (`Layout.scratch`, one span across layers if it needs
-  to; the programs can take the address from the layout alone). Those slots leave the free
+  region's first ceil(bytes / pitch) slots, from the first slot on (`Layout.scratch`, the same
+  as the card side's `moe.em_slots`: one span across layers if it needs to, and the programs
+  take the address from the layout alone; 13.11 said the last). Those slots leave the free
   lists. Their experts are evicted, and their entries cleared and flushed, before the base is
   returned. No slot of the scratch is handed out until end_prefill.
 - `end_prefill` serves the last post (settle), drops ahead_layer's queue, then sends every need

@@ -1634,25 +1634,25 @@ def _em_pitch():
 
 
 def test_end_prefill_drains_the_needs_and_hands_the_scratch_back_with_zeroed_tags():
-    """begin_prefill(scratch=n): the slot region's last ceil(n / pitch) slots (Layout.scratch:
-    here layer 2's last and layer 3's two) leave the free lists, their experts evicted with
-    their entries cleared on the card before the base is returned, and no need or miss is
-    given one. end_prefill sends every need still queued or on its way whole (drained),
-    zeroes the scratch's tag beats (the card's scratch data there would read as a landed
-    expert's tag) and gives each layer its slots back."""
-    lay, mem, srv, base = _em_setup(scratch=2 * _em_pitch() + 1, warm=(24, 25))
-    p, a2, a3 = lay.pitch, lay.slots[2][0], lay.slots[3][0]
-    scratch = [a2 + p, a3, a3 + p]
-    assert base == a2 + p == lay.scratch(2 * p + 1)[0] and srv.scratch_slots == scratch
-    assert _empty(mem, lay, 24) and _empty(mem, lay, 25) and not srv.lru[3]
-    assert srv.free[2] == [a2] and not srv.free[3] and 24 not in srv.order
+    """begin_prefill(scratch=n): the slot region's first ceil(n / pitch) slots (Layout.scratch,
+    as moe.em_slots: here layer 0's two and layer 1's first) leave the free lists, their
+    experts evicted with their entries cleared on the card before the base is returned, and no
+    need or miss is given one. end_prefill sends every need still queued or on its way whole
+    (drained), zeroes the scratch's tag beats (the card's scratch data there would read as a
+    landed expert's tag) and gives each layer its slots back."""
+    lay, mem, srv, base = _em_setup(scratch=2 * _em_pitch() + 1, warm=(0, 1))
+    p, a0, a1 = lay.pitch, lay.slots[0][0], lay.slots[1][0]
+    scratch = [a0, a0 + p, a1]
+    assert base == a0 == lay.scratch(2 * p + 1)[0] and srv.scratch_slots == scratch
+    assert _empty(mem, lay, 0) and _empty(mem, lay, 1) and not srv.lru[0]
+    assert not srv.free[0] and srv.free[1] == [a1 + p] and 0 not in srv.order
     mem.write(base, np.full(3 * p, 0xAB, np.uint8))     # the card's scratch
     N = lay.need_off
-    for seq, ids in enumerate(([0, 1], [8, 9], [16, 17, 18]), 1):
+    for seq, ids in enumerate(([8, 9], [16, 17], [24, 25, 26]), 1):
         _post_n(mem, lay, seq, [g + N for g in ids])
         assert srv.poll() == 1
-    assert len(srv.needs) == 7 and srv.poll() == 1  # 0's first part only
-    while len(srv.needs) > 1:                       # (up to 17: a victim of layer 0)
+    assert len(srv.needs) == 7 and srv.poll() == 1  # 8's first part only
+    while len(srv.needs) > 1:                       # (up to 25: a victim of layer 1)
         srv.poll()
     assert not {a for lru in srv.lru for a in lru.values()} & set(scratch)
     srv.end_prefill()

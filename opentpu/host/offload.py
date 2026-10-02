@@ -64,7 +64,7 @@ each id in no slot (`needs`); idle polls send them ahead of ahead_layer's queue,
 slot when its first part goes, its tag with its last part, then its entry: the expert run
 waits on that entry. A need is never dropped. While the prefill is expert-major, every slot
 taken during layer j's runs has its victim outside layers j - 1, j and j + 1, and begin_prefill
-can set the slot region's last slots aside as the prefill's scratch.
+can set the slot region's first slots aside as the prefill's scratch.
 
 On the card the server's memory is `BoardDram` (`dram_of`): the experts' DMA at the link's
 rate, in a worker thread, the host's own words without a read of the card first.
@@ -485,14 +485,15 @@ class Layout:
         return 2 * self.E * self.layers
 
     def scratch(self, nbytes: int) -> tuple:
-        """An expert-major prefill's scratch of nbytes (docs/offload.md 13.11): the last
-        ceil(nbytes / pitch) slots, one span (the slots lie layer after layer). Returns (its
-        base address, those slots' addresses)."""
+        """An expert-major prefill's scratch of nbytes (docs/offload.md 13.11): the first
+        ceil(nbytes / pitch) slots from the first slot on, one span (the slots lie layer after
+        layer; moe.em_slots, the card's side, takes the same). Returns (its base address, those
+        slots' addresses)."""
         al = self.all_slots()
         m = -(-nbytes // self.pitch)
         if not 0 < m < len(al):
             raise ValueError(f"a scratch of {nbytes} bytes: {m} of the {len(al)} slots")
-        return al[-m], al[-m:]
+        return al[0], al[:m]
 
     def layer_of(self, slot: int) -> int:
         """The MoE layer whose own slots hold `slot`."""
@@ -1170,7 +1171,7 @@ class ExpertServer:
         part: the bytes an idle poll sends of an expert while it lasts (RUN blocks; default the
         server's part). expert_major (docs/offload.md 13.11): need lines are served (need),
         and every slot taken during layer j's runs has its victim outside layers j - 1, j and
-        j + 1. scratch: that many bytes of the slot region's last slots (Layout.scratch) set
+        j + 1. scratch: that many bytes of the slot region's first slots (Layout.scratch) set
         aside for the prefill, their experts evicted and their entries cleared on the card
         before the scratch's base address is returned (None without one); no slot of it is
         handed out until end_prefill."""
