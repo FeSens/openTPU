@@ -7,7 +7,7 @@ an exact end), and the card's requests replayed from a session.
 The card here posts each request (a session trace's layer and misses: hits drawn from the
 server's slots, misses from outside them) a device gap after the previous served landed, and
 answers the poll's reads of seq and of the row. It records when each request is posted, seen,
-its last new entry landed and served landed. The DMA calls are logged, so the link's idle time
+its last tag landed (docs/offload.md 10.11: the last missing expert's) and served landed. The DMA calls are logged, so the link's idle time
 between them can be split by what comes before and after.
 
   TRACE  a moe_card --hint-trace timeline ([t0, t1, kind, layer, misses] per poll: its "d"
@@ -18,12 +18,12 @@ between them can be split by what comes before and after.
 
 Prints one JSON line (appended to --out):
 - detect_s: post -> seen, summed;
-- crit_s: seen -> the request's last new entry landed (what the card waits for);
+- crit_s: seen -> the request's last tag landed (what the card waits for);
 - window_s: seen -> poll returns (moe_card's poll, less its seq read);
 - link_busy_s: the calls' modelled time;
 - gaps: the link's idle between consecutive calls in a window, by the calls' kinds
-  (D an expert's part, e a new entry, c a victim's clear, s served; "q": nothing queued when
-  the first ended): [count, s, us each].
+  (a the answer, D an expert's part, T its last (the tag its last beat), e the directory, t
+  a tag's clear, s served; "q": nothing queued when the first ended): [count, s, us each].
 
 --legacy serves as before docs/offload.md 10.8 (moe_card --legacy-serve). Needs a C compiler
 (cc) for the wait, Linux for its timer slack.
@@ -126,7 +126,7 @@ def main():
         R, gaps = R[:a.n], gaps[:a.n]
     st = dict(r=0, posted=None, ids=[], post=[], seen=[], entry=[], served=[], busy=0.0)
     rng = np.random.default_rng(1)
-    beats, calls, srv_ref = {}, [], []
+    calls, srv_ref = [], []
 
     def addr_of(ch, o):                 # a beat's logical address (CHASH)
         m = o // 64
@@ -168,7 +168,10 @@ def main():
             b[:4 * len(ids)] = np.frombuffer(np.array(ids, np.float32).tobytes(), np.uint8)
         return b[:n]
 
-    def card_write(addr, data) -> str:
+    tags = {s + L.tag for s in L.all_slots()}
+
+    def card_write(addr, data, n) -> str:
+        """A call of n bytes whose last beat is at addr landed."""
         now = time.perf_counter()
         if addr == L.served:
             r = int(np.frombuffer(bytes(data[:4]), np.float32)[0]) - 1
@@ -176,16 +179,17 @@ def main():
                 st["served"][r] = now
                 st["r"] = r + 1
             return "s"
+        if addr == L.answer:
+            return "a"
         if L.dir <= addr < L.dir + 8 * G:
-            w = np.frombuffer(bytes(data), np.uint32).copy()
-            old, beats[addr] = beats.get(addr), w
-            new = w[1::2] != 0
-            if old is not None:
-                new &= old[1::2] == 0
-            if new.any() and st["posted"] is not None:
+            return "e"
+        if addr in tags:
+            if n == 64:
+                return "t"
+            if st["posted"] is not None:        # an expert's last call: its tag landed
                 st["entry"][st["posted"]] = now
-            return "e" if new.any() else "c"
-        return "?"
+            return "T"
+        return "D" if n > 64 else "?"
 
     class FakeOs:
         """board.py's os: pwrite / lseek / readinto on the fake device files (fds -2, -3)."""
@@ -204,7 +208,7 @@ def main():
             t1 = time.perf_counter()
             st["busy"] += t
             ch, o = (1, at - bd.BASE[1]) if at >= bd.BASE[1] else (0, at)
-            kind = card_write(addr_of(ch, o), np.frombuffer(buf, np.uint8)) if n == 64 else "D"
+            kind = card_write(addr_of(ch, o + n - 64), np.frombuffer(buf, np.uint8)[-64:], n)
             calls.append((t0, t1, kind, mem._q.qsize() == 0))
             return n
 

@@ -37,11 +37,14 @@ def _served(mem, lay):
 
 def test_layout_is_aligned_and_disjoint():
     lay = Layout.build(4096, E, K, (3, 5), SLOT)
-    words = [lay.mbox, lay.served, lay.dir] + [a for a, _ in lay.slots]
+    words = [lay.mbox, lay.served, lay.answer, lay.dir] + [a for a, _ in lay.slots]
     assert all(a % LINE == 0 for a in words)
-    assert lay.served >= lay.row + LINE
+    assert lay.served >= lay.row + LINE and lay.answer >= lay.served + LINE
+    assert lay.dir >= lay.answer + LINE
     assert lay.slots[0][0] >= lay.dir + 8 * E * 2
-    assert lay.slots[1][0] == lay.slots[0][0] + 3 * SLOT
+    assert lay.tag == SLOT and lay.pitch == SLOT + 128      # a slot, then its tag chunk
+    assert lay.slots[1][0] == lay.slots[0][0] + 3 * lay.pitch
+    assert lay.all_slots() == [a + i * lay.pitch for a, n in lay.slots for i in range(n)]
     with pytest.raises(ValueError):
         Layout.build(4100, E, K, (3,), SLOT)
 
@@ -197,29 +200,30 @@ def test_preadv_iov_fills_as_preadv_and_resumes_short_reads(tmp_path, monkeypatc
     assert max(calls) == O.IOV_MAX and len(calls) > len(sizes) // 7
 
 
-def test_victims_entries_are_cleared_after_the_requests_experts():
-    """A request's victims' entries are cleared after its last new entry and before served (the
-    card waits on the new entries only and reads a victim's entry in a later request: after
-    served), so the link starts with the first expert's bytes; clear_late False clears each one
-    before its slot is written, as before docs/offload.md 10.8. Either way the victims' entries
-    read empty once poll returns."""
+def test_a_requests_answer_goes_first_and_its_directory_after_its_experts():
+    """A request's answer (its missing experts' slots) is written before any of their bytes,
+    each expert's tag right after its bytes, and the directory's new entries and victims'
+    clears after the last expert, before served (the card waits on the answer and the tags;
+    it reads a victim's entry only in a later request: after served), so the link starts with
+    the answer and then the first expert's bytes; clear_late False clears each victim before
+    its slot is written, as before docs/offload.md 10.8. Either way the victims' entries read
+    empty once poll returns."""
     for late in (True, False):
         lay, mem, srv = _setup(warm=[0, 1, 2])      # layer 0 LRU order: 2, 1, 0 (0 newest)
         srv.clear_late = late
         log, w = [], mem.write
+        tags = {a + lay.tag for a in lay.all_slots()}
 
         def rec(addr, data, w=w):
-            b = np.frombuffer(data if isinstance(data, bytes) else np.asarray(data).tobytes(),
-                              np.uint8)
-            log.append("served" if addr == lay.served else
-                       ("entry" if b[4:8].any() else "clear")
-                       if lay.dir <= addr < lay.dir + 8 * E * 2 else "slot")
+            log.append("served" if addr == lay.served else "answer" if addr == lay.answer else
+                       "dir" if lay.dir <= addr < lay.dir + 8 * E * 2 else
+                       "tag" if addr in tags else "slot")
             w(addr, data)
         _post(mem, lay, 1, [5, 6])                  # two misses: victims 2 and 1
         mem.write = rec
         assert srv.poll() == 1
-        assert log == (["slot", "entry", "slot", "entry", "clear", "clear", "served"] if late
-                       else ["clear", "slot", "entry", "clear", "slot", "entry", "served"])
+        assert log == (["answer", "slot", "tag", "slot", "tag", "dir", "served"] if late else
+                       ["dir", "dir", "answer", "slot", "tag", "slot", "tag", "dir", "served"])
         assert _entry(mem, lay, 2) == _entry(mem, lay, 1) == (0, 0.0)
         assert _entry(mem, lay, 5)[1] == _entry(mem, lay, 6)[1] == 1.0
         assert not srv._victims
@@ -294,9 +298,9 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
                         fast_pool, **kw)
     dmas, dma = [], fast.mem._dma
 
-    def counted(off, bufs, a=0, b=None):
-        dmas.append(len(bufs[0][a:b]) < len(bufs[0]))
-        dma(off, bufs, a, b)
+    def counted(off, bufs, a=0, b=None, order=(0, 1)):
+        dmas.append(len(bufs[0][a:b]) < len(bufs[0]) - 64)   # (the tag beat after the runs)
+        dma(off, bufs, a, b, order)
     fast.mem._dma = counted
     plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
                                                      read=lambda s, a, n: bb.read(a, n))),
@@ -453,9 +457,9 @@ def test_pool_file_residency(tmp_path):
 
 def test_slots_are_whole_run_blocks_apart_so_every_expert_reads_in_place(tmp_path):
     """Layout's pitch: a slot of 3.5 RUN blocks (gemma-4-26B-A4B's 841.5) starts every slot on a
-    RUN block (the last one's end its own bytes), so BoardDram reads every expert of a split
-    pool straight into its runs (`direct`), none through the copy path; a slot under RUN keeps
-    its size as its pitch."""
+    RUN block (its tag chunk in the half block after it), so BoardDram reads every expert of a
+    split pool straight into its runs (`direct`), none through the copy path; a slot under RUN
+    keeps its size and tag chunk, rounded up to its own alignment."""
     from types import SimpleNamespace
 
     from opentpu.host.board import Board
@@ -465,8 +469,9 @@ def test_slots_are_whole_run_blocks_apart_so_every_expert_reads_in_place(tmp_pat
     lay = Layout.build(4096, 4, 2, (2, 3), slot)
     assert lay.pitch == 4 * RUN and all(a % RUN == 0 for a, _ in lay.slots)
     assert lay.slots[1][0] == lay.slots[0][0] + 2 * lay.pitch
-    assert lay.end == lay.slots[1][0] + 2 * lay.pitch + slot
-    assert Layout.build(4096, 4, 2, (2, 3), 128 * 7).pitch == 128 * 7
+    assert lay.tag == slot and lay.end == lay.slots[1][0] + 2 * lay.pitch + slot + 128
+    assert Layout.build(4096, 4, 2, (2, 3), 128 * 7).pitch == 128 * 8     # + its tag chunk
+    assert Layout.build(4096, 4, 2, (2, 3), 256 * 3).pitch == 256 * 4     # at its alignment
     x = np.random.default_rng(0).integers(0, 256, (8, slot), dtype=np.uint8)
     f = tmp_path / "pool.bin"
     f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
@@ -761,11 +766,12 @@ def _consistent(mem, lay, srv):
 
 
 def test_two_line_layout_moves_nothing_else():
-    """lines=2: a second line of ids on its own 128-byte block after the directory, the slots
-    after it; lines=1 is the old layout, address for address."""
+    """lines=2: a second line of the answer before the directory and a second line of ids on
+    its own 128-byte block after it, the slots after that."""
     one, two = (Layout.build(4096, E, K, (3, 5), SLOT, lines=n) for n in (1, 2))
     assert one == Layout.build(4096, E, K, (3, 5), SLOT) and one.row2 == 0
-    assert (one.mbox, one.served, one.dir) == (two.mbox, two.served, two.dir)
+    assert (one.mbox, one.served, one.answer) == (two.mbox, two.served, two.answer)
+    assert two.dir == one.dir + LINE
     assert two.row2 % (2 * LINE) == 0 and two.row2 >= two.dir + 8 * E * 2
     assert two.slots[0][0] >= two.row2 + LINE and two.slots[0][0] % 4096 == 0
     assert (one.max_ids, two.max_ids) == (16, 32)
@@ -935,3 +941,176 @@ def test_poll_pacer_sleeps_through_the_quiet_part_of_each_gap():
     assert pacer.sleeps == s0
     with pytest.raises(ValueError, match="share"):
         PollPacer([card], share=1.0)
+
+
+def _tag(mem, lay, slot):
+    return int(np.frombuffer(mem.read(slot + lay.tag, 4), np.uint32)[0])
+
+
+def _answer(mem, lay):
+    return [int(v) for v in np.frombuffer(mem.read(lay.answer, LINE), np.uint32)]
+
+
+def test_the_answer_names_the_missing_experts_slots_and_their_tags_land():
+    """docs/offload.md 10.11: load zeroes every slot's tag and the answer. A request's answer
+    holds each missing expert's slot at the id's place (0 for the hits); each one's tag reads
+    g + 1 once poll returns. The card zeroes the tags of the experts it used and then the
+    answer before its next post: tags the host wrote are armed until a later request comes."""
+    lay, mem, srv = _setup(warm=[0, 1, 2])
+    assert all(_tag(mem, lay, a) == 0 for a in lay.all_slots())
+    assert _answer(mem, lay) == [0] * 16
+    _post(mem, lay, 1, [2, 5])                      # 2 hits; 5 misses
+    srv.poll()
+    s5 = srv.lru[0][5]
+    assert _answer(mem, lay) == [0, s5] + [0] * 14
+    assert _tag(mem, lay, s5) == 6 and srv.armed == {s5}
+    assert _tag(mem, lay, srv.lru[0][2]) == 0       # (a hit's tag is left alone)
+    for g in (2, 5):                                # the card: each used expert's tag, then
+        mem.write(srv.lru[0][g] + lay.tag, np.zeros(1, np.uint32))    # the answer, zeroed
+    mem.write(lay.answer, np.zeros(16, np.uint32))
+    _post(mem, lay, 2, [6, 2])                      # 6 misses
+    srv.poll()
+    s6 = srv.lru[0][6]
+    assert srv.armed == {s6} and _answer(mem, lay) == [s6] + [0] * 15
+    assert _tag(mem, lay, s6) == 7 and _tag(mem, lay, s5) == 0
+
+
+def test_an_armed_victims_tag_is_cleared_before_its_slot_takes_another_expert():
+    """A hinted expert that lands on idle polls (its tag with its last part) and that no
+    request uses keeps its tag nonzero: the card never zeroed it. When its slot is a victim,
+    its tag is cleared before the new expert's bytes, so the card cannot take the old tag for
+    the new expert's."""
+    lay, mem, srv, G = _hint_setup()
+    _post(mem, lay, 1, [G + 6, G + 7])              # 6, 7 hinted: victims 2 and 1
+    srv.poll()
+    while srv.poll():                               # both land on idle polls
+        pass
+    s6 = srv.lru[0][6]
+    assert _tag(mem, lay, s6) == 7 and s6 in srv.armed
+    _post(mem, lay, 2, [0, 7])                      # the card zeroes 0's and 7's tags
+    srv.poll()
+    for g in (0, 7):
+        mem.write(srv.lru[0][g] + lay.tag, np.zeros(1, np.uint32))
+    log, w = [], mem.write
+
+    def rec(addr, data, w=w):
+        b = np.frombuffer(np.asarray(data).tobytes() if not isinstance(data, bytes) else data,
+                          np.uint8)
+        log.append(("tag", int(b[:4].view(np.uint32)[0])) if addr == s6 + lay.tag else
+                   "slot" if addr == s6 else None)
+        w(addr, data)
+    mem.write = rec
+    _post(mem, lay, 3, [0, 3])                      # 3 misses: the victim is 6 (never used)
+    srv.poll()
+    assert srv.lru[0][3] == s6
+    assert [x for x in log if x] == [("tag", 0), "slot", ("tag", 4)]
+    assert s6 in srv.armed and srv.lru[0][7] not in srv.armed
+
+
+def test_an_all_hit_request_left_at_a_runs_end_is_served_before_the_slots_change():
+    """A request whose experts are all present does not wait for the host, so the run that
+    posted it can halt first (a layer-major prefill's last run). end_prefill and begin_prefill
+    serve it before they change the slots, as the card ran it: all hits, no answer, no tags.
+    Served after the restore it could name misses, and the next request would read their
+    answer for its own (the card never zeroes it)."""
+    for restore in ("lazy", "eager"):
+        lay, mem, srv = _setup(slots=(2, 2, 2))
+        srv.begin_prefill()
+        for seq, run in enumerate(([0, 1, 1, 2], [1, 1, 2, 2], [8, 9, 9, 10]), 1):
+            _post_n(mem, lay, seq, run)
+            assert srv.poll() == 1
+            mem.write(lay.answer, np.zeros(16, np.uint32))      # (the card, after its experts)
+        _post_n(mem, lay, 4, [0, 0, 0, 0])              # all present; the run halts unseen
+        srv.end_prefill(restore)
+        assert srv.seq == 4 and _served(mem, lay) == 4.0 and srv.misses == 6
+        assert _answer(mem, lay) == [0] * 16
+        _consistent(mem, lay, srv)
+        missing = [g not in srv.lru[0] for g in (0, 3)]
+        _post_n(mem, lay, 5, [0, 3])                    # the next request's answer: its own
+        assert srv.poll() == 1
+        assert _answer(mem, lay)[:2] == [srv.lru[0][g] if m else 0
+                                         for g, m in zip((0, 3), missing)]
+        _consistent(mem, lay, srv)
+    lay, mem, srv = _setup(warm=[0, 1, 2])
+    _post(mem, lay, 1, [0, 1])                          # a step's last request, unseen
+    srv.begin_prefill()
+    assert srv.seq == 1 and srv.misses == 0 and _answer(mem, lay) == [0] * 16
+
+
+@pytest.mark.parametrize("fmt", ["bytes", "split"])
+@pytest.mark.parametrize("chash", [False, True])
+def test_board_dram_sends_each_tag_as_its_experts_last_beat(fmt, chash, tmp_path):
+    """The link's side of docs/offload.md 10.11, call by call: per request the answer's beat
+    first; then each missing expert's DMA calls (a fifth first for the request's first: two
+    parts), its last part on the other channel and then on its tag's channel, the tag that
+    call's last 64 bytes (nothing of the expert after it); then the directory, then served."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import RUN, BoardDram, PoolFile, to_split
+    slot = 3 * RUN
+    lay = Layout.build(4096, 4, 2, (2, 3), slot)
+    x = np.random.default_rng(1).integers(0, 256, (8, slot), dtype=np.uint8)
+    pool = lambda g: x[g].tobytes()                 # noqa: E731
+    if fmt == "split":
+        f = tmp_path / "pool.bin"
+        f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
+        pool = PoolFile(f, slot, split=True).get
+    b = Board(FakeTransport(ch_bytes=1 << 20, devname=None))
+    b.info()["caps"]["chash"] = chash
+    m = BoardDram(SimpleNamespace(board=b), lay)
+    srv = ExpertServer(m, lay, pool)
+    srv.load([0, 1])
+    calls, mw = [], b.t.mem_write
+
+    def call(ch, off, data):
+        calls.append((ch, off, len(data), bytes(np.asarray(data, np.uint8)[-64:])))
+        mw(ch, off, data)
+    b.t.mem_write = call
+
+    def where(a):                                   # a beat's (channel, channel offset)
+        return m._tag_channel(a), a // 128 * 64
+
+    def covers(c, a):                               # call c writes the beat at a
+        ch, off = where(a)
+        return c[0] == ch and c[1] <= off < c[1] + c[2]
+    for seq, ids in enumerate(([2, 3], [0, 3]), 1):
+        b.write(lay.row, np.array(ids + [0] * 14, np.float32))
+        b.write(lay.mbox, np.float32(seq).tobytes())
+        calls.clear()                               # (the card's post: not the server's)
+        miss = [g for g in ids if g not in srv.lru[0]]
+        assert srv.poll() == 1
+        assert covers(calls[0], lay.answer) and covers(calls[-1], lay.served)
+        last = 0
+        for g in miss:
+            s = srv.lru[0][g]
+            mine = [i for i, c in enumerate(calls)
+                    if any(covers(c, a) for a in range(s, s + lay.tag + 128, 64))]
+            assert mine[0] > last and mine == list(range(mine[0], mine[-1] + 1))
+            *_, other, final = mine
+            ct, ot = where(s + lay.tag)
+            assert calls[final][0] == ct and calls[other][0] == 1 - ct
+            assert calls[final][1] + calls[final][2] == ot + 64       # the tag: its last beat
+            assert calls[final][3][:4] == np.uint32(g + 1).tobytes()
+            parts = 2 if g == miss[0] and m.direct > 2 else 1   # (the first: a fifth, the rest)
+            assert len(mine) == 2 * parts
+            last = mine[-1]
+        rest = calls[last + 1:-1]                   # the directory's beats, after them all
+        assert rest and all(any(covers(c, a) for a in range(lay.dir, lay.dir + 64, 64))
+                            for c in rest)
+    assert (m.direct > 2) == (fmt == "split" and chash)
+    for g in srv.lru[0]:                            # the bytes as Board.write would have them
+        assert bytes(b.read(srv.lru[0][g], slot)) == x[g].tobytes()
+
+
+def test_a_multi_row_requests_answer_is_at_each_ids_first_place():
+    """A layer-major run's request (moe.moe_ffn_rows: R k ids, repeats included, the count at
+    mbox + 4): each missing expert's slot is at its id's first place in the request, where the
+    card's union loop reads it; the repeats' words stay 0."""
+    lay, mem, srv = _setup(slots=(4, 3), warm=[0, 1, 2])
+    mem.write(lay.mbox + 4, np.float32(6).tobytes())
+    _post(mem, lay, 1, [5, 2, 5, 6, 2, 6])          # rows (5, 2), (5, 6), (2, 6)
+    srv.poll()
+    assert srv.history is None and (srv.hits, srv.misses) == (1, 2)
+    assert _answer(mem, lay) == [srv.lru[0][5], 0, 0, srv.lru[0][6]] + [0] * 12

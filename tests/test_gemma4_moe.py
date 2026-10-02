@@ -258,6 +258,33 @@ def test_moe_small_cache_is_bit_exact(moe, wf):
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
 
 
+@pytest.mark.parametrize("R,tag_first", [(1, False), (2, False), (2, True)])
+def test_moe_streams_beat_by_beat(moe, R, tag_first):
+    """docs/offload.md 10.11 over an adversarial link (tests/beat_link.py: the server's writes
+    land a 64-byte beat at a time, the machine running as soon as one of its WAITWs holds): k
+    slots per layer (2k for runs of 2 rows), the dense MLP beside each request and, with
+    R = 2, the prompt layer by layer (moe.moe_ffn_rows: one request for the run's rows, each
+    union expert's slot at its first place in the answer), give the logits of the engine with
+    every expert in a slot bit for bit, then the next decode steps. The negative control (each
+    tag before its expert's bytes) breaks the prefill's."""
+    from beat_link import BeatLink
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 9)]
+    full = _moe_engine(moe, wformat="fp4")
+    small = _moe_engine(moe, wformat="fp4", experts=R * K, layer_major=R if R > 1 else 0)
+    link = BeatLink(small, tag_first)
+    la, lb = small.prefill(toks), full.prefill(toks)
+    if tag_first:
+        assert not np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+        return
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    t = int(np.argmax(la))
+    for _ in range(3):
+        ga, gb = small.step(t), full.step(t)
+        assert np.array_equal(ga.view(np.uint32), gb.view(np.uint32))
+        t = int(np.argmax(ga))
+    assert small.server.misses > len(toks) and link.held > 0
+
+
 def test_moe_resident_and_the_card_loop(moe):
     """Resident decode (the token's rows gathered on the device) gives the per-position
     programs' logits bit for bit, with k slots per layer; the decode loop on the card (the
