@@ -96,7 +96,7 @@ def fit_experts(spec, cfg, cap: int, **kw) -> int:
     from dataclasses import replace
     probe = spec.image(replace(cfg, DRAM_BYTES=1 << 40), cap, rows=1, experts=spec.moe.k, **kw)
     L = probe.offload
-    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.slot_bytes))
+    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.pitch))
 
 
 def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None,
@@ -105,7 +105,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
-         formats: str | None = None, layer_major: int = 0) -> dict:
+         formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
+         willneed: bool = True) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -137,6 +138,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         ekw["layer_major"] = layer_major        # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
+    if release_weights:                         # the checkpoint's pages back to the page
+        W.release()                             # cache's other users: the pool (10.6)
     load_s = time.time() - t
     srv = eng.server
     srv.policy = policy                         # the slots' replacement (ExpertServer)
@@ -182,6 +185,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
             return r
         eng.backend.host = served
     warm, pf = getattr(srv, "pool_warm", None), getattr(srv, "pool_file", None)
+    if willneed and pf is not None:             # a request's misses read from the disk at once
+        srv.ahead = pf.willneed
 
     def warm_at():                              # the pool file's packed experts: read by the
         if warm is None:                        # warm thread, and in the page cache
@@ -276,6 +281,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
+                release_weights=release_weights, willneed=willneed,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
@@ -343,6 +349,15 @@ def main():
     ap.add_argument("--layer-major", type=int, default=0, metavar="R",
                     help="prefill a layer at a time in runs of R rows (docs/offload.md 13; "
                          "default 0: token by token)")
+    ap.add_argument("--keep-weights", action="store_true",
+                    help="keep the checkpoint mapped after the image is built (by default "
+                         "LazyWeights.release gives its pages back: page cache for the pool; "
+                         "docs/offload.md 10.6)")
+    ap.add_argument("--no-willneed", action="store_true",
+                    help="read a request's misses from the pool one after another (by default "
+                         "PoolFile.willneed queues those not in the page cache at once)")
+    ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -354,7 +369,8 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major)
+             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
+             not a.keep_weights, not a.no_willneed)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

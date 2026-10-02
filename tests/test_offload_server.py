@@ -72,6 +72,25 @@ def test_misses_evict_the_least_recent_not_requested():
     assert _entry(mem, lay, 0)[1] == 1.0 and _entry(mem, lay, 6)[1] == 1.0
 
 
+def test_ahead_sees_a_requests_misses_before_the_first_is_staged():
+    """ExpertServer.ahead (moe_card --willneed: PoolFile.willneed) is called with a request's
+    missing ids, before the first of them is read from the pool; a request of hits only does
+    not call it."""
+    lay, mem, srv = _setup(warm=[0, 1, 2])
+    seen, reads = [], []
+    pool = srv.pool
+    srv.pool = lambda g: (reads.append(g), pool(g))[1]
+    srv.ahead = lambda ids: seen.append((list(ids), len(reads)))
+    _post(mem, lay, 1, [5, 4])
+    srv.poll()
+    _post(mem, lay, 2, [0, 6])                      # 0 hits (2 was a victim)
+    srv.poll()
+    assert seen == [([5, 4], 0), ([6], 2)] and reads == [5, 4, 6]
+    _post(mem, lay, 3, [6, 0])                      # hits only
+    srv.poll()
+    assert len(seen) == 2
+
+
 def test_one_request_at_a_time():
     lay, mem, srv = _setup()
     for s in range(1, 6):
@@ -149,8 +168,8 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
     slot of a half chunk falls back to Board.write.
     split: the pool a file in the split format, read with preadv straight into the channel
     runs under CHASH at a page-aligned slot (pages of either parity; a slot of 37 chunks is
-    every other slot off a page: the slot's bytes there, as without CHASH); a request's first
-    miss in `pieces` parts, each DMAed when it is read.
+    two pages apart: Layout's pitch); a request's first miss in `pieces` parts, each DMAed
+    when it is read.
     hints: both servers by decayed use, each request after a hint (one of its experts and one
     it does not name) and 0, 2 or 4 polls with no request: the hinted experts' 4 KiB parts (a
     staging pair's first bytes) land as Board.write writes them."""
@@ -337,6 +356,36 @@ def test_pool_file_residency(tmp_path):
         assert pf.resident(range(4)) == 4 * slot
 
 
+def test_slots_are_whole_run_blocks_apart_so_every_expert_reads_in_place(tmp_path):
+    """Layout's pitch: a slot of 3.5 RUN blocks (gemma-4-26B-A4B's 841.5) starts every slot on a
+    RUN block (the last one's end its own bytes), so BoardDram reads every expert of a split
+    pool straight into its runs (`direct`), none through the copy path; a slot under RUN keeps
+    its size as its pitch."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import RUN, BoardDram, PoolFile, to_split
+    slot = 3 * RUN + RUN // 2
+    lay = Layout.build(4096, 4, 2, (2, 3), slot)
+    assert lay.pitch == 4 * RUN and all(a % RUN == 0 for a, _ in lay.slots)
+    assert lay.slots[1][0] == lay.slots[0][0] + 2 * lay.pitch
+    assert lay.end == lay.slots[1][0] + 2 * lay.pitch + slot
+    assert Layout.build(4096, 4, 2, (2, 3), 128 * 7).pitch == 128 * 7
+    x = np.random.default_rng(0).integers(0, 256, (8, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
+    b = Board(FakeTransport(ch_bytes=1 << 20, devname=None))
+    b.info()["caps"]["chash"] = True
+    m = BoardDram(SimpleNamespace(board=b), lay)
+    srv = ExpertServer(m, lay, PoolFile(f, slot, split=True).get)
+    srv.load(range(8))
+    assert m.direct == 5
+    for g in srv.lru[0].keys() | srv.lru[1].keys():
+        assert srv.lru[g // 4][g] % RUN == 0
+        assert np.array_equal(np.asarray(b.read(srv.lru[g // 4][g], slot)).view(np.uint8), x[g])
+
+
 def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):
     """A staging pair goes back to the free list only after its expert's last part is on the
     card: with one pair and a slow link, the next expert's read waits for it (else it would
@@ -386,6 +435,7 @@ def test_pool_file_counts_its_reads_by_the_page_cache(tmp_path):
     os.truncate(f, slot * n)                            # experts 4 and 5: holes
     for split, hole in ((False, 4), (True, 5)):
         pf = PoolFile(f, slot, split=split)
+        pf.willneed([1, 2])                             # (a hint to the kernel, or nothing)
         if pf.resident(range(n)) is None:
             pytest.skip("no mincore here")
         np.asarray(pf.get(1))

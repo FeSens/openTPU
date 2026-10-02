@@ -1192,6 +1192,70 @@ After session 9's 35B (the same misses and DMA, staging 10.5 -> 20-32 s), moe_ca
   with the WAITW stalls, DRAM_RD / WR, INSTR, ...);
 - `misses_per_request_decode`: each request's misses (a token's layers in order).
 
+What the 35B needs (cachesim, the decode's misses under lfu_layer at the card's 1680 slots
+replayed against a host cache over the pool; four 2048-token router traces, 128-token windows,
+85 misses a token): disk reads a token by the pool's GB in the page cache:
+
+| pool GB in RAM | LRU (the page cache) | admit the profile's 5000 / 7000 best only (O_DIRECT the rest) | the profile's best pinned (O_DIRECT the rest) | Belady |
+|:--|:--|:--|:--|:--|
+| 8 | 18.5 | 32.4 / 20.6 | 33.9 | 6.2 |
+| 10 | 9.7 | 32.4 / 16.0 | 22.2 | 3.6 |
+| 12 | 4.5 | 32.4 / 15.5 | 13.2 | 2.2 |
+| 14 | 2.2 | 32.4 / 15.5 | 6.9 | 1.8 |
+
+- The page cache's own LRU beats keeping cold experts out of it and pinning a hot set at every
+  size; other slot policies miss more (lru_layer 95 a token, a global LFU 175). The 26B's 13.2 GB
+  pool needs about 8 GB (1.9 disk reads a token; 0.4 at 10).
+- opentpu's SSD (a SATA BX500, btrfs on dm-crypt) reads an expert dropped from the page cache in
+  4.2 ms one at a time (400 MB/s), 3.4-3.6 ms with a request's misses queued at once
+  (POSIX_FADV_WILLNEED, threads, or O_DIRECT in threads): about 3.8 ms more than a cached read.
+- With no disk read a token takes the card's 101 ms outside the windows plus 144 ms of windows
+  (session 5's traces: 0.12-0.26 ms a request plus 1.27-1.36 ms a miss, the link's 1.24 ms): 4.08
+  tok/s; by pool GB in RAM 14 -> 3.95, 12 -> 3.82, 10 -> 3.55, 8 -> 3.17.
+
+So the lever is RAM for the pool. moe_card's `--release-weights` gives the checkpoint's pages back
+after the build (`LazyWeights.release`: safe_open maps each file whole, and the pages the build
+read stay mapped, held over the pool's; the 35B's stripped checkpoint is 4.9 GB, the 26B's 4.5;
+a tensor read after reopens its file). On Linux a 537 MB checkpoint read whole held 526 MB of
+RssFile and its pages; after release() neither. `--willneed` queues a request's misses' reads at
+once (`ExpertServer.ahead`, `PoolFile.willneed`).
+
+Card session 10 (2026-10-01, build 72256074, `tools/offload/sessions/session10.sh`; main d29bfe9's
+programs with this host code, against session 9's references: every run's tokens and prefill
+sha the simulator's) measured both, the 35B at 128 tokens with the same 102.85 misses a token in
+every run:
+
+| run | other checkpoints in the page cache | release | willneed | tok/s | disk reads (s) | staging s | windows s | pool GB cached at decode |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| s10 t | 13.6 GB (the session before's) | | | 2.20 | 3261 (26.4) | 33.7 | 45.9 | 9.35 |
+| s10 r | 13.6 GB | yes | | 3.05 | 1664 (9.4) | 17.0 | 29.6 | 9.64 |
+| s10 rw | 13.6 GB | yes | yes | 3.50 | 1248 (2.5) | 10.4 | 24.2 | 12.70 |
+| s10b t | dropped | | | 3.67 | 226 (1.0) | 8.8 | 22.4 | 16.50 |
+| s10b r | dropped | yes | | **3.79** | 0 | 7.7 | 21.3 | 16.05 |
+
+- The process is not what crowds the pool: 1.3 GB anonymous, its compile workers 0.1 GB (13.3 GB
+  at its peak, the image build). The page cache held the checkpoints a session before had
+  mmapped (Qwen3.5 0.8B / 2B / 4B, 13.6 GB) and the run's own (4.74 GB of RssFile): with MGLRU
+  (opentpu: on) once-mapped pages outlive the pool's read() pages. `fincore` shows them.
+- So moe_card releases the checkpoint and queues a request's disk reads by default
+  (`--keep-weights`, `--no-willneed` for the old way), and card_moe.sh drops every other file of
+  100 MB or more under ~/openTPU/models and the session directory before each run (`DROPOTHER`,
+  "" for none; DONTNEED only, the next session's loads read them from the SSD).
+- The card's side did not change: MXU_BUSY 2.13e9 cycles in every run, RUNNING - DMA_BUSY 1.76e9;
+  only WAITW's share moved. Each request's window (`--hint-trace`): 0.6 ms + 1.57 ms a miss with
+  the pool cached (rw), 1.57 + 2.85 with the disk (t, its 99th percentile 108 ms).
+- 3.79 against the model's 4.08: the build's link (1.33 GB/s, not 1.40) and the windows' 21.3 s
+  against the DMA thread's 16.4 s, each request's first expert staged before the link starts.
+- The 26B (2.42, 2.39 with release) read nothing from the disk: its 13.2 GB pool fits. Its
+  staging (21.4 s for 11,276 experts) is half in the copy path: an expert of 3,446,784 bytes is
+  841.5 RUN blocks, so every other slot is not 4 KiB aligned and BoardDram reads it whole and
+  reorders it (`direct` 5618), about 2.85 ms more an expert. So `Layout.build` now spaces the
+  slots by whole RUN blocks (`Layout.pitch`: the 26B's 3,448,832, 1.1 MB more for its 540 slots,
+  still 18 a layer in its 4052 MiB image; the 35B's and LFM2.5-8B's slots are whole blocks
+  already) and every expert reads into its runs. The slot addresses are the directory's, so no
+  program changes (program_sha.py: main's hashes under both configurations). Expected: about
+  16 s less staging, the 26B near 2.8 tok/s.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The

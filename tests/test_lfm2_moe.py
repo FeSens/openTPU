@@ -484,8 +484,9 @@ def test_the_host_serves_the_card_during_its_runs(tiny, mode, tmp_path):
     assert brd.server.seq == isa.server.seq == (len(toks) + 8) * len(brd.image.offload.slots)
     if threaded:                            # the experts went the one-pass way, not Board.write
         assert brd.server.mem._bufs is not None
-    if mode == "split":                     # and read into the runs (the split format)
-        assert 0 < brd.server.mem.direct < brd.server.misses and brd.server.pool_warm
+    if mode == "split":                     # and read into the runs (the split format):
+        # every one (each slot on a RUN block, Layout's pitch; direct counts the load's too)
+        assert brd.server.mem.direct >= brd.server.misses > 0 and brd.server.pool_warm
 
 
 @pytest.mark.parametrize("embed", ["f32", "int8"])
@@ -504,3 +505,20 @@ def test_lazy_weights_build_the_same_engine(tiny, tmp_path, embed):
             for w in (W, LazyWeights(tmp_path)))
     for t in (5, 77, 900, 13, 4):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
+
+
+def test_lazy_weights_release_closes_and_reopens(tiny, tmp_path):
+    """LazyWeights.release (moe_card --release-weights): the files closed and their pages
+    dropped; a tensor read after reopens its file and reads the same values."""
+    from safetensors.numpy import save_file
+    from opentpu.llm.qwen3 import LazyWeights
+    _, W, _ = tiny
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
+              str(tmp_path / "model.safetensors"))
+    lw = LazyWeights(tmp_path)
+    k = "model.embed_tokens.weight"
+    a = lw[k]
+    lw.release()
+    assert not lw._h
+    assert np.array_equal(lw[k], a) and np.array_equal(lw.part(k, 3), a[3])
+    assert len(lw._h) == 1
