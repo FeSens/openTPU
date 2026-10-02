@@ -599,6 +599,13 @@ class ExpertServer:
     def _clear(self) -> None:
         """The request's victims' entries cleared, after its experts (the card waits on their
         entries, not these: it reads a victim's entry only in a later request, after served)."""
+        # Safe late because of moe.moe_ffn's contract (its steps 3-5): the card reads the
+        # present flag and WAITWs on the entry of the ids it posted only, and a victim is never
+        # one of them (_slot / _pool_slot pick outside ids); its next request (the only one that
+        # could name a victim) is posted after its fence, WAITW served >= seq, and served is
+        # written after these clears on the same in-order queue. A card program that read any
+        # other entry during a request would need the clear before the victim's slot is written
+        # (clear_late False).
         for g in self._victims:
             self.mem.write(self.L.entry(g), np.zeros(2, np.uint32))
         self._victims.clear()

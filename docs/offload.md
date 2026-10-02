@@ -1379,6 +1379,33 @@ slower per miss than the card's, so scaled by 0.85 the prediction is:
 - 35B: -1.9 s per 128 tokens, 3.76 -> about 4.0 tok/s.
 - 26B: -2.0 s, 2.69 -> about 2.8 tok/s.
 
+Card session 13 (2026-10-01, `tools/offload/sessions/session13.sh`, d29bfe9's programs on the
+production build): one tree, `--legacy-serve` (L) against this serving (N), with `--hint-trace`
+and the DMA calls. Every run matched the simulator bit for bit (tokens and prefill sha):
+
+| run | serving | tok/s (device) | decode Gcycles | windows s | window fit (ms) | seen -> first expert DMA, median | link idle before data calls | DMA_BUSY G | MXU_STARVE G |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B L1 | legacy | 3.74 (3.75) | 4.546 | 21.19 | 0.34 + 1.48 / miss | 449 us | 1.16 s | 2.777 | 0.077 |
+| 35B N1 | now | **4.01** (4.02) | 4.241 | 20.23 | 0.33 + 1.41 | 273 us | 0.11 s | 2.416 | 0.105 |
+| 35B L2 | legacy | 3.75 (3.76) | 4.544 | 21.15 | 0.30 + 1.50 | 462 us | 0.95 s | 2.774 | 0.078 |
+| 35B N2 | now | **4.04** (4.05) | 4.217 | 20.02 | 0.34 + 1.39 | 269 us | 0.11 s | 2.386 | 0.108 |
+| 26B L | legacy | 2.62 (2.63) | 6.497 | 33.10 | 0.54 + 2.75 | 716 us | 1.27 s | 2.804 | 0.212 |
+| 26B N | now | **2.78** (2.78) | 6.138 | 31.34 | 0.52 + 2.60 | 316 us | 0.10 s | 2.256 | 0.284 |
+
+- That is +7.2% on the 35B (predicted ~4.0) and +6.1% on the 26B (predicted ~2.8). Decode cycles
+  fell 6.9% and 5.5%; DMA_BUSY (with the WAITW stalls) fell 0.38 G and 0.55 G cycles.
+- The DMA calls show where it came from: the link's idle time before its data calls fell from
+  ~1 s to 0.1 s per 128 tokens, and a request's first expert DMA starts 270-320 us after its
+  request is seen instead of 450-720.
+- Not all of the windows' gain reached the device. MXU_STARVE rose by 0.03 G cycles (35B) and
+  0.07 G (26B), and RUNNING - DMA_BUSY by 0.06 G and 0.19 G (1.4 s on the 26B). That is either
+  the spinning poll's card reads (98k -> 346k on the 35B, 64k -> 456k on the 26B, one every
+  ~33 us outside the windows) competing with the MXU's weight reads, or the earlier expert DMA
+  overlapping the hits' compute. To tell them apart, the next A/B is the poll's sleep alone.
+- The 64-byte calls (entries, clears, served) take 49-68 us each on the card, not 20: 31,346
+  of them per 128 tokens of the 35B, 1.8-2.1 s. Each miss still has its entry call on the
+  critical path.
+
 What remains of the excess is the link's own cost. Each expert takes two calls (one per
 channel) plus its entry's 64-byte call, about 60 us with their gaps. On top of that come the
 row read and served, plus the first part's read. Only a faster link (PCIe Gen2, on hold) or

@@ -9,7 +9,8 @@
 #     predicted about 2.8).
 # Each with its timeline and BoardDram's DMA calls (--hint-trace: <run>.trace.json and
 # <run>.trace.calls.json). The other big files dropped before each run (DROPOTHER's default).
-# About 18 min. It stops at a mismatch, a timeout or an error (a FAIL, a selftest's).
+# About 14 min (2026-10-01 22:48-23:02; results: docs/offload.md 10.8). It stops at a mismatch,
+# a timeout or an error (a FAIL, a selftest's).
 # Run: otpu-lock --wait 10800 -- tools/offload/sessions/session13.sh   (log: O/s13/session.log)
 set -u
 SESSION=${SESSION:-s13}; RF=${RF:-${O:-$HOME/otpu-build/offload/card2}/refs-d29bfe9}
