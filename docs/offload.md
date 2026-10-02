@@ -1706,12 +1706,14 @@ Two alternatives:
 
 The recommendation is A first: no bitstream, +2-3% on Gen2, and the ordering test can run on
 the current production bitstream. B later, with the next bitstream that has room for it
-(10.12: parked, nothing measurable after A).
+(10.12: parked; at most 0.3% after A on the emulator's model, up to 1-2% on the 35B by the
+card's answer cost until a software reorder lands).
 
 ### 10.12 Alternative B: a host window onto DRAM (design, ld-memch; parked)
 
-Parked on 2026-10-02: after design A it gains nothing measurable ("What B is worth after A",
-below).
+Parked on 2026-10-02. After design A the emulator shows nothing measurable, but on the card
+A's answer is not hidden yet, so B could still be worth up to 1-2% on the 35B until a software
+reorder lands ("What B is worth after A" and "On the card", below).
 
 B moves the small calls from XDMA's DMA engine to MMIO. The host's 64-byte writes (the answer,
 served, entries, clears) and the poll's reads become loads and stores on a window of BAR0, at
@@ -1829,6 +1831,14 @@ tokens, against main's entry protocol, with a run-to-run spread of 0.05-0.1 s:
 - **The larger host lever is software.** From seen to the first data DMA takes 258 / 309 us
   (median, 35B / 26B): 1.27 / 1.20 s per 128 tokens on the critical path. Only about 20 us of
   it is the row's read; the rest is serve's Python and the pool's read.
+
+**On the card** (offload, session 15, design A on production pa e4db91c9): the answer is not
+hidden. It goes out 232-246 us after the request is seen, the window's first call is cold
+(75-90 us), and the lead expert's DMA starts after it. A's net gain is +1.2-2.8% on the 35B and
++1.7% on the 26B, below the emulator's. So, B after A: at most 0.3% on the emulator's model,
+but the card's answer cost suggests up to +1-2% on the 35B (0.3-0.5 s per 128 tokens) until a
+software reorder lands. That reorder is offload's next step: the answer after the first
+expert's lead DMA. Measure B's case again after it.
 
 **Port H out of context** (omarchy, otpu_native_dram alone, 7.5 ns, D = 128):
 - **WNS +0.208 ns, against main's +0.530.** The worst paths in both are existing ones: the tag
