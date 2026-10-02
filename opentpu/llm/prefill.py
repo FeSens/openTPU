@@ -53,12 +53,14 @@ def conv_k(eng) -> int:
 
 def supported(eng) -> bool:
     """The engine's image runs prompts this way: a dense model's resident image, without
-    rows the host writes before each run."""
+    rows the host writes before each run unless its prompt runs read them (prompt_host_rows:
+    Gemma 4's PLE records on the host, written before each run)."""
     img = eng.image
+    host = (eng._host_rows is not None and bool(eng._host_rows([0]))) or \
+        getattr(eng, "row_server", None) is not None
     return (hasattr(img, "compile_prompt_run") and bool(getattr(img, "lookup", None))
-            and getattr(eng.spec, "moe", None) is None
-            and not (eng._host_rows is not None and eng._host_rows([0]))
-            and getattr(eng, "row_server", None) is None)
+            and getattr(eng.spec, "moe", None) is None and not getattr(eng.spec, "experts", 0)
+            and (not host or getattr(img, "prompt_host_rows", False)))
 
 
 def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0):
@@ -219,9 +221,12 @@ def words(eng, names, p: int, R: int) -> dict:
     return {RUN_WORDS[n]: v[n] for n in names}
 
 
-def run(eng, entry, p: int, R: int) -> dict:
-    """One run at position p (programs' entry): the state words it reads written first."""
+def run(eng, entry, p: int, R: int, tokens=()) -> dict:
+    """One run at position p (programs' entry): the state words it reads written first, and
+    on an image whose prompt runs read host rows (prompt_host_rows) the run's tokens' rows."""
     progs, names = entry
+    if getattr(eng.image, "prompt_host_rows", False):
+        eng._write_host_rows(tokens)
     if names:
         g, w = eng.image.lookup["gen"], words(eng, names, p, R)
         for a, b in _ranges(sorted(w)):
@@ -266,7 +271,7 @@ def chunks(eng, tokens):
         progs = programs(eng, p, R, kind)
         if kind == "L":
             eng._prefetch(P)            # the first decode step's, while the device runs
-        eng.stats.append(run(eng, progs, p, R))
+        eng.stats.append(run(eng, progs, p, R, tokens[p - p0:p - p0 + R]))
         eng.poss[0] = p + R
         yield tokens[p - p0:p - p0 + R], logits(eng, R) if kind == "L" else None
 

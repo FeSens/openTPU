@@ -254,3 +254,13 @@ Today's rows are checked only where R_max is below one pass's rows (MCOLS, the i
 cache's end): compile_rows of R_max + 1 rows at the bucket's first run-time position, which
 must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
+
+**Gemma 4 E2B** (`gemma4_prompt_run`): gemma4_step's rows over a RunRows, each row a `_RowPos`
+(its slot, sliding window and mask pair as a layer run's), the tokens from out[]; each token's
+embedding row and PLE record are gathered at addresses from scratch registers (RLD MUL of its
+word, `_gathered_out`), the records into the I/O area's rows as compile-time runs store them.
+With the PLE table on the host (OTPU_PLE_HOST=1) the run reads the slot's rows, which
+prefill.run writes first (Image.prompt_host_rows, Engine._write_host_rows). An image with
+lookup tables holds a mask pair per I/O row. MoE images keep the layer-major prefill.
+tests/test_prefill_gemma4.py: int8, fp4, the host's PLE table and the sliding ring's wrap at
+768, bit-exact against compile-time runs of the same split.
