@@ -2563,6 +2563,13 @@ answer word, while the host, at the next poll, finds the expert landed and serve
 answer word 0, and the card's WAITW never holds. Two polls later the race is over (the poll
 between read seq after the entry had landed).
 
+Only idle polls land experts, and only hinted experts (`MoESpec.hint`, the hint programs:
+moe_card `--hints on`) and ahead_layer's queue (`Engine(layer_ahead=...)`, `--layer-ahead`) go
+on idle polls; the default paths (hints off, no layer ahead) never had a pending or queued
+expert, so they were never exposed. Exposed and passing by timing: card sessions 5-6 (the
+decode hints, 16 tokens, most hinted experts sent on request), pfahead, pfhint and pfhint2
+(the layer ahead).
+
 Found by a hang of the live fake card (test_qwen35_moe's hints test under load, 2026-10-02:
 `WAITW ... wait: its slot (the answer) never holds`). Capped hints make it likelier on the
 card: a whole expert lands about 0.9 ms after its hint, the request comes 1.6-1.7 ms after.
