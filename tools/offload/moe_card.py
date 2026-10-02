@@ -91,6 +91,24 @@ def host_mem() -> dict | None:
                 swap_used=gb(m.get("SwapTotal", 0) - m.get("SwapFree", 0)))
 
 
+def ahead_order(value: str, spec):
+    """--layer-ahead's order: "index" (True: each layer's experts in index order), or router
+    traces (router_trace.py's or --trace's, comma-separated): per MoE layer its experts by use
+    in them, most used first (a static profile; no model math on the host)."""
+    if value == "index":
+        return True
+    E, nl = spec.moe.E, spec.layers - spec.moe.first
+    cnt = np.zeros((nl, E))
+    for path in value.split(","):
+        z = np.load(path)
+        moe = sorted(int(k[1:-4]) for k in z.files if k.startswith("L") and k.endswith("_idx"))
+        if len(moe) != nl:
+            raise ValueError(f"{path}: {len(moe)} MoE layers, the model has {nl}")
+        for j, li in enumerate(moe):
+            cnt[j] += np.bincount(z[f"L{li}_idx"].astype(np.int64).ravel(), minlength=E)[:E]
+    return [np.argsort(-c, kind="stable").tolist() for c in cnt]
+
+
 def fit_experts(spec, cfg, cap: int, **kw) -> int:
     """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image."""
     from dataclasses import replace
@@ -108,7 +126,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          formats: str | None = None, layer_major: int = 0, pooled: bool = True,
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
          legacy_serve: bool = False, embed_runs: bool = False,
-         poll_idle: str | None = None, prefill_trace: str | None = None) -> dict:
+         poll_idle: str | None = None, prefill_trace: str | None = None,
+         layer_ahead: str | None = None) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -139,12 +158,17 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if layer_major:                             # the prompt a layer at a time, runs of R rows
         ekw.update(layer_major=layer_major, pooled=pooled,  # (docs/offload.md 13)
                    embed_runs=embed_runs)           # (13.6: a bitstream with port A's fix)
+        if layer_ahead:                             # the next layer's experts during a layer's
+            ekw.update(layer_ahead=ahead_order(layer_ahead, spec))     # runs (13.7)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
                  release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
                  **ekw)
     load_s = time.time() - t
     srv = eng.server
+    if eng.layer_ahead and not (pooled and hasattr(srv, "ahead_layer")):
+        raise SystemExit("--layer-ahead needs pooled slots and a server that streams ahead "
+                         "(ExpertServer.ahead_layer)")
     srv.policy = policy                         # the slots' replacement (ExpertServer)
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
@@ -375,6 +399,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
                 pooled=pooled if layer_major else None,
                 embed_runs=embed_runs if layer_major else None,
+                layer_ahead=layer_ahead if layer_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
                 pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
@@ -452,6 +477,10 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
+    ap.add_argument("--layer-ahead", metavar="index|TRACES",
+                    help="--layer-major with pooled slots: the next MoE layer's experts sent "
+                         "while a layer runs (docs/offload.md 13.7), each layer's in index order "
+                         "or by their use in router traces (comma-separated .npz)")
     ap.add_argument("--embed-runs", action="store_true",
                     help="--layer-major with the embed runs and compile-time-position runs "
                          "for an embedding table on the host (Engine embed_runs; needs a "
@@ -490,7 +519,8 @@ def main():
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
-             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace)
+             not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
+             a.layer_ahead)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

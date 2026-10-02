@@ -2492,3 +2492,47 @@ What is left:
 3. R = 4, if the TMEM layout for 4-bit experts at 4 rows allows it. The R = 1 / 2 runs fit
    1.58 + 0.90 R ms (DeltaNet) and 1.35 + 0.63 R ms (attention): 6.4 s of compute for the
    35B, against its 4.5 s of pooled misses, so about 8 s.
+
+### 13.8 Layer-ahead streaming
+
+`Engine(layer_ahead=...)` (`moe_card.py --layer-ahead index|TRACES`) gives the expert server
+the next MoE layer's experts to send while a layer runs: `ExpertServer.ahead_layer(j, ids)`,
+global ids in the order to send. It is called between runs only:
+- for the first MoE layer, after `begin_prefill`;
+- for MoE layer j + 1, before each layer j's first run in a chunk;
+- for the first layer again, before a chunk's last layer when another chunk follows.
+
+The order is index order, or a static profile: each layer's experts by their use in router
+traces of other texts (`router_trace.py`, `--trace`). It is host bookkeeping on recorded routes,
+with no model math on the host. A request still names its own experts: one not landed yet is
+a miss, served first (the server's promote path for one partly sent).
+
+An event model (`lahsim.py`, scratchpad) runs on the measured pooled R = 2 traces (pfcomp,
+pfcomp2). Each run's device time is its kind's zero-miss time plus the measured cost of its
+misses. The link sends the queued experts on its idle time, and a demand miss goes first after
+the part in flight. Without ahead the model gives 13.48 s against the card's 13.32 s (35B) and
+16.76 s against 16.25 s (26B). The table shows the layer runs' seconds over the first T rows of
+each layer, sending all of a layer's experts in the profile order of three other texts:
+
+| | T = 16 | 32 | 64 | 134 |
+|:--|--:|--:|--:|--:|
+| 35B, no ahead | 2.48 | 4.08 | 6.92 | 12.13 |
+| 35B, a call appends to the queue | 2.47 | 4.07 | 6.78 | 8.49 |
+| 35B, a call replaces the queue | **2.33** | **3.58** | **5.28** | 8.58 |
+| 26B, no ahead | 3.57 | 5.63 | 9.52 | 16.54 |
+| 26B, a call appends to the queue | 3.56 | 5.59 | 7.19 | 13.83 |
+| 26B, a call replaces the queue | **3.09** | **4.35** | 7.20 | 13.89 |
+
+Appending leaves the link on the leftovers of layers that already ran when a layer's runs are
+shorter than its stream (short prompts). Replacing drops them: the cost is about 1% at 134 rows,
+the gain 7-30% below. Index order instead of the profile is the same at 134 rows and 6% slower
+at 64. Cutting the order hurts at 134 rows: the top 128 of the 35B's 256 experts gives 9.78 s
+against 8.58 s, since the last expert a layer needs sits at rank 253 of 256 on average.
+Predicted prompts: about 9.9 s for the 35B (13.32 s now) and 14.1 s for the 26B (16.25 s).
+
+The server side (offload) builds on the one-call entry. A queued expert takes its slot when
+queued, never one of the last request's, finished layers first. It is sent one part per idle
+poll and its tag rides in its last part. `end_prefill` drops what has not landed. The Engine side
+is tested on the ISA simulator against a stub that loads each queued expert at once
+(`test_layer_ahead_sends_the_next_layers_experts`): the call schedule, fewer misses, and the
+logits and decode bit-exact.

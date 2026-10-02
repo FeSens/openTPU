@@ -346,6 +346,48 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
         a._pool.shutdown()
 
 
+
+def test_layer_ahead_sends_the_next_layers_experts(tiny, monkeypatch):
+    """Engine(layer_ahead=orders): prefill_layers gives the server each MoE layer's experts in
+    the order's, as global ids, between runs: the first layer's after begin_prefill, the next
+    layer's before each layer's first run, the first layer's again before the last layer of a
+    chunk another chunk follows (17 rows in chunks of 12 and 5). A stub of the server's
+    ahead_layer loads them into pooled slots at once: fewer misses than without, the logits and
+    the decode steps after token by token's bit for bit."""
+    from opentpu.llm import qwen35 as Q35
+    monkeypatch.setattr(Q35, "PREFILL_CHUNK", 12)
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    order = [[(e * 3 + j) % E for e in range(6)] for j in range(len(KINDS))]
+    a, b, ref = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, **kw)
+                 for kw in ({"layer_major": 2, "layer_ahead": order}, {"layer_major": 2}, {}))
+    srv, calls = a.server, []
+
+    def ahead_layer(j, ids):                    # (the server's stub: every one loaded now,
+        calls.append((j, list(ids)))            # each victim's entry cleared first)
+        for g in ids:
+            if g not in srv.lru[j]:
+                slot = srv._pool_slot(j, ids)
+                srv._clear()
+                srv._insert(j, g, slot)
+                srv.order[g] = None
+        srv._flush()
+    srv.ahead_layer = ahead_layer
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 21)]
+    m0 = a.server.misses, b.server.misses
+    la, lb, lr = a.prefill(toks), b.prefill(toks), ref.prefill(toks)
+    assert a.image.prefill_rows == 12 and a.pos == len(toks)
+    assert [j for j, _ in calls] == [0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5]
+    assert all(ids == [j * E + e for e in order[j]] for j, ids in calls)
+    assert np.array_equal(la.view(np.uint32), lr.view(np.uint32))
+    assert np.array_equal(lb.view(np.uint32), lr.view(np.uint32))
+    assert a.server.misses - m0[0] < b.server.misses - m0[1]
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    a.layer_ahead, got = True, []                # True: each layer's experts in index order
+    a._send_ahead(lambda j, ids: got.append((j, ids)), 2)
+    assert got == [(2, list(range(2 * E, 3 * E)))]
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 

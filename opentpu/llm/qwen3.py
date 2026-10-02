@@ -1698,7 +1698,11 @@ class Engine:
     docs/offload.md 13); pooled: the expert slots pooled for it, given back by `restore`
     ("lazy" or "eager"); embed_runs: with the embedding rows from the host's table, its embed
     runs and compile-time-position runs (default off while the card's port A keeps its beats
-    across runs, 13.6: token steps first, and layer 0's runs gather their rows).
+    across runs, 13.6: token steps first, and layer 0's runs gather their rows); layer_ahead:
+    with pooled slots and a server that streams ahead (ExpertServer.ahead_layer), the next MoE
+    layer's experts sent while a layer runs (13.7): True for each layer's experts in index
+    order, or per MoE layer its expert indices in the order to send them (a static profile, most
+    used first; a shorter list sends fewer).
 
     prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
     come from opentpu/progcache.py: compiled once per process and image layout, and kept on
@@ -1714,7 +1718,7 @@ class Engine:
                  resident: bool = False, experts: int | None = None, pool_file=None,
                  embed_host: bool | None = None, layer_major: int = 0, pooled: bool = True,
                  restore: str = "lazy", embed_runs: bool = False, release_weights: bool = True,
-                 pool_map: bool = True, prog_cache: bool | None = None):
+                 pool_map: bool = True, prog_cache: bool | None = None, layer_ahead=None):
         self.spec, self.cap, self.block = spec, cap, block
         self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
         self.batch, self.rows = batch, max(rows, batch)
@@ -1790,6 +1794,7 @@ class Engine:
         self.pooled, self.restore = pooled, restore     # (the expert slots during it)
         self.embed_runs = embed_runs        # (the embed and compile-time-position runs with
                                             # the embedding rows from the host: prefill_layers)
+        self.layer_ahead = layer_ahead      # (the next layer's experts sent during a layer's)
         self._layer_runs: dict = {}
         self._layer_next: dict = {}         # their compiles in the worker processes: Futures
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
@@ -2188,7 +2193,11 @@ class Engine:
         server's slots are pooled for the prompt (ExpertServer.begin_prefill: every slot serves
         the running layer) and given back to their layers before the head runs (end_prefill:
         `restore`, "lazy" by default). With the process pipeline the runs' programs compile in
-        the worker processes ahead of their runs, in their order (_precompile_layers).
+        the worker processes ahead of their runs, in their order (_precompile_layers). With
+        `layer_ahead` the server is given the next MoE layer's experts to send while a layer
+        runs (ExpertServer.ahead_layer, between runs: the first MoE layer's after begin_prefill,
+        the next one's before each layer's first run in a chunk, the first one's again before a
+        chunk's last layer when another chunk follows); a request still names its own.
         Bit-identical to step() token by token (the states, the KV cache, the logits): only
         the slots the experts sit in move. Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
@@ -2243,8 +2252,20 @@ class Engine:
         srv = self.server if self.pooled else None
         if srv is not None and hasattr(srv, "begin_prefill"):
             srv.begin_prefill()
-        for part, runs in chunks:
+        send = getattr(srv, "ahead_layer", None) if self.layer_ahead else None
+        if send is not None:
+            self._send_ahead(send, 0)
+            first, nm = self.spec.moe.first, img.offload.layers
+        for c, (part, runs) in enumerate(chunks):
+            cur = -1
             for key, vals, rows in runs:
+                if send is not None and key[0] > cur:   # a layer's first run: the next MoE
+                    cur = key[0]                        # layer's experts, or the first's for
+                    j = cur + 1 - first                 # the next chunk
+                    if cur + 1 == self.spec.layers and c + 1 < len(chunks):
+                        self._send_ahead(send, 0)
+                    elif 0 < j < nm:
+                        self._send_ahead(send, j)
                 if rows is not None:
                     self._write_host_rows(rows)
                 run(key, vals)
@@ -2255,6 +2276,13 @@ class Engine:
         io, S, v_loc = img.io, self.cfg.S, img.v_loc
         return np.concatenate([self.backend.read(s, io["logits"] + 4 * s * v_loc, 4 * v_loc)
                                .view(np.float32) for s in range(S)])
+
+    def _send_ahead(self, send, j: int) -> None:
+        """MoE layer j's experts to the server's ahead_layer, as global ids in layer_ahead's
+        order."""
+        E = self.image.offload.E
+        order = range(E) if self.layer_ahead is True else self.layer_ahead[j]
+        send(j, [j * E + int(e) for e in order])
 
     def _layer_run(self, key):
         """prefill_layers' programs, compiled once (layer_programs' key) -> (programs, run_args,
