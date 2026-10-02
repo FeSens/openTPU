@@ -105,8 +105,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          embed_host: bool | None = None, hints: bool | None = None,
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
-         formats: str | None = None, layer_major: int = 0, release_weights: bool = False,
-         willneed: bool = False) -> dict:
+         formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
+         willneed: bool = True) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -349,11 +349,15 @@ def main():
     ap.add_argument("--layer-major", type=int, default=0, metavar="R",
                     help="prefill a layer at a time in runs of R rows (docs/offload.md 13; "
                          "default 0: token by token)")
-    ap.add_argument("--release-weights", action="store_true",
-                    help="give the checkpoint's pages back once the image is built "
-                         "(LazyWeights.release: more page cache for the pool)")
-    ap.add_argument("--willneed", action="store_true",
-                    help="queue a request's misses' pool reads at once (PoolFile.willneed)")
+    ap.add_argument("--keep-weights", action="store_true",
+                    help="keep the checkpoint mapped after the image is built (by default "
+                         "LazyWeights.release gives its pages back: page cache for the pool; "
+                         "docs/offload.md 10.6)")
+    ap.add_argument("--no-willneed", action="store_true",
+                    help="read a request's misses from the pool one after another (by default "
+                         "PoolFile.willneed queues those not in the page cache at once)")
+    ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
     if a.hf:
         r = hf_greedy(a.model, a.n, a.max_memory, a.prompt)
@@ -366,7 +370,7 @@ def main():
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
-             a.release_weights, a.willneed)
+             not a.keep_weights, not a.no_willneed)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
