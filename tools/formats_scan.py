@@ -410,15 +410,17 @@ def _g4_args(spec, v, cap: int = G4CAP) -> tuple:
         c = spec.src(i)
         wmap.update({f"{k}@{c}-{c}": x for k, x in zip(G4KINDS, f)})
     hf = head or hf or wformat
-    return wformat, hf, wmap, _g4_ple(spec, v, cap)
+    return wformat, hf, wmap, _g4_ple(spec, v, cap)[0]
 
 
 @functools.lru_cache(maxsize=None)
-def _g4_ple(spec, v, cap: int) -> str:
-    """_g4_args' PLE table format (the image's choice: a layout, no weights)."""
+def _g4_ple(spec, v, cap: int) -> tuple:
+    """The PLE table's (format, on the host) in variant v's image (a layout, no weights;
+    OTPU_PLE_HOST=1: int8 on the host)."""
     from opentpu.isasim import board_config
-    return spec.image(board_config(), cap, 1, Q3.PREFILL_ROWS, v[1], v[2], lookup=True,
-                      formats=v[0]).ple_format
+    img = spec.image(board_config(), cap, 1, Q3.PREFILL_ROWS, v[1], v[2], lookup=True,
+                     formats=v[0])
+    return img.ple_format, img.ple_host
 
 
 def _g4_spans(spec) -> list:
@@ -520,7 +522,8 @@ def _g4_run(spec, W, ids, specs: dict, D, log, cache=None, head_rows: int = HEAD
     rows = _rows(specs, _head(hs, fmts, chunks, ids, D, kl_to=("float", "int8"),
                               cap=spec.softcap))
     for lab, r in rows.items():
-        r["ple_table"] = pfs[lab]
+        r["ple_table"] = pfs[lab] + (" (host)" if specs[lab] is not None and
+                                     _g4_ple(spec, specs[lab], G4CAP)[1] else "")
     return rows
 
 
