@@ -2078,8 +2078,32 @@ Column meanings in the table below:
   contention. The tail (critical end to the poll's return) grew 0.2-0.3 s with the deferred
   touches, but the next post is never sooner than 1.4 ms after it.
 - The 35B prefill pair (pooled, R = 2, layer-major, one run each): wall 13.04 (M) and 13.08 s
-  (H); demand serve 6.41 and 6.28 s for the same 6241 misses. The prompt is bound by the card's
-  runs (12.1-12.3 s), so the head's gain does not reach its wall time.
+  (H); demand serve 6.41 and 6.28 s for the same 6241 misses. With one run each, both
+  differences are inside the noise. The prompt is bound by the card's runs (12.1-12.3 s), so the
+  head's gain cannot reach its wall time. gemma4's 7.10 s demand serve on main (pfahead) came
+  from another session's state.
+
+Next, the answer's call (design note, 2026-10-02). With A' it sits on the critical path between
+the lead's part and the rest: 43-58 us a request with misses.
+- The bound: session 16's H runs, each request's answer call capped by its slack over the
+  card's own time (the W model: next post = max(critical end + F, post + W(m)), fit on the M
+  runs). That gives 0.22-0.28 s per 128 tokens on the 35B (+0.9-1.2%) and 0.14-0.16 s on the 26B
+  (+0.4%), whose 1-2-miss requests wait on the card anyway.
+- The card's contract does not order the answer against the data: the card waits on each
+  answer word, then on each tag. Only the answer may leave the data's channel. The entries, the
+  victims' tag clears and served must stay behind the data on one engine.
+- Three ways to take the answer off the path:
+  1. A second H2C channel. The current bitstream has only `/dev/xdma0_h2c_0` (read-only check
+     on opentpu), so this means XDMA's IP with two H2C channels, sharing its AXI master. The
+     answer then goes from its own thread on h2c_1 while h2c_0 carries the lead. An IP option,
+     no RTL of ours: it could ride in a fused build.
+  2. B's window (10.12, parked): a posted MMIO write, ~1-2 us. The same bound, with port H's
+     area.
+  3. XDMA's poll_mode=1 (a driver parameter: the user's setting). It may cut every call's fixed
+     cost, the answer's included, with no bitstream. dma_bench measures it first, after the user
+     reloads the driver with it.
+- Recommendation: at about 1% on the 35B, (1) only if a fused build has room. Propose (3) to the
+  user first, since it is the cheapest to measure.
 
 ## 11. Gemma 4 26B-A4B: design note
 
@@ -2577,9 +2601,17 @@ first (a profile's order), so its runs find them in slots:
 - A request that names a queued expert takes it as a miss. A request that names one on its way
   sends its rest with its tag (promoted), as for a hint.
 - `end_prefill` drops the queue and the expert on its way.
+- A hint for the queue's layer adds its ids to the end of the queue, in arrival order. This is
+  the card's own router on the layer before it, gemma4's predictor (13.9).
+  - Each id is added once, and only if it is in no slot, not on its way and not queued.
+  - The append takes no slot and evicts nothing; each expert takes a slot when its first part
+    goes, as before.
+  - The hint is served as any hint.
+  - A hint for any other layer is ignored, as with pooled slots before. `hinted_ahead` counts
+    the ids added.
 - Without pooled slots, only free slots are used.
 - Tests: test_offload_server's ahead tests: idle-poll landing in order, replace, promote and
-  miss, victims outside the running layers, settle and end_prefill.
+  miss, victims outside the running layers, settle and end_prefill, and a hint's append.
 
 ### 13.5 Tests and status
 
