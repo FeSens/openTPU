@@ -3487,6 +3487,26 @@ experts; cap 4096): the layer runs take at most 1005 (35B) and 1525 (26B) of IME
 instructions. The expert run at 512 rows is 106 / 128 instructions and fits TMEM: its tables, at
 most 4096 entries and 2304 passes, take about 21K words.
 
+Status (2026-10-02): expert-major is merged and dormant. It is off by default
+(Engine(expert_major=False); moe_card runs it only with `--expert-major`). It is built and bit
+for bit on the ISA with offload's ExpertServer. It has not run on the card: the A/B session pfB
+was staged (opentpu ~/otpu-build/offload/card2/pfB/README.md, with its predicted column) and
+then not run, because the work wrapped up. When it runs, the plan is:
+- Models: the 35B (lmtime's 134-token prompt) and the 26B (q26-hf.json's 124 rows), 16 tokens
+  each.
+- Order: per model, one unmeasured warm-up run, then A B B A (optionally C as A B C C B A), each
+  pair's difference reported.
+- Arms:
+  - A: today's default, layer-major pooled with no layer-ahead (`--layer-major 2`);
+  - B: `--layer-major 2 --expert-major`;
+  - C (optional, to check 13.11's model): `--layer-ahead hint`. A against B decides.
+- Every arm: `--idle-parts v2`, the default since session 18 (with offload-hold's hold fix), and
+  `--ahead-part 4096` (whole-expert parts, as 13.11's model assumed).
+- Pass rule: every run bit for bit with today's references (35B 95426ebacc3b40a9 and lmtime's
+  tokens, 26B q26ref16). B becomes the 35B and 26B prefill default only if both models gain and
+  the 35B gains at least 0.5 s (predicted B - A, against a base with no layer-ahead: about -1.7 s
+  on the 35B and -1.9 s on the 26B; 13.11's table).
+
 ### 13.14 The need path on the host (offload-need)
 
 The server's share of 13.11, host only (opentpu/host/offload.py). The card and Engine parts are
