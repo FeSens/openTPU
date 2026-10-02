@@ -3,18 +3,18 @@
 # - the tag's order on it first (tools/qual/waitw.py --tag-rounds 2000: an expert's 1-4 MiB with
 #   the tag in its DMA's last beat while the card waits on it; it stops on a FAIL);
 # - then A against each miss's entry on the same bitstream, A B A B: A's parent (OLD: main
-#   e389dc1, every other change the same) and this tree (the answer and the tags), q35e128s and
+#   cb3dce5, every other change the same) and this tree (the answer and the tags), q35e128s and
 #   g26s with their timelines and DMA calls, against refs-d29bfe9 (the math is unchanged: the
 #   same tokens and prefill sha; refs-f725c2b confirms it on the ISA simulator). Predicted: the
 #   35B -0.6 to -0.8 s per 128 tokens (+2.4-3.3%), the 26B -0.4 to -0.9 s (+1-2.5%); the 35B's
 #   64-byte calls 31,346 -> about 10,000.
-#   OLD  A's parent's tree (default O/../tree-e389dc1: git archive of main e389dc1)
+#   OLD  A's parent's tree (default O/../tree-cb3dce5: git archive of main cb3dce5)
 # About 22 min. It stops at a mismatch, a timeout or an error.
 # Run: otpu-lock --wait 10800 -- tools/offload/sessions/session15.sh   (log: O/s15/session.log)
 set -u
 SESSION=${SESSION:-s15}; RF=${RF:-${O:-$HOME/otpu-build/offload/card2}/refs-d29bfe9}
 source "$(dirname "$0")/env.sh"             # (its RF defaults to O: set before)
-OLD=${OLD:-$(dirname "$O")/tree-e389dc1}
+OLD=${OLD:-$(dirname "$O")/tree-cb3dce5}
 exec > >(tee -a $R/session.log) 2>&1
 echo "session15 start $(date +%T) tree $rev old $(cat $OLD/COMMIT) mem $(mem) GB"
 bad() { sleep 1; grep -c -E "\[FAIL\]|exit 124|Traceback|STOP" $R/session.log; }
