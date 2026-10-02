@@ -9,11 +9,13 @@
 # runs; the 26B's must give O/lm's 90e6b6e06e19da99).
 # A model's runs must give the same prefill logits and tokens (layer-major is bit-exact with
 # token by token on the ISA simulator, pooled or not); each is also checked against the ISA
-# simulator's reference (reference.sh) and HF's; and against the runs of an earlier session in
+# simulator's reference (reference.sh; RF, default O/refs-d29bfe9: q35ref16 88225ff781699291,
+# after moe-pair's expert sum order) and HF's; and against the runs of an earlier session in
 # O/lm (678b976: g26t16 / lm1 / lm2, per-layer slots). prefill_s: the prompt's time.
 # Run: otpu-lock --wait 10800 -- tools/offload/sessions/layer_major.sh   (log: O/lm2/session.log)
 set -u
-SESSION=${SESSION:-lm2}; source "$(dirname "$0")/env.sh"
+SESSION=${SESSION:-lm2}; RF=${RF:-${O:-$HOME/otpu-build/offload/card2}/refs-d29bfe9}
+source "$(dirname "$0")/env.sh"             # (its RF defaults to O, whose q35ref16 is 7d879e6's)
 exec > >(tee -a $R/session.log) 2>&1
 [ -e $O/gemma-4-26B-A4B ] || ln -s ${G26:-$HOME/openTPU/models/gemma-4-26B-A4B} $O/gemma-4-26B-A4B
 echo "layer_major start $(date +%T) tree $rev mem $(mem) GB"
