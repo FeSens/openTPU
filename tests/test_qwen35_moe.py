@@ -509,6 +509,7 @@ def test_layer_ahead_on_a_live_card_with_idle_parts_v2(tiny, tmp_path):
     assert card.error is None, card.error
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
     assert s.hinted_ahead > 0 and s.mem.staged > 0 and not s.mem._held
+    assert s.holds > 0          # (run_clock seen during the runs: 0 on the card in pfv2, fixed)
     t = int(np.argmax(la))
     a, b = isa.step(t), brd.step(t)
     assert card.error is None, card.error
@@ -649,7 +650,7 @@ def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
     assert got[:2] == old[:2] == want[:2] == capped[:2]
     h = capped[3]["hints"]
     assert (h["n"], h["top"], h["drop"]) == (1, 1, True) and h["served"] > 0
-    assert capped[3]["idle_parts"]["mode"] == "v2" and got[3]["idle_parts"]["mode"] == "v1"
+    assert capped[3]["idle_parts"]["mode"] == "v2" and got[3]["idle_parts"]["mode"] == "ra"
     assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
 
 

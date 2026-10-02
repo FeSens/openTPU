@@ -551,16 +551,18 @@ class ExpertServer:
         # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
         # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
         self.hint_n = self.hint_top = 0
-        # idle parts (docs/offload.md 13.12), opt-in until the card's A/B: read_ahead, each read
-        # by the poll before, beside its DMA, and sent as one DMA call per channel (a memory
-        # with stage: BoardDram); halt_aware, none started when the running program's expected
-        # end is nearer than an idle part takes (part_s: the measured parts' average). The end:
-        # the memory's run_clock (the run's start and its time with no waits) plus the run's
-        # own waits (_waits: each of its requests with misses, seen to served)
-        self.read_ahead = self.halt_aware = False
+        # idle parts (docs/offload.md 13.12): read_ahead (the default since pfv2), each read by
+        # the poll before, beside its DMA, and sent as one DMA call per channel (a memory with
+        # stage: BoardDram); halt_aware (opt-in), none started, nor read ahead, when the running
+        # program's expected end is nearer than an idle part takes (part_s: the measured parts'
+        # average). The end: the memory's run_clock (the run's start and its time with no
+        # waits) plus the run's own waits (_waits: each of its requests with misses, seen to
+        # served)
+        self.read_ahead, self.halt_aware = True, False
         self._staged = None                 # ((g, slot, from, to), the memory's staged part)
         self.part_s: float | None = None
         self.holds = 0                      # polls that held an idle part back (halt_aware)
+        self.stage_holds = 0                # and the reads ahead it skipped (_stage_next)
         self._run, self._waits = None, 0.0
         self.history: list | None = None    # a list: each request's ids are appended
         # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
@@ -1032,6 +1034,9 @@ class ExpertServer:
         stage = getattr(self.mem, "stage", None)
         if stage is None or not self.read_ahead or self._staged is not None:
             return
+        if self._near_end():                # (halt_aware: no host read as the run ends, pfv2's
+            self.stage_holds += 1           # 26B: its halts seen 0.09 s later with read-ahead)
+            return
         if not self.pending and not self._next_ahead():
             return
         g, a = next(iter(self.pending.items()))
@@ -1056,18 +1061,22 @@ class ExpertServer:
         if self._clock() is not None:
             self._waits += s
 
-    def _hold(self) -> bool:
-        """halt_aware (docs/offload.md 13.12): no idle part now if the running program is
-        expected to end before one would be done (its halt would be seen after the part): its
-        start, its time with no waits and its own waits so far. A run past that end by
-        HOLD_LATE gets parts again (the estimate was short), as does one with no estimate.
-        Requests are served as always."""
+    def _near_end(self) -> bool:
+        """halt_aware (docs/offload.md 13.12): the running program is expected to end before an
+        idle part would be done (its halt would be seen after the part): its start, its time
+        with no waits and its own waits so far. A run past that end by HOLD_LATE is not (the
+        estimate was short), nor is one with no estimate."""
         c = self._clock() if self.halt_aware else None
         if c is None:
             return False
         left = c[0] + c[1] + self._waits - time.perf_counter()
         need = self.part_s if self.part_s is not None else PART_S0 + self.part / PART_GBS
-        if -HOLD_LATE < left < need:
+        return -HOLD_LATE < left < need
+
+    def _hold(self) -> bool:
+        """No idle part now near the running program's end (_near_end); requests are served as
+        always."""
+        if self._near_end():
             self.holds += 1
             return True
         return False

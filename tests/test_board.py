@@ -306,3 +306,28 @@ def test_tiny_qwen3_generate_on_board_model(have_verilator):
     assert got == want == seen and len(set(got)) >= 3
     assert eng.stats[-1]["cycles"] > 0
     assert np.array_equal(brd.read(0, 0, n), isa.machine.slices[0].dram[:n])
+
+
+def test_run_clock_is_there_while_the_host_serves_a_run():
+    """BoardBackend.run_clock, the expert server's halt-aware hold (docs/offload.md 13.12): the
+    host hook polled during a run sees the run's start and the shortest time of its program
+    length's earlier runs (None on the first). It returned None at every poll on the card in
+    pfv2 (holds 0): wait() cleared the running programs before it served the run."""
+    from opentpu import isa as I
+    from opentpu.host.fake import FakeTransport
+    t = FakeTransport(ch_bytes=1 << 21, run_s=0.01, cycles=1_000_000, core_khz=100_000)
+    be = BoardBackend(board_config(DRAM_BYTES=1 << 22), [np.zeros(4096, np.uint8)],
+                      transport=t)
+    seen = []
+    be.host = lambda: (seen.append(be.run_clock()), 0)[1]
+    prog = [[I.Instr(I.HALT)]]
+    for run in range(3):
+        seen.clear()
+        be.start(prog)
+        be.wait()
+        assert seen and be.run_clock() is None      # (after the run: none)
+        if run == 0:
+            assert set(seen) == {None}
+        else:                                       # (CYCLES / CORE_KHZ, times the ratio)
+            assert all(c is not None and 0.009 < c[1] < 0.011 for c in seen)
+

@@ -474,6 +474,25 @@ def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
     assert _landed(mem, lay, srv, 3) and _landed(mem, lay, srv, 4)
 
 
+def test_halt_aware_reads_no_part_ahead_near_a_runs_end():
+    """halt_aware: near the running program's expected end _stage_next reads no part ahead (the
+    host's read there would make the halt seen late: pfv2's 26B, 0.09 s more of it with read
+    ahead); stage_holds counts them. Far from its end it reads the next part as always."""
+    import time
+    lay, mem, srv, G = _hint_setup()
+    staged, clock = [], [None]
+    mem.stage = lambda addr, data, tag=None: staged.append(addr) or len(staged)
+    mem.unstage = lambda h: None
+    mem.run_clock = lambda: clock[0]
+    srv.halt_aware = True
+    clock[0] = (time.perf_counter(), 1e-4)          # the run ends in 0.1 ms
+    _post(mem, lay, 1, [G + 3, G + 4])
+    assert srv.poll() == 1 and not staged and srv.stage_holds == 1
+    clock[0] = (time.perf_counter(), 10.0)          # far from its end: 3's first part, the
+    assert srv.poll() == 1 and len(staged) == 1     # next one read ahead
+    assert srv.stage_holds == 1 and srv.holds == 0
+
+
 def test_a_held_idle_poll_leaves_no_dma_in_flight():
     """halt_aware holding the first part of an ahead expert that has just taken a victim's
     slot (_next_ahead clears the victim's entry, a DMA): the poll flushes before it returns 0,

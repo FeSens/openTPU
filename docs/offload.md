@@ -3365,8 +3365,8 @@ about 0.42 ms a part plus 0.33 ms a MiB. Where the 0.42 ms goes:
 - The last part's entry, one more call (35-45 us). The 0.085 ms between events is the next
   poll's mailbox read (one 64-byte c2h call) and the loop.
 
-Two changes, opt-in until a card A/B (`moe_card --idle-parts`: v1 as before, ra, halt, v2
-both; `ExpertServer.read_ahead`, `halt_aware`):
+Two changes (`moe_card --idle-parts`: ra, the default since pfv2 below; v1 as before; halt;
+v2 both; `ExpertServer.read_ahead`, on by default, and `halt_aware`, opt-in):
 
 `read_ahead`:
 - `_stage_next`: before a poll flushes, the part the next idle poll would send is read into a
@@ -3410,9 +3410,47 @@ hop, the lock); with none of it a 1 MiB part would take about 0.38 ms:
 | a whole 35B expert (1.59 MiB) | two parts and a poll: 1.46 ms | ~0.12 + 0.53 + 0.05 + 0.04 = 0.74 ms |
 | a whole 26B expert (3.29 MiB) | three parts and two polls: ~2.3 ms (0.795, 0.795, 0.505) | ~0.12 + 1.09 + 0.09 = 1.3 ms |
 
-The contention (13.8) is per byte, so neither change touches it. Card measurement: with
-gemma4's whole-expert parts, as an A/B on the 35B's layer-ahead predictor and the decode
-hints (a discarded warm-up run, then A B B A).
+The contention (13.8) is per byte, so neither change touches it.
+
+On the card: session pfv2 (gemma4; 2026-10-02 14:28-14:52 opentpu; build 542fc43a; 15 runs, all
+bit for bit). Each pair ran after a warm-up, in A B B A order. The prefills are layer-major with
+the layer-ahead predictor (`--layer-ahead hint --ahead-part 4096`).
+
+| | A (v1, or base) | B (v2) | pairs B - A | mean B - A | predicted |
+|:--|:--|:--|:--|:--|:--|
+| 35B prefill wall, s | 12.838, 12.645 | 12.469, 12.502 | -0.369, -0.143 | **-0.256** | -0.6 |
+| 26B prefill wall, s | 15.813, 15.818 | 15.823, 15.845 | +0.010, +0.027 | **+0.018** | -0.3 |
+| 35B decode, hints top 4 + v2 against no hints, tok/s | 5.28, 5.25 | 5.37, 5.38 | +0.09, +0.13 | **+2.09%** | +2% |
+
+- A whole expert's idle part took 0.961 / 0.963 ms on the 35B (v1: 1.21-1.45 ms) and 1.73 /
+  1.68 ms on the 26B (v1: 1.92 ms). A 1632 KiB decode part took 0.87-0.89 ms.
+- The 35B's -0.26 s comes from the shorter parts alone. Device time fell 0.13 s (fewer
+  waits). The late halts fell 0.15 s: a run ending with a part in flight was seen late by
+  0.58 ms median, against 0.73 ms with v1.
+- The hold never acted: holds was 0 in every v2 run, so as many runs ended with a part in
+  flight as with v1 (1296 / 1280 against 1295 / 1273).
+- The 26B lands its whole queue either way (213 misses). Its runs with no part in flight were
+  seen 0.09 s later with v2 (0.18 s to 0.27 s). That is the read-ahead's host reads (3.3 MB a
+  part) at a run's end.
+
+Why the hold never acted. BoardBackend.wait cleared the running programs before it served the
+run, so run_clock() returned None at every poll of the run. It worked in the unit tests, which
+put a clock on the memory, and the live-card tests never counted holds.
+- Fixed (offload-hold): the running programs are cleared once the run has halted.
+- With halt_aware on, _stage_next also reads nothing ahead near a run's expected end; `stage_holds`
+  counts those skips.
+- Tests: test_board's `test_run_clock_is_there_while_the_host_serves_a_run` (fails on the old
+  wait); test_qwen35_moe's v2 live-card prefill now needs holds > 0 (26 there; 0 before the fix);
+  `test_halt_aware_reads_no_part_ahead_near_a_runs_end`.
+- The card's generate loop is one run with no clock, so it holds nothing; its halt comes once a
+  generation.
+
+The lead's rulings:
+- read-ahead (`ra`) becomes the default for moe_card and the server.
+- halt_aware stays opt-in until a card session shows it holding, in a re-measure of the 35B
+  prefill, ra against v2.
+- The 35B decode hints (top 4, n 1) get a confirm session against the then-default parts.
+  They become the default only at >= 2% with both pairs positive.
 
 Tests: test_offload_server's `test_idle_parts_go_as_one_call_each_and_are_read_ahead` (an idle
 part's calls with and without, a request's misses with the lead cut, the staged reads, a

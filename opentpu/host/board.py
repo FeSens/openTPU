@@ -1162,8 +1162,8 @@ class BoardBackend:
         """Wait for the started program; returns its counters (run's second half). After a
         start(stream=...), feed(offset, words) gets every piece of the logits (byte offset in
         the region, uint32 words), most of them while the run goes on."""
-        programs, self._running = self._running, None
-        try:
+        programs = self._running              # (running until it halts: run_clock, polled
+        try:                                    # by the host hook during _serve)
             if self._stream is not None:
                 self._stream_logits(feed)
             elif self.host is not None:
@@ -1175,6 +1175,8 @@ class BoardBackend:
         except BaseException:
             self._armed, self._stream = None, None  # the region's state is unknown
             raise
+        finally:
+            self._running = None
         khz = self.info["core_khz"]
         self._expects[self._key] = self._next_expect(st["cycles"] / (khz * 1e3) if khz else 0.0)
         if khz:
