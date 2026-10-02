@@ -34,13 +34,15 @@ from .qwen3 import RUN_WORDS
 
 def split(p0: int, P: int, R_max, block: int, K: int) -> list[tuple[int, int, str]]:
     """The runs (first position, rows, kind) of the prompt positions [p0, P). R_max: the most
-    rows of a run, an int, or R_max(blocks) for bucket `blocks`."""
+    rows of a run, an int, or R_max(blocks) for bucket `blocks` (0: the first run of a new
+    context, before conv_k - 1)."""
     rm = R_max if callable(R_max) else (lambda blocks: R_max)
     runs, p = [], p0
     while p < P:
-        n = min(rm(p // block + 1), P - p)
         if p >= K - 1:                      # a run-time run: its rows in one bucket
-            n = min(n, block - p % block)
+            n = min(rm(p // block + 1), P - p, block - p % block)
+        else:                               # a new context's first run (R_max(0))
+            n = min(rm(0), P - p)
         runs.append((p, n, "L" if p + n == P else "P"))
         p += n
     return runs
@@ -143,10 +145,12 @@ def _probe(eng, blocks: int) -> list:
     fit_chunk's run sizes (up to MCOLS rows, then whole passes of MCOLS up to the image's rows;
     Qwen3.5's, whose MTP runs take R_max too, one pass at most) whose L program fits; covered
     when compile_rows (today's prefill) does not fit the next larger size there either (a
-    prompt program larger than today's would run fewer rows)."""
+    prompt program larger than today's would run fewer rows). blocks 0: a new context's first
+    run, at compile-time positions from 0 (convolutions), sized on its own (LFM2.5-230M's fits
+    8 rows at a run-time position, 4 from position 0), covered."""
     from .qwen3 import _whole_passes
     img, block, mc = eng.image, eng.block, eng.image.cfg.MCOLS
-    p = max((blocks - 1) * block, conv_k(eng) - 1)
+    p = max((blocks - 1) * block, conv_k(eng) - 1) if blocks else 0
     n = _whole_passes(min(img.rows, img.cap - p, mc if hasattr(eng.spec, "mtp") else img.rows),
                       mc)
     sizes = []
@@ -158,7 +162,7 @@ def _probe(eng, blocks: int) -> list:
             break
     else:
         raise CompileError(f"no prompt run fits bucket {blocks}")
-    return [R, i == 0 or not _fits(lambda: _today(eng, p, sizes[i - 1]))]
+    return [R, i == 0 or not blocks or not _fits(lambda: _today(eng, p, sizes[i - 1]))]
 
 
 def _fits(compile) -> bool:
@@ -200,7 +204,7 @@ def warm(eng) -> None:
         try:
             R, K = r_max(eng, 1), conv_k(eng)
             mtp = bool(getattr(eng.spec, "mtp", False))
-            todo = [(0, R, "P")] if K > 1 else []
+            todo = [(0, r_max(eng, 0), "P")] if K > 1 else []
             todo += [(K - 1 if K > 1 else 0, r, k) for r in range(R, 0, -1)
                      for k in (("P", "L") if r == R else ("L",))]
             for p, r, k in todo:

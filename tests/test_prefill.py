@@ -114,9 +114,9 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     assert all(np.array_equal(x, y) for x, y in zip(_drams(a, P1 + P2), _drams(b, P1 + P2)))
     K = PF.conv_k(a)
     runs = PF.split(0, P1, R_max, 256, K) + PF.split(P1, P1 + P2, R_max, 256, K)
-    keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1)
-            for p, R, k in runs} | {("L", R, b) for b, (R, _) in rm.items()}  # (r_max's probes)
-    assert sorted(rm) == sorted({p // 256 + 1 for p, _, _ in runs})
+    keys = {(k, R, "at", p) if p < K - 1 else (k, R, p // 256 + 1) for p, R, k in runs} | \
+        {("L", R, "at", 0) if b == 0 else ("L", R, b) for b, (R, _) in rm.items()}  # (probes)
+    assert sorted(rm) == sorted({0 if p < K - 1 else p // 256 + 1 for p, _, _ in runs})
     assert {(k[1], k[2], k[3], k[4]) if k[3] == "at" else (k[1], k[2], k[3])
             for k in a._prompt_progs} == keys
     if case == "fp4":
@@ -159,6 +159,32 @@ def test_todays_route_where_it_fits_more_rows(monkeypatch):
     assert [s["rows"] for s in a.stats[na:]] == [s["rows"] for s in c.stats[nc:]]
     assert {k for k in a._prompt_progs if k[3] == 2} == {("prompt", "L", 2, 2, False, 0)}
     assert np.array_equal(a.step(5), c.step(5))
+
+
+def test_a_new_contexts_first_run_is_sized_on_its_own(monkeypatch):
+    """prefill.r_max(eng, 0) with convolutions (LFM2): a new context's first run, at
+    compile-time positions from 0, takes the rows its own program fits (here held to 4;
+    LFM2.5-230M's on the board fits 8 rows at a run-time position, 4 from 0), bucket 1's runs
+    the most; the split, from 0, then the logits of compile-time runs of it."""
+    from opentpu.compiler import CompileError
+    W, spec, cfg, _ = _model("lfm2-board")
+    a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True)
+    real = a.image.compile_prompt_run
+
+    def held(blocks, R, *args, p0=None, **kw):
+        if p0 is not None and R > 4:
+            raise CompileError("TMEM exhausted (the test's first run)")
+        return real(blocks, R, *args, p0=p0, **kw)
+    monkeypatch.setattr(a.image, "compile_prompt_run", held)
+    R, K = a.image.rows, PF.conv_k(a)
+    assert R > 4 and K > 1
+    assert PF.r_max(a, 0) == 4 and PF.r_max(a, 1) == R and PF.covers(a, 0, 30)
+    toks = [int(t) for t in np.random.default_rng(11).integers(0, 1000, 30)]
+    rm = lambda blocks: PF.r_max(a, blocks)
+    assert PF.split(0, 30, rm, 256, K) == [(0, 4, "P"), (4, 8, "P"), (12, 8, "P"),
+                                           (20, 8, "P"), (28, 2, "L")]
+    b = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    assert np.array_equal(a.prefill(toks), _static(b, toks, rm))
 
 def _static_mtp(dec, R_max):
     """MTPDecoder.prefill as compile-time runs of the prompt runs' split: the rows (hidden,
@@ -268,7 +294,7 @@ def test_bucket_1_programs_are_warmed_at_start(tmp_path, monkeypatch):
                  prog_cache=True)
     eng._prompt_warm.join(timeout=600)
     warmed = set(eng._prompt_progs)
-    assert len(warmed) == 2 + PF.r_max(eng, 1)          # first run, P, L of every R
+    assert len(warmed) == 3 + PF.r_max(eng, 1)  # first run's P and L (r_max's), P, L of every R
     lg = eng.prefill(prompt)
     assert set(eng._prompt_progs) == warmed
     assert np.array_equal(lg, Engine(spec, W, cap=512, cfg=CFG, resident=True,
