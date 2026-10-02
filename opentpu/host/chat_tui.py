@@ -118,13 +118,15 @@ def status_line(meta: dict, chat: Chat, turn: Turn | None, width: int = 0) -> Te
 
 def stats_markup(meta: dict, chat: Chat, turn: Turn | None) -> str:
     """The detail: model and device, the last turn, KV context, DRAM, session, sampling.
-    meta: model, backend, device, bitstream (text lines), sampling (dict), dram (a callable
-    returning runstate's DRAM layout, or None)."""
+    meta: model, backend, device, bitstream (text lines), weights (text, or None), sampling
+    (dict), dram (a callable returning runstate's DRAM layout, or None)."""
     eng = chat.eng
     ctx, cap = eng.pos, eng.cap
     dev = bool(chat.clock_mhz)
     L = [f"[b]{meta['model']}[/b]", f"backend  {meta['backend']}", f"device   {meta['device']}"]
     L += [f"         {x}" for x in meta.get("bitstream", [])]
+    if meta.get("weights"):
+        L.append(f"weights  {meta['weights']}")
     L += ["", "[b]last turn[/b]"]
     t = turn
     if t is None:
@@ -189,7 +191,8 @@ def stats_inline(meta: dict, chat: Chat, turn: Turn | None) -> str:
 
 
 def welcome(meta: dict) -> Text:
-    bits = [meta["model"], meta["backend"], meta["device"]] + list(meta.get("bitstream", []))
+    bits = [meta["model"], meta["backend"], meta["device"]] + list(meta.get("bitstream", [])) \
+        + ([meta["weights"]] if meta.get("weights") else [])
     return Text.assemble(("✻ ", ACCENT), ("openTPU chat", "bold"), "\n\n",
                          " · ".join(bits), "\n", ("/help for commands · esc to interrupt", DIM))
 

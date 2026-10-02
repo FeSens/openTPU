@@ -430,7 +430,14 @@ otpu-chat --backend board --prompt "Why is the sky blue?"   # one-shot, plain ou
 otpu-chat --backend board --clock-mhz 100      # override the core clock (v1 bitstreams)
 otpu-chat --backend board --model lfm2         # LFM2.5-230M instead of Qwen3-0.6B
 otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTER / LOG2 in the bitstream)
+otpu-chat --backend board --model smollm3 --wformat int8   # the weights' format (default below)
 ```
+
+`--wformat auto`, the default, takes the model's recommended mix of int8 and fp4 layers where it
+has one (Phi-4-mini, SmolLM3-3B, LFM2-2.6B, Qwen3.5-4B: [formats.md](formats.md)) and int8
+elsewhere; `int8`, `fp4` and `mix` choose explicitly, and `--head-format` sets the LM head's. The
+tool prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head int8`); the
+interface's header and `/stats` panel show them, and otpu-smi's process line.
 
 The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
 0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the
@@ -919,6 +926,7 @@ otpu-smi 0.1.0                                                       2026-09-24 
 | stall TMEM-deny 1%  DRAM-wait 20%   IPC 0.005   over 200 ms                          |
 | pid 53814  otpu-chat --backend board                                                 |
 |       model Qwen3-0.6B   tokens 57   12.10 tok/s wall   device 17.86 tok/s           |
+|       weights int8, head int8                                                        |
 +--------------------------------------------------------------------------------------+
 ```
 

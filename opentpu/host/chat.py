@@ -9,6 +9,8 @@
     otpu-chat --prompt "Why is the sky blue?" # one-shot
     otpu-chat --think                         # Qwen3 thinking mode
     otpu-chat --model qwen35-2b --mtp         # Qwen3.5 with its MTP drafter (docs/mtp.md)
+    otpu-chat --model phi4-mini --wformat fp4 # the weights' format (default auto: the model's
+                                              # recommended mix, else int8; docs/formats.md)
 
 The interactive mode is a full-screen interface (opentpu/host/chat_tui.py): the conversation,
 and under the input a status line with TTFT, prefill and decode tokens/s (wall and device) and
@@ -36,6 +38,7 @@ import numpy as np
 
 from opentpu.host.runstate import busy_exits
 from opentpu.llm import MODELS, load_spec, model_dir
+from opentpu.llm import formats as FM
 from opentpu.llm import generate as G
 from opentpu.llm.qwen3 import Engine, load_weights
 
@@ -645,8 +648,9 @@ NOTES = {"max_new": "(stopped at max_new={max_new} tokens · {cmd} or raise --ma
 
 
 def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None,
-                 lookup: bool = False):
-    """(backend, configuration) for Engine (lookup: room for the resident decode's tables)."""
+                 lookup: bool = False, wformat: str = "int8", head_format: str | None = None):
+    """(backend, configuration) for Engine (lookup: room for the resident decode's tables;
+    the weight formats size the board model's DRAM where an int8 image would not fit)."""
     if name == "isa":
         return "isa", None
     if name == "board":
@@ -657,7 +661,7 @@ def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None,
         return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "board-sim":
         from opentpu.host.board import BoardBackend, SimTransport, sim_config
-        cfg = sim_config(spec, cap, lookup=lookup)
+        cfg = sim_config(spec, cap, lookup=lookup, wformat=wformat, head_format=head_format)
         tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2)
         return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "rtl":
@@ -666,11 +670,21 @@ def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None,
     raise SystemExit(f"unknown backend {name}")
 
 
+def weights_label(image, wformat: str) -> str:
+    """An image's weight formats in words, as otpu-chat and otpu-smi show them: "mix: int8 +
+    gateup@9-35=fp4, head int8" (wformat the choice before formats.named: "mix" names it)."""
+    rest = ",".join(i for i in (image.formats or "").replace(" ", "").split(",")
+                    if i and not i.startswith("head="))
+    return (f"{FM.MIX}: " if wformat == FM.MIX else "") + image.wformat + \
+        (f" + {rest}" if rest else "") + f", head {image.head_format}"
+
+
 def panel_meta(eng, backend: str, dev: str, model: str, sp: dict, max_new: int,
-               clock_mhz: float = 0.0) -> dict:
-    """What the interface shows about the model, the device and the sampling."""
+               clock_mhz: float = 0.0, weights: str | None = None) -> dict:
+    """What the interface shows about the model, its weights, the device and the sampling."""
     info = getattr(eng.backend, "info", None)
     meta = {"model": model, "backend": backend, "sampling": {**sp, "max_new": max_new},
+            "weights": weights,
             "device": {"board": dev, "board-sim": "Verilator board model"}.get(
                 backend, "ISA simulator (host)"), "dram": None,
             "short": f"{backend} {clock_mhz:g} MHz" if clock_mhz else backend}
@@ -720,9 +734,11 @@ def main(argv=None):
     ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=1024, help="tokens per reply at most")
-    ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4", "mix"],
+    ap.add_argument("--wformat", default=FM.AUTO, choices=[FM.AUTO, "int8", "fp4", "int4", FM.MIX],
                     help="weight format of the layers (docs/quant.md; fp4 needs a bitstream "
-                         "with 4-bit MM support)")
+                         "with 4-bit MM support): auto (default) is the model's recommended "
+                         "mix of int8 and fp4 where it has one (mix, docs/formats.md), else "
+                         "int8")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
                     help="weight format of the LM head (default: --wformat)")
     ap.add_argument("--no-prog-cache", action="store_true",
@@ -741,11 +757,13 @@ def main(argv=None):
     path = model_dir(a.model)
     tok = AutoTokenizer.from_pretrained(path)
     spec = load_spec(path)
+    wformat = FM.auto(spec, a.wformat)
     print(f"loading {path.name} onto openTPU ({a.backend}) ...", flush=True)
     from opentpu.host.board import ConfigMismatch
     try:
         backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name,
-                                    lookup=not a.per_position)
+                                    lookup=not a.per_position, wformat=wformat,
+                                    head_format=a.head_format)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     if a.mtp and (not hasattr(spec, "mtp") or a.per_position):
@@ -757,22 +775,26 @@ def main(argv=None):
         from opentpu.llm.qwen3 import PREFILL_ROWS
         flags = dict(DSTEP=True, STREAM=True, PAIR=True)
         need = replace(spec, mtp=True).image(board_config(DRAM_BYTES=1 << 40, **flags), a.cap,
-                                             1, PREFILL_ROWS, a.wformat, a.head_format,
+                                             1, PREFILL_ROWS, wformat, a.head_format,
                                              lookup=True).nbytes
         cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **flags)
     try:
         if a.mtp:
             from opentpu.llm.mtp import mtp_engine
             eng = mtp_engine(spec, load_weights(path, mtp=True), cap=a.cap, cfg=cfg,
-                             backend=backend, wformat=a.wformat, head_format=a.head_format,
+                             backend=backend, wformat=wformat, head_format=a.head_format,
                              prog_cache=not a.no_prog_cache, prompt_runs=not a.no_prompt_runs)
         else:
             eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
-                         wformat=a.wformat, head_format=a.head_format,
+                         wformat=wformat, head_format=a.head_format,
                          resident=not a.per_position, prog_cache=not a.no_prog_cache,
                          prompt_runs=not a.no_prompt_runs)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
+    weights = weights_label(eng.image, wformat)
+    print(f"weights: {weights}", flush=True)
+    if getattr(eng.backend, "status", None) is not None:
+        eng.backend.status.update(weights=weights)      # for otpu-smi
     sp = sampling(spec, a)
     pick = sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
                    sp["repetition_penalty"])
@@ -793,7 +815,7 @@ def main(argv=None):
     if not a.plain:
         from opentpu.host.chat_tui import ChatApp
         ChatApp(chat, panel_meta(eng, a.backend, a.dev, path.name,
-                                 dict(sp, greedy=a.greedy), a.max_new, clock)).run()
+                                 dict(sp, greedy=a.greedy), a.max_new, clock, weights)).run()
         return
     print("type a message (/continue, /reset; empty line or Ctrl-D to quit)")
     while True:

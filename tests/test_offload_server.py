@@ -1114,3 +1114,115 @@ def test_a_multi_row_requests_answer_is_at_each_ids_first_place():
     srv.poll()
     assert srv.history is None and (srv.hits, srv.misses) == (1, 2)
     assert _answer(mem, lay) == [srv.lru[0][5], 0, 0, srv.lru[0][6]] + [0] * 12
+
+
+def _ahead_setup(slots=(2, 2, 2), ahead=True):
+    """A pooled prefill on layers of `slots` (empty), experts of three 4 KiB parts (the last
+    128 bytes), an idle poll's part 4 KiB."""
+    from opentpu.host.offload import RUN
+    slot = 2 * RUN + 128
+    lay = Layout.build(4096, E, K, slots, slot)
+    mem = SimDram(np.zeros(lay.end + 4096, np.uint8))
+    srv = ExpertServer(mem, lay, lambda g: np.full(slot, g + 1, np.uint8).tobytes(),
+                       policy="lfu")
+    srv.load()
+    srv.begin_prefill(ahead=ahead, part=RUN)
+    return lay, mem, srv
+
+
+def _empty(mem, lay, g):
+    return _entry(mem, lay, g) == (0, 0.0)
+
+
+def test_ahead_layer_lands_a_layers_experts_on_idle_polls_most_wanted_first():
+    """ahead_layer(j, ids): layer j's experts, most wanted first, each given a slot when its
+    first part goes on an idle poll (a free one here), its tag with its last part, then its
+    entry; a landed one joins the pooled order. With no slot left outside the layers the runs
+    may read (j - 1 and j) the queue stops."""
+    lay, mem, srv = _ahead_setup()
+    _post_n(mem, lay, 1, [0, 1, 1, 0])              # layer 0's run: two of the six slots
+    assert srv.poll() == 1
+    srv.ahead_layer(1, [9, 8, 10, 11, 12])
+    assert list(srv.queue) == [9, 8, 10, 11, 12] and not srv.pending
+    for i in range(3):                              # 9: three parts, the tag with the last
+        assert srv.poll() == 1
+        assert _empty(mem, lay, 9) == (i < 2) and (9 in srv.pending) == (i < 2)
+    s9 = srv.lru[1][9]
+    assert _landed(mem, lay, srv, 9) and _tag(mem, lay, s9) == 10 and s9 in srv.armed
+    while srv.poll():
+        pass
+    assert all(_landed(mem, lay, srv, g) for g in (9, 8, 10, 11))
+    assert 12 not in srv.lru[1] and _empty(mem, lay, 12) and not srv.queue  # (no slot left)
+    assert (srv.landed, srv.aheads) == (4, 1) and set(srv.lru[0]) == {0, 1}
+    assert list(srv.order)[-4:] == [9, 8, 10, 11]
+
+
+def test_a_new_ahead_layer_call_replaces_the_queue():
+    """Each call replaces what the last one queued: those without a slot leave, the one on its
+    way is dropped (its slot free again; its tag and entry never written)."""
+    lay, mem, srv = _ahead_setup()
+    srv.ahead_layer(1, [9, 8])
+    assert srv.poll() == 1                          # 9's first part
+    s9 = srv.lru[1][9]
+    srv.ahead_layer(2, [17, 16])
+    assert 9 not in srv.lru[1] and not srv.pending and list(srv.queue) == [17, 16]
+    assert _empty(mem, lay, 9) and _tag(mem, lay, s9) == 0 and srv.dropped == 1
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 17) and _landed(mem, lay, srv, 16)
+    assert 8 not in srv.lru[1] and _empty(mem, lay, 8)
+
+
+def test_a_request_takes_a_queued_expert_as_a_miss_and_one_on_its_way_its_rest():
+    """A run's request that names a queued expert takes it as an ordinary miss; one on its way
+    is promoted: the rest of its bytes with its tag, its slot in the answer. Either way the
+    queue does not send it again."""
+    lay, mem, srv = _ahead_setup()
+    srv.ahead_layer(1, [9, 8])
+    assert srv.poll() == 1                          # 9 on its way, 8 queued
+    _post_n(mem, lay, 1, [9, 8, 8, 9])
+    assert srv.poll() == 1
+    assert (srv.promoted, srv.misses) == (1, 2) and not srv.pending
+    assert _answer(mem, lay)[:2] == [srv.lru[1][9], srv.lru[1][8]]
+    assert _landed(mem, lay, srv, 9) and _landed(mem, lay, srv, 8)
+    assert srv.poll() == 0 and not srv.queue
+
+
+def test_ahead_victims_spare_the_layers_the_runs_may_read():
+    """With no free slot, an ahead expert takes the oldest expert of a layer outside j - 1 and
+    j (the runs until the next call read only those): what the running layer may read never
+    changes under it."""
+    lay, mem, srv = _ahead_setup(slots=(1, 1, 1, 1))
+    for seq, g in enumerate((0, 8, 16, 24), 1):     # one run a layer: every slot taken
+        _post_n(mem, lay, seq, [g])
+        assert srv.poll() == 1
+    srv.ahead_layer(1, [9])                         # spared: layers 0 and 1; 16 the oldest
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 9) and _empty(mem, lay, 16) and 16 not in srv.lru[2]
+    assert all(_landed(mem, lay, srv, g) for g in (0, 8, 24))
+    srv.ahead_layer(0, [1])                         # spared: layers 3 and 0; 8 the oldest left
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 1) and _empty(mem, lay, 8)
+
+
+def test_ahead_layer_serves_the_last_request_first_and_end_prefill_drops_the_queue():
+    """ahead_layer settles first (a run's all-hit request the host has not seen). end_prefill
+    drops the queue and the expert on its way and gives the server its part back; a prefill
+    begun with ahead=False ignores the calls."""
+    from opentpu.host.offload import RUN
+    lay, mem, srv = _ahead_setup()
+    part = srv._part
+    _post_n(mem, lay, 1, [0, 1])
+    assert srv.poll() == 1
+    _post_n(mem, lay, 2, [1, 0])                    # all hits: the run halts unseen
+    srv.ahead_layer(1, [9, 8])
+    assert srv.seq == 2 and srv.hits == 2
+    assert srv.poll() == 1 and 9 in srv.pending
+    srv.end_prefill()
+    assert not srv.pending and not srv.queue and 9 not in srv.lru[1] and _empty(mem, lay, 9)
+    assert srv.part == part != RUN and not srv.pooled
+    lay, mem, srv = _ahead_setup(ahead=False)
+    srv.ahead_layer(1, [9, 8])
+    assert not srv.queue and srv.poll() == 0
