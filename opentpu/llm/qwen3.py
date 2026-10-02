@@ -1790,7 +1790,12 @@ def mxu_time(progs) -> float:
     return best
 
 
-PREFER_MARGIN = 0.05        # prefer_rows: R - 1 rows take over at 5% less MXU time per row
+# prefer_rows: R - 1 rows take over only at 5% less MXU time a row. mxu_time leaves out what a
+# run pays once (its start, the first weight chunks' latency, the instructions besides the MMs),
+# which R - 1 rows pay n / (n - 1) times as often; the real layouts sit far from the line (the
+# 4B -25% and LFM2-2.6B's mix -22% where 2 rows win, Phi-4-mini's mix +8% and int8 +49% where 3
+# stay), so the margin only keeps a near tie from adding runs.
+PREFER_MARGIN = 0.05
 
 
 def prefer_rows(image, n: int, compile) -> int:
