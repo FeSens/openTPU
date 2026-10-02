@@ -1,4 +1,4 @@
-# Prefill at run-time positions (design)
+# Prefill at run-time positions
 
 **Goal:** a prompt's prefill from programs compiled once per attention bucket, not once per
 prompt. Each prefill run currently bakes its positions and token ids into its program, so the
@@ -165,3 +165,46 @@ days; the chain about 1 more day, then RTL and a card session.
   at one R. The 4B's R = 3 is the known case; fitting R = 4 there is a separate item.
 - The gate keeps test_qwen35_moe's layer-major tests (test_layer_major_prefill_is_bit_exact,
   test_layer_major_runs_compile_in_the_worker_processes), so the MoE path is shown untouched.
+
+## 6. Measured: host-started runs, and the chain parked
+
+Steps 1 and 2 are in (`opentpu/llm/prefill.py`, `qwen35_prompt_run`, tests/test_prefill.py).
+The engine keeps each prompt program (on the card assembled once); `Engine(prompt_runs=True)`
+and `MTPDecoder.prefill` use them, otpu-chat by default (`--no-prompt-runs`: the old route).
+On the ISA simulator the logits and every slice's DRAM equal compile-time runs of the same split
+word for word, and with int8 weights today's prefill too. Real layouts (cap 4096, fp4 and int8):
+every program fits IMEM; R_max 4 / 4 / 3.
+
+**Card** (pa e4db91c9, 133.33 MHz, 2026-10-02 07:18-07:37 opentpu; fp4, int8 head; tree
+76ef74b; `mtp_decode --loop device --prompt-runs`, prompts 0 and 7; MTP's tokens equal plain's in
+every run; with prompt runs on and off the tokens are equal for all three models, both prompts,
+plain and MTP). Wall seconds to the first token, warm program cache; "device" is the prefill
+runs' cycles (MTP: rows and MTP layer runs):
+
+| model | prompt | plain old | plain now | device | MTP old | MTP now | device |
+|---|---|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 30 | 1.280 | 0.604 | 0.405 | 2.410 | 0.557 | 0.431 |
+| Qwen3.5-0.8B | 237 | 4.594 | 3.146 | 3.096 | 16.622 | 3.435 | 3.302 |
+| Qwen3.5-2B | 30 | 1.400 | 0.959 | 0.743 | 2.767 | 0.898 | 0.803 |
+| Qwen3.5-2B | 237 | 6.084 | 5.689 | 5.645 | 20.029 | 6.247 | 6.114 |
+| Qwen3.5-4B | 30 | 3.224 | 2.905 | 2.364 | 5.442 | 3.016 | 2.488 |
+| Qwen3.5-4B | 237 | 18.643 | 18.478 | 18.425 | 38.705 | 19.577 | 19.413 |
+
+- **Per run, the host adds 0.5-0.8 ms (plain) and 1.0-1.1 ms (MTP: its rows and MTP layer
+  runs alternate, each loading its program).** On the 237-token prompt (60 / 79 runs, MTP twice
+  that) that is 0.3-1.6% of TTFT plain and 0.8-3.9% MTP (0.13 s, the 0.8B's MTP).
+- **A process's first prompt pays 0.1-0.5 s more** (prompt 0 above: 0.20 / 0.22 / 0.54 s
+  plain): its programs read from the disk cache, the engine's compile workers still starting
+  beside it, and on the 4B R_max's probe of R = 4 (traced until TMEM runs out, every process).
+  The chain would not remove it: its programs load the same way. A warm-up of bucket 1's
+  prompt programs when the engine starts (or a kept R_max) would.
+- Cold (a new program cache), the first prompt also compiles its 4-6 programs: 0.87-1.35 s.
+- otpu-chat on the 2B (23 tokens, cold cache): plain and `--mtp` replies byte-equal, TTFT 1.41 /
+  1.68 s.
+
+**The chain is parked.** Host-started runs cost at most ~4% of TTFT (the 0.8B's MTP), at most
+0.16 s on any prompt measured, and under 2% for plain prefill; the chain (state block, chain
+table, the first pick on the device, RTL and a card session) would save only that. Its design
+above stays the plan if prefill runs get much shorter (more rows per weight pass, a faster
+link to the host's pick) or the host's per-run cost grows. Next: the other dense models
+(step 5).
