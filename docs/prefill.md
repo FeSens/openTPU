@@ -237,8 +237,7 @@ three prompts (P tokens from p0), prompt runs / today's:
 - **The passes are equal everywhere.** In bucket 16 Phi-4-mini's mix and LFM2-2.6B take one
   row a run with both routes: today's two-row run at 3840 is over IMEM too (4538 and 5116
   instructions), since attention is unrolled per row, head and block and so grows with the
-  context. A long context there costs 3-4x the passes of bucket 1 either way. A looped
-  attention would lift both routes; that is a separate item.
+  context. A long context there costs 3-4x the passes of bucket 1 either way (below).
 - **Runs.** Qwen3-0.6B and LFM2.5-230M fit 8 rows (two passes) in one run of today's in
   bucket 1, where a prompt run takes one pass's 4: the same passes, more runs (30 tokens 8 / 5,
   237 tokens 60 / 31). The host adds 0.5-0.8 ms a run (section 6), about 2 and 20 ms; today's
@@ -254,6 +253,17 @@ Today's rows are checked only where R_max is below one pass's rows (MCOLS, the i
 cache's end): compile_rows of R_max + 1 rows at the bucket's first run-time position, which
 must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
+
+**Later: a looped attention.** A run's program grows with its rows times the blocks its rows
+attend over, because attention is unrolled per row, KV head and block. In bucket 16 (blocks
+of 256, positions 3840-4095) Phi-4-mini's mix's prompt-run L program is 2597 instructions
+at one row, and today's two-row run 4538 (LFM2-2.6B's 5116), against IMEM's 4096; in bucket 1
+the same models fit 3 and 4 rows (Phi's mix: 2415 instructions at 3). So past the middle of the cache
+both models prefill one row a run, by either route: 3-4x the weight passes of a run of 3-4
+rows, for a long prompt or a later chat turn at a long context. Attention as a hardware loop
+over the blocks (the loop body one block's scores, softmax update and V product, the block's
+K / V address an induction variable) would make the program independent of the context, so
+every bucket would take bucket 1's rows. A separate item, not started.
 
 **Gemma 4 E2B** (`gemma4_prompt_run`): gemma4_step's rows over a RunRows, each row a `_RowPos`
 (its slot, sliding window and mask pair as a layer run's), the tokens from out[]; each token's
