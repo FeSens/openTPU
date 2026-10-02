@@ -197,11 +197,13 @@ def _close(eng) -> None:
 def _plain_card(eng, spec, ids, n, samp=None, seed=0):
     """Plain greedy (or samp's sampled) decode on the card as the production loop runs it:
     the prefill, then Engine.generate_card (each token picked and fed back on the card); the
-    tokens, and the decode's device cycles and wall seconds (the first token is the
-    prefill's: sampled, reference_pick's with seed's first uniform, as MTPDecoder's)."""
+    tokens, the prefill's device cycles and runs, and the decode's device cycles and wall
+    seconds (the first token is the prefill's: sampled, reference_pick's with seed's first
+    uniform, as MTPDecoder's)."""
     import numpy as np
     from opentpu.llm import generate as G
     rng = np.random.default_rng(seed)
+    k0 = len(eng.stats)
     t0 = time.perf_counter()
     lg = eng.prefill(ids)
     if samp is None:
@@ -220,6 +222,8 @@ def _plain_card(eng, spec, ids, n, samp=None, seed=0):
     t2 = time.perf_counter()
     return got, {"cycles": int(sum(s.get("cycles", 0) for s in eng.stats[k:])),
                  "runs": len(eng.stats) - k,
+                 "prefill_cycles": int(sum(s.get("cycles", 0) for s in eng.stats[k0:k])),
+                 "prefill_runs": k - k0,
                  "prefill_wall": round(t1 - t0, 3), "wall": round(t2 - t1, 3),
                  "ttft": round(t1 - t0, 3),
                  "t2": round(seen[0] - t0, 3) if seen else None,
