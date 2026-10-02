@@ -3368,9 +3368,9 @@ about 0.42 ms a part plus 0.33 ms a MiB. Where the 0.42 ms goes:
 - The last part's entry, one more call (35-45 us). The 0.085 ms between events is the next
   poll's mailbox read (one 64-byte c2h call) and the loop.
 
-Two changes (`moe_card --idle-parts`: v2, both, the default since session 18 below; ra, the
-default from pfv2 to session 18; v1 as before; halt; `ExpertServer.read_ahead` and `halt_aware`,
-both on by default):
+Two changes (`moe_card --idle-parts`: v2, both, the default since session 18 below; v1 as
+before, the default until then; ra; halt; `ExpertServer.read_ahead` and `halt_aware`, both on by
+default since session 18):
 
 `read_ahead`:
 - `_stage_next`: before a poll flushes, the part the next idle poll would send is read into a
@@ -3450,7 +3450,8 @@ put a clock on the memory, and the live-card tests never counted holds.
   generation.
 
 The lead's rulings on pfv2:
-- read-ahead (`ra`) becomes the default for moe_card and the server.
+- read-ahead (`ra`) becomes the default for moe_card and the server (it landed as part of
+  session 18's v2, below).
 - halt_aware stays opt-in until a card session shows it holding, in a re-measure of the 35B
   prefill, ra against v2.
 - The 35B decode hints (top 4, n 1) get a confirm session against the then-default parts.

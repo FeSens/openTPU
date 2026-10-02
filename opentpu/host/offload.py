@@ -551,13 +551,13 @@ class ExpertServer:
         # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
         # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
         self.hint_n = self.hint_top = 0
-        # idle parts (docs/offload.md 13.12): read_ahead (the default since pfv2), each read by
-        # the poll before, beside its DMA, and sent as one DMA call per channel (a memory with
-        # stage: BoardDram); halt_aware (the default since session 18), none started, nor read
-        # ahead, when the running program's expected end is nearer than an idle part takes
-        # (part_s: the measured parts' average). The end: the memory's run_clock (the run's
-        # start and its time with no waits) plus the run's own waits (_waits: each of its
-        # requests with misses, seen to served)
+        # idle parts (docs/offload.md 13.12), both on by default since session 18: read_ahead,
+        # each read by the poll before, beside its DMA, and sent as one DMA call per channel (a
+        # memory with stage: BoardDram); halt_aware, none started, nor read ahead, when the
+        # running program's expected end is nearer than an idle part takes (part_s: the
+        # measured parts' average). The end: the memory's run_clock (the run's start and its
+        # time with no waits) plus the run's own waits (_waits: each of its requests with
+        # misses, seen to served)
         self.read_ahead, self.halt_aware = True, True
         self._staged = None                 # ((g, slot, from, to), the memory's staged part)
         self.part_s: float | None = None
