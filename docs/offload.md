@@ -2552,6 +2552,35 @@ its own programs: q35ref16 without hints, q35ref16h with them and the caps. Hint
 bit. The 26B has no decode hint programs (a gemma4.py change), so they wait for the 35B's
 result.
 
+### 12.8 An expert landing as its request is posted
+
+The card posts a request, then reads the present flag of each id it names; a missing one's
+slot comes from the request's answer word, which the host writes only for the ids it serves as
+misses. An idle poll reads seq, finds no request, and lands a hinted (or ahead_layer's) expert:
+its last part with the tag, then its entry. If the card posts a request naming that expert
+after the poll read seq, it can read the entry before it lands, as missing, and wait on its
+answer word, while the host, at the next poll, finds the expert landed and serves it as a hit:
+answer word 0, and the card's WAITW never holds. Two polls later the race is over (the poll
+between read seq after the entry had landed).
+
+Only idle polls land experts, and only hinted experts (`MoESpec.hint`, the hint programs:
+moe_card `--hints on`) and ahead_layer's queue (`Engine(layer_ahead=...)`, `--layer-ahead`) go
+on idle polls; the default paths (hints off, no layer ahead) never had a pending or queued
+expert, so they were never exposed. Exposed and passing by timing: card sessions 5-6 (the
+decode hints, 16 tokens, most hinted experts sent on request), pfahead, pfhint and pfhint2
+(the layer ahead).
+
+Found by a hang of the live fake card (test_qwen35_moe's hints test under load, 2026-10-02:
+`WAITW ... wait: its slot (the answer) never holds`). Capped hints make it likelier on the
+card: a whole expert lands about 0.9 ms after its hint, the request comes 1.6-1.7 ms after.
+The fix, host only: `poll` keeps the experts the last idle poll landed (`_fresh`); the request
+served in the next poll names their slots in its answer too (`late`), and writes the answer
+even with no miss. Their tags landed with them, so a card that read the entry as missing finds
+its slot and its data; one that read it present never reads that answer word, and zeroes the
+answer after its experts as always. test_offload_server's
+`test_an_expert_landed_in_the_poll_before_a_request_is_answered` posts the request right after
+the landing poll's read of seq; on the server before the fix its answer word is 0.
+
 ## 13. Layer-major prefill
 
 Today a prompt runs token by token through the decode step. Each token's MoE layers ask for

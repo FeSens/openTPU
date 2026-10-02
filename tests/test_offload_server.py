@@ -745,6 +745,41 @@ def test_a_request_withdraws_its_layers_unnamed_hints_with_drop():
     assert set(srv.lru[0]) == {0, 4, 7} and _landed(mem, lay, srv, 7)
 
 
+def test_an_expert_landed_in_the_poll_before_a_request_is_answered():
+    """docs/offload.md 12.8: a request posted while an idle poll lands one of its experts
+    (after the poll read seq, before the expert's entry landed): the card may read that entry
+    as missing and wait on its answer word. The host serves that expert as a hit, so the
+    request's answer names its slot all the same (its tag landed with it), even with no miss.
+    An expert landed two polls before a request is not answered (the card reads its entry
+    after the poll between read seq, by when the entry had landed)."""
+    from opentpu.host.offload import RUN
+    lay, mem, srv, G = _hint_setup(slot=RUN)        # experts of one part
+    _post(mem, lay, 1, [G + 3, G + 4])              # hint: 3 and 4 take slots (2 and 1 leave)
+    assert srv.poll() == 1 and dict(srv.pending) == {3: 0, 4: 0}
+    read, posted = mem.read, []
+
+    def late(a, n):                                 # the card posts right after the poll's
+        r = read(a, n)                              # read of seq
+        if a == lay.mbox and not posted:
+            posted.append(1)
+            _post(mem, lay, 2, [0, 3])
+        return r
+    mem.read = late
+    assert _entry(mem, lay, 3) == (0, 0.0)          # what the card reads: 3 missing
+    assert srv.poll() == 1 and dict(srv.pending) == {4: 0}  # this poll lands 3 (its entry)
+    mem.read = read
+    assert _landed(mem, lay, srv, 3)
+    assert srv.poll() == 1 and srv.misses == 0 and srv.late == 1    # 0 and 3: hits
+    ans = np.frombuffer(mem.read(lay.answer, 8), np.uint32)
+    assert ans[1] == srv.lru[0][3] and ans[0] == 0  # 3's slot named, 0's not
+    mem.write(lay.answer, np.zeros(2, np.uint32))   # (the card zeroes it)
+    assert srv.poll() == 1 and not srv.pending      # 4 lands, then a poll with nothing
+    assert srv.poll() == 0
+    _post(mem, lay, 3, [4, 0])
+    assert srv.poll() == 1 and srv.late == 1
+    assert not np.frombuffer(mem.read(lay.answer, 8), np.uint32).any()
+
+
 def test_hint_caps_send_the_first_n_of_its_top_ids_not_in_a_slot():
     """hint_n / hint_top (docs/offload.md 12.7): of a hint's first hint_top ids (the router's
     best first), the first hint_n not in a slot get one, at once (the victim's entry cleared
