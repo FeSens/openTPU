@@ -175,8 +175,9 @@ module otpu_ldc_mem #(
     // closing, a bank's timers); commands at the ports or in the banks' lookahead queues and none
     // at any bank's head (the crossbar); nothing (idle). From the first command to the last.
     // The idle gaps: their lengths, and the gaps after which the next command reads the next
-    // channel beat of one of the last 4 read streams (a sequential prefetch could have filled
-    // the gap with it: the cycles, up to 256 per gap).
+    // channel beat of one of the last 16 read streams (a sequential prefetch could have filled
+    // the gap with it: the cycles, up to 256 per gap). The rows: each bank's row changes in the
+    // ports' command order, and the reopens among them.
 `define OTPU_LDC_COL(p) (!u_ctl.core_dfi_p``p``_cs_n && !u_ctl.core_dfi_p``p``_cas_n && u_ctl.core_dfi_p``p``_ras_n)
 `define OTPU_LDC_CR(n) (u_ctl.core_bankmachine``n``_cmd_valid && (u_ctl.core_bankmachine``n``_cmd_payload_is_read || u_ctl.core_bankmachine``n``_cmd_payload_is_write))
 `define OTPU_LDC_HD(n) u_ctl.core_bankmachine``n``_pipe_valid_source_valid
@@ -194,13 +195,17 @@ module otpu_ldc_mem #(
     longint g_n [4], g_cyc [4];          // idle gaps of 1-7, 8-63, 64-255, 256+ cycles
     longint g_cont, g_cont_cyc;          // gaps of 8+ followed by a stream's next beat
     longint gap;
-    bit     started, brk;
-    int     sh [4];                      // the last 4 read streams' next channel beats
+    longint r_act, r_reopen;             // row changes per bank (ROW_BANK_COLUMN: beat bits 9:7
+    int     r_open [8], r_prev [8];      // the bank, 24:10 the row), and those back to the row
+    bit     started, brk;                // the bank had open before (two streams in one bank)
+    int     sh [16];                     // the last 16 read streams' next channel beats
     initial begin
       brk = $test$plusargs("ldc_break");
-      started = 0; gap = 0; g_cont = 0; g_cont_cyc = 0;
+      started = 0; gap = 0; g_cont = 0; g_cont_cyc = 0; r_act = 0; r_reopen = 0;
+      for (int i = 0; i < 8; i++) begin r_open[i] = -1; r_prev[i] = -1; end
       for (int i = 0; i < 6; i++) begin bk[i] = 0; bk_tail[i] = 0; end
-      for (int i = 0; i < 4; i++) begin g_n[i] = 0; g_cyc[i] = 0; sh[i] = -1; end
+      for (int i = 0; i < 4; i++) begin g_n[i] = 0; g_cyc[i] = 0; end
+      for (int i = 0; i < 16; i++) sh[i] = -1;
     end
     always @(posedge uclk) if (brk && !urst) begin
       int k;
@@ -217,7 +222,7 @@ module otpu_ldc_mem #(
           hit = 0;
           for (int p = 0; p < 2; p++)
             if (cv[p] && cr[p] && !cwe[p])
-              for (int s = 0; s < 4; s++) if (int'(ca[p]) == sh[s]) hit = 1;
+              for (int s = 0; s < 16; s++) if (int'(ca[p]) == sh[s]) hit = 1;
           if (started && gap >= 8 && hit != 0) begin
             g_cont++;
             g_cont_cyc += gap < 256 ? gap : 256;
@@ -226,11 +231,18 @@ module otpu_ldc_mem #(
         end
         started = 1;
         for (int i = 0; i < 6; i++) begin bk[i] += bk_tail[i]; bk_tail[i] = 0; end
+        for (int p = 0; p < 2; p++)
+          if (cv[p] && cr[p] && int'(ca[p][24:10]) != r_open[ca[p][9:7]]) begin
+            r_act++;
+            if (int'(ca[p][24:10]) == r_prev[ca[p][9:7]]) r_reopen++;
+            r_prev[ca[p][9:7]] = r_open[ca[p][9:7]];
+            r_open[ca[p][9:7]] = int'(ca[p][24:10]);
+          end
         for (int p = 0; p < 2; p++)       // the read streams: a read continuing one moves it up
           if (cv[p] && cr[p] && !cwe[p]) begin
             int s;
-            s = 3;
-            for (int i = 0; i < 4; i++) if (sh[i] == int'(ca[p])) s = i;
+            s = 15;
+            for (int i = 0; i < 16; i++) if (sh[i] == int'(ca[p])) s = i;
             for (int i = s; i > 0; i--) sh[i] = sh[i - 1];
             sh[0] = int'(ca[p]) + 1;
           end
@@ -284,16 +296,16 @@ module otpu_ldc_mem #(
     for (int c = 0; c < 2; c++)
       $display("MEM ch%0d rd=%0d wr=%0d row_miss=%0d rmw=0", c, n_rd[c], n_wr[c], n_miss[c]);
     if (g_ch[0].brk) begin
-      $display("BRK ch0 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d",
+      $display("BRK ch0 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d act=%0d reopen=%0d",
                g_ch[0].bk[0], g_ch[0].bk[1], g_ch[0].bk[2], g_ch[0].bk[3], g_ch[0].bk[4], g_ch[0].bk[5],
                g_ch[0].g_n[0], g_ch[0].g_n[1], g_ch[0].g_n[2], g_ch[0].g_n[3],
                g_ch[0].g_cyc[0], g_ch[0].g_cyc[1], g_ch[0].g_cyc[2], g_ch[0].g_cyc[3],
-               g_ch[0].g_cont, g_ch[0].g_cont_cyc);
-      $display("BRK ch1 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d",
+               g_ch[0].g_cont, g_ch[0].g_cont_cyc, g_ch[0].r_act, g_ch[0].r_reopen);
+      $display("BRK ch1 data=%0d ref=%0d mux=%0d rows=%0d xbar=%0d idle=%0d gaps=%0d/%0d/%0d/%0d gapcyc=%0d/%0d/%0d/%0d cont=%0d contcyc=%0d act=%0d reopen=%0d",
                g_ch[1].bk[0], g_ch[1].bk[1], g_ch[1].bk[2], g_ch[1].bk[3], g_ch[1].bk[4], g_ch[1].bk[5],
                g_ch[1].g_n[0], g_ch[1].g_n[1], g_ch[1].g_n[2], g_ch[1].g_n[3],
                g_ch[1].g_cyc[0], g_ch[1].g_cyc[1], g_ch[1].g_cyc[2], g_ch[1].g_cyc[3],
-               g_ch[1].g_cont, g_ch[1].g_cont_cyc);
+               g_ch[1].g_cont, g_ch[1].g_cont_cyc, g_ch[1].r_act, g_ch[1].r_reopen);
     end
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");
