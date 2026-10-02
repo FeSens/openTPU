@@ -82,6 +82,12 @@
 //   the word it waits for). Their beats not yet taken are dropped by the next miss, as after a
 //   write. Without it a run's first A reads took the previous run's beat over the host's rewrite
 //   (the 35B's back-to-back embed runs: token 0's block scales for tokens 1 and 2).
+// - Port H, the host's window (docs/offload.md 10.12): the host's own words, one request at a
+//   time. Its writes gather in one beat (whole when all 16 words come, or on a write to another
+//   beat, a read, or HGATHER idle cycles) and go out last in their channel's command order; they
+//   drop A's beats as the adapter's other writes do. A read waits for the gathered beat to go
+//   out first, then reads its beat. H is ordered against nothing else of the slice's: the host
+//   and the programs meet through WAITW on a word (docs/isa.md), as with XDMA's writes.
 // Requests are taken when req && rdy; rdy depends on registered state only. Reads return in
 // order per port (the B tag with its data).
 module otpu_native_dram #(
@@ -95,7 +101,8 @@ module otpu_native_dram #(
   // A read run (prefetch), beats. 32: decode's knee (docs/litedram.md section 11; 8 -> 32 is
   // 0.9-1.3% fewer cycles per token, 64 no better): fewer runs, so fewer row and bank changes
   // between the scale stream and the others
-  parameter int APF = 32
+  parameter int APF = 32,
+  parameter int HGATHER = 255                        // idle cycles before a partial H beat goes out
 ) (
   input  logic              clk,
   input  logic              rst,
@@ -127,6 +134,15 @@ module otpu_native_dram #(
   output logic              b_rtag,
   output logic [D*8-1:0]    b_rdata,
   output logic              wr_idle,
+  // port H (see Ordering): a write taken when h_req && h_rdy; a read too, its word on h_rvalid
+  output logic              h_rdy,
+  input  logic              h_req,
+  input  logic              h_we,
+  input  logic [31:0]       h_addr,     // word address
+  input  logic [31:0]       h_wdata,
+  input  logic [3:0]        h_be,
+  output logic              h_rvalid,
+  output logic [31:0]       h_rdata,
   // native memory masters, one per channel ([1:0] = channel)
   output logic [1:0]        n_cvalid,
   input  logic [1:0]        n_cready,
@@ -155,8 +171,9 @@ module otpu_native_dram #(
   localparam int TD = 2 ** $clog2(RD + AD + WQD);    // reads in flight per channel (tags)
   localparam int TW = $clog2(TD);
   localparam int PW = $clog2(4 * QD + 2 * WQD + 1);  // writes accepted and not gone out
-  localparam logic [1:0] K_B = 2'd0, K_A = 2'd1, K_W = 2'd2;          // a read's source
-  localparam logic [1:0] S_A = 2'd0, S_WR = 2'd1, S_WW = 2'd2, S_B = 2'd3;  // a command's
+  localparam logic [1:0] K_B = 2'd0, K_A = 2'd1, K_W = 2'd2, K_H = 2'd3;  // a read's source
+  localparam logic [2:0] S_A = 3'd0, S_WR = 3'd1, S_WW = 3'd2, S_B = 3'd3,  // a command's
+                         S_H = 3'd4;
 
   // the hazard bucket of a channel beat: an XOR fold, so that the strided beats of a transposed
   // V column spread over the buckets
@@ -426,12 +443,34 @@ module otpu_native_dram #(
     assign ra_head[c] = ram[AW_'(ra_h[c] + AW_'(aoh.drop))];
   end
 
+  // ------------------------------------------------------------------ port H
+  // hg: the gathered beat (its logical beat, data, bytes written, idle cycles); hc: the one H
+  // command (a gathered beat's write, or a read) until its channel takes it; hr: a read's word
+  // index until its data comes back
+  logic         hg_v, hc_v, hc_we, hc_c, hr_v;
+  logic [25:0]  hg_beat;
+  logic [511:0] hg_d, hc_d;
+  logic [63:0]  hg_s, hc_s;
+  logic [7:0]   hg_age;
+  logic [24:0]  hg_m, hc_m;
+  logic         hg_c;
+  logic [3:0]   hr_idx;
+  logic [1:0]   h_done;                          // channel c took hc (a read) or wrote it
+  wire  [25:0]  h_beat = h_addr[29:4];
+  // a read waits for the gathered beat (pushed by the flush below)
+  assign h_rdy = !hc_v && !hr_v && (h_we || !hg_v);
+  wire  h_take = h_req && h_rdy;
+  // the gathered beat becomes the command: a write to another beat, a read waiting for it, full,
+  // or idle (and the command slot free)
+  wire  hg_push = hg_v && !hc_v && !hr_v &&
+                  (h_req ? (!h_we || h_beat != hg_beat) : (&hg_s || hg_age >= 8'(HGATHER)));
+
   // ------------------------------------------------------------------ per-channel issue
   logic [1:0] hv;                                // a command shown and not taken (or a write
-  logic [1:0] hsrc [2];                          //   not yet out): shown again; its source
+  logic [2:0] hsrc [2];                          //   not yet out): shown again; its source
   logic [1:0] c_done, d_done;                    // the shown write's command / data taken
   logic [1:0] sv;                                // a command is shown
-  logic [1:0] src [2];                           // its source (S_*)
+  logic [2:0] src [2];                           // its source (S_*)
   logic [1:0] swr;                               // it is a write
   logic [1:0] ctk, dtk;                          // command / write data taken this cycle
   logic [1:0] wiss;                              // a write goes out (both taken)
@@ -439,7 +478,7 @@ module otpu_native_dram #(
                                                  //   beat); the SW writes wait
   always_comb begin
     for (int c = 0; c < 2; c++) begin
-      logic e_a, e_wr, e_ww, e_b;
+      logic e_a, e_wr, e_ww, e_b, e_h;
       // the SW queue's next partial beat: blocked while an older live entry may have its
       // address (one in its bucket; a hash collision only delays the read)
       w_blk[c] = wnz[c][wh_r[c]];
@@ -451,9 +490,11 @@ module otpu_native_dram #(
       // an SW write once its slot is past the read point and, if partial, has its fill data
       e_ww = (qw_n[c] != qw_rn[c]) && (!wpart[c][qw_f[c]] || wgot[c][qw_f[c]]) && !w_hold[c];
       e_b = (qb_n[c] != 0) && (hb[c].we || rb_res[c] < (RW + 1)'(RD));
-      sv[c] = hv[c] || e_a || e_wr || e_ww || e_b;
-      src[c] = hv[c] ? hsrc[c] : e_a ? S_A : e_wr ? S_WR : e_ww ? S_WW : S_B;
-      swr[c] = (src[c] == S_A && ha[c].we) || src[c] == S_WW || (src[c] == S_B && hb[c].we);
+      e_h = hc_v && hc_c == c[0];                // last: the host's words never hold the slice up
+      sv[c] = hv[c] || e_a || e_wr || e_ww || e_b || e_h;
+      src[c] = hv[c] ? hsrc[c] : e_a ? S_A : e_wr ? S_WR : e_ww ? S_WW : e_b ? S_B : S_H;
+      swr[c] = (src[c] == S_A && ha[c].we) || src[c] == S_WW || (src[c] == S_B && hb[c].we) ||
+               (src[c] == S_H && hc_we);
       n_cvalid[c] = sv[c] && !(swr[c] && c_done[c]);
       n_wvalid[c] = sv[c] && swr[c] && !d_done[c];
       n_cwe[c] = swr[c];
@@ -461,6 +502,7 @@ module otpu_native_dram #(
         S_A:  n_caddr[c] = ha[c].m + 25'(a_iss[c]);
         S_WR: n_caddr[c] = wadr_r[c];
         S_WW: n_caddr[c] = hw[c].m;
+        S_H:  n_caddr[c] = hc_m;
         default: n_caddr[c] = hb[c].m;
       endcase
       n_wdata[c] = '0;
@@ -472,6 +514,9 @@ module otpu_native_dram #(
       end else if (src[c] == S_A) begin
         n_wdata[c][32 * ha[c].idx +: 32] = ha[c].data;
         n_wmask[c][4 * ha[c].idx +: 4] = ha[c].be;
+      end else if (src[c] == S_H) begin
+        n_wdata[c] = hc_d;
+        n_wmask[c] = hc_s;
       end else begin
         n_wdata[c] = hb[c].data;
         for (int k = 0; k < 16; k++) n_wmask[c][4 * k +: 4] = {4{hb[c].wmask[k]}};
@@ -480,8 +525,44 @@ module otpu_native_dram #(
       dtk[c] = n_wvalid[c] && n_wready[c];
       wiss[c] = sv[c] && swr[c] && (c_done[c] || ctk[c]) && (d_done[c] || dtk[c]);
       rtk[c] = ctk[c] && !swr[c];
-      tg_in[c].k = src[c] == S_A ? K_A : src[c] == S_WR ? K_W : K_B;
+      tg_in[c].k = src[c] == S_A ? K_A : src[c] == S_WR ? K_W : src[c] == S_H ? K_H : K_B;
+      h_done[c] = src[c] == S_H && (swr[c] ? wiss[c] : ctk[c]);
       tg_in[c].slot = qw_r[c];
+    end
+  end
+
+  // port H: the gathered beat, the command, the read's word
+  always_ff @(posedge clk) begin
+    h_rvalid <= 1'b0;
+    if (rst) begin
+      hg_v <= 1'b0; hc_v <= 1'b0; hr_v <= 1'b0;
+    end else begin
+      if (|h_done) hc_v <= 1'b0;
+      if (hg_push) begin                         // the gathered beat goes (h_take is a write)
+        hc_v <= 1'b1; hc_we <= 1'b1; hc_c <= hg_c; hc_m <= hg_m; hc_d <= hg_d; hc_s <= hg_s;
+      end
+      if (h_take && !h_we) begin                 // a read (nothing gathered: h_rdy)
+        hc_v <= 1'b1; hc_we <= 1'b0; hc_c <= chan_of(h_addr); hc_m <= h_addr[29:5];
+        hr_v <= 1'b1; hr_idx <= h_addr[3:0];
+      end
+      if (h_take && h_we) begin                  // a write: into the beat, or a new one
+        logic same;
+        same = hg_v && h_beat == hg_beat;        // (else hg_push took the old one)
+        hg_v <= 1'b1; hg_age <= '0;
+        hg_beat <= h_beat; hg_m <= h_addr[29:5]; hg_c <= chan_of(h_addr);
+        for (int k = 0; k < 64; k++)
+          if (h_addr[3:0] == 4'(k / 4) && h_be[k % 4]) begin
+            hg_d[8 * k +: 8] <= h_wdata[8 * (k % 4) +: 8];
+            hg_s[k] <= 1'b1;
+          end else if (!same) hg_s[k] <= 1'b0;
+      end else if (hg_push) hg_v <= 1'b0;
+      else if (hg_v && hg_age != '1) hg_age <= hg_age + 1'b1;
+      for (int c = 0; c < 2; c++)
+        if (n_rvalid[c] && tgh[c].k == K_H) begin
+          h_rvalid <= 1'b1;
+          h_rdata <= n_rdata[c][32 * hr_idx +: 32];
+          hr_v <= 1'b0;
+        end
     end
   end
 
@@ -576,7 +657,7 @@ module otpu_native_dram #(
       // a_reuse and the channel decode stay off this path; a B write to each channel whose half
       // it writes) and gone out
       wq_n <= wq_n + PW'(wacc_q[0]) + PW'(wacc_q[1]) + PW'(wacc_q[2]) + PW'(wacc_q[3]) +
-              PW'(wacc_q[4]) - PW'(wiss[0]) - PW'(wiss[1]);
+              PW'(wacc_q[4]) - PW'(wiss[0] && src[0] != S_H) - PW'(wiss[1] && src[1] != S_H);
       wacc_q <= {qw_push[1], qw_push[0], a_take && a_we,
                  b_take && b_we && b_wmask[31:16] != 0,
                  b_take && b_we && b_wmask[15:0]  != 0};
@@ -626,6 +707,7 @@ module otpu_native_dram #(
               for (int k = 0; k < RBP; k++) rb_tq[c][k] <= rb_tq[c][k] + 1;
             end
             K_A: begin ra_t[c] <= ra_t[c] + 1; ran = ran + 1; end
+            K_H: ;                                  // port H's word (below)
             default: wgot[c][tgh[c].slot] <= 1'b1;   // the SW fill read: its slot has the data
           endcase
           tg_h[c] <= tg_h[c] + 1;

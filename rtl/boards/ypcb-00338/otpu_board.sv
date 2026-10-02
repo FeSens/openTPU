@@ -216,7 +216,8 @@ module otpu_board #(
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
     .b_rdata, .wr_idle,
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
-    .n_rvalid, .n_rdata, .n_wdone);
+    .n_rvalid, .n_rdata, .n_wdone,
+    .h_rdy(), .h_req(1'b0), .h_we(1'b0), .h_addr('0), .h_wdata('0), .h_be('0), .h_rvalid(), .h_rdata());
 
   // ---- LEDs: heartbeat, running, halted/error
   logic [26:0] hb;

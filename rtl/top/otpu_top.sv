@@ -86,7 +86,9 @@ module otpu_top
         .b_rdata, .wr_idle,
         .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
         .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
-        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
+        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone),
+        .h_rdy(), .h_req(1'b0), .h_we(1'b0), .h_addr('0), .h_wdata('0), .h_be('0), .h_rvalid(),
+        .h_rdata());
       if (AXI == 2) begin : g_ldc
         otpu_ldc_mem #(.WORDS(DRAM_WORDS), .SID(s)) u_mem (
           .clk, .rst(sys_rst),
