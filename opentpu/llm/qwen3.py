@@ -2262,6 +2262,9 @@ class Engine:
         worker process compiled it (_precompile_layers)."""
         if key not in self._layer_runs:
             fut = self._layer_next.pop(key, None)
+            if fut is not None and not fut.done() and not self._ready.done():
+                fut.cancel()                # the workers still starting: compiled here
+                fut = None
             if fut is not None:
                 words, ra = fut.result()
                 self._layer_runs[key] = (None, ra, words)
@@ -2274,9 +2277,11 @@ class Engine:
 
     def _precompile_layers(self, keys) -> None:
         """prefill_layers' runs not compiled yet, compiled by the worker processes in the order
-        they run (a process pipeline that is up): the card runs a layer while the next one's
-        programs compile (22-46 ms each against a layer's 200-460 ms, docs/offload.md 13.7)."""
-        if not self._procs or not self._ready.done():
+        they run (the process pipeline): the card runs a layer while the next one's programs
+        compile (22-46 ms each against a layer's 200-460 ms, docs/offload.md 13.7). Queued
+        while the workers start too (a prompt right after the engine: the 26B's); until they
+        are up, _layer_run compiles a run here and drops its compile."""
+        if not self._procs:
             return
         for k in dict.fromkeys(keys):
             if k not in self._layer_runs and k not in self._layer_next:

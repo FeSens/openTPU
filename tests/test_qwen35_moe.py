@@ -291,12 +291,14 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs,
 
 
 
-def test_layer_major_runs_compile_in_the_worker_processes(tiny):
+@pytest.mark.parametrize("ready", [True, False])
+def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
     """Engine._precompile_layers: with the process pipeline (a backend running assembled words,
     as the board does) prefill_layers' programs all come from the worker processes
     (layer_programs in the worker's image, assembled), queued in the order they run; here the
     ISA simulator runs them (the words decoded), and the logits and the decode steps after
-    equal token by token's bit for bit."""
+    equal token by token's bit for bit. With the workers not up yet (ready False: a prompt
+    right after the engine) each run compiles in line and its queued compile is dropped."""
     from opentpu import isa as I
     from opentpu.llm.qwen3 import IsaBackend
 
@@ -316,16 +318,33 @@ def test_layer_major_runs_compile_in_the_worker_processes(tiny):
     ref = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K)
     try:
         assert a._procs and a._ready.result(timeout=120)
+        if not ready:                           # the workers still starting: no compile
+            from concurrent.futures import Future   # done, none ready
+
+            class Starting:
+                def __init__(self, pool):
+                    self.pool, self.futures = pool, []
+
+                def submit(self, *args):
+                    self.futures.append(Future())
+                    return self.futures[-1]
+
+                def shutdown(self):
+                    self.pool.shutdown()
+            a._pool, a._ready = Starting(a._pool), Future()
         toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 21)]
         la, lb = a.prefill(toks), ref.prefill(toks)
         assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
         assert a._layer_runs and not a._layer_next
-        assert all(progs is None and isinstance(w, np.ndarray)    # (the worker's)
-                   for progs, _, w in a._layer_runs.values())
+        assert all((progs is None) == ready and isinstance(w, np.ndarray)  # (None: the
+                   for progs, _, w in a._layer_runs.values())             # worker's)
+        if not ready:
+            assert a._pool.futures and all(f.cancelled() for f in a._pool.futures)
         for t in (5, 6):
             assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
     finally:
         a._pool.shutdown()
+
 
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
