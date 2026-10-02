@@ -157,16 +157,20 @@ class _DmaLock:
     of reads alone. A thread lock for the process's threads, and flock on <run dir>/<card>.dma
     for other processes (the device lock does not keep them apart inside one otpu-lock). Calls in
     one direction keep their pipelining with host work (Board.write / read's worker); a call waits
-    at most one DMA_CHUNK of the other direction."""
+    at most one DMA_CHUNK of the other direction. Reentrant in its thread: a thread that makes
+    calls back to back (offload.BoardDram's worker, a request's) holds it around them once, and
+    each call inside skips the flock's two system calls (each one more wait for the GIL in a
+    busy process)."""
 
     def __init__(self, name: str, flock: bool = True):
         self.name, self.flock = name, flock
-        self._t = threading.Lock()
+        self._t = threading.RLock()
         self._fd, self._pid = -1, 0
+        self._depth = 0                 # the holder's nesting (the flock at the outermost)
 
     def __enter__(self) -> _DmaLock:
         self._t.acquire()
-        if self.flock:
+        if self.flock and not self._depth:
             try:
                 if self._pid != os.getpid():           # a forked child opens its own description
                     d = run_dir()
@@ -177,10 +181,12 @@ class _DmaLock:
             except BaseException:
                 self._t.release()
                 raise
+        self._depth += 1
         return self
 
     def __exit__(self, *exc) -> None:
-        if self.flock:
+        self._depth -= 1
+        if self.flock and not self._depth:
             fcntl.flock(self._fd, fcntl.LOCK_UN)
         self._t.release()
 
