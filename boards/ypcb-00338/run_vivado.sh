@@ -10,8 +10,8 @@
 #   CORE_MHZ=100 ./run_vivado.sh          # another core clock (default 133.33, the production image's)
 #   FAST=1 ./run_vivado.sh                # development build: default strategies, no retiming or post-route
 #                                         # phys_opt (its default CORE_MHZ is 100); about half the time
-#   PCIE_GEN=2 ./run_vivado.sh            # PCIe Gen2 x8 (xdma_aclk 250 MHz; default 1, Gen1 x8:
-#                                         # vivado/bd_native.tcl, docs/offload.md section 6)
+#   PCIE_GEN=1 ./run_vivado.sh            # PCIe Gen1 x8 (xdma_aclk 125 MHz); the default is 2, Gen2 x8
+#                                         # (250 MHz; vivado/bd_native.tcl, docs/offload.md section 6)
 #   VIVADO_DOCKER=image ./run_vivado.sh   # Docker (e.g. Apple Silicon with Rosetta), see docs/board.md
 #   VIVADO_AS_USER=1                      # Docker on Linux: run as the calling user (see run())
 #   STEP=impl ./run_vivado.sh             # rerun implementation only (keeps project and synthesis)
@@ -71,7 +71,7 @@ mkdir -p "$out"
 # the IP synthesis cache shared by this host's builds (create_project.tcl); OTPU_IP_CACHE= turns it off
 export OTPU_IP_CACHE="${OTPU_IP_CACHE-$HOME/.cache/otpu-vivado-ip}"
 export OTPU_FAST="${FAST:-0}"
-export PCIE_GEN="${PCIE_GEN:-1}"    # read by vivado/bd_native.tcl
+export PCIE_GEN="${PCIE_GEN:-2}"    # read by vivado/bd_native.tcl and userclk1_reroute.tcl
 if [[ "${STEP:-}" == impl ]]; then
   run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
 else

@@ -13,9 +13,9 @@
 # core's MMCMs share it), so the clock wizard has no input buffer and makes core_clk only.
 # xdma_aclk 125 MHz (Gen1 x8, 128 bits; 250 MHz at Gen2 x8).
 #
-# Variables (set before sourcing): CORE_MHZ. Environment: PCIE_GEN, 1 (Gen1 x8, the production
-# setting, the default) or 2 (Gen2 x8: 5 GT/s, xdma_aclk 250 MHz, the PCIe block's userclk1 500 MHz;
-# docs/offload.md section 6).
+# Variables (set before sourcing): CORE_MHZ. Environment: PCIE_GEN, 2 (Gen2 x8: 5 GT/s, xdma_aclk
+# 250 MHz, the PCIe block's userclk1 500 MHz; the production setting since g2fix 0885d436, the
+# default) or 1 (Gen1 x8, 125 MHz; docs/offload.md section 6).
 
 # the newest installed version of an IP
 proc ip_vlnv {name} {
@@ -34,7 +34,7 @@ set CORE_DIV [expr {round(double($VCO) / $CORE_MHZ * 8) / 8.0}]
 set CORE_MHZ_ACT [format %.3f [expr {double($VCO) / $CORE_DIV}]]
 set CORE_HZ [expr {int(floor($VCO * 1.0e6 / $CORE_DIV))}]
 puts "core_clk: $CORE_MHZ_ACT MHz (MMCM divide $CORE_DIV)"
-set PCIE_GEN [expr {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) ne "" ? $::env(PCIE_GEN) : 1}]
+set PCIE_GEN [expr {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) ne "" ? $::env(PCIE_GEN) : 2}]
 if {$PCIE_GEN ni {1 2}} { error "bd_native.tcl: PCIE_GEN $PCIE_GEN (1 or 2)" }
 set XDMA_MHZ [expr {$PCIE_GEN == 2 ? 250 : 125}]
 set XDMA_HZ [expr {$XDMA_MHZ * 1000000}]

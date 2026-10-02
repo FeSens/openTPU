@@ -15,7 +15,8 @@ proc otpu_ws {args} {
   return [get_property SLACK $p]
 }
 set uc1 [get_clocks -quiet userclk1]
-if {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) eq "2" && [llength $uc1] == 1} {
+set gen [expr {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) ne "" ? $::env(PCIE_GEN) : 2}]
+if {$gen eq "2" && [llength $uc1] == 1} {   ;# (bd_native.tcl's default)
   set bad [get_timing_paths -quiet -setup -to $uc1 -max_paths 100 -nworst 1 -slack_lesser_than 0]
   if {[llength $bad]} {
     set others [get_clocks -quiet -filter {NAME != userclk1}]
