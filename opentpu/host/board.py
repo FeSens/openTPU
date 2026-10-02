@@ -38,7 +38,6 @@ from pathlib import Path
 
 import numpy as np
 
-from .. import simtmp
 from . import memcal
 from . import regs as R
 from .regs import *  # noqa: F401,F403  (the v1 names stay importable from here)
@@ -462,7 +461,7 @@ class SimTransport:
     def flush(self) -> None:
         if not self.script:
             return
-        from opentpu import rtlsim
+        from opentpu import rtlsim, simtmp     # (the simulator's: not on the card's path)
         root = Path(__file__).resolve().parents[2]
         srcs = [rtlsim.RTL / s for s in rtlsim.RTL_SOURCES if not s.endswith("otpu_top.sv")]
         board = root / "rtl/boards/ypcb-00338"

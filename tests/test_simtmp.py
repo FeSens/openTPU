@@ -88,6 +88,18 @@ def test_sigterm_during_a_worker_threads_run(tmp_path):
     assert left.stdout.strip() == ""
 
 
+
+def test_a_forked_childs_sigterm_leaves_the_parents_run(tmp_path):
+    """A forked child (a pool's worker) inherits the handler but not the parent's runs."""
+    p, d = _holder(tmp_path, "import os, signal\n    c = os.fork()\n"
+                   "    if c == 0:\n        time.sleep(60)\n    time.sleep(0.5)\n"
+                   "    os.kill(c, signal.SIGTERM)\n"
+                   "    print(os.waitpid(c, 0)[1] & 0x7f, d.exists(), flush=True)")
+    assert p.stdout.readline().split() == [str(int(signal.SIGTERM)), "True"]
+    assert p.wait(timeout=20) == 0
+    assert not d.exists()
+
+
 def test_sigkilled_runs_directory_goes_at_the_next_run(tmp_path, monkeypatch):
     p, d = _holder(tmp_path, "time.sleep(60)")
     p.kill()

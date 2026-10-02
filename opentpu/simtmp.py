@@ -10,9 +10,15 @@ up to gigabytes, so:
   no handler of its own: the handler (installed at import, from the main thread) kills the
   simulators run_sim started (track) and removes the live directories, then the signal's
   default action ends the process as before (any thread's runs; nothing else runs first, as
-  without the handler). A process killed outright (SIGKILL, the OOM killer) leaves its
-  directory: each new one sweeps its parent of those whose marker (MARKER: host and pid) names
-  a process of this host that is gone.
+  without the handler). A forked child forgets its parent's (os.register_at_fork), so a pool
+  worker's SIGTERM leaves the parent's runs alone. A process killed outright (SIGKILL, the OOM
+  killer) leaves its directory: each new one sweeps its parent of those whose marker (MARKER:
+  host and pid) names a process of this host that is gone.
+
+The handler comes with importing this module: rtlsim (and so profile, lens, llm.rtl_backend,
+host.hwlens, the tests and the co-sim tools) and the board model's run (host.board's
+SimTransport, imported there when it first runs); the card's own path (host.board's XDMA
+transport, the Engine, otpu-chat, -selftest, -diag) does not import it.
 """
 from __future__ import annotations
 
@@ -65,6 +71,16 @@ def root(mounts: str | None = None) -> Path | None:
 
 _live: set = set()                  # the directories of tempdir() blocks not ended
 _groups: set = set()                # the process groups of run_sim's simulators running
+
+
+def _forget() -> None:
+    """In a forked child: the parent's runs are not this process's to kill or remove."""
+    _live.clear()
+    _groups.clear()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_forget)
 
 
 def track(pgid: int) -> None:
