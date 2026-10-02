@@ -163,9 +163,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 calls[part] += 1
         return g
 
-    def counted(ids_):
+    def counted(ids_, *pos):
         m0 = srv.misses
-        timed("serve", serve)(ids_)
+        timed("serve", serve)(ids_, *pos)
         per_req.append(srv.misses - m0)
     srv.serve = counted
     srv.step = timed("hint", srv.step)          # a hinted expert's part on idle time (polls')

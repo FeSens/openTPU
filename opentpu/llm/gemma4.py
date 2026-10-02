@@ -1266,7 +1266,8 @@ class Image:
         ns.moe_dev = None
         if self.offload is not None:
             Lo = self.offload
-            ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, dir=Lo.dir, fmt=self.fmt,
+            ns.moe_dev = SimpleNamespace(mbox=Lo.mbox, served=Lo.served, answer=Lo.answer,
+                                         dir=Lo.dir, tag=Lo.tag, fmt=self.fmt,
                                          scratch=self.io.get("moe_scratch"))
         return ns
 
