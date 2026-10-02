@@ -276,18 +276,17 @@ class MTPDecoder:
         first = progs[(b0, (E0 if P % block == block - 1 else V0) + self.slot)]
         run = getattr(eng.backend, "run_generate", None)
         if run is not None:
-            late = None
-            if deadline is not None:
-                end = time.perf_counter() + deadline
+            end = None if deadline is None else time.perf_counter() + deadline
 
-                def late() -> bool:
-                    now = time.perf_counter()
-                    if now > end + 10.0:
-                        raise TimeoutError(f"the MTP loop runs {deadline + 10:.0f} s, its stop "
-                                           f"word unanswered")
-                    st.timed_out = st.timed_out or now > end
-                    return st.timed_out
-            stats, got = run(first, g["out"] + 4 * (P + 1), n, on_token, late, g["state"])
+            def late() -> bool:
+                now = time.perf_counter()
+                if now > end + 10.0:
+                    raise TimeoutError(f"the MTP loop runs {deadline + 10:.0f} s, its stop "
+                                       f"word unanswered")
+                st.timed_out = st.timed_out or now > end
+                return st.timed_out
+            stats, got = run(first, g["out"] + 4 * (P + 1), n, on_token,
+                             None if end is None else late, g["state"])
         else:
             stats = eng.backend.run(first)
             w = eng.backend.read(0, g["out"] + 4 * (P + 1), 4 * n).view(np.uint32)
