@@ -24,7 +24,10 @@ MIX = "mix"                 # the named choice: int8 with the model's mix (Spec.
 
 # the recommended mixes over int8 (wformat "mix", docs/formats.md), by (model_type, layers,
 # hidden size, vocabulary) of the checkpoint's config
-MIXES: dict = {}
+MIXES: dict = {
+    ("phi3", 32, 3072, 200064): "mlp@4-27=fp4",                 # Phi-4-mini
+    ("qwen3_5_text", 32, 2560, 248320): "delta=fp4,mlp=fp4",    # Qwen3.5-4B
+}
 
 
 def mix_for(config: dict) -> str:

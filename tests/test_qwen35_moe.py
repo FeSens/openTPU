@@ -290,6 +290,62 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs,
         t = int(np.argmax(ga))
 
 
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_layer_major_runs_compile_in_the_worker_processes(tiny, ready):
+    """Engine._precompile_layers: with the process pipeline (a backend running assembled words,
+    as the board does) prefill_layers' programs all come from the worker processes
+    (layer_programs in the worker's image, assembled), queued in the order they run; here the
+    ISA simulator runs them (the words decoded), and the logits and the decode steps after
+    equal token by token's bit for bit. With the workers not up yet (ready False: a prompt
+    right after the engine) each run compiles in line and its queued compile is dropped."""
+    from opentpu import isa as I
+    from opentpu.llm.qwen3 import IsaBackend
+
+    class Words(IsaBackend):                    # the ISA simulator taking the board's words
+        runs_words = True
+
+        def run(self, programs, args=None):
+            if isinstance(programs, np.ndarray):
+                programs = [[I.Instr.decode(programs[i:i + 8])
+                             for i in range(0, len(programs), 8)]]
+            return super().run(programs, args)
+
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    a = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, layer_major=2,
+               backend=lambda c, imgs: Words(c, imgs, adopt=True))
+    ref = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K)
+    try:
+        assert a._procs and a._ready.result(timeout=120)
+        if not ready:                           # the workers still starting: no compile
+            from concurrent.futures import Future   # done, none ready
+
+            class Starting:
+                def __init__(self, pool):
+                    self.pool, self.futures = pool, []
+
+                def submit(self, *args):
+                    self.futures.append(Future())
+                    return self.futures[-1]
+
+                def shutdown(self):
+                    self.pool.shutdown()
+            a._pool, a._ready = Starting(a._pool), Future()
+        toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 21)]
+        la, lb = a.prefill(toks), ref.prefill(toks)
+        assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+        assert a._layer_runs and not a._layer_next
+        assert all((progs is None) == ready and isinstance(w, np.ndarray)  # (None: the
+                   for progs, _, w in a._layer_runs.values())             # worker's)
+        if not ready:
+            assert a._pool.futures and all(f.cancelled() for f in a._pool.futures)
+        for t in (5, 6):
+            assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    finally:
+        a._pool.shutdown()
+
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 
@@ -476,3 +532,44 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
         run(stripped, b, "recv", stdin=f)
     assert a.read_bytes() == b.read_bytes()
     assert Path(str(b) + ".packed").read_bytes() == bytes([1] * n)
+
+
+def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
+    """tools/offload/moe_card.py --layer-major 2 --prefill-trace (ISA): the prompt's timeline
+    holds each run (the embed runs, the layer runs by key, the head last) and each request with
+    its ids and misses, as many as the result's prefill_time and prefill_requests count."""
+    import json
+    import pickle
+    import runpy
+    import sys
+    from pathlib import Path
+
+    from safetensors.numpy import save_file
+
+    m = tmp_path / "model"
+    tiny[0].config.save_pretrained(m)
+    save_file({k: np.ascontiguousarray(v) for k, v in tiny[1].items()},
+              str(m / "model.safetensors"))
+    spec = tiny[2]
+    cfg = device_config(replace(spec, embed="int8"), 256, rows=1, lookup=True, S=1,
+                        experts=2 * K)
+    (tmp_path / "cfg.pkl").write_bytes(pickle.dumps(cfg))
+    ids = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 7)]
+    (tmp_path / "ref.json").write_text(json.dumps({"ids": ids, "tokens": []}))
+    tr, out = tmp_path / "tr.json", tmp_path / "out.json"
+    monkeypatch.setattr(sys, "argv", [
+        "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
+        "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
+        "--prefill-trace", str(tr), "--out", str(out)])
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
+                   run_name="__main__")
+    r, t = json.loads(out.read_text()), json.loads(tr.read_text())
+    keys = [x[0] for x in t["runs"]]
+    pt = r["prefill_time"]
+    assert keys[-1] == "head" and pt["runs"] == len(keys) == pt["layer_runs"]
+    li = [k[0] for k in keys[:-1]]
+    assert li.count(-1) == len(ids) - 1                         # the embed runs, a token each
+    assert sorted(set(li) - {-1}) == list(range(len(KINDS)))
+    assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
+    assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
+    assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])

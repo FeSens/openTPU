@@ -488,6 +488,14 @@ a691ea98, 100 MHz), before (main at e639ecd) and after the host changes in secti
 
 While a chat runs, `otpu-smi` shows the process, the model, the DRAM in use and tokens/s.
 
+otpu-chat keeps the decode loop's compiled bucket programs in the program cache
+(`opentpu/progcache.py`): in memory, and on disk under `~/otpu-build/qcache/prog` on a host
+that has `~/otpu-build`, or in `OTPU_PROG_CACHE=<dir>`. A later process then skips their
+compile. Without it, a new process compiles before the second token of its first reply in each
+256-position bucket: about 0.1 s for plain decode and 0.5-0.7 s for `--mtp`'s six programs
+(Qwen3.5 on the card, [mtp.md](mtp.md) 11.7). `--no-prog-cache` turns it off;
+`OTPU_PROG_CACHE=0` keeps it in memory only.
+
 **`--mtp`** (Qwen3.5) decodes with the model's MTP drafter, the loop on the device
 ([mtp.md](mtp.md) sections 10 and 11). Each iteration verifies the token and a draft in one
 two-row run and drafts the next with the MTP layer, so a reply needs fewer runs of the model.

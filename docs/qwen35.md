@@ -114,7 +114,9 @@ size, of which 21 MiB are KV cache, convolution ring and DeltaNet state at a 256
 capacity. Each block now has its kind's size (in its formats group: `Image.layouts`, placed
 run by run, `Image.loc` / `Image._off`): the int8 image without lookup tables goes from 787
 MiB to 763 at a 256-token capacity and to 786 at 4096; the 35B-A3B's with 16 expert slots per
-layer from 4040 to 3957 MiB at 256 tokens.
+layer from 4040 to 3957 MiB at 256 tokens. A second layer layout would need a second loop
+body (about 2,000 more instructions), so a Qwen3.5 mix has one layout: the 4B's recommended
+mix (`wformat="mix"`) is `delta=fp4,mlp=fp4`, the 2B has none (`docs/formats.md`).
 
 ## Fewer key heads than value heads
 

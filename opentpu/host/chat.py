@@ -724,6 +724,9 @@ def main(argv=None):
                          "with 4-bit MM support)")
     ap.add_argument("--head-format", default=None, choices=["int8", "fp4", "int4"],
                     help="weight format of the LM head (default: --wformat)")
+    ap.add_argument("--no-prog-cache", action="store_true",
+                    help="compile the decode loop's bucket programs in every process (by "
+                         "default they are kept on disk: opentpu/progcache.py)")
     ap.add_argument("--mtp", action="store_true",
                     help="Qwen3.5: decode with the model's MTP drafter, the loop on the device "
                          "(docs/mtp.md): the same replies, greedy or sampled, 1.3-1.6x the "
@@ -742,15 +745,26 @@ def main(argv=None):
         raise SystemExit(f"otpu-chat: {e}") from None
     if a.mtp and (not hasattr(spec, "mtp") or a.per_position):
         raise SystemExit("otpu-chat: --mtp takes a Qwen3.5 model and resident decode")
+    if a.mtp and cfg is None:   # the simulators' default is the design's (two slices): the
+        from dataclasses import replace     # card's one-slice configuration instead
+
+        from opentpu.isasim import board_config
+        from opentpu.llm.qwen3 import PREFILL_ROWS
+        flags = dict(DSTEP=True, STREAM=True, PAIR=True)
+        need = replace(spec, mtp=True).image(board_config(DRAM_BYTES=1 << 40, **flags), a.cap,
+                                             1, PREFILL_ROWS, a.wformat, a.head_format,
+                                             lookup=True).nbytes
+        cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **flags)
     try:
         if a.mtp:
             from opentpu.llm.mtp import mtp_engine
             eng = mtp_engine(spec, load_weights(path, mtp=True), cap=a.cap, cfg=cfg,
-                             backend=backend, wformat=a.wformat, head_format=a.head_format)
+                             backend=backend, wformat=a.wformat, head_format=a.head_format,
+                             prog_cache=not a.no_prog_cache)
         else:
             eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
                          wformat=a.wformat, head_format=a.head_format,
-                         resident=not a.per_position)
+                         resident=not a.per_position, prog_cache=not a.no_prog_cache)
     except ConfigMismatch as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     sp = sampling(spec, a)

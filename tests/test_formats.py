@@ -41,3 +41,19 @@ def test_named_mix(monkeypatch):
     with pytest.raises(ValueError, match="no recommended mix"):
         FM.named(SimpleNamespace(mix=""), "mix", None)
     assert FM.mix_for({"model_type": "none"}) == ""
+
+
+def test_mixes():
+    """The recommended mixes (docs/formats.md): found by their config, the head int8, at most
+    two layer layouts (Qwen3.5: one, its second run does not fit the IMEM)."""
+    from opentpu.llm import lfm2, qwen3, qwen35
+    fam = {"qwen3_5_text": (qwen35, 1), "lfm2": (lfm2, 2)}
+    assert FM.MIXES
+    for (mt, layers, hidden, vocab), mix in FM.MIXES.items():
+        assert FM.mix_for({"model_type": mt, "num_hidden_layers": layers, "hidden_size": hidden,
+                           "vocab_size": vocab}) == mix
+        M, most = fam.get(mt, (qwen3, 2))
+        f = FM.resolver(mix, M.KINDS, "", "int8")
+        assert f("head") == "int8"
+        kinds = [k for k in M.KINDS if k not in ("mlp", "head")]
+        assert len({tuple(f(k, i) for k in kinds) for i in range(layers)}) <= most

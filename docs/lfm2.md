@@ -53,6 +53,8 @@ IMEM. Each layer block in DRAM has its kind's size (conv or attention, in its fo
 `Image._off(i)`, and a loop steps by its unit's size. (Until the per-layer weight formats every
 block had the larger kind's size, so layer i started at `layer0 + i * LS`; LFM2.5-230M's int8
 image at a 4096-token capacity went from 334 to 276 MiB, LFM2-2.6B's from 2639 to 2595.)
+Formats per layer range, the second layout's IMEM cost and the recommended mixes:
+`docs/formats.md`.
 
 Nothing new was needed in the ISA or the RTL. The shared kernel code gained two small
 generalizations: `KVDesc` takes a V width (`dv`), and `qwen3._attention` pads heads narrower
