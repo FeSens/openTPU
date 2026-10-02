@@ -12,6 +12,7 @@ import pytest
 from opentpu import isa as I
 from opentpu.compiler import Affine
 from opentpu.isasim import board_config
+from opentpu.llm import generate as G
 from opentpu.llm.mtp import MTPDecoder, MTPStats, mtp_engine
 from opentpu.llm.qwen3 import Engine
 from opentpu.llm.qwen35 import mtp_reference, qwen35_step, reference_logits
@@ -248,6 +249,119 @@ def test_mtp_loop_on_the_device_is_plain_greedy(P, drafter, fmt, N, stop):
                zip(_states(eng, spec, dec.slot), _states(ref, spec, 0)))
 
 
+# (the tiny model's initializer range, the sampling): at 0.02 the tied head mostly gives back
+# the input token, so the penalty of row 1's draft decides picks; at 0.2 the tokens vary
+SAMPLINGS = {"pen": (0.02, (0.8, 5, 0.9, 1.5)), "greedy-pen": (0.02, (0.0, 0, 1.0, 3.0)),
+             "free": (0.2, (1.5, 20, 1.0, 1.0)), "varied-pen": (0.2, (0.8, 5, 0.9, 1.1))}
+
+
+def _plain_sampled(spec, W, prompt, N, samp, seed, cfg, stop=()):
+    """Plain decode's sampled tokens (the device sampler's numpy model, generate.reference_pick,
+    on resident decode's logits) with the uniforms of default_rng(seed), as the device takes
+    them (fp32, below 1), that engine (the prompt and the tokens but the last fed), and the
+    number of picks that the penalty of the token before decides (new to the context: a
+    verify's row 1 must count its draft)."""
+    ref = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    u = np.minimum(np.random.default_rng(seed).random(N).astype(np.float32),
+                   np.float32(1 - 2.0 ** -24))
+    c, out, lg, hits = list(prompt), [], ref.prefill(prompt), 0
+    for i in range(N):
+        out.append(G.reference_pick(lg, samp, c, u[i]))
+        if i and c[-1] not in c[:-1]:
+            hits += out[-1] != G.reference_pick(lg, samp, c[:-1], u[i])
+        c.append(out[-1])
+        if out[-1] in stop or i == N - 1:
+            return out, ref, hits
+        lg = ref.step(out[-1])
+
+
+@pytest.mark.parametrize("P, drafter, how, N, stop", [
+    (250, "right", "pen", 16, False),       # across the bucket's end, accepted pairs
+    (251, "mixed", "pen", 15, False),       # E at 255, then D1 and the next bucket's V
+    (249, "mtp", "pen", 15, False),
+    (250, "right", "greedy-pen", 16, False),
+    (250, "mixed", "free", 16, False),      # no penalty: top-k 20, no top-p
+    (250, "right", "varied-pen", 16, False),
+    (252, "right", "pen", 15, True),        # a stop id
+    (30, "right", "kh16", 6, False)])       # 16 DeltaNet heads (the 0.8B's and 2B's)
+def test_mtp_sampled_loop_is_plain_sampling(P, drafter, how, N, stop):
+    """The sampled MTP loop on the device (docs/mtp.md 11) gives plain sampled decode's tokens
+    for the same uniforms, whatever the drafts: the verify's row 0 samples a0 with position p +
+    1's uniform and accepts the draft iff a0 equals it, row 1 samples a1 with p + 2's, its
+    repetition penalty counting the draft (new to the context, which decides picks here, or
+    not); the context is left as plain decode leaves it."""
+    kh16 = how == "kh16"
+    init, sp = SAMPLINGS["pen" if kh16 else how]
+    _, W, spec = _tiny_model(16, 16, init=init) if kh16 else _tiny_model(8, init=init)
+    cfg = board_config(DRAM_BYTES=1 << 26, DSTEP=True, STREAM=True, PAIR=True) if kh16 else CFG
+    W = _mtp_weights(W, spec)
+    samp = G.Sampling(*sp)
+    prompt = [int(t) for t in np.random.default_rng(P).integers(0, 1000, P)]
+    want, ref, hits = _plain_sampled(spec, W, prompt, N, samp, 5, cfg)
+    ids = []
+    if stop:                                # the first token of a second kind stops it
+        k = next((i for i, t in enumerate(want) if t != want[0]), len(want) - 1)
+        ids = [want[k]]
+        want, ref, _ = _plain_sampled(spec, W, prompt, N, samp, 5, cfg, ids)
+        assert len(want) == k + 1
+    assert len(set(want)) > len(want) // 2
+    if how in ("pen", "greedy-pen") and not stop:
+        assert hits >= 3
+    if how == "pen" and not stop:           # drafts in the context already, too
+        assert any(t in want[:i] for i, t in enumerate(want))
+    right = np.zeros(514, np.float32)
+    right[P:P + len(want)] = want
+    drafts = {"right": right, "mtp": None,
+              "mixed": np.where(np.arange(514) % 3, right, (right + 7) % 1000)}[drafter]
+    eng = mtp_engine(spec, W, cap=512, cfg=cfg)
+    dec = MTPDecoder(eng)
+    st = dec.generate_card(prompt, max_new=N, stop=ids, drafts=drafts, sampling=samp,
+                           rng=np.random.default_rng(5))
+    assert st.tokens == want
+    if drafter == "right" and not stop:
+        assert sum(st.accepted) >= len(want) // 2 - 2
+    assert eng.pos == ref.pos == P + len(want) - 1
+    assert all(np.array_equal(a, b) for a, b in
+               zip(_states(eng, spec, dec.slot), _states(ref, spec, 0)))
+
+
+def _mtp_kv(eng, n):
+    """The MTP layer's KV cache at positions [0, n): K, its scales and V's, per head."""
+    kv = eng.image.descriptors(0, 0).mtp.layer.kv
+    d, D, rd = kv.d, kv.D, eng.backend.read
+    return [x for _, r in sorted(kv.heads.items())
+            for x in (rd(0, Affine.of(r["k"]).const, n * d),
+                      rd(0, Affine.of(r["ks"]).const, n * 4 * (d // D)),
+                      rd(0, Affine.of(r["vs"]).const, 4 * n))]
+
+
+@pytest.mark.parametrize("sampled", [False, True])
+def test_mtp_continues_its_context(sampled):
+    """A chat's next turn: after the loop's run, a prefill from Engine.pos (the last token,
+    then the new ones) and a second run continue the context. The loop's last D (it runs
+    before the HALT) fills the MTP layer's KV cache at the position before the last token, so
+    the cache, the drafts and the tokens equal those of one fresh decoder over the whole
+    conversation, bit for bit (without it, that position's K differs)."""
+    _, W, spec = _tiny_model(8, init=0.2)
+    W = _mtp_weights(W, spec)
+    r = np.random.default_rng(3)
+    p1, p2 = [int(t) for t in r.integers(0, 1000, 40)], [int(t) for t in r.integers(0, 1000, 9)]
+    samp = G.Sampling(0.8, 5, 0.9, 1.1) if sampled else None
+
+    def kw(seed):
+        return {} if samp is None else dict(sampling=samp, rng=np.random.default_rng(seed))
+    dec = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG))
+    t1 = dec.generate_card(p1, max_new=12, stop=[], **kw(1)).tokens
+    ctx = p1 + t1 + p2
+    st = dec.generate_card([t1[-1]] + p2, max_new=12, stop=[], context=ctx, **kw(2))
+    fresh = MTPDecoder(mtp_engine(spec, W, cap=512, cfg=CFG))
+    want = fresh.generate_card(ctx, max_new=12, stop=[], **kw(2))
+    assert st.tokens == want.tokens and len(set(st.tokens)) > 6
+    assert dec.eng.pos == fresh.eng.pos == len(ctx) + 11 and dec.draft == fresh.draft
+    assert all(np.array_equal(a, b) for a, b in
+               zip(_mtp_kv(dec.eng, dec.eng.pos), _mtp_kv(fresh.eng, fresh.eng.pos)))
+
+
 def test_mtp_loop_on_rtl(have_verilator):
     """The MTP loop on the Verilator RTL (the board's memory path): from the same DRAM state (a
     251-token prefill on the ISA simulator), one run of the loop across the first bucket's end (V, E, D, D1 and the next
@@ -276,3 +390,80 @@ def test_mtp_loop_on_rtl(have_verilator):
     got = dec.loop_card(a0, d, N, drafts=drafts)
     assert got.tokens == want
     assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
+
+
+def test_mtp_sampled_loop_on_rtl(have_verilator):
+    """The sampled MTP loop on the Verilator RTL: from the same DRAM state (a 251-token
+    prefill on the ISA simulator, a0 the sampler's pick), one run across the first bucket's end
+    with the repetition penalty (row 1's draft counted), drafts from the host's table, every
+    third wrong: the tokens and the image's DRAM equal the ISA simulator's."""
+    from opentpu import rtlsim
+    from opentpu.llm.rtl_backend import RtlBackend
+    _, W, spec = _tiny_model(8)
+    W = _mtp_weights(W, spec)
+    P, N = 251, 9
+    samp = G.Sampling(*SAMPLINGS["pen"][1])
+    prompt = [int(t) for t in np.random.default_rng(P).integers(0, 1000, P)]
+    want, _, _ = _plain_sampled(spec, W, prompt, N, samp, 5, CFG)
+    right = np.zeros(514, np.float32)
+    right[P:P + N] = want
+    drafts = np.where(np.arange(514) % 3, right, (right + 7) % 1000)
+    eng = mtp_engine(spec, W, cap=512, cfg=CFG)
+    dec = MTPDecoder(eng)
+    u0 = np.minimum(np.float32(np.random.default_rng(5).random()), np.float32(1 - 2.0 ** -24))
+    a0, d = dec.prefill(prompt, MTPStats(), pick=lambda lg: G.reference_pick(lg, samp, prompt, u0))
+    isa, n = eng.backend, eng.image.nbytes
+    rtl = RtlBackend(eng.cfg, [isa.machine.slices[0].dram[:n]], uarch=rtlsim.BOARD_UARCH,
+                     axi=True, boot=True)
+
+    def rng():                              # the uniforms after a0's
+        r = np.random.default_rng(5)
+        r.random()
+        return r
+    kw = dict(drafts=drafts, samp=samp, context=prompt + [a0])
+    st = dec.loop_card(a0, d, N, rng=rng(), **kw)
+    assert st.tokens == want and 0 < sum(st.accepted) < st.iterations
+    eng.backend, eng.pos, dec.slot = rtl, P, 0
+    eng.__dict__.pop("_mtp_gen")            # the chain area: written again, to the RTL's DRAM
+    got = dec.loop_card(a0, d, N, rng=rng(), **kw)
+    assert got.tokens == want
+    assert np.array_equal(isa.machine.slices[0].dram[:n], rtl.drams[0][:n])
+
+
+class _Chars:
+    """One token per character, both ways: a reply's text gives back its ids, so the next
+    turn's template starts with the fed tokens (the context continues)."""
+
+    def apply_chat_template(self, history, add_generation_prompt, enable_thinking, tokenize):
+        return [ord(c) for m in history for c in m["content"]]
+
+    def decode(self, ids, skip_special_tokens=True):
+        return "".join(map(chr, ids))
+
+
+@pytest.mark.parametrize("sampled", [False, True])
+def test_chat_with_mtp(sampled):
+    """otpu-chat --mtp: Chat on an MTP engine decodes with MTPDecoder (its prefill, the host
+    picking the first token, then the loop on the device), turn after turn. The replies, what
+    is fed and the context equal those of Chat on a plain engine with the same sampler and
+    seed: a reply cut at max_new resumes from its last token (the draft after it kept), and
+    the next turn's prefill continues the context."""
+    from opentpu.host.chat import Chat, sampler
+    _, W, spec = _tiny_model(8, init=0.2)
+    W = _mtp_weights(W, spec)
+    args = (0.8, 5, 0.9, 3, 1.1) if sampled else (0, 0, 1.0, None)
+    plain, mtp = (Chat(e, _Chars(), False, sampler(*args), 10) for e in (
+        Engine(spec, W, cap=512, cfg=CFG, resident=True), mtp_engine(spec, W, cap=512, cfg=CFG)))
+    assert mtp.use_mtp and not plain.use_mtp and plain.on_card
+    got = {}
+    for c in (plain, mtp):
+        shown = []
+        r1, t1 = c.ask("hello there", lambda d, turn: shown.append(d))
+        r2, t2 = c.resume()
+        r3, t3 = c.ask("and then?")
+        assert t1.end == "max_new" and not t3.restarted and r1 == "".join(shown)
+        got[c is mtp] = (r1, r2, r3, list(c.fed), c.eng.pos, [t.gen_tokens for t in (t1, t2, t3)])
+        if c is mtp:
+            assert t1.mtp_iters and "MTP acceptance" in t3.line()
+    assert got[True] == got[False]
+    assert len(set(got[True][2])) > 4

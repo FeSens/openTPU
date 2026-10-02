@@ -773,7 +773,7 @@ class Image(EmbedHost):
                                     rows=self.grows) if lookup else {}  # (layer 0's R rows)
         if lookup and spec.mtp:     # the MTP loop's chain area (opentpu/llm/mtp.py)
             from .mtp import gen_alloc
-            self.lookup["mtpgen"] = gen_alloc(b, cap)
+            self.lookup["mtpgen"] = gen_alloc(b, cap, spec)
         self.choices = {"embed_host": self.embed_host,          # (the compile worker's
                         "formats": self.formats}                # image)
         self.offload = None
@@ -1003,6 +1003,10 @@ class Image(EmbedHost):
         put_q(self.head, rows(head, self.v_loc), self.head_format)
         if self.lookup:
             _lookup_build(put, S, W, spec, self.cap, self.lookup)
+        if "mtpgen" in self.lookup:
+            from .mtp import gen_build
+            for s in range(S):
+                gen_build(put, s, S, spec, self.lookup["mtpgen"])
         return imgs
 
     # ---- path (a): the expert pool and its server (docs/offload.md)

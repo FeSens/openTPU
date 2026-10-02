@@ -27,7 +27,12 @@ JSON) checks the tokens against it too; with --no-plain plain greedy's tokens co
 (MTPDecoder.generate_card, docs/mtp.md 10) instead of phase 2's host loop, and plain greedy
 as the device's loop (Engine.generate_card) on the ISA simulator too. --prebuild builds both
 images into the image cache (opentpu/qcache.py) without the card, outside the lock, waiting
-while a session holds the host's quiet file.
+while a session holds the host's quiet file. --sample T,K,P,R (with --loop device): sampled
+decoding (docs/mtp.md 11) with temperature T, top-k K, top-p P and repetition penalty R, the
+uniforms from --seed's generator: the first token is the sampler's pick from the prefill's
+logits (generate.reference_pick) with its first uniform in both, then plain sampled decode
+(Engine.generate_card(sampling=...)) and the sampled MTP loop take the next ones, one per
+position; the tokens must be equal.
 """
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 
 def run(a) -> None:
+    import numpy as np
     from transformers import AutoTokenizer
     from mtp_accept import PROMPTS
     from opentpu.isasim import board_config
@@ -68,9 +74,17 @@ def run(a) -> None:
     if a.prebuild:
         prebuild(cfg, spec, W, a)
         return
+    samp = None
+    if a.sample:
+        from opentpu.llm.generate import Sampling
+        t, k, p, r = (float(x) for x in a.sample.split(","))
+        samp = Sampling(t, int(k), p, r)
+        if a.loop != "device":
+            raise SystemExit("--sample runs the loops on the device: --loop device")
     res = {"model": path.name, "wformat": a.wformat, "head_format": a.head_format,
            "cfg": {k: getattr(cfg, k) for k in ("MCOLS", "PAIR", "DSTEP", "STREAM")},
-           "card": bool(a.card), "loop": a.loop, "prompts": []}
+           "card": bool(a.card), "loop": a.loop, "sample": a.sample, "seed": a.seed,
+           "prompts": []}
     want_sim, plain_sim = {}, {}
     if a.want:
         sim = json.loads(Path(a.want).read_text())["prompts"]
@@ -100,12 +114,12 @@ def run(a) -> None:
         t0 = time.time()
         eng.reset()
         if a.card or a.loop == "device":    # the production loop: picked and fed on the device
-            got, pl = _plain_card(eng, spec, ids, a.tokens)
+            got, pl = _plain_card(eng, spec, ids, a.tokens, samp, a.seed)
         else:
             got, pl = eng.generate(ids, max_new=a.tokens), {}
         pl["seconds"] = round(time.time() - t0, 1)
         wants.append((got, pl))
-        print(f"prompt {i}: plain greedy {pl}", flush=True)
+        print(f"prompt {i}: plain {'sampled' if samp else 'greedy'} {pl}", flush=True)
     if eng is not None:
         _close(eng)
     del eng
@@ -120,7 +134,8 @@ def run(a) -> None:
         if a.loop == "device":
             dl = a.deadline if a.deadline is not None else 10.0 + 0.5 * a.tokens
             st = dec.generate_card(ids, max_new=a.tokens, deadline=dl if a.card else None,
-                                   on_token=lambda t: seen.append(time.time()))
+                                   on_token=lambda t: seen.append(time.time()),
+                                   sampling=samp, rng=np.random.default_rng(a.seed))
         else:
             st = dec.generate(ids, max_new=a.tokens)
         dt = time.time() - t0
@@ -178,19 +193,29 @@ def _close(eng) -> None:
         close()
 
 
-def _plain_card(eng, spec, ids, n):
-    """Plain greedy decode on the card as the production loop runs it: the prefill, then
-    Engine.generate_card (each token picked and fed back on the card); the tokens, and the
-    decode's device cycles and wall seconds (the first token is the prefill's)."""
+def _plain_card(eng, spec, ids, n, samp=None, seed=0):
+    """Plain greedy (or samp's sampled) decode on the card as the production loop runs it:
+    the prefill, then Engine.generate_card (each token picked and fed back on the card); the
+    tokens, and the decode's device cycles and wall seconds (the first token is the
+    prefill's: sampled, reference_pick's with seed's first uniform, as MTPDecoder's)."""
     import numpy as np
+    from opentpu.llm import generate as G
+    rng = np.random.default_rng(seed)
     t0 = time.perf_counter()
-    got = [int(np.argmax(eng.prefill(ids)))]
+    lg = eng.prefill(ids)
+    if samp is None:
+        got = [int(np.argmax(lg))]
+    else:
+        u = np.minimum(np.float32(rng.random()), np.float32(1 - 2.0 ** -24))
+        got = [int(G.reference_pick(lg, samp, ids, u, eng.cfg.S,
+                                    getattr(spec, "softcap", None)))]
     t1 = time.perf_counter()
     k = len(eng.stats)
     seen = []
     if got[0] not in spec.eos and n > 1:
+        kw = {} if samp is None else dict(sampling=samp, context=list(ids) + got, rng=rng)
         got += eng.generate_card(got[0], n - 1,
-                                 on_token=lambda t: seen.append(time.perf_counter()))
+                                 on_token=lambda t: seen.append(time.perf_counter()), **kw)
     t2 = time.perf_counter()
     return got, {"cycles": int(sum(s.get("cycles", 0) for s in eng.stats[k:])),
                  "runs": len(eng.stats) - k,
@@ -315,6 +340,9 @@ def main() -> None:
     ap.add_argument("--deadline", type=float, default=None,
                     help="seconds for one device loop run (--loop device on the card): then "
                          "the host's stop word (default 10 + 0.5 s per token)")
+    ap.add_argument("--sample", help="T,K,P,R: sampled decoding (temperature, top-k, top-p, "
+                                     "repetition penalty), with --loop device")
+    ap.add_argument("--seed", type=int, default=0, help="--sample's uniforms")
     ap.add_argument("--summary", nargs="+")
     ap.add_argument("--cycles", help="decode step, verify and draft cycles (perf_qwen)")
     a = ap.parse_args()
