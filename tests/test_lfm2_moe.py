@@ -267,6 +267,34 @@ def test_pool_file_is_the_same_pool(tiny, tmp_path):
     assert f.stat().st_size == (len(KINDS) - 1) * E * eng.image.offload.slot_bytes
 
 
+def test_engine_releases_the_checkpoint_when_streaming_from_a_pool(tiny, tmp_path):
+    """Engine with a pool file releases its LazyWeights once the image is written and the slots
+    warm (release_weights, the default: the checkpoint's mapped pages would outlive the
+    pool's in the page cache, docs/offload.md 10.6): its files closed, the same logits bit
+    for bit, an expert packed later reading its file again; release_weights=False keeps
+    them, and without a pool nothing is released."""
+    from safetensors.numpy import save_file
+    from opentpu.llm.qwen3 import LazyWeights
+    _, W, spec = tiny
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
+              str(tmp_path / "model.safetensors"))
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 3)]
+    full = _engine(spec, W, experts=K)
+    ref = np.array([full.step(t) for t in toks])
+    cfg = device_config(spec, 256, S=1, experts=K)
+    for i, keep in enumerate((False, True)):
+        lw = LazyWeights(tmp_path)
+        eng = Engine(spec, lw, cap=256, cfg=cfg, experts=K, pool_file=tmp_path / f"p{i}.bin",
+                     release_weights=not keep)
+        assert bool(lw._h) == keep
+        got = np.array([eng.step(t) for t in toks])
+        assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+        assert len(lw._h) == 1                          # (the experts packed since: reopened)
+    lw = LazyWeights(tmp_path)
+    Engine(spec, lw, cap=256, cfg=cfg, experts=K)
+    assert lw._h
+
+
 def test_compile_worker_builds_the_moe_image(tiny):
     """The compile worker process (the card's backend compiles ahead in it) builds the engine's
     image, K expert slots per layer included: with E it would be over the DRAM that

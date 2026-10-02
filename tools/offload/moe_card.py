@@ -137,9 +137,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if layer_major:                             # the prompt a layer at a time, runs of R rows
         ekw["layer_major"] = layer_major        # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
-                 resident=True, experts=experts, pool_file=pool, backend=backend, **ekw)
-    if release_weights:                         # the checkpoint's pages back to the page
-        W.release()                             # cache's other users: the pool (10.6)
+                 resident=True, experts=experts, pool_file=pool, backend=backend,
+                 release_weights=release_weights, **ekw)    # (the checkpoint released: 10.6)
     load_s = time.time() - t
     srv = eng.server
     srv.policy = policy                         # the slots' replacement (ExpertServer)
