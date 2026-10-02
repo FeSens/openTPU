@@ -523,9 +523,10 @@ def test_waitw_tag_check_on_a_live_card(chash):
     sizes = (1 << 16, 3 << 15)
     ok, msg = waitw_tag(b, rounds=6, sizes=sizes, base=0x400000)
     assert ok and card.error is None, (msg, card.error)
-    tags = {waitw_tag_round(r, sizes=sizes, base=0x400000)["tag"] // 128 for r in range(6)}
-    par = {bin(m).count("1") & 1 for m in tags}
-    assert par == ({0, 1} if chash else par)    # (the tag's chunk on both parities)
+    tags = [waitw_tag_round(r, sizes=sizes, base=0x400000)["tag"] for r in range(6)]
+    assert {a >> 13 & 1 for a in tags} == {0, 1}    # (either 8 KiB bank parity)
+    par = {bin(a // 128).count("1") & 1 for a in tags}
+    assert par == ({0, 1} if chash else par)        # (the tag's chunk on either channel)
 
 
 @pytest.mark.parametrize("mode", ["sync", "threaded", "split"])

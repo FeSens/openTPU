@@ -303,12 +303,13 @@ WT_SAMPLES = 64                 # beats the card copies on each channel's end, a
 
 
 def waitw_tag_round(r: int, seed: int = 5, sizes=WT_SIZES, base: int = WT_DATA) -> dict:
-    """Round r of waitw_tag: the record's address (a 128-byte chunk on either parity, so the tag
-    lands on either channel), size, and the logical beats the card copies after its WAITW (the
-    last WT_SAMPLES beats of each channel before the tag, then random ones)."""
+    """Round r of waitw_tag: the record's address (a 128-byte chunk anywhere in 32 KiB: the tag
+    on either channel and in either 8 KiB bank parity), size, and the logical beats the card
+    copies after its WAITW (the last WT_SAMPLES beats of each channel before the tag, then random
+    ones)."""
     rng = np.random.default_rng([seed, r, 7])
     n = int(sizes[r % len(sizes)])
-    addr = base + 128 * int(rng.integers(0, 64))
+    addr = base + 128 * int(rng.integers(0, 256))
     tail = list(range(n // 64 - 2 * WT_SAMPLES, n // 64))
     rand = rng.choice(n // 64 - 2 * WT_SAMPLES, WT_SAMPLES, replace=False)
     beats = tail[::-1] + [int(b) for b in rand]       # the tag's neighbours first
@@ -327,10 +328,12 @@ def waitw_tag(board, rounds: int = 2000, seed: int = 5, sizes=WT_SIZES,
               base: int = WT_DATA) -> tuple[bool, str]:
     """docs/offload.md 10.11's order: a flag in the last beat of the DMA that carries the data.
     Each round the host fills a record of 1-4 MiB with old words and its tag chunk with zeros,
-    starts the card, which waits on the tag (read back to back), and writes the new record as
-    BoardDram does an expert with its tag: the other channel's run in one call, then the tag's
-    channel's run in a call that ends with the tag beat. The card's copy of the beats just
-    before the tag on both channels, and of random ones, must be the new data."""
+    starts the card, which waits on the tag (read back to back: the reads on the tag's channel
+    during the transfer that load XDMA's writes), and writes the new record as BoardDram does an
+    expert with its tag: the other channel's run in one call, then the tag's channel's run in a
+    call that ends with the tag beat. The card's copy of the beats just before the tag on both
+    channels, and of random ones, must be the new data. Needs xdma_rnum_rids 8 (ld-memch: a
+    32-RID bitstream can lap XDMA's completion ring under this backpressure)."""
     from .board import BEAT, swapped
     board.scrub()
     cyc, mb = [], 0.0
@@ -374,8 +377,8 @@ def waitw_tag(board, rounds: int = 2000, seed: int = 5, sizes=WT_SIZES,
                            f", {n // 64 - b} before the tag)")
         cyc.append(st["cycles"])
     return True, (f"{rounds} rounds of {min(sizes) >> 20}..{max(sizes) >> 20} MiB, the tag on "
-                  f"either channel, {S} beats checked each, {min(cyc)}..{max(cyc)} cycles, "
-                  f"{mb / rounds:.0f} MB/s")
+                  f"either channel and bank parity, {S} beats checked each, "
+                  f"{min(cyc)}..{max(cyc)} cycles, {mb / rounds:.0f} MB/s")
 
 
 def waitw_timeout(board) -> tuple[bool, str]:
