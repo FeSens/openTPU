@@ -1629,3 +1629,34 @@ Qwen3.5-MoE, 262 tokens in chunks of 100, int8 R = 1 and fp4 R = 2 with build B'
 DSTEP / STREAM, the table on the host: the logits, states, windows and KV cache equal token by
 token's, then 3 decode steps. Dense Qwen3.5 programs are sha-identical; the MoE images gain
 xbuf and the scratch (42 / 35 slots a layer, as before).
+
+### 13.6 The card's port A, and the embed runs
+
+The first layer-major session of the 35B (2026-10-01, lm2, build xfix 72256074) gave
+24832180ab7cce3d at R = 1 where token by token and the ISA simulator give 88225ff781699291.
+Dumps of the residual rows after every layer (`lmdiag`) put the first wrong row at layer 0, row
+1, every column off by a few percent. 5 ms before each run, or the host waiting for WR_IDLE,
+changed no bit; with the first conv_k - 1 rows token by token the rest was bit-exact. The
+memory before each of layer 0's first runs, card against ISA (`lmsnap`), then showed it: after
+the three embed runs, rows 1 and 2 held their own int8 values times row 0's block scales (the
+ratio card / ISA per 128-column block was s0 / s1, and s0 / s2, on all 16 blocks), while the
+states, windows, gates, offload words and expert slots were equal and every run's instruction
+count matched (57 for an embed run; 1115, 1149, 1183 for layer 0's).
+
+The embedding gather (kernels/gather.py) streams the slot's int8 row on port B and its scale
+words on port A. otpu_native_dram reuses the beat of the last A read and keeps a run of 32
+prefetched A beats; only the slice's own writes or the board's reset drop them. They outlive
+runs and program loads, and the host's writes (XDMA, its own master in otpu_mem_ch) never
+reach the adapter. So an embed run after another, the host having written the next token's
+record to the same slot in between, read the old scale beat. Any other run starts with a
+layer's weight scales, a different beat, after a run that ended on other scales: token by
+token, the run-time layer runs (layer 0 gathers its row after the previous run's experts), the
+decode steps and the 26B (its table on the card) never meet it.
+
+Until a bitstream drops the A beat and run at RUN (ld-memch's next build), prefill_layers with
+the table on the host (embed_host) has no embed runs: the rows before conv_k - 1 run token by
+token (prefill_chunks) and layer 0's runs gather their rows from the host's slot (its rows 0
+to R - 1, which the host writes before the run; the slot holds RUN_ROWS records).
+Engine(..., embed_runs=True) brings back the embed runs and the compile-time-position runs; the ISA
+simulator gives the same bits both ways (`test_layer_major_prefill_is_bit_exact`, the 35B's
+layout at R = 1 and 2, and the embed runs at R = 1).

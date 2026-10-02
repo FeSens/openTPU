@@ -1523,7 +1523,7 @@ class Engine:
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
                  embed_host: bool | None = None, layer_major: int = 0, pooled: bool = True,
-                 restore: str = "lazy"):
+                 restore: str = "lazy", embed_runs: bool = False):
         self.spec, self.cap, self.block = spec, cap, block
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
@@ -1594,6 +1594,8 @@ class Engine:
         # (programs, run_args)
         self.layer_major = int(layer_major)
         self.pooled, self.restore = pooled, restore     # (the expert slots during it)
+        self.embed_runs = embed_runs        # (the embed and compile-time-position runs with
+                                            # the embedding rows from the host: prefill_layers)
         self._layer_runs: dict = {}
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
                                      and getattr(self.backend, "args", False) and batch == 1):
@@ -1957,9 +1959,17 @@ class Engine:
         serve one layer at a time; then the LM head of the last row. Runs of more than one row
         start from the chunk's embedding rows (one embed run a token). A model with
         convolutions (conv_k > 1) runs its rows before position conv_k - 1 at compile-time
-        positions, from their embedding rows too. The expert server's slots are pooled for the
-        prompt (ExpertServer.begin_prefill: every slot serves the running layer) and given
-        back to their layers before the head runs (end_prefill: `restore`, "lazy" by default).
+        positions, from their embedding rows too. With the embedding rows from the host's table
+        (embed_host) and not `embed_runs`, there are no embed runs: the rows before conv_k - 1
+        run token by token (prefill_chunks) and layer 0's runs gather their rows from the
+        host's slot. (The card's port A keeps the beat of its last read and its prefetch run
+        across runs, and the host's writes do not drop them: embed runs back to back read the
+        slot's scale beat first and got the first row's scales, docs/offload.md 13.6. A run
+        whose first scale read follows a layer's is safe; embed_runs=True brings the embed and
+        compile-time-position runs back on a bitstream that drops them at RUN.) The expert
+        server's slots are pooled for the prompt (ExpertServer.begin_prefill: every slot serves
+        the running layer) and given back to their layers before the head runs (end_prefill:
+        `restore`, "lazy" by default).
         Bit-identical to step() token by token (the states, the KV cache, the logits): only
         the slots the experts sit in move. Returns the logits after the last token."""
         img, K, B, R = self.image, getattr(self.spec, "conv_k", 1), self.block, self.layer_major
@@ -1979,13 +1989,21 @@ class Engine:
                       args=arg_words(ra, vals))
                 self.stats.append(self.backend.wait())
 
+        host = bool(getattr(img, "embed_host", False)) and not self.embed_runs
+        if host and self.pos < K - 1:   # the rows before conv_k - 1 token by token (no embed
+            n = min(len(tokens), K - 1 - self.pos)          # or compile-time-position runs)
+            for _, lg in self.prefill_chunks(tokens[:n], 0, None):
+                pass
+            tokens = tokens[n:]
+            if not tokens:
+                return lg
         srv = self.server if self.pooled else None
         if srv is not None and hasattr(srv, "begin_prefill"):
             srv.begin_prefill()
         for c0 in range(0, len(tokens), img.prefill_rows):
             part, p0 = tokens[c0:c0 + img.prefill_rows], self.pos
             low = max(0, min(len(part), K - 1 - p0))    # rows at compile-time positions
-            for i, t in enumerate(part[:len(part) if R > 1 else low]):
+            for i, t in enumerate([] if host else part[:len(part) if R > 1 else low]):
                 self._write_host_rows([t])              # (embed_host: the token's row)
                 run((-1, (p0 + i) // B + 1, 1, True), dict(RunPos.values(t, p0 + i, K, B), row=i))
             for li in range(self.spec.layers):
@@ -1997,9 +2015,10 @@ class Engine:
                         run((li, None, n, True, p), {"row": i})
                     else:
                         n = min(R, len(part) - i, B - p % B)
-                        if li == 0 and R == 1:          # (the run gathers its embedding row)
-                            self._write_host_rows([part[i]])
-                        run((li, p // B + 1, n, R > 1),
+                        gather = li == 0 and (R == 1 or host)   # (the run gathers its rows:
+                        if gather:                              # the host's first)
+                            self._write_host_rows(part[i:i + n])
+                        run((li, p // B + 1, n, R > 1 and not gather),
                             dict(RunPos.values(part[i], p, K, B), row=i))
                     i += n
             self.pos = p0 + len(part)

@@ -77,9 +77,10 @@ from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, _attention, _attention_rows, _Bump,
-                    _embed, _fake_q, _fake_w, _formats, _inputs, _inputs_rows, _lm_head,
-                    _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp, _qdesc,
-                    _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables, EmbedHost)
+                    _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
+                    _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
+                    _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables,
+                    EmbedHost)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
@@ -769,7 +770,7 @@ class Image(EmbedHost):
             raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
-                                    rows=rows) if lookup else {}
+                                    rows=self.grows) if lookup else {}  # (layer 0's R rows)
         self.choices = {"embed_host": self.embed_host,          # (the compile worker's
                         "formats": self.formats}                # image)
         self.offload = None
@@ -1084,6 +1085,9 @@ class Image(EmbedHost):
         if not 1 <= R <= RUN_ROWS or R * k > LINE // 4:
             raise ValueError(f"{R} rows a layer run")
         row = RunVar("row", self.prefill_rows)
+        if R > 1 and li == 0 and not embedded and not self.embed_host:
+            raise ValueError("layer 0's run of rows gathers them from the host's slot "
+                             "(embed_host)")
         if at is not None:
             if li < 0 or not embedded:
                 raise ValueError("a compile-time layer run takes embedded rows")
@@ -2164,8 +2168,9 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     rows from `row` (a run-time value) at the positions pos .. pos + R - 1 (a RunPos, from
     conv_k - 1, in one attention block; or compile-time positions, the rows before conv_k - 1)
     through layer li alone. Their input is the chunk's residual stream rows m.xbuf[row:row + R]
-    (layer 0 of a one-row run unless `embedded`: the token's embedding row, _inputs at pos.tok;
-    else qwen35_embed_run's), their output goes back there. One row runs qwen35_step's layer;
+    (layer 0 unless `embedded`: one row's embedding row, _inputs at pos.tok, or R rows' from the
+    host's slot rows 0 .. R - 1 (embed_host); else qwen35_embed_run's), their output goes back
+    there. One row runs qwen35_step's layer;
     more rows _deltanet_rows / _attention_rows and moe.moe_ffn_rows, each row bit for bit as
     the step's, so the chunk layer by layer leaves the states, windows, KV cache and residual
     rows the per-position programs make. No router hints (the run's request follows at once)."""
@@ -2174,6 +2179,11 @@ def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
     p = pos.pos if run else pos
     if R == 1 and li == 0 and not embedded:
         x, c, s_ = _inputs(m, pos)
+    elif li == 0 and not embedded:  # the host's slot rows (its embed_host table), as _inputs_rows
+        x = ol.empty([R, spec.hidden], dense=True)
+        c, s_ = ol.load(m.cos_t[p:p + R, :]), ol.load(m.sin_t[p:p + R, :])
+        for r, g in enumerate(_gather(m, m.embed_q, range(R))):
+            x[r:r + 1, :].set(g)
     else:
         x = ol.load(m.xbuf[row:row + R, :])
         if R == 1:

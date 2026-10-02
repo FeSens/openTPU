@@ -8,6 +8,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from opentpu.compiler import Affine
 from opentpu.llm.moe import MoESpec
 from opentpu.llm.qwen3 import Engine, device_config
 from opentpu.llm.qwen35 import Spec, emulated_logits, reference_logits
@@ -223,19 +224,24 @@ def test_the_card_generates_with_streamed_experts(tiny):
     assert a.server.misses > misses
 
 
-@pytest.mark.parametrize("wformat,R,b,real", [("int8", 1, False, False), ("fp4", 2, True, False),
-                                              ("fp4", 1, True, True)])
-def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, monkeypatch):
+@pytest.mark.parametrize("wformat,R,b,real,embed_runs", [
+    ("int8", 1, False, False, False), ("fp4", 2, True, False, False),
+    ("fp4", 1, True, True, False), ("fp4", 2, True, True, False), ("fp4", 1, True, True, True)])
+def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs, monkeypatch):
     """The prompt layer by layer (Engine.prefill_layers, docs/offload.md 13): every row of a
     chunk through a layer before the next, in runs of R rows at their run-time position and
-    chunk row (R > 1: _deltanet_rows, _attention_rows at run-time rows, moe.moe_ffn_rows), the
-    rows before conv_k - 1 at compile-time positions, gives token-by-token prefill's logits,
-    DeltaNet states and windows and KV cache bit for bit: 262 tokens in chunks of 100 rows, the
-    last crossing an attention block (runs split at its end), 2k slots per layer, the table on
-    the host (each embedding row the host's); then the next decode steps. b: build B's PAIR,
+    chunk row (R > 1: _deltanet_rows, _attention_rows at run-time rows, moe.moe_ffn_rows),
+    gives token-by-token prefill's logits, DeltaNet states and windows and KV cache bit for bit
+    (all of layer 0 to the head but a group-major layer's gates, a one-row run's scratch that
+    R rows keep in m.gr): 262 tokens in chunks of 100 rows, the last crossing an attention block
+    (runs split at its end), 2k slots per layer, the table on the host (each embedding row the
+    host's); then the next decode steps. b: build B's PAIR,
     DSTEP and STREAM (the state steps by DSTEP). real: the 35B's DeltaNet layout, its pairs
     sharing q and k (4 key heads) and group-major (Spec.pair_loop: a hardware loop over the
-    pairs, as past PAIR_LOOP)."""
+    pairs, as past PAIR_LOOP). The rows before conv_k - 1 token by token and layer 0's runs
+    gathering their rows from the host's slot (no embed runs: the card's port A, docs/offload.md
+    13.6; int8: the prompt in two calls, the first of 2 tokens), or with embed_runs the embed
+    runs and the rows before conv_k - 1 at compile-time positions."""
     from opentpu.llm import qwen35 as Q35
     monkeypatch.setattr(Q35, "PREFILL_CHUNK", 100)
     spec, W = _untied(_tiny(nk=4) if real else tiny)
@@ -245,16 +251,32 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, monkeypatch
     cfg = device_config(spec, 512, rows=1, lookup=True, S=1, experts=2 * K, wformat=wformat,
                         **kw)
     a, ref = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, experts=2 * K,
-                     wformat=wformat, **lm) for lm in ({"layer_major": R}, {}))
+                     wformat=wformat, **lm)
+              for lm in ({"layer_major": R, "embed_runs": embed_runs}, {}))
     assert a.image.embed_host and a.image.prefill_rows == 100
     assert (a.image.grouped, a.image.shared) == (real, real)
     toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 262)]
-    la, lb = a.prefill(toks), ref.prefill(toks)
+    if wformat == "int8":
+        a.prefill(toks[:2])
+        assert a.pos == 2 and not a._layer_runs
+        la = a.prefill(toks[2:])
+    else:
+        la = a.prefill(toks)
+    lb = ref.prefill(toks)
+    static = [k for k in a._layer_runs if k != "head" and (k[0] < 0 or k[1] is None)]
+    assert bool(static) == embed_runs           # (embed runs, compile-time positions)
     assert a.pos == ref.pos == len(toks)
     assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
     img = a.image
-    assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
-                          ref.backend.machine.slices[0].dram[img.layer0:img.head[0]])
+    dram = [e.backend.machine.slices[0].dram[img.layer0:img.head[0]].copy() for e in (a, ref)]
+    for li in range(spec.layers):       # (group-major: but the pairs' gates, a one-row run's
+        dn = getattr(img.descriptors(0).layer(li), "dn", None)  # scratch that R rows keep in
+        for g in range(dn.nl // dn.og if dn is not None and dn.grouped else 0):    # m.gr)
+            e = dn._gates(g)
+            o = Affine.of(e.base).const - img.layer0
+            for d in dram:
+                d[o:o + 4 * e.shape[0] * e.shape[1]] = 0
+    assert np.array_equal(*dram)
     assert a.server.misses > 0
     t = int(np.argmax(la))
     for _ in range(3):
