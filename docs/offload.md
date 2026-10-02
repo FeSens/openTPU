@@ -2581,6 +2581,67 @@ answer after its experts as always. test_offload_server's
 `test_an_expert_landed_in_the_poll_before_a_request_is_answered` posts the request right after
 the landing poll's read of seq; on the server before the fix its answer word is 0.
 
+### 12.9 Session 17: capped hints on the card (the default stays off)
+
+One otpu-lock, 2026-10-02 13:22-13:43 opentpu.
+- Build and tree: production fmvf 542fc43a; tree offload-s17 2ce26c5 (b16071b with 12.8's fix).
+- Length: 128 tokens.
+- References: every run bit for bit against the ISA simulator's run of its own programs. The
+  hinted runs used q35ref16h, computed on omarchy for this tree with the caps.
+- Order: a discarded warm-up run of each model's base, then the 35B in A B C C B A. A is
+  q35e128s; B is q35e128hn (pre, top 4, n 1, whole-expert parts, --hint-drop); C is
+  q35e128hn8 (top 8).
+
+| run | tok/s | misses a token | serve s | hinted landed | link GB | requests with misses (host, seen to served) |
+|:--|--:|--:|--:|--:|--:|--:|
+| W (warm-up) | 5.28 | 102.85 | 6.02 | | 21.91 | |
+| A1 / A2 | 5.31 / 5.29 | 102.85 | 5.99 / 6.09 | | 21.91 | 4649, 12.79 / 12.69 s |
+| B1 / B2 | 5.34 / 5.37 | 80.09 / 80.06 | 4.66 / 4.69 | 3945 / 3944 | 22.68 | 4350, 10.18 / 10.06 s |
+| C1 / C2 | 5.43 / 5.29 | 73.94 / 73.96 | 4.32 / 4.48 | 5557 / 5559 | 23.69 | 4018, 9.08 / 9.38 s |
+
+- B against A: +1.0%, with pairs +0.6% and +1.5%.
+- C against A: +1.1%, with pairs +2.3% and +0.0%.
+- Both are under the 2% rule, so the 35B's default stays off, and the 26B's hint programs
+  (gemma4.py) are not raised.
+
+The misses fell as predicted: -22% for B (cachesim -20.9%) and -28% for C (-30.1%). Time is
+from the host's timeline (`--hint-trace`). For each run, the run's span minus its requests' seen
+to served time gives the time the card was not waiting on a request:
+
+| | A | B | C |
+|:--|--:|--:|--:|
+| card not waiting on a request | 11.29 s | 13.66 s | 14.53 s |
+| change against A | | +2.37 s | +3.24 s |
+| request time saved against A | | -2.6 s | -3.5 s |
+
+So nearly all of the saved request time went back into the card's own time. Estimated, for B:
+- Contention: the hinted experts go while the card computes, about 3,900 whole experts and
+  6.6 GB. At 13.8's 0.17 s a GB that is about 1.1 s of card time.
+- Requests behind a part: an idle part (one whole expert) takes 1.17 ms (3.93 s in all), and
+  a request posted during one is seen after it. That is about 0.5 s.
+- The hint polls: 5120 polls at 0.21 ms each, 1.06 s of host time. Part of it is behind the
+  mixer and part delays the next post's fence.
+
+Contention and the requests behind a part come to about 1.6 s of the 2.37 s. The other ~0.8 s is
+about three quarters of the hint polls' 1.06 s. Per token: about 20 ms of requests' time saved,
+against about 12.5 ms for the parts and about 6 ms of the hint polls, which leaves the measured
+~2 ms (+1.0%). 12.7's prediction left out the requests behind a part and the hint polls' own
+time.
+
+What would change the balance:
+- v2 idle parts (13.12: one call each, read ahead, halt-aware) shorten a part and the wait
+  behind one, but not the contention.
+- A cheaper hint poll: its seq and row reads, then served, are about three DMA calls.
+- Hinting only where a miss costs more than a sent expert does.
+For now, hints stay opt-in.
+
+The other runs, all bit for bit:
+- The 26B base: 3.68 tok/s three times (warm-up, A1, A2), serve 8.66-8.68 s, 88.09 misses a
+  token.
+- LFM2-8B-A1B from /dev/shm, token-exact against its refs: 8b16 at 13.53 tok/s, 8b160 at 14.95
+  tok/s.
+- The 35B's warm-up ran 0.6% under A1 (gemma4's pfhint2 saw 5% on a prefill).
+
 ## 13. Layer-major prefill
 
 Today a prompt runs token by token through the decode step. Each token's MoE layers ask for
