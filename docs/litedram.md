@@ -1992,10 +1992,11 @@ Cycles per token against main (4-bit layers unless noted):
 
 ### The fused build: fastmux and VPU-first (2026-10-02)
 
-One build at 133.33 MHz carries both: main 5372244, fastmux 5a088e5 (the core with `FASTMUX`,
-"The chooser and the turnarounds" above) and vpu-first ed66aba (the arbiter's order, "The core's
-own gaps"). Its BUILD_ID is the sha of the branch's last commit. The 32-entry window stays out:
-on top of VPU-first it is worth 0.08%, not the 1% that would pay for its hazard logic.
+One build at 133.33 MHz carries both: fastmux 5a088e5 (the core with `FASTMUX`, "The chooser and
+the turnarounds" above) and vpu-first ed66aba (the arbiter's order, "The core's own gaps"), on
+main. It was built from fused-fmvf 542fc43 (main a60df35 merged; BUILD_ID 542fc43a). The 32-entry
+window stays out: on top of VPU-first it is worth 0.08%, not the 1% that would pay for its hazard
+logic.
 
 **The slice out of context** (`otpu_slice` alone at the board's generics: MCOLS 4, LANES 8,
 WIN 16, RPB 64, WPB 1; 7.5 ns; the build's synthesis and implementation directives; omarchy).
@@ -2042,6 +2043,43 @@ change:
 **Qualification:** the usual `qual.sh`, which now carries `turnaround.py` (data against the ISA
 simulator, and the ECC counters for fastmux's rtw 3). The decode table compares the six counters
 with the expected column.
+
+**The build** (omarchy, 2026-10-02 09:19-10:27, full effort; speculative while the models' RTL gate
+ran, 64 / 64 passed):
+- WNS +0.026 ns, WHS +0.014 ns. The core clock has +0.054 ns (pa +0.055), LiteDRAM's sys clock
+  +0.257 ns (pa +0.116), and userclk1 +0.048 ns: the reroute ran on 7 paths and was kept.
+- Slice LUTs 174,268 (pa 175,425), slices 76.3%; BRAM and DSPs as pa.
+- otpu.bit sha256 3c91fa6a46ff8296c12420749c27285911fdff2c43aa2f2a000f11ae8c65a93a.
+
+**On the card** (opentpu, 09:40-10:15, one otpu-lock; production pa restored after): `qual.sh fast`
+gave 0 FAIL lines and 44 PASS. The decode counters land on the predictions:
+
+| | pa, Mcycles | expected | measured | change, predicted | change, measured |
+|---|---|---|---|---|---|
+| Qwen3 4-bit | 3.878 | 3.730 | 3.730 | -3.83% | -3.82% |
+| LFM2 4-bit | 1.413 | 1.369 | 1.369 | -3.10% | -3.11% |
+| Qwen3.5 4-bit | 4.895 | 4.818 | 4.817 | -1.57% | -1.59% |
+| Qwen3 8-bit | 5.650 | 5.503 | 5.506 | -2.60% | -2.55% |
+| LFM2 8-bit | 2.069 | 2.026 | 2.025 | -2.10% | -2.13% |
+| Qwen3.5 8-bit | 6.884 | 6.818 | 6.818 | -0.96% | -0.96% |
+
+- **Every row is within 0.05 points of its prediction.** Bandwidth while decoding rises from
+  90-94% of the 17.1 GB/s peak to 93-95%.
+- **The streamed decode** (`decode_profile`, device tokens/s), pa to fused: Qwen3 4-bit
+  37.48 -> 38.35, LFM2 98.86 -> 100.08, Qwen3.5 27.35 -> 27.80. The on-card decode loop gives
+  Qwen3 37.89 -> 38.76, LFM2 98.89 -> 99.38 and Qwen3.5 27.71 -> 28.16.
+- **Every model run is token-exact** against the ISA simulator: all six per position, resident,
+  and on the card's decode loop.
+- **The turnarounds:** 1765 runs and 181.3 GB in 30 s, every result equal to the ISA simulator's.
+  The ECC counters are 0 / 0 on both channels.
+- **The BIST** (2 GiB, 2 passes, both channels, 0 errors): reads 91.6% and writes 91.4% of peak,
+  which is `FASTMUX`'s simulated 91.65 / 91.49. Production's stock multiplexer gives 90.4 / 89.8.
+  The scrubs after it read ECC 0 / 0.
+- **The rest also passes:**
+  - WAITW's tag rounds: 2000 rounds of 1-4 MiB.
+  - The H2C stress: acc_overlap 300 s, xmon overlap 300 s and serial 60 s, flags 0.
+  - dma_bench: H2C 2.31-2.32 GB/s.
+  - The selftests.
 
 ### The core clock at DDR3-1066: the co-simulated grid
 
