@@ -2109,6 +2109,14 @@ token); with R = 1 layer 0 gathers its row itself. After the last layer, `compil
 runs the final norm and LM head on the chunk's last row. A run stays inside one attention
 block (the host splits runs there), so the token-index tiles stay static.
 
+Qwen3.5-MoE (qwen35.py, the same entry points): a DeltaNet layer of R rows is
+`_deltanet_rows` (its state steps row after row, by DSTEP on the card), an attention layer
+`_attention_rows` at run-time rows (`RunPos.offset`: row r's position and mask row from the
+run's), a row alone the decode step's layer. From position conv_k - 1 on, every position
+reads the whole convolution window, so one program serves them all; the first conv_k - 1
+rows of a sequence run at compile-time positions, from their embedding rows. The embedding
+rows come from the host's table as in decode (the host writes each before its run).
+
 `moe.moe_ffn_rows` is the MoE layer on R rows (section 5.2's route, R times):
 1. each row routes as moe_ffn's (the router, the k best, the weights): R x k global ids;
 2. one request: the fence, the R x k ids to the row (repeats included), their count to
@@ -2154,7 +2162,11 @@ finished layer's), its entry cleared. `end_prefill(restore)` after the last run'
 each layer gets its own number of slots back, keeping its experts of most decayed use up to it
 (the others leave, their entries cleared); "lazy" (the default) leaves the free slots to
 decode's misses, "eager" loads each layer's experts of most use in the prompt. Both run between
-polls, with the server flushed.
+polls, with the server flushed. `Engine.prefill_layers` calls them around the layer runs (before
+the first, then once the last has halted, before the head run): `Engine(pooled=True,
+restore="lazy")` by default, `moe_card.py --per-layer-slots` for each layer's own.
+`test_moe_pooled_slots_cut_the_prompts_misses` (test_gemma4_moe.py, lazy and eager): pooled
+against per-layer slots, the same logits and decode steps bit for bit, under half the misses.
 
 Lazy, by cachesim.py's event model (11.3) on the traces (four texts, two 512-token prompts each,
 then N tokens of decode by decayed use; the 26B as on the card, 540 slots, the 35B 1680; Gen1
@@ -2205,3 +2217,54 @@ greedy ones; decode 2.53 tok/s each. With per-layer slots (not pooled):
 R = 1 with per-layer slots sees token by token's requests in the same order per layer, so the
 same misses (10613 in the whole run, both). R = 2 is already 1.29x: two rows a run, and the
 union's repeats (-2.6% misses). The rest of the bound needs the pooled slots.
+
+Qwen3.5-35B-A3B's layer runs, co-simulated as the 26B's (position 256, a zero image: union 8):
+
+| layer | R = 1 | R = 2 (per 2 rows) |
+|:--|--:|--:|
+| DeltaNet | 2.54 ms | 2.94 ms |
+| attention | 2.00 ms | 2.25 ms |
+
+That is 96 ms a token at R = 1 and 55 ms at R = 2 (union 8; about 65 with R = 2's real union),
+before the link. `test_layer_major_prefill_is_bit_exact` (test_qwen35_moe.py): a tiny
+Qwen3.5-MoE, 262 tokens in chunks of 100, int8 R = 1 and fp4 R = 2 with build B's PAIR /
+DSTEP / STREAM, the table on the host: the logits, states, windows and KV cache equal token by
+token's, then 3 decode steps. Dense Qwen3.5 programs are sha-identical; the MoE images gain
+xbuf and the scratch (42 / 35 slots a layer, as before).
+
+### 13.6 The card's port A, and the embed runs
+
+The first layer-major session of the 35B (2026-10-01, lm2, build xfix 72256074) gave
+24832180ab7cce3d at R = 1 where token by token and the ISA simulator give 88225ff781699291.
+Dumps of the residual rows after every layer (`lmdiag`) put the first wrong row at layer 0, row
+1, every column off by a few percent. 5 ms before each run, or the host waiting for WR_IDLE,
+changed no bit; with the first conv_k - 1 rows token by token the rest was bit-exact. The
+memory before each of layer 0's first runs, card against ISA (`lmsnap`), then showed it: after
+the three embed runs, rows 1 and 2 held their own int8 values times row 0's block scales (the
+ratio card / ISA per 128-column block was s0 / s1, and s0 / s2, on all 16 blocks), while the
+states, windows, gates, offload words and expert slots were equal and every run's instruction
+count matched (57 for an embed run; 1115, 1149, 1183 for layer 0's).
+
+The embedding gather (kernels/gather.py) streams the slot's int8 row on port B and its scale
+words on port A. otpu_native_dram reuses the beat of the last A read and keeps a run of 32
+prefetched A beats; only the slice's own writes or the board's reset drop them. They outlive
+runs and program loads, and the host's writes (XDMA, its own master in otpu_mem_ch) never
+reach the adapter. So an embed run after another, the host having written the next token's
+record to the same slot in between, read the old scale beat. Any other run starts with a
+layer's weight scales, a different beat, after a run that ended on other scales: token by
+token, the run-time layer runs (layer 0 gathers its row after the previous run's experts), the
+decode steps and the 26B (its table on the card) never meet it.
+
+Until a bitstream drops the A beat and run at RUN (ld-memch's next build), prefill_layers with
+the table on the host (embed_host) has no embed runs: the rows before conv_k - 1 run token by
+token (prefill_chunks) and layer 0's runs gather their rows from the host's slot (its rows 0
+to R - 1, which the host writes before the run; the slot holds RUN_ROWS records).
+Engine(..., embed_runs=True) brings back the embed runs and the compile-time-position runs; the ISA
+simulator gives the same bits both ways (`test_layer_major_prefill_is_bit_exact`, the 35B's
+layout at R = 1 and 2, and the embed runs at R = 1).
+
+On the card with it (2026-10-02, production g2fix 0885d436, Gen2 x8, session lm3, tree
+bc546a4; `layer_major.sh` RUNS="q35t16 q35lm1 q35lm2 q35lmp2"), the 35B's 16 tokens give the
+same prefill logits (88225ff781699291) and tokens four ways: token by token, layer-major R = 1
+and R = 2 with each layer's slots (840 and 480 requests in the prompt, 2755 and 2705 misses),
+and R = 2 pooled (480, 3027).

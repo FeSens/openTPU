@@ -66,7 +66,7 @@ from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
 from ..compiler import Affine, CompileError, KVDesc, QTensor, Tensor, current
-from ..host.offload import ExpertServer, Layout
+from ..host.offload import LINE, ExpertServer, Layout
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.deltanet import gates, l2norm_rows
@@ -77,10 +77,10 @@ from . import formats as FM
 from . import generate as G
 from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, RunRows, _attention, _attention_rows, _Bump,
-                    _fake_q, _fake_w, _formats, _inputs, _inputs_rows, _lm_head, _lm_head_rows,
-                    _lookup_alloc, _lookup_build, _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg,
-                    _tokens_arg, compile_decode, rope_tables, EmbedHost, fill_logits,
-                    step_descriptors)
+                    _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
+                    _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
+                    _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables,
+                    EmbedHost, fill_logits, step_descriptors)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
@@ -89,6 +89,8 @@ MTP_VOCAB = 32768   # the MTP's draft head: the fp4 rows of this many lowest ids
                     # docs/mtp.md 7.1)
 EMBED_F32_MAX = 2 << 30     # bytes: a larger fp32 embedding table (over half the card's DRAM,
 #                             Qwen3.5-4B and up) is int8, gathered from the head (Spec.embed)
+PREFILL_CHUNK = 512 # a MoE model's layer-major prefill: prompt rows a chunk (Image's xbuf)
+RUN_ROWS = 4        # and at most rows a run (_deltanet_rows' gr / on; moe_ffn_rows: R k ids)
 
 
 # =============================================================================== model spec
@@ -205,9 +207,10 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
               lookup: bool | str = False, experts: int | None = None,
-              embed_host: bool | None = None, formats: str | None = None) -> "Image":
+              embed_host: bool | None = None, formats: str | None = None,
+              prefill_rows: int | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts,
-                     embed_host, formats)
+                     embed_host, formats, prefill_rows)
 
 
 # =============================================================================== reference
@@ -655,7 +658,7 @@ class Image(EmbedHost):
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
                  experts: int | None = None, embed_host: bool | None = None,
-                 formats: str | None = None):
+                 formats: str | None = None, prefill_rows: int | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Qwen3.5 runs one sequence: batch=1")
@@ -693,14 +696,23 @@ class Image(EmbedHost):
         self.slots = 2 if spec.mtp else 1               # DeltaNet state and window slots
         self.CVW = self.CV0 + (self.slots - 1) * (K - 1) * self.CP     # (then window 1)
         b = _Bump()
+        # the layer-major prefill's rows a chunk (a MoE model's: compile_layer_run), and the
+        # rows of _deltanet_rows' DRAM scratch (gr, on)
+        self.prefill_rows = (PREFILL_CHUNK if spec.moe is not None else 0) \
+            if prefill_rows is None else prefill_rows
+        self.grows = max(rows, RUN_ROWS) if self.prefill_rows else rows
         self.io = {"x": b.alloc(4 * H * rows), "cos": b.alloc(2 * spec.rope_dim * rows),
                    "sin": b.alloc(2 * spec.rope_dim * rows), "gf": b.alloc(4 * H),
                    "logits": b.alloc(4 * spec.vocab * rows),
                    "hs": b.alloc(4 * 2 * self.nl),     # per pair: decays of a, b; betas
-                   "gr": b.alloc(4 * 2 * self.nl * rows),  # chunked prefill, per row: decays,
-                   "on": b.alloc(4 * 4 * spec.lin_dv * rows)}  # betas; a head group's outputs
+                   "gr": b.alloc(4 * 2 * self.nl * self.grows),    # chunked prefill, per row:
+                   "on": b.alloc(4 * 4 * spec.lin_dv * self.grows)}    # decays, betas; a head
         if spec.mtp:                # the final norm's rows (the MTP's input), the draft ids
-            self.io.update(hid=b.alloc(4 * H * rows), draft=b.alloc(4 * rows))
+            self.io.update(hid=b.alloc(4 * H * rows), draft=b.alloc(4 * rows))   # group's outputs
+        if self.prefill_rows:       # its residual stream, and moe_ffn_rows' outputs (a
+            self.io["xbuf"] = b.alloc(4 * H * self.prefill_rows)     # request's ids and a sink)
+            if spec.moe is not None:
+                self.io["moe_scratch"] = b.alloc(4 * H * (LINE // 4 + 1))
         self.layer0 = b.next
         mlp = {"wg": (self.f_loc, H), "wu": (self.f_loc, H)}
         mo = spec.moe
@@ -758,7 +770,7 @@ class Image(EmbedHost):
             raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
-                                    rows=rows) if lookup else {}
+                                    rows=self.grows) if lookup else {}  # (layer 0's R rows)
         if lookup and spec.mtp:     # the MTP loop's chain area (opentpu/llm/mtp.py)
             from .mtp import gen_alloc
             self.lookup["mtpgen"] = gen_alloc(b, cap)
@@ -1059,6 +1071,50 @@ class Image(EmbedHost):
                                                **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
+    def compile_layer_run(self, li: int, blocks: int, block: int = ATTN_BLOCK, R: int = 1,
+                          embedded: bool = False, at: int | None = None):
+        """(programs, run_args): qwen35_layer_run of layer li, R rows at a run-time position of
+        bucket `blocks` (from conv_k - 1: the convolutions' taps) and a run-time row of the
+        prefill chunk (run arguments: RunPos.values and "row"), or at the compile-time
+        position `at` (the rows before conv_k - 1; embedded); li < 0: qwen35_embed_run. The
+        image needs lookup tables and its prefill rows."""
+        from ..compiler import RunVar
+        spec, K = self.spec, self.spec.conv_k
+        if not self.lookup or not self.prefill_rows:
+            raise ValueError("a layer run needs lookup tables and the image's prefill rows")
+        if self.cfg.S != 1:
+            raise ValueError("a layer run is one slice's (S = 1)")
+        k = spec.moe.k if spec.moe is not None else 1
+        if not 1 <= R <= RUN_ROWS or R * k > LINE // 4:
+            raise ValueError(f"{R} rows a layer run")
+        row = RunVar("row", self.prefill_rows)
+        if R > 1 and li == 0 and not embedded and not self.embed_host:
+            raise ValueError("layer 0's run of rows gathers them from the host's slot "
+                             "(embed_host)")
+        if at is not None:
+            if li < 0 or not embedded:
+                raise ValueError("a compile-time layer run takes embedded rows")
+            pos = at
+        else:
+            lo = max((blocks - 1) * block, K - 1 if li >= 0 else 0)
+            pos = RunPos(blocks, block, lo, self.lookup["zmask"], self.cap)
+            pos.tpos.bound -= R - 1     # the run's last row in the block too: tpos <= block - R
+        m = self.descriptors(0)
+        if li < 0:
+            b = qwen35_embed_run.trace(self.cfg, 0, {"m": m, "pos": pos, "row": row})
+        else:
+            b = qwen35_layer_run.trace(self.cfg, 0, {"m": m, "li": li, "pos": pos, "row": row,
+                                                     "block": block, "R": R,
+                                                     "embedded": embedded})
+        return [b.finish()], list(b.run_args)
+
+    def compile_prefill_head(self):
+        """(programs, run_args): qwen35_prefill_head at a run-time row ("row")."""
+        from ..compiler import RunVar
+        b = qwen35_prefill_head.trace(self.cfg, 0, {"m": self.descriptors(0),
+                                                    "row": RunVar("row", self.prefill_rows)})
+        return [b.finish()], list(b.run_args)
+
     def _run_rows(self, kernel, blocks: int, lo: int, R: int, block: int, slot: int, **kw):
         if not self.lookup:
             raise ValueError("a run at a run-time position needs lookup tables (lookup=True)")
@@ -1163,7 +1219,7 @@ class Image(EmbedHost):
         if self.offload is not None:
             L = self.offload
             dev = SimpleNamespace(mbox=L.mbox, served=L.served, dir=L.dir, fmt=self.fmt,
-                                  hint_off=L.layers * L.E)
+                                  hint_off=L.layers * L.E, scratch=self.io.get("moe_scratch"))
         mtp = {}
         if spec.mtp:
             mo, ff = self.mtpo, self.mtp_fc
@@ -1187,8 +1243,9 @@ class Image(EmbedHost):
             sinr=_tdesc(self.io["sin"], (self.rows, spec.rope_dim // 2)),
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             hs=_tdesc(self.io["hs"], (nl // 2, 4)),
-            gr=_tdesc(self.io["gr"], (self.rows, 2 * nl)),
-            on=_tdesc(self.io["on"], (self.rows, self.og * dv)),
+            gr=_tdesc(self.io["gr"], (self.grows, 2 * nl)),
+            on=_tdesc(self.io["on"], (self.grows, self.og * dv)),
+            xbuf=_tdesc(self.io["xbuf"], (self.prefill_rows, H)) if self.prefill_rows else None,
             head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
             **_lookup_desc(self.lookup, spec, self.cap))
 
@@ -2144,3 +2201,70 @@ def qwen35_mtp(m, p0: int, R: int, block: int = ATTN_BLOCK, keep: bool = False, 
     for r, t in enumerate(drafts):
         ol.store(m.draft[r:r + 1], t)
     return drafts
+
+
+@ol.jit
+def qwen35_layer_run(m, li: int, pos, row, block: int = ATTN_BLOCK, R: int = 1,
+                     embedded: bool = False):
+    """Layer-major prefill (a MoE model's, docs/offload.md 13: the whole prompt chunk through a
+    layer before the next, so that the expert cache serves one layer at a time): the R prompt
+    rows from `row` (a run-time value) at the positions pos .. pos + R - 1 (a RunPos, from
+    conv_k - 1, in one attention block; or compile-time positions, the rows before conv_k - 1)
+    through layer li alone. Their input is the chunk's residual stream rows m.xbuf[row:row + R]
+    (layer 0 unless `embedded`: one row's embedding row, _inputs at pos.tok, or R rows' from the
+    host's slot rows 0 .. R - 1 (embed_host); else qwen35_embed_run's), their output goes back
+    there. One row runs qwen35_step's layer; more rows _deltanet_rows / _attention_rows and
+    moe.moe_ffn_rows, each row bit for bit as the step's, so the chunk layer by layer leaves the
+    states, windows, KV cache and residual rows the per-position programs make. No router hints
+    (the run's request follows at once)."""
+    spec, K = m.spec, m.spec.conv_k
+    run = isinstance(pos, RunPos)
+    p = pos.pos if run else pos
+    if R == 1 and li == 0 and not embedded:
+        x, c, s_ = _inputs(m, pos)
+    elif li == 0 and not embedded:  # the host's slot rows (its embed_host table), as _inputs_rows
+        x = ol.empty([R, spec.hidden], dense=True)
+        c, s_ = ol.load(m.cos_t[p:p + R, :]), ol.load(m.sin_t[p:p + R, :])
+        for r, g in enumerate(_gather(m, m.embed_q, range(R))):
+            x[r:r + 1, :].set(g)
+    else:
+        x = ol.load(m.xbuf[row:row + R, :])
+        if R == 1:
+            c, s_ = ol.load(m.cos_t[p, :]), ol.load(m.sin_t[p, :])
+        else:
+            c, s_ = ol.load(m.cos_t[p:p + R, :]), ol.load(m.sin_t[p:p + R, :])
+    lw = m.layer(li)
+    if lw.kind == LIN:
+        if R == 1:
+            dn = _deltanet_dstep if ol.has_dstep() else _deltanet
+            x.set(dn(x, lw, pos, spec, m.hs))
+        else:                       # (from conv_k - 1 every position reads the whole window:
+            x.set(_deltanet_rows(x, lw, K - 1 if run else pos, spec,    # one program for all)
+                                 m.gr[0:R, :], m.on[0:R, :]))
+    elif R == 1:
+        x.set(_attention(x, lw, c, s_, pos, spec, block, gated=True))
+    else:
+        rows = [(0, pos.offset(r) if run else pos + r) for r in range(R)]
+        x.set(_attention_rows(x, lw, c, s_, rows, spec, block, gated=True))
+    if not lw.moe:
+        x.set(_mlp(x, lw, spec))
+    elif R == 1:
+        x.set(MO.moe_ffn(x, lw, spec.moe, m.moe_dev, spec.eps))
+    else:
+        x.set(MO.moe_ffn_rows(x, lw, spec.moe, m.moe_dev, spec.eps))
+    ol.store(m.xbuf[row:row + R, :], x)
+
+
+@ol.jit
+def qwen35_embed_run(m, pos, row):
+    """A layer-major prefill's input row (runs of more than one row, the rows before conv_k -
+    1): the token's embedding row (pos.tok, from the image's tables) -> m.xbuf[row], as
+    qwen35_step's."""
+    ol.store(m.xbuf[row:row + 1, :], _embed(m, pos.tok))
+
+
+@ol.jit
+def qwen35_prefill_head(m, row):
+    """After a layer-major prefill's last layer: the final norm and the LM head of the residual
+    stream row m.xbuf[row] (a run-time value) -> m.logits, as qwen35_step's."""
+    _lm_head(ol.load(m.xbuf[row:row + 1, :]), m, m.spec)
