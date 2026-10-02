@@ -3025,3 +3025,41 @@ The card side (Engine(layer_ahead="hint"), moe_card --layer-ahead hint):
   by token (Qwen3.5, Gemma 4), and that each hint equals the next layer's own request for the
   same rows when the mixers' output projections are zero, so that a layer's route reads its
   input.
+
+### 13.10 Idle parts: read ahead, one call each (offload-parts)
+
+pfhint (gemma4, production fmvf 542fc43a, the 35B's layer-major prefill with the predictor,
+1 MiB parts) measured each idle poll's part: the first 1 MiB of an expert 0.757 ms (median,
+4868 parts), its 0.59 MiB rest 0.622 ms, events 0.085 ms apart; the link busy 9.4 of 12.4 s,
+6.80 s of it parts, and 700 of 5568 queued experts never sent. A line through the two gives
+about 0.42 ms a part plus 0.33 ms a MiB. Where the 0.42 ms goes:
+- The lead cut. A poll flushes before it returns, so BoardDram finds nothing in flight at the
+  next part and cuts it as it cuts a request's first miss: a fifth, then the rest, each one
+  DMA call per channel. Session 16's data calls fit 122 us + bytes / 3.15 GB/s a pair of calls
+  (1.67 MB: 622 us median; a 64-byte call 33 us), so a cut part pays 0.24 ms of calls where one
+  pair would pay 0.12. The 0.33 ms a MiB is the 3.15 GB/s.
+- The read in front of the link. The first fifth's read from the pool file and its iovecs
+  come before any DMA (pfhint's stage time: 0.32 ms a part; the pool reads at 7.3 GB/s).
+- The last part's entry, one more call (35-45 us). The 0.085 ms between events is the next
+  poll's mailbox read (one 64-byte c2h call) and the loop.
+
+`ExpertServer.read_ahead` (default on; `moe_card --no-read-ahead` for the old path):
+- `_stage_next`: before a poll flushes, the part the next idle poll would send is read into a
+  staging pair (`BoardDram.stage`), beside the DMA in flight (the part's, or the request's
+  experts and served; a hint's first part reads while the card runs its mixer). ahead_layer's
+  next queued expert takes its slot for it then, by the same rule as at the next poll.
+- The next idle poll queues a staged part as it is, one DMA call per channel (write_slot's
+  `staged`, `cut=False`). A part that was not read ahead keeps the lead cut, as a request's
+  misses do.
+- A request, a hint, ahead_layer and the prefill's begin and end drop a staged part first
+  (`_unstage`: the read is lost, not the link's time); the server's reads of the card still
+  meet no DMA in flight.
+- The staging pairs are sized for an expert and its tag chunk before the first stage, so none
+  is reallocated under a staged part (BoardDram raises if one would be).
+
+Expected: a 1 MiB part about 0.12 + 0.33 + 0.05 = 0.5 ms against 0.757; a whole 35B expert in
+one part (1.59 MiB) about 0.7 ms against 1.46 ms in two today (0.757 + 0.622 + 0.085). The
+contention (13.8) is per byte, so neither changes it. Tests: test_offload_server's
+`test_idle_parts_go_as_one_call_each_and_are_read_ahead` (the calls per part, the staged reads,
+a request dropping one, ahead_layer's slot at its stage, the card's memories as Board.write's
+with and without), and the live card's runs (BoardDram, CHASH, a split pool) bit for bit.

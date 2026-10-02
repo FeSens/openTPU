@@ -353,6 +353,82 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
     assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == seq
 
 
+@pytest.mark.parametrize("ahead", [True, False])
+def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
+    """read_ahead (docs/offload.md 13.10): on BoardDram (CHASH, a split pool file) an idle
+    poll's part was read by the poll before (stage, beside that poll's DMA: a part's, or the
+    hint's served) and goes as one DMA call per channel; one not read ahead (the first after
+    ahead_layer) keeps the lead cut. A request first drops the staged part (its pair free
+    again). ahead_layer's next expert takes its slot when its part is staged. The card's
+    memories stay as Board.write leaves them, with read_ahead and without (each idle part of 2
+    blocks cut in two)."""
+    from types import SimpleNamespace
+
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import RUN, BackendDram, BoardDram, PoolFile, to_split
+
+    def board():
+        b = Board(FakeTransport(ch_bytes=1 << 21, devname=None))
+        b.info()["caps"]["chash"] = True
+        return b
+
+    slot = 4 * RUN
+    x = np.random.default_rng(3).integers(0, 256, (24, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(b"".join(to_split(r).tobytes() for r in x))
+    pf = PoolFile(f, slot, split=True)
+    lay = Layout.build(4096, 8, 2, (3, 3, 3), slot)
+    ba, bb = board(), board()
+    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay, pieces=2), lay, pf.get,
+                        policy="lfu", part=2 * RUN)
+    plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
+                                                     read=lambda s, a, n: bb.read(a, n))),
+                         lay, lambda g: x[g], policy="lfu", part=2 * RUN)
+    fast.read_ahead = ahead
+    m = fast.mem
+    recs, staged, dma, stage = [], [], m._dma, m.stage
+    m._dma = lambda *a, **kw: (recs.append(a[3] if len(a) > 3 else 0), dma(*a, **kw))
+    m.stage = lambda *a: (lambda h: (staged.append(h is not None), h)[1])(stage(*a))
+    for srv in (fast, plain):
+        srv.load([0, 1, 8, 9, 16, 17])
+    seq, G = 0, 24
+
+    def poll():
+        n0 = len(recs)
+        assert fast.poll() == plain.poll()
+        for c in (0, 1):
+            assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), c
+        return len(recs) - n0
+
+    def post(ids):
+        nonlocal seq
+        seq += 1
+        for b in (ba, bb):
+            b.write(lay.row, np.array(ids + [0] * (LINE // 4 - len(ids)), np.float32))
+            b.write(lay.mbox, np.float32(seq).tobytes())
+        assert poll() >= 0
+    r = 1 if ahead else 2                           # an idle part's DMA calls (or a lead cut)
+    post([G + 2, G + 3])                            # hint: 2 and 3 take slots, 4 parts to send
+    assert staged == ([True] if ahead else [])      # 2's first part read beside served
+    assert poll() == r                              # ... sent, and 2's second part read
+    assert poll() == r and fast.pending == {3: 0}   # 2's second (with its tag): staged
+    assert len(m._held) == ahead                    # 3's first part staged
+    post([3, 1])                                    # a request first: 3's staged part dropped
+    assert not m._held and fast.promoted == 1 and m._free.qsize() == m.depth
+    for srv in (fast, plain):                       # pooled: 20 a free slot, 21 a victim
+        srv.begin_prefill(ahead=True)               # of layer 0 (outside 1 and 2)
+        srv.ahead_layer(2, [20, 21])
+    assert poll() == 2 and 20 in fast.lru[2] and 21 not in fast.lru[2]     # (not read ahead)
+    assert poll() == r and (21 in fast.lru[2]) == ahead     # 21's slot taken as it is staged
+    while fast.pending or fast.queue:
+        assert poll() == r
+    assert poll() == 0 and fast.landed == plain.landed == 2 and not m._held
+    assert fast.bytes == plain.bytes and fast.misses == plain.misses
+    assert sum(staged) == (6 if ahead else 0)       # each idle part but 20's first (3's
+                                                    # first dropped)
+
+
 def test_board_dram_raises_a_dma_error_at_flush():
     """A DMA call that fails in BoardDram's worker is raised by the next flush (ExpertServer.poll
     calls it), not lost."""
