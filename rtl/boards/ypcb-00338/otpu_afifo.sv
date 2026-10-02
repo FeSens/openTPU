@@ -19,7 +19,9 @@
 // conservative than wused), low from the cycle after wrst rises to the cycle after it falls. In
 // wrst's first cycle it keeps the last cycle's value; the channel bridge's XDMA side is in its own
 // reset then (x_crst), except in the first cycle of a hold the controller's reset raised, when a
-// beat it takes is lost with those already in the FIFO.
+// beat it takes is lost with those already in the FIFO. The RAM's write address is a copy of the
+// write pointer of its own then, replicated by synthesis (MAX_FANOUT) over the RAM's width (the
+// XDMA side at 250 MHz, PCIe Gen2).
 module otpu_afifo #(
   parameter int W = 32,
   parameter int DEPTH = 16,
@@ -58,7 +60,7 @@ module otpu_afifo #(
   // write side
   logic [AW:0] rbin_w;
   logic        wput, wadv;
-  logic [AW-1:0] waddr;
+  logic [AW-1:0] waddr, wa;
   logic [DEPTH-1:0] wvld;                  // OOO: slots written, not yet passed
   assign rbin_w = g2b(rgray_w2);
   assign wused  = wbin - rbin_w;
@@ -67,11 +69,17 @@ module otpu_afifo #(
     always_ff @(posedge wclk)
       wrdy <= !wrst && ((wbin + (AW + 1)'(wput)) - rbin_w) != (AW + 1)'(DEPTH);
     assign wready = wrdy;
+    (* max_fanout = 32 *) logic [AW-1:0] wa_q;
+    always_ff @(posedge wclk)
+      if (wrst) wa_q <= '0;
+      else if (wadv) wa_q <= wbin[AW-1:0] + 1'b1;
+    assign wa = wa_q;
   end else begin : g_cwr
     assign wready = !wrst && (wused != (AW + 1)'(DEPTH));
+    assign wa = wbin[AW-1:0];
   end
   assign wput   = OOO ? (wvalid && !wrst) : (wvalid && wready);
-  assign waddr  = OOO ? wslot : wbin[AW-1:0];
+  assign waddr  = OOO ? wslot : wa;
   assign wadv   = OOO ? (!wrst && wvld[wbin[AW-1:0]])
                       : (wvalid && wready);
   assign wcommit = OOO && wadv;

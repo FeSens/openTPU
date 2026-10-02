@@ -18,6 +18,8 @@
 #     with the checkpoint kept mapped and the pool read one expert after another (--keep-weights
 #     --no-willneed: before session 10; docs/offload.md 10.6); q35e128r, q35e128rw, g26r:
 #     session 10's names for the defaults since
+#   q35e128s, q35e128sl: q35e128r with its timeline and DMA calls (--hint-trace), served as now
+#     and as before docs/offload.md 10.8 (--legacy-serve); g26s, g26sl: g26r's the same
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
 #     layer), 128 tokens after wiki.txt's first paragraph (q26-hf.json, q26ref16.json: 16 tokens)
 #   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
@@ -32,7 +34,9 @@ PSFX=${PSFX-.split}       # the pool files: the split format (.split.bin), or ""
 G26POOL=${G26POOL:-../g26/pool-g26-fp4.split.bin}     # (relative to O)
 # before each run every other file of 100 MB or more under these leaves the page cache (MGLRU
 # keeps once-mmapped checkpoints over the pool's reads: docs/offload.md 10.6); "" for none. A
-# link whose target is outside ~/openTPU and ~/otpu-build is skipped (and logged), never opened
+# link whose target is outside ~/openTPU and ~/otpu-build is skipped (and logged), never opened.
+# HOG=dir:dir (after DROPOTHER): the files of 100 MB or more there mapped and touched first by
+# another process, as a user's host would have them (docs/offload.md 10.7)
 DROPOTHER=${DROPOTHER-$HOME/openTPU/models:$O:$O/$(dirname $G26POOL)}
 echo "card_moe start $(date +%T) tree $rev mem $(mem) GB"
 timeout 1800 python -m opentpu.host.selftest 2>&1 | grep -E "\[(PASS|FAIL)\]|config" | tail -12
@@ -67,11 +71,15 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35e128k]="$Q35 128 q35-hf.json q35ref16 q35card128ek 0 lfu --embed-table host --hints off --keep-weights --no-willneed --hint-trace $R/q35card128ek.trace.json"
   [q35e128r]="$Q35 128 q35-hf.json q35ref16 q35card128er 0 lfu --embed-table host --hints off --release-weights --hint-trace $R/q35card128er.trace.json"
   [q35e128rw]="$Q35 128 q35-hf.json q35ref16 q35card128erw 0 lfu --embed-table host --hints off --release-weights --willneed --hint-trace $R/q35card128erw.trace.json"
+  [q35e128s]="$Q35 128 q35-hf.json q35ref16 q35card128es 0 lfu --embed-table host --hints off --hint-trace $R/q35card128es.trace.json"
+  [q35e128sl]="$Q35 128 q35-hf.json q35ref16 q35card128esl 0 lfu --embed-table host --hints off --legacy-serve --hint-trace $R/q35card128esl.trace.json"
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"
   [q35c128b]="$Q35 128 q35-hf.json q35ref16 q35card128cb 0 lfu --embed-table card --hints off"
   [g26a]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128a 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26b]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128b 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26r]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128r 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --release-weights"
+  [g26s]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128s 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --hint-trace $R/g26card128s.trace.json"
+  [g26sl]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128sl 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --legacy-serve --hint-trace $R/g26card128sl.trace.json"
   [g26t16]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1"
   [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2")
@@ -113,6 +121,27 @@ for d in sys.argv[3].split(":"):
             os.close(fd)
             gb, n = gb + os.path.getsize(r) / 1e9, n + 1
 print(f"  dropped from the page cache: {n} other files of {gb:.1f} GB")
+PY
+  fi
+  if [ -n "${HOG:-}" ]; then                  # a user's host: files another process mapped
+    python - $HOG <<'PY'                        # and touched (and exited), which a session
+import mmap, os, sys                          # cannot evict (docs/offload.md 10.7)
+import numpy as np
+ours = tuple(os.path.realpath(os.path.expanduser(d)) + os.sep for d in ("~/openTPU", "~/otpu-build"))
+gb = 0
+for d in sys.argv[1].split(":"):
+    for root, _, files in os.walk(os.path.expanduser(d)):
+        for f in files:
+            r = os.path.realpath(os.path.join(root, f))
+            if not r.startswith(ours) or os.path.getsize(r) < 100 << 20:
+                continue
+            fd = os.open(r, os.O_RDONLY)
+            mm = mmap.mmap(fd, os.path.getsize(r), prot=mmap.PROT_READ)
+            int(np.frombuffer(mm, np.uint8)[::mmap.PAGESIZE].sum())
+            mm.close()
+            os.close(fd)
+            gb += os.path.getsize(r) / 1e9
+print(f"  hog: {gb:.1f} GB mapped and touched")
 PY
   fi
   t0=$SECONDS; cat $O/$pool > /dev/null      # the RAM tier warm before each timed run, and how

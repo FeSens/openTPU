@@ -79,7 +79,8 @@ from . import moe as MO
 from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, RunPos, RunRows, _attention, _attention_rows, _Bump,
                     _fake_q, _fake_w, _formats, _inputs, _inputs_rows, _lm_head, _lm_head_rows,
                     _lookup_alloc, _lookup_build, _lookup_desc, _mlp, _qdesc, _tdesc, _tok_arg,
-                    _tokens_arg, compile_decode, rope_tables, EmbedHost)
+                    _tokens_arg, compile_decode, rope_tables, EmbedHost, fill_logits,
+                    step_descriptors)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
@@ -1020,7 +1021,7 @@ class Image(EmbedHost):
 
     def compile_step(self, pos: int, block: int = ATTN_BLOCK, tok: int | None = None) -> list:
         """One program per slice: the decode token at position `pos` (qwen35_step)."""
-        return [qwen35_step.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos,
+        return [qwen35_step.trace(self.cfg, s, {"m": step_descriptors(self, s), "pos": pos,
                                                 "block": block, **_tok_arg(self, tok)}).finish()
                 for s in range(self.cfg.S)]
 
@@ -1655,6 +1656,7 @@ def qwen35_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     K/V at `pos` and attend over positions 0..pos. Logits for this slice's vocabulary rows go
     to m.logits.
     """
+    fill_logits(m)
     spec = m.spec
     x, c, s_ = _inputs(m, pos, tok)
 

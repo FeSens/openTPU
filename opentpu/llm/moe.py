@@ -173,14 +173,15 @@ def gemma_router(W, p: str) -> np.ndarray:
     return w * (np.asarray(W[p + "router.scale"], np.float32) * np.float32(w.shape[1] ** -0.5))
 
 
-def open_pool(layout: Layout, pool_file) -> PoolFile:
+def open_pool(layout: Layout, pool_file, mapped: bool = True) -> PoolFile:
     """The expert pool file for `layout`, opened, and its packed experts' read into the page
     cache started (PoolFile.warm: the host's RAM tier; the Engine opens it before it builds the
     image, so the read runs during the build). The file is the whole pool's size (sparse until
     packed), and `<pool_file>.packed` marks the experts in it (a file of the right size without
     one is a pool packed whole). A new file is in the split format
     (opentpu.host.offload.split_order), as `<pool_file>.format` says; a file without it holds
-    the slot format. The page cache stays the kernel's to reclaim: nothing is pinned."""
+    the slot format. The page cache stays the kernel's to reclaim: nothing is pinned. mapped:
+    PoolFile's (its reads touched through a read-only map: docs/offload.md 10.7)."""
     L = layout
     n = L.layers * L.E
     path = Path(pool_file)
@@ -194,7 +195,8 @@ def open_pool(layout: Layout, pool_file) -> PoolFile:
     fmt = Path(str(path) + ".format")
     if fresh:
         fmt.write_text(SPLIT + "\n")
-    pf = PoolFile(path, L.slot_bytes, fmt.exists() and fmt.read_text().strip() == SPLIT)
+    pf = PoolFile(path, L.slot_bytes, fmt.exists() and fmt.read_text().strip() == SPLIT,
+                  mapped=mapped)
     pf.arr = np.memmap(path, np.uint8, "r+", shape=(n, L.slot_bytes))
     pf.packed = np.memmap(done, np.uint8, "r+", shape=(n,))
     pf.ids = np.nonzero(np.asarray(pf.packed))[0]

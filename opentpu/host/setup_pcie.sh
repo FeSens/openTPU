@@ -149,8 +149,9 @@ $(attr "$d" subsystem_vendor):$(attr "$d" subsystem_device) revision $(attr "$d"
     *) bad "class $cls: $(describe_class "$cls")" ;;
   esac
   spd="$(cat "$d/current_link_speed" 2>/dev/null)"; wid="$(cat "$d/current_link_width" 2>/dev/null)"
-  if [[ "$spd" == "2.5 GT/s"* && "$wid" == 8 ]]; then ok "link $spd x$wid (the design: Gen1 x8)"
-  else note "link $spd x$wid: the design is 2.5 GT/s x8 (it works; DMA is slower)"; fi
+  msp="$(cat "$d/max_link_speed" 2>/dev/null)"            # the card's own: its bitstream's Gen
+  if [[ -n "$spd" && "$spd" == "$msp" && "$wid" == 8 ]]; then ok "link $spd x$wid (the card's own speed, x8)"
+  else note "link $spd x$wid: the card can do ${msp:-?} x8 (it works; DMA is slower; --rescan or a warm reboot retrains)"; fi
   drv="$(driver_of "$bdf")"
   if [[ "$drv" == xdma ]]; then ok "bound to xdma"
   else bad "bound to '${drv:-nothing}', not xdma (driver_override: $(cat "$d/driver_override"))"; return; fi

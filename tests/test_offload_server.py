@@ -155,11 +155,102 @@ def test_preadv_resumes_short_reads(tmp_path, monkeypatch):
     assert max(calls) == O.IOV_MAX and len(calls) > len(bufs) // 7
 
 
+def test_preadv_iov_fills_as_preadv_and_resumes_short_reads(tmp_path, monkeypatch):
+    """offload.preadv_iov (an iovec array of addresses and lengths through libc's preadv: no
+    buffer objects, the GIL released for the read) fills the buffers as preadv does: in order,
+    over more of them than one call takes (IOV_MAX), and when a call stops short in the middle
+    of a buffer."""
+    import ctypes
+    import os
+
+    from opentpu.host import offload as O
+    if O._libc_preadv() is None:
+        pytest.skip("no libc preadv")
+    data = np.random.default_rng(0).integers(0, 256, 20000, dtype=np.uint8).tobytes()
+    f = tmp_path / "f.bin"
+    f.write_bytes(data)
+    sizes = np.random.default_rng(1).integers(1, 9, 3000)
+    buf = np.zeros(int(sizes.sum()), np.uint8)
+    at = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+    iov = np.stack([buf.ctypes.data + at, sizes], 1).astype(np.uint64)
+    want = data[100:100 + int(sizes.sum())]
+    real, calls = O._libc_preadv(), []
+
+    def stingy(fd, a, g, off):              # 6 buffers and half the 7th at most
+        calls.append(g)
+        assert g <= O.IOV_MAX
+        v = np.ctypeslib.as_array((ctypes.c_uint64 * (2 * g)).from_address(a)).reshape(g, 2)
+        v = np.array(v[:7] if g > 6 else v)
+        if g > 6:
+            v[6, 1] //= 2
+        return real(fd, v.ctypes.data, len(v), off)
+    fd = os.open(f, os.O_RDONLY)
+    try:
+        O.preadv_iov(fd, iov, 100)
+        assert buf.tobytes() == want
+        buf[:] = 0
+        monkeypatch.setattr(O, "_libc_preadv", lambda: stingy)
+        O.preadv_iov(fd, iov, 100)
+    finally:
+        os.close(fd)
+    assert buf.tobytes() == want
+    assert max(calls) == O.IOV_MAX and len(calls) > len(sizes) // 7
+
+
+def test_victims_entries_are_cleared_after_the_requests_experts():
+    """A request's victims' entries are cleared after its last new entry and before served (the
+    card waits on the new entries only and reads a victim's entry in a later request: after
+    served), so the link starts with the first expert's bytes; clear_late False clears each one
+    before its slot is written, as before docs/offload.md 10.8. Either way the victims' entries
+    read empty once poll returns."""
+    for late in (True, False):
+        lay, mem, srv = _setup(warm=[0, 1, 2])      # layer 0 LRU order: 2, 1, 0 (0 newest)
+        srv.clear_late = late
+        log, w = [], mem.write
+
+        def rec(addr, data, w=w):
+            b = np.frombuffer(data if isinstance(data, bytes) else np.asarray(data).tobytes(),
+                              np.uint8)
+            log.append("served" if addr == lay.served else
+                       ("entry" if b[4:8].any() else "clear")
+                       if lay.dir <= addr < lay.dir + 8 * E * 2 else "slot")
+            w(addr, data)
+        _post(mem, lay, 1, [5, 6])                  # two misses: victims 2 and 1
+        mem.write = rec
+        assert srv.poll() == 1
+        assert log == (["slot", "entry", "slot", "entry", "clear", "clear", "served"] if late
+                       else ["clear", "slot", "entry", "clear", "slot", "entry", "served"])
+        assert _entry(mem, lay, 2) == _entry(mem, lay, 1) == (0, 0.0)
+        assert _entry(mem, lay, 5)[1] == _entry(mem, lay, 6)[1] == 1.0
+        assert not srv._victims
+
+
+def test_board_dram_sends_a_requests_first_miss_a_fifth_first():
+    """BoardDram._cuts: with nothing in flight (a request's first miss) an expert goes in
+    `pieces` parts, the first `lead` of its blocks (the link starts after a fifth is read, not
+    half), the rest in equal parts; lead None: equal parts; one part otherwise."""
+    from types import SimpleNamespace
+
+    from opentpu.host.offload import BoardDram
+    lay = Layout.build(4096, E, K, (3, 3), SLOT)
+    m = BoardDram(SimpleNamespace(board=None), lay)
+    assert m.lead == 0.2 and m.pieces == 2
+    assert m._cuts(408, True) == [(0, 82), (82, 408)] and m._cuts(408, False) == [(0, 408)]
+    assert m._cuts(1, True) == [(0, 1)] and m._cuts(3, True) == [(0, 1), (1, 3)]
+    m.pieces = 3
+    assert m._cuts(408, True) == [(0, 82), (82, 245), (245, 408)]
+    m.lead = None
+    assert m._cuts(408, True) == [(0, 136), (136, 272), (272, 408)]
+    with pytest.raises(ValueError, match="lead"):
+        BoardDram(SimpleNamespace(board=None), lay, lead=1.0)
+
+
 @pytest.mark.parametrize("hints", [False, True])
 @pytest.mark.parametrize("chash", [False, True])
 @pytest.mark.parametrize("slot,fmt,pieces", [(128 * 37, "bytes", 2), (64 * 75, "bytes", 2),
                                              (4096 * 3, "split", 3), (4096 * 3, "split", 1),
-                                             (128 * 37, "split", 2)])
+                                             (128 * 37, "split", 2), (4096 * 3, "readv", 3),
+                                             (128 * 37, "readv", 2)])
 def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hints, tmp_path):
     """BoardDram (the card's fast path: one-pass channel runs, a worker thread's DMA, the
     host's words from a shadow without reading the card) leaves the card's two channel memories
@@ -168,8 +259,9 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
     slot of a half chunk falls back to Board.write.
     split: the pool a file in the split format, read with preadv straight into the channel
     runs under CHASH at a page-aligned slot (pages of either parity; a slot of 37 chunks is
-    two pages apart: Layout's pitch); a request's first miss in `pieces` parts, each DMAed
-    when it is read.
+    two pages apart: Layout's pitch); a request's first miss in `pieces` parts (the first a
+    fifth of it), each DMAed when it is read. readv: the same through os.preadv's buffer list
+    (a record without readiov: PoolFile.iov False) instead of preadv_iov's iovec array.
     hints: both servers by decayed use, each request after a hint (one of its experts and one
     it does not name) and 0, 2 or 4 polls with no request: the hinted experts' 4 KiB parts (a
     staging pair's first bytes) land as Board.write writes them."""
@@ -189,10 +281,13 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
 
     lay = Layout.build(4096, 4, 2, (2, 3), slot)
     fast_pool = pool
-    if fmt == "split":
+    if fmt in ("split", "readv"):
         f = tmp_path / "pool.bin"
         f.write_bytes(b"".join(to_split(pool(g)).tobytes() for g in range(8)))
-        fast_pool = PoolFile(f, slot, split=True).get
+        pf = PoolFile(f, slot, split=True)
+        pf.iov = fmt == "split"
+        fast_pool = pf.get
+        assert (pf.get(0).readiov is not None) == (fmt == "split")
     ba, bb = board(), board()
     kw = dict(policy="lfu", part=RUN) if hints else {}
     fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay, pieces=pieces), lay,
@@ -245,9 +340,9 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
         post(ids)
     assert calls[0] == words[0] > len(reqs)     # an entry or served: one beat, one DMA call
     assert fast.misses == plain.misses > 0 and fast.bytes == plain.bytes
-    assert (fast.mem.direct > 0) == (fmt == "split" and chash)
+    assert (fast.mem.direct > 0) == (fmt != "bytes" and chash)
     if not hints:
-        assert any(dmas) == (fmt == "split" and chash and pieces > 1)     # a part's DMA
+        assert any(dmas) == (fmt != "bytes" and chash and pieces > 1)     # a part's DMA
     else:
         assert fast.prefetched == plain.prefetched > 0 and fast.promoted == plain.promoted > 0
     assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == seq
@@ -384,6 +479,42 @@ def test_slots_are_whole_run_blocks_apart_so_every_expert_reads_in_place(tmp_pat
     for g in srv.lru[0].keys() | srv.lru[1].keys():
         assert srv.lru[g // 4][g] % RUN == 0
         assert np.array_equal(np.asarray(b.read(srv.lru[g // 4][g], slot)).view(np.uint8), x[g])
+
+
+def test_pool_file_touches_what_it_reads_through_its_map(tmp_path):
+    """PoolFile's `mapped` (the default): each expert read (get, warm) is touched through a
+    read-only map of the pool, so its pages stand as mapped ones under MGLRU (docs/offload.md
+    10.7); the bytes are preadv's either way. On Linux the map's resident pages
+    (/proc/self/smaps) cover what was read, and mapped=False leaves no map."""
+    import sys
+
+    from opentpu.host.offload import PoolFile
+    slot, n = 4096 * 3 + 2048, 6                      # (experts off a page too)
+    x = np.random.default_rng(0).integers(0, 256, (n, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(x.tobytes())
+
+    def rss():                                        # the pool's maps' resident bytes
+        if sys.platform != "linux":
+            return None
+        out, cur = 0, False
+        for ln in open("/proc/self/smaps"):
+            if ln[0] in "0123456789abcdef" and "-" in ln.split()[0]:
+                cur = ln.rstrip().endswith(str(f))
+            elif cur and ln.startswith("Rss:"):
+                out += int(ln.split()[1]) * 1024
+        return out
+    for mapped in (True, False):
+        pf = PoolFile(f, slot, split=False, mapped=mapped)
+        for g in (1, 4):
+            assert bytes(pf.get(g)) == x[g].tobytes()
+        pf.warm([5]).join(timeout=60)
+        if mapped:                                    # (read-only: nothing writes through it)
+            assert pf._mc and (rss() is None or rss() >= 3 * slot)
+            assert not pf._mc[1].flags.writeable
+        else:
+            assert pf._mc is None
+        del pf
 
 
 def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):

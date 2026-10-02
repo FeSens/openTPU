@@ -21,11 +21,13 @@ DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
 
 A global expert id is `j * E + e` for the j-th MoE layer's expert e (the card's ARGMAX gives it
 with base j * E). Per request the host, for each id missing from its copy of the directory:
-picks the layer's least recently used expert that the request does not name, writes {0, 0.0}
-to its entry, writes the new expert into its slot and then {slot, 1.0} to the new entry; after
-the last id, `served = seq`. The card fences each layer before it posts, `WAITW served >= seq`
-(its last request), so one request row is enough, and no eviction for a layer is in flight
-while it uses that layer's slots (docs/offload.md 5.2).
+picks the layer's least recently used expert that the request does not name, writes the new
+expert into its slot and then {slot, 1.0} to the new entry; after the last id, {0, 0.0} to
+each victim's entry, then `served = seq`. The card fences each layer before it posts, `WAITW
+served >= seq` (its last request), so one request row is enough, and no eviction for a layer is
+in flight while it uses that layer's slots (docs/offload.md 5.2). It reads only the entries of
+the ids it posts, so a victim's entry is cleared in time if it lands before served: the card
+waits on the new entries alone (docs/offload.md 10.8).
 
 During a layer-major prefill (docs/offload.md 13: one MoE layer at a time over the whole
 prompt) the slots are pooled (`begin_prefill`): a missing expert of the running layer takes a
@@ -122,14 +124,63 @@ def preadv(fd: int, bufs: list, off: int) -> None:
             bufs[i] = bufs[i][k:]
 
 
+_LIBC: list = []
+
+
+def _libc_preadv():
+    """libc's preadv through ctypes (the GIL released for the call), or None."""
+    if not _LIBC:
+        import ctypes
+        try:
+            f = ctypes.CDLL(None, use_errno=True).preadv
+            f.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_longlong]
+            f.restype = ctypes.c_ssize_t
+        except (OSError, AttributeError):
+            f = None
+        _LIBC.append(f)
+    return _LIBC[0]
+
+
+def preadv_iov(fd: int, iov: np.ndarray, off: int) -> None:
+    """preadv's fill from an iovec array: iov[i] = (address, length) as uint64, C order, of
+    buffers that outlive the call. libc's preadv in groups of IOV_MAX, a short read resumed: no
+    buffer objects built and the GIL released for the whole read (os.preadv holds it while it
+    takes each buffer: 816 of them an expert of the 35B, ~170 us on the card's host, docs/
+    offload.md 10.8), so the DMA thread runs meanwhile."""
+    import ctypes
+    f = _libc_preadv()
+    iov = np.ascontiguousarray(iov, np.uint64)
+    i, n = 0, len(iov)
+    while i < n:
+        g = min(IOV_MAX, n - i)
+        k = f(fd, iov.ctypes.data + 16 * i, g, off)
+        if k < 0:
+            e = ctypes.get_errno()
+            raise OSError(e, f"preadv at {off}: {os.strerror(e)}")
+        if k == 0:
+            raise OSError(f"preadv at {off}: end of file")
+        off += k
+        lens = np.cumsum(iov[i:i + g, 1])
+        if k == lens[-1]:                       # the whole group: the usual case
+            i += g
+            continue
+        j = int(np.searchsorted(lens, k, side="right"))     # buffers read whole
+        part = k - (int(lens[j - 1]) if j else 0)
+        iov = np.array(iov[i + j:], np.uint64)              # the rest, the first one cut
+        iov[0, 0] += np.uint64(part)
+        iov[0, 1] -= np.uint64(part)
+        i, n = 0, len(iov)
+
+
 class SplitRecord:
     """An expert in the split format, read from its file when it is written: readv(bufs, at)
-    reads its bytes from byte `at` on, in file order, into the buffers. BoardDram on a CHASH
-    card reads it straight into its two channel runs; as bytes (bytes(), np.asarray) it is the
-    slot's own bytes."""
+    reads its bytes from byte `at` on, in file order, into the buffers; readiov(iov, at), when
+    given, the same into an iovec array (preadv_iov's). BoardDram on a CHASH card reads it
+    straight into its two channel runs; as bytes (bytes(), np.asarray) it is the slot's own
+    bytes."""
 
-    def __init__(self, n: int, readv):
-        self.n, self.readv = n, readv
+    def __init__(self, n: int, readv, readiov=None):
+        self.n, self.readv, self.readiov = n, readv, readiov
 
     def __len__(self) -> int:
         return self.n
@@ -139,7 +190,9 @@ class SplitRecord:
         are its own."""
         if a % RUN or (b % RUN and b != self.n) or not 0 <= a < b <= self.n:
             raise ValueError(f"a split record's part {a}..{b} of {self.n} bytes")
-        return SplitRecord(b - a, lambda bufs, at=0: self.readv(bufs, a + at))
+        return SplitRecord(b - a, lambda bufs, at=0: self.readv(bufs, a + at),
+                           None if self.readiov is None else
+                           lambda iov, at=0: self.readiov(iov, a + at))
 
     def __array__(self, dtype=None, copy=None) -> np.ndarray:
         f = np.empty(self.n, np.uint8)
@@ -162,19 +215,49 @@ class PoolFile:
     page cache: the card's host SSD reads an expert of 1.67 MB that is not in the page cache
     in 4.2 ms (400 MB/s; docs/offload.md 10.6). It moves bytes only.
 
+    `mapped` (the default): every expert read (and warmed) is then touched through a read-only
+    map of the file, a byte a page. Under MGLRU (Linux's multi-generational LRU) a file page
+    read only through read() ages out before one a process has mapped and touched: a
+    checkpoint any process mmapped once outlived the pool's pages (docs/offload.md 10.7).
+
     `io`, when set to {} (moe_card's decode), counts the reads by where they came from:
     "cached" the reads whose pages were all in the page cache just before (mincore), "disk"
     the others ("unknown" where mincore cannot tell), each [reads, seconds, bytes, bytes not
     in the page cache]."""
 
-    def __init__(self, path, slot: int, split: bool):
+    def __init__(self, path, slot: int, split: bool, mapped: bool = True):
         import mmap
         self.fd, self.slot, self.split = os.open(path, os.O_RDONLY), slot, split
         self.bufs = [mmap.mmap(-1, slot) for _ in range(2)]
         self.k, self.warm_t = 0, None
         self.arr = self.packed = self.ids = self.resident_at_open = None    # (moe.open_pool)
         self.io: dict | None = None
-        self._mc = None                 # io's mincore: (the file's map, its view, libc)
+        self.iov = True                 # get's records read through preadv_iov where libc has it
+        self.mapped = mapped
+        self._mc = None                 # the file's read-only map: (map, its view, libc)
+        if mapped:                      # (made here: the warm thread and the server share it)
+            self._map()
+
+    def _map(self):
+        """The file's read-only map, its uint8 view and libc (io's mincore, mapped's touches),
+        or None where the host has none."""
+        import ctypes
+        import mmap
+        if self._mc is None:
+            try:
+                mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
+                self._mc = (mm, np.frombuffer(mm, np.uint8),
+                            ctypes.CDLL(None, use_errno=True))
+            except (OSError, AttributeError, ValueError):
+                self._mc = False
+        return self._mc or None
+
+    def _touch(self, off: int, n: int) -> None:
+        """A byte of every page under [off, off + n) read through the map (mapped)."""
+        import mmap
+        m = self._map()
+        if m is not None and n > 0:
+            int(m[1][off // mmap.PAGESIZE * mmap.PAGESIZE:off + n:mmap.PAGESIZE].sum())
 
     def resident(self, ids) -> int | None:
         """Bytes of these experts in the page cache (mincore over the file's pages), or None
@@ -209,41 +292,46 @@ class PoolFile:
         None where the host cannot tell."""
         import ctypes
         import mmap
-        if self._mc is None:
-            try:
-                mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
-                self._mc = (mm, np.frombuffer(mm, np.uint8),
-                            ctypes.CDLL(None, use_errno=True))
-            except (OSError, AttributeError, ValueError):
-                self._mc = False
-        if not self._mc or n <= 0:
+        m = self._map()
+        if m is None or n <= 0:
             return None
         pg = mmap.PAGESIZE
         lo, hi = off // pg, -(-(off + n) // pg)
         vec = (ctypes.c_ubyte * (hi - lo))()
-        if self._mc[2].mincore(ctypes.c_void_p(self._mc[1].ctypes.data + lo * pg),
-                               ctypes.c_size_t((hi - lo) * pg), vec) != 0:
+        if m[2].mincore(ctypes.c_void_p(m[1].ctypes.data + lo * pg),
+                        ctypes.c_size_t((hi - lo) * pg), vec) != 0:
             return None
         return (hi - lo - int((np.frombuffer(vec, np.uint8) & 1).sum())) * pg
 
     def _read(self, bufs, off: int) -> None:
+        self._io(sum(map(len, bufs)), off, lambda: preadv(self.fd, bufs, off))
+
+    def _read_iov(self, iov: np.ndarray, off: int) -> None:
+        self._io(int(iov[:, 1].sum()), off, lambda: preadv_iov(self.fd, iov, off))
+
+    def _io(self, n: int, off: int, read) -> None:
+        """read() of n bytes at off, counted in io, then touched through the map."""
         if self.io is None:
-            return preadv(self.fd, bufs, off)
-        n = sum(map(len, bufs))
-        gone = self._absent(off, n)
-        t0 = time.perf_counter()
-        preadv(self.fd, bufs, off)
-        s = self.io.setdefault("unknown" if gone is None else "disk" if gone else "cached",
-                               [0, 0.0, 0, 0])
-        s[0] += 1
-        s[1] += time.perf_counter() - t0
-        s[2] += n
-        s[3] += gone or 0
+            read()
+        else:
+            gone = self._absent(off, n)
+            t0 = time.perf_counter()
+            read()
+            s = self.io.setdefault("unknown" if gone is None else "disk" if gone else "cached",
+                                   [0, 0.0, 0, 0])
+            s[0] += 1
+            s[1] += time.perf_counter() - t0
+            s[2] += n
+            s[3] += gone or 0
+        if self.mapped:
+            self._touch(off, n)
 
     def get(self, g: int):
         if self.split:
             return SplitRecord(self.slot,
-                               lambda bufs, at=0: self._read(bufs, g * self.slot + at))
+                               lambda bufs, at=0: self._read(bufs, g * self.slot + at),
+                               None if not self.iov or _libc_preadv() is None else
+                               lambda iov, at=0: self._read_iov(iov, g * self.slot + at))
         self.k ^= 1
         self._read([memoryview(self.bufs[self.k])], g * self.slot)
         return np.frombuffer(self.bufs[self.k], np.uint8)
@@ -263,6 +351,8 @@ class PoolFile:
         def run():
             for g in ids:
                 preadv(self.fd, [scratch], int(g) * self.slot)
+                if self.mapped:
+                    self._touch(int(g) * self.slot, self.slot)
                 t.bytes += self.slot
         t = threading.Thread(target=run, daemon=True, name="otpu-pool-warm")
         t.bytes = 0
@@ -382,6 +472,8 @@ class ExpertServer:
         # called with a request's missing ids before the first is staged (PoolFile.willneed:
         # the reads of those not in the page cache queued at once)
         self.ahead = None
+        self._victims: list = []            # this request's victims: entries cleared at its end
+        self.clear_late = True              # (False: each at once, before its slot is written)
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory and mailbox, then the experts `warm` names (global
@@ -395,6 +487,7 @@ class ExpertServer:
             fr.extend(lru.values())
             lru.clear()
         self.pending.clear()
+        self._victims.clear()
         self.pooled = False
         self.order.clear()
         self.seq = 0
@@ -501,6 +594,21 @@ class ExpertServer:
                 del self.pending[g]
                 self.free[j].append(lru.pop(g))
                 self.withdrawn += 1
+        self._clear()
+
+    def _clear(self) -> None:
+        """The request's victims' entries cleared, after its experts (the card waits on their
+        entries, not these: it reads a victim's entry only in a later request, after served)."""
+        # Safe late because of moe.moe_ffn's contract (its steps 3-5): the card reads the
+        # present flag and WAITWs on the entry of the ids it posted only, and a victim is never
+        # one of them (_slot / _pool_slot pick outside ids); its next request (the only one that
+        # could name a victim) is posted after its fence, WAITW served >= seq, and served is
+        # written after these clears on the same in-order queue. A card program that read any
+        # other entry during a request would need the clear before the victim's slot is written
+        # (clear_late False).
+        for g in self._victims:
+            self.mem.write(self.L.entry(g), np.zeros(2, np.uint32))
+        self._victims.clear()
 
     def hint(self, ids) -> None:
         """A hint: the k global ids the layer's router picks on its input (docs/offload.md 12).
@@ -517,6 +625,7 @@ class ExpertServer:
             if g not in lru:
                 lru[g] = self._slot(j, ids)
                 self.pending[g] = 0
+        self._clear()
 
     def step(self) -> None:
         """The next part of the oldest hinted expert on its way (the link is idle: no request
@@ -552,7 +661,8 @@ class ExpertServer:
 
     def _slot(self, j: int, ids) -> int:
         """A slot of layer j for one of the request's experts: a free one, or the victim's (its
-        entry cleared; a hinted expert still on its way is dropped)."""
+        entry cleared at the request's end, _clear; a hinted expert still on its way is
+        dropped)."""
         if self.free[j]:
             return self.free[j].pop(0)
         lru, use = self.lru[j], self.use[j]
@@ -566,7 +676,9 @@ class ExpertServer:
         if self.pending.pop(victim, None) is not None:
             self.dropped += 1               # (its entry reads 0 already)
         else:
-            self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
+            self._victims.append(victim)
+            if not self.clear_late:
+                self._clear()
         return lru.pop(victim)
 
     def _pool_slot(self, j: int, ids) -> int:
@@ -579,7 +691,9 @@ class ExpertServer:
         if victim is None:
             raise RuntimeError(f"{len(self.order)} slots for a request of {len(ids)}")
         del self.order[victim]
-        self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
+        self._victims.append(victim)
+        if not self.clear_late:
+            self._clear()
         return self.lru[victim // self.L.E].pop(victim)
 
     def begin_prefill(self) -> None:
@@ -736,9 +850,11 @@ class BoardDram:
     - write_slot: an expert's bytes (or a part's: a hint's, ExpertServer.step) go to the two
       channels' runs in one pass (the beat interleave and CHASH's swaps, `np.take` of 64-byte
       beats) into page-aligned staging buffers, then one DMA call per channel; an expert of a
-      split-format pool file (SplitRecord) is read straight into the runs, and when nothing
-      is in flight (a request's first miss) in `pieces` parts, each DMAed as soon as it is
-      read;
+      split-format pool file (SplitRecord) is read straight into the runs (one preadv of an
+      iovec array, preadv_iov, where the record has readiov), and when nothing is in flight
+      (a request's first miss) in `pieces` parts, the first `lead` of it (None: equal parts),
+      each DMAed as soon as it is read: the link starts after a fifth of the expert is read,
+      not half (docs/offload.md 10.8);
     - the host's own words (served and the directory: the card only reads them) are kept in a
       shadow and written with no read first: a write within one 64-byte beat (an entry,
       served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
@@ -747,9 +863,12 @@ class BoardDram:
       expert: an expert's data lands before its directory entry, every entry before served
       (one queue, one h2c stream). flush() waits for the queue and raises a worker's error;
       ExpertServer calls it before poll returns, so no DMA of the server's is in flight
-      while anything else uses the card."""
+      while anything else uses the card.
+    `calls`, when set to a list (moe_card --hint-trace): each DMA call of the worker's appended,
+    (perf_counter at its start, at its end, bytes)."""
 
-    def __init__(self, backend, layout: Layout, depth: int = 3, pieces: int = 2):
+    def __init__(self, backend, layout: Layout, depth: int = 3, pieces: int = 2,
+                 lead: float | None = 0.2):
         from .board import BEAT
         self.board, self.L = backend.board, layout
         blk = 2 * BEAT                        # a chunk: one beat on each channel
@@ -761,6 +880,8 @@ class BoardDram:
         self.depth, self._bufs, self._base, self._i1 = depth, None, None, None
         self._idx: dict = {}                  # (address, chunks) -> channel 0's beat indices
         self._pieces: dict = {}               # bytes -> per staging pair: its split pieces
+        self._iovs: dict = {}                 # bytes -> per staging pair: its iovec template
+        self._par: dict = {}                  # (address, blocks) -> each block's parity
         self._free: queue.Queue = queue.Queue()
         self._q: queue.Queue = queue.Queue()
         self._err: BaseException | None = None
@@ -769,6 +890,10 @@ class BoardDram:
         self.direct = 0                         # experts read from the file into their runs
         self.wait_s = 0.0                       # the server's waits for a free staging pair
         self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
+        if lead is not None and not 0 < lead < 1:
+            raise ValueError(f"lead {lead}: the first part's share of the expert, in (0, 1)")
+        self.lead = lead
+        self.calls: list | None = None
 
     # ---- the worker
     def _work(self) -> None:
@@ -826,7 +951,7 @@ class BoardDram:
         n = nbytes // self.blk
         self._bufs = [[_page_buf(nbytes // 2) for _ in (0, 1)] for _ in range(self.depth)]
         self._base = 2 * np.arange(n, dtype=np.intp)
-        self._i1, self._idx, self._pieces = np.empty(n, np.intp), {}, {}
+        self._i1, self._idx, self._pieces, self._iovs = np.empty(n, np.intp), {}, {}, {}
         while not self._free.empty():
             self._free.get()
         for i in range(self.depth):
@@ -854,24 +979,67 @@ class BoardDram:
             self._pieces[nbytes] = ps
         return self._pieces[nbytes]
 
+    def _iov(self, nbytes: int) -> list:
+        """Per staging pair, an nbytes record's iovec template [block, run, (address, length)]
+        (uint64): the two runs' RUN / 2-byte pieces of each block, in file order where the
+        block lands on even parity (BoardDram.write_slot swaps the two where it is odd)."""
+        if nbytes not in self._iovs:
+            h, nb = RUN // 2, -(-nbytes // RUN)
+            j = np.arange(nb, dtype=np.uint64) * np.uint64(h)
+            ln = np.minimum(np.uint64(h), np.uint64(nbytes // 2) - j)
+            ts = []
+            for b0, b1 in self._bufs:
+                t = np.empty((nb, 2, 2), np.uint64)
+                t[:, 0, 0] = np.uint64(b0.ctypes.data) + j
+                t[:, 1, 0] = np.uint64(b1.ctypes.data) + j
+                t[:, :, 1] = ln[:, None]
+                ts.append(t)
+            self._iovs[nbytes] = ts
+        return self._iovs[nbytes]
+
+    def _cuts(self, nb: int, lead: bool) -> list:
+        """The block ranges an expert of nb blocks is read and DMAed in: one, or with nothing
+        in flight (`lead`) `pieces`, the first `self.lead` of it and the rest in equal parts
+        (equal parts all where self.lead is None)."""
+        if not lead or self.pieces <= 1 or nb <= 1:
+            return [(0, nb)]
+        if self.lead is None:
+            c = [nb * p // self.pieces for p in range(self.pieces + 1)]
+        else:
+            c1, r = max(1, min(nb - 1, round(nb * self.lead))), self.pieces - 1
+            c = [0, c1] + [c1 + (nb - c1) * p // r for p in range(1, r + 1)]
+        c = sorted(set(c))
+        return list(zip(c[:-1], c[1:]))
+
     def write_slot(self, addr: int, data) -> None:
         from .board import swapped
         if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
                 and len(data) % self.blk == 0):
-            self._staging(len(data))            # the file's runs, read in place
+            n = len(data)
+            self._staging(n)                    # the file's runs, read in place
             i = self._pair()
-            pieces = self._split_pieces(len(data))[i]
-            nb = pieces.shape[0]
-            iov = pieces[np.arange(nb), _parity(addr // RUN + np.arange(nb))]
-            bufs, h = self._bufs[i], RUN // 2
-            # nothing in flight: the link waits for this read, so it goes in parts (each one
-            # DMA call per channel more)
-            parts = self.pieces if self._lead or not self._q.unfinished_tasks else 1
+            nb, h, bufs = -(-n // RUN), RUN // 2, self._bufs[i]
+            par = self._par.get((addr, nb))
+            if par is None:                     # (CHASH: where each block lands)
+                par = self._par[addr, nb] = _parity(addr // RUN + np.arange(nb)).astype(bool)
+            if data.readiov is not None:        # an iovec array: no buffer objects
+                t = self._iov(n)[i]
+                iov = np.where(par[:, None, None], t[:, ::-1], t).reshape(-1, 2)
+
+                def read(j0, j1):
+                    data.readiov(iov[2 * j0:2 * j1], j0 * RUN)
+            else:
+                pv = self._split_pieces(n)[i][np.arange(nb), par.astype(np.intp)]
+
+                def read(j0, j1):
+                    data.readv(pv[j0:j1].reshape(-1).tolist(), j0 * RUN)
+            # nothing in flight: the link waits for this read, so it goes in parts, a short
+            # one first (each part one DMA call per channel more)
+            lead = self._lead or not self._q.unfinished_tasks
             self._lead = False
-            cut = sorted({nb * p // parts for p in range(parts + 1)})
-            for j0, j1 in zip(cut[:-1], cut[1:]):
-                data.readv(iov[j0:j1].reshape(-1).tolist(), j0 * RUN)
-                self._put(lambda a=j0 * h, b=min(j1 * h, len(data) // 2):
+            for j0, j1 in self._cuts(nb, lead):
+                read(j0, j1)
+                self._put(lambda a=j0 * h, b=min(j1 * h, n // 2):
                           self._dma(addr // 2, bufs, a, b), i if j1 == nb else None)
             self.direct += 1
             return
@@ -896,28 +1064,37 @@ class BoardDram:
     def _beat(self, at: int, data: np.ndarray) -> None:
         """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds
         it (CHASH: beat b of chunk m on channel b ^ parity(m))."""
+        t0 = time.perf_counter()
         m, c = at // self.blk, at // (self.blk // 2) % 2
         if self.board.chash:
             c ^= m.bit_count() & 1
         self.board.t.mem_write(c, m * (self.blk // 2), data)
+        if self.calls is not None:
+            self.calls.append((t0, time.perf_counter(), len(data)))
 
     def _blocks(self, at: int, data: np.ndarray) -> None:
         """Whole chunks of the host's words (at, len: multiples of 128) to the two channels, as
         Board.write does (CHASH's swaps), without its general path's copies."""
         from .board import BEAT, swapped
+        t0 = time.perf_counter()
         v = data.reshape(-1, 2, BEAT)
         sw = swapped(at, len(v)) if self.board.chash else np.zeros(len(v), bool)
         for c in (0, 1):
             run = np.where(sw[:, None], v[:, 1 - c], v[:, c])
             self.board.t.mem_write(c, at // 2, run.reshape(-1))
+        if self.calls is not None:
+            self.calls.append((t0, time.perf_counter(), len(data)))
 
     def _dma(self, off: int, bufs, a: int = 0, b: int | None = None) -> None:
         """bufs[c][a:b] to channel c's run from channel offset off + a."""
         t0 = time.perf_counter()
         for c in (0, 1):
             self.board.t.mem_write(c, off + a, bufs[c][a:b])
-        self.dma_s += time.perf_counter() - t0
+        t1 = time.perf_counter()
+        self.dma_s += t1 - t0
         self.dma_bytes += 2 * len(bufs[0][a:b])
+        if self.calls is not None:
+            self.calls.append((t0, t1, 2 * len(bufs[0][a:b])))
 
     def read(self, addr: int, n: int) -> bytes:
         """n bytes from the card. Within one 64-byte beat (a poll's seq, a request's row) that

@@ -106,7 +106,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          hint_part: int | None = None, hint_drop: bool = False,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
          formats: str | None = None, layer_major: int = 0, release_weights: bool = True,
-         willneed: bool = True) -> dict:
+         willneed: bool = True, pool_map: bool = True, legacy_serve: bool = False) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -138,7 +138,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         ekw["layer_major"] = layer_major        # (docs/offload.md 13)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
-                 release_weights=release_weights, **ekw)    # (the checkpoint released: 10.6)
+                 release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
+                 **ekw)
     load_s = time.time() - t
     srv = eng.server
     srv.policy = policy                         # the slots' replacement (ExpertServer)
@@ -186,6 +187,15 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     warm, pf = getattr(srv, "pool_warm", None), getattr(srv, "pool_file", None)
     if willneed and pf is not None:             # a request's misses read from the disk at once
         srv.ahead = pf.willneed
+    if legacy_serve:                            # the serving of docs/offload.md 10.7 (A/B, 10.8):
+        from opentpu.host import board as brd   # halves, buffer lists, the victims' entries
+        mem.lead, srv.clear_late = None, False  # first, a 50 us sleep between polls, out[] read
+        if pf is not None:                      # every poll
+            pf.iov = False
+        t_ = getattr(getattr(eng.backend, "board", None), "t", None)
+        if t_ is not None:
+            t_.host_idle = brd.HOST_IDLE
+        brd.HOST_TAKE = 0.0
 
     def warm_at():                              # the pool file's packed experts: read by the
         if warm is None:                        # warm thread, and in the page cache
@@ -203,7 +213,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     lg_sha = hashlib.sha256(np.asarray(lg, np.float32).tobytes()).hexdigest()[:16]
     tm0, b0, st0, calls0 = dict(tm), srv.bytes, len(eng.stats), dict(calls)
     if hint_trace:                              # the decode's timeline of hints and requests
-        srv.events = []
+        srv.events = []                         # (and BoardDram's DMA calls)
+        if hasattr(mem, "calls"):
+            mem.calls = []
     dma0 = (getattr(mem, "dma_s", 0.0), getattr(mem, "dma_bytes", 0))
     direct0 = getattr(mem, "direct", 0)         # experts read from the file into their runs
     wait0 = getattr(mem, "wait_s", 0.0)         # staging's waits for the DMA thread
@@ -230,6 +242,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if hint_trace:
         Path(hint_trace).write_text(json.dumps(srv.events))
         srv.events = None
+        if getattr(mem, "calls", None) is not None:
+            Path(hint_trace).with_suffix(".calls.json").write_text(json.dumps(mem.calls))
+            mem.calls = None
     host = {k: round(tm[k] - tm0[k], 3) for k in tm}          # the decode's
     host.update(bytes=srv.bytes - b0, polls_read_s=host.pop("read"),
                 polls_reads=calls["read"] - calls0["read"])     # (each a card read's DMA)
@@ -280,7 +295,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 misses_per_token_decode_2nd_half=round(float(dec[len(dec) // 2:].mean()), 2)
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
-                release_weights=release_weights, willneed=willneed,
+                release_weights=release_weights, willneed=willneed, pool_map=pool_map,
+                legacy_serve=legacy_serve,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
                 load_s=round(load_s), prefill_s=round(prefill_s), generate_s=round(gen_s),
                 loop="host" if host_loop else "card", embed=spec.embed,
@@ -355,6 +371,14 @@ def main():
     ap.add_argument("--no-willneed", action="store_true",
                     help="read a request's misses from the pool one after another (by default "
                          "PoolFile.willneed queues those not in the page cache at once)")
+    ap.add_argument("--no-pool-map", action="store_true",
+                    help="read the pool through read() only (by default each read is also "
+                         "touched through a read-only map of the pool: its page cache's standing "
+                         "under MGLRU, docs/offload.md 10.7)")
+    ap.add_argument("--legacy-serve", action="store_true",
+                    help="serve as before docs/offload.md 10.8 (A/B): a request's first miss in "
+                         "halves, its reads through buffer lists, each victim's entry cleared "
+                         "before its slot is written, a 50 us sleep between empty polls")
     ap.add_argument("--release-weights", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--willneed", action="store_true", help=argparse.SUPPRESS)  # (the default)
     a = ap.parse_args()
@@ -369,7 +393,7 @@ def main():
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
-             not a.keep_weights, not a.no_willneed)
+             not a.keep_weights, not a.no_willneed, not a.no_pool_map, a.legacy_serve)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
