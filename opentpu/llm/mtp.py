@@ -204,7 +204,8 @@ class MTPDecoder:
             t0 = time.perf_counter()
             tab = np.zeros(2 * NK, np.uint32)
             for k in range(NK):
-                progs = compile_gen(img, blk, k, eng.block, forced)
+                progs = eng.cached(("mtpgen", blk, k, eng.block, forced),
+                                   lambda: (compile_gen(img, blk, k, eng.block, forced), None))[0]
                 if progs is None:
                     continue
                 if not G.fits(img, progs):
