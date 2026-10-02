@@ -9,10 +9,9 @@ import numpy as np
 import pytest
 
 from opentpu.isasim import board_config
-from opentpu.llm import generate as G
 from opentpu.llm import prefill as PF
 from opentpu.llm.mtp import MTPDecoder, MTPStats, mtp_engine
-from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+from opentpu.llm.qwen3 import PREFILL_ROWS, RUN_WORDS, Engine, device_config
 
 from test_mtp import CFG, FP4, _mtp_kv, _mtp_weights, _states
 from test_qwen35 import _tiny_model
@@ -45,24 +44,26 @@ def _static(eng, toks, R_max):
 
 
 def _drams(eng, P):
-    """Each slice's DRAM but the prompt runs' own words: out[0 .. P] and the state's tpos."""
+    """Each slice's DRAM but the prompt runs' own words: out[0 .. P] and the state's run
+    words (tpos, LFM2's ring words: qwen3.RUN_WORDS)."""
     g = eng.image.lookup["gen"]
     out = []
     for s in eng.backend.machine.slices:
         d = s.dram.copy()
         d[g["out"]:g["out"] + 4 * (P + 1)] = 0
-        d[g["state"] + 4 * G.S_TPOS:g["state"] + 4 * G.S_TPOS + 4] = 0
+        for w in RUN_WORDS.values():
+            d[g["state"] + 4 * w:g["state"] + 4 * w + 4] = 0
         out.append(d)
     return out
 
 
 def _model(case):
-    if case.startswith("qwen3"):         # Qwen3 (no convolutions: every run at a run-time position)
-        from test_autodecode import _tiny
-        W, spec = _tiny("qwen3")
+    if case.startswith(("qwen3", "lfm2")):  # Qwen3 (no convolutions: every run at a run-time
+        from test_autodecode import _tiny   # position), LFM2 (its 3-tap convolutions' ring)
+        W, spec = _tiny(case.split("-")[0])
         if case == "qwen3-emb8":
             spec = dataclasses.replace(spec, embed="int8")
-        S = 2 if case == "qwen3-design" else 1
+        S = 2 if case.endswith("-design") else 1
         return W, spec, device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S), {}
     if case == "kh16":
         _, W, spec = _tiny_model(16, 16, init=0.2)
@@ -84,6 +85,8 @@ def _model(case):
     ("qwen3", 250, 20),     # Qwen3 (qwen3_rows), one slice
     ("qwen3-design", 37, 30),
     ("qwen3-emb8", 37, 30),     # the int8 embedding (Llama-likes: SmolLM3, Phi-4-mini)
+    ("lfm2", 250, 20),
+    ("lfm2-design", 37, 30),
 ])
 def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     """Two prompts, the second from where the first left (a chat's next turn): each one's last
@@ -118,7 +121,7 @@ def test_prompt_runs_are_compile_time_runs(case, P1, P2):
     # (fit_chunk's runs) gives the same logits, states and windows, and the next step's logits
     c = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
     assert all(np.array_equal(x, c.prefill(t)) for x, t in zip(got, (p1, p2)))
-    if K > 1:
+    if "linear" in getattr(spec, "kinds", ()):     # Qwen3.5's DeltaNet states and windows
         assert all(np.array_equal(x, y) for x, y in zip(_states(a, spec, 0), _states(c, spec, 0)))
     assert np.array_equal(a.step(5), c.step(5))
 

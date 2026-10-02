@@ -24,6 +24,7 @@ import numpy as np
 from .. import isa as I
 from ..compiler import CompileError
 from . import generate as G
+from .qwen3 import RUN_WORDS
 
 
 def split(p0: int, P: int, R_max, block: int, K: int) -> list[tuple[int, int, str]]:
@@ -57,10 +58,11 @@ def supported(eng) -> bool:
 
 
 def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0):
-    """The run's programs (kept by the engine; through its program cache), or on the card
-    (runs_words) the program assembled once: a run of another program loads its words, not
-    an assembly of them (3-5 ms a run; MTP's rows and M runs alternate). hidden, slot: MTP's
-    rows (their hidden stored, the states' slot); M's take neither."""
+    """The run's (programs, the state words it reads) (kept by the engine; through its
+    program cache): the programs, or on the card (runs_words) the program assembled once, so
+    a run of another program loads its words, not an assembly of them (3-5 ms a run; MTP's
+    rows and M runs alternate). hidden, slot: MTP's rows (their hidden stored, the states'
+    slot); M's take neither."""
     img, block = eng.image, eng.block
     if kind == "M":
         hidden, slot = False, 0
@@ -74,9 +76,9 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
         what = ("prompt", kind, R, blocks, hidden, slot)
 
     def compile():
-        return img.compile_prompt_run(blocks, R, kind, block, **kw), None
+        return img.compile_prompt_run(blocks, R, kind, block, **kw)
     if what not in done:
-        progs = eng.cached(what, compile)[0]
+        progs, ra = eng.cached(what, compile)
         if not G.fits(img, progs):
             raise CompileError(f"prompt run {what}: {max(map(len, progs))} instructions, "
                                f"IMEM {img.cfg.IMEM_WORDS // 8}")
@@ -85,7 +87,10 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
             progs = np.asarray(I.assemble(progs[0]), np.uint32)
         elif prep is not None:
             prep(progs)
-        done[what] = progs
+        names = {v.name for v, _ in ra or ()}
+        if blocks:                  # a run-time run: and the words its kernel reads itself
+            names |= set(getattr(img, "prompt_words", ()))
+        done[what] = progs, sorted(names)
     return done[what]
 
 
@@ -119,16 +124,38 @@ def write_tokens(eng, p0: int, tokens) -> None:
         eng.backend.write(s, g["out"] + 4 * p0, t)
 
 
-def run(eng, progs, p: int, R: int) -> dict:
-    """One run at position p (its tpos word written first)."""
-    if p >= conv_k(eng) - 1:
-        g = eng.image.lookup["gen"]
-        for s in range(eng.cfg.S):
-            eng.backend.write(s, g["state"] + 4 * G.S_TPOS,
-                              np.full(1, p % eng.block, np.float32))
+def words(eng, names, p: int, R: int) -> dict:
+    """The state words (qwen3.RUN_WORDS) of a run of R rows at p: tpos; LFM2's ring, the
+    first row of the last K in its state ring ((p + 1) mod K), and ringo, the rotation of the
+    ring after the run (-(p + R) mod K, lfm2._ring_store)."""
+    K = conv_k(eng)
+    v = {"tpos": p % eng.block, "ring": (p + 1) % K, "ringo": -(p + R) % K}
+    return {RUN_WORDS[n]: v[n] for n in names}
+
+
+def run(eng, entry, p: int, R: int) -> dict:
+    """One run at position p (programs' entry): the state words it reads written first."""
+    progs, names = entry
+    if names:
+        g, w = eng.image.lookup["gen"], words(eng, names, p, R)
+        for a, b in _ranges(sorted(w)):
+            x = np.array([w[i] for i in range(a, b)], np.float32)
+            for s in range(eng.cfg.S):
+                eng.backend.write(s, g["state"] + 4 * a, x)
     st = eng.backend.run(progs)
     st["rows"] = R
     return st
+
+
+def _ranges(ws):
+    """Runs [a, b) of consecutive word indices."""
+    out = []
+    for i in ws:
+        if out and out[-1][1] == i:
+            out[-1][1] = i + 1
+        else:
+            out.append([i, i + 1])
+    return out
 
 
 def logits(eng, R: int) -> np.ndarray:

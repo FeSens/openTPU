@@ -76,7 +76,7 @@ from .lfm2 import _place, plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, TposWords,
+from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords,
                     _attention, _attention_rows, _Bump,
                     _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
                     _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
@@ -1143,9 +1143,10 @@ class Image(EmbedHost):
 
     def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK,
                            hidden: bool = False, slot: int = 0, p0: int | None = None):
-        """qwen35_prompt_run's programs (docs/prefill.md), one per slice: R rows of a prompt
-        at a run-time position of bucket `blocks` (from conv_k - 1; the position in the state's
-        tpos word), or at the compile-time position p0 (the rows before conv_k - 1)."""
+        """qwen35_prompt_run's (programs, run_args) (docs/prefill.md), a program per slice: R
+        rows of a prompt at a run-time position of bucket `blocks` (from conv_k - 1; the
+        position in the state's tpos word), or at the compile-time position p0 (the rows
+        before conv_k - 1; no run_args)."""
         spec = self.spec
         if spec.moe is not None:
             raise ValueError("a MoE model's prompt runs layer by layer (compile_layer_run)")
@@ -1161,10 +1162,11 @@ class Image(EmbedHost):
                           1 if kind == "M" else 0)
         else:
             pos = p0
-        return [qwen35_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s, slot),
-                                                      "pos": pos, "R": R, "kind": kind,
-                                                      "block": block, "hidden": hidden}).finish()
-                for s in range(self.cfg.S)]
+        bs = [qwen35_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s, slot), "pos": pos,
+                                                    "R": R, "kind": kind, "block": block,
+                                                    "hidden": hidden})
+              for s in range(self.cfg.S)]
+        return [b.finish() for b in bs], list(bs[0].run_args)
 
     def compile_mtp_run(self, blocks: int, lo: int, R: int, block: int = ATTN_BLOCK,
                         h0: int = 0):
@@ -2242,7 +2244,7 @@ def qwen35_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK, hidden
     position in the generate state's tpos word (run_words: no host arguments), or the run's
     first position, a compile-time one (the rows before conv_k - 1). hidden: MTP's rows."""
     toks = None if isinstance(pos, RunRows) else OutTokens(1 if kind == "M" else 0)
-    with TposWords(m, pos):
+    with RunWords(m, pos):
         if kind == "M":
             qwen35_mtp.fn(m, pos, R, block, tokens=toks)
         else:

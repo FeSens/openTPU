@@ -43,7 +43,8 @@ from .. import fp32 as F
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, KVDesc, QTensor, Tensor
+from .. import isa as I
+from ..compiler import Affine, KVDesc, QTensor, Tensor, current
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
@@ -53,8 +54,9 @@ from ..runtime import quantize_rows
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
-from .qwen3 import (RunPos, _formats, _inputs, _inputs_rows, _lookup_alloc, _lookup_build,
-                    _lookup_desc, _tok_arg, _tokens_arg, compile_decode)
+from .qwen3 import (OutTokens, RunPos, RunRows, RunWords, _formats, _inputs, _inputs_rows,
+                    _lookup_alloc, _lookup_build, _lookup_desc, _tok_arg, _tokens_arg,
+                    compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
                     _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables, EmbedHost, fill_logits,
                     step_descriptors)
@@ -400,6 +402,8 @@ class Image(EmbedHost):
     group) keys, each run's blocks one after the other.
     """
 
+    prompt_words = ("ringo",)    # a prompt run reads it itself (_ring_store, prefill.run)
+
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
                  experts: int | None = None, embed_host: bool | None = None,
@@ -665,6 +669,29 @@ class Image(EmbedHost):
                                               **_tokens_arg(self, tokens, rows)}).finish()
                 for s in range(self.cfg.S)]
 
+    def compile_prompt_run(self, blocks: int, R: int, kind: str, block: int = ATTN_BLOCK,
+                           p0: int | None = None):
+        """lfm2_prompt_run's (programs, run_args) (docs/prefill.md), a program per slice: R
+        rows of a prompt at a run-time position of bucket `blocks` (from conv_k - 1: the state's
+        tpos and ring words), or at the compile-time position p0 (the rows before conv_k - 1;
+        no run_args)."""
+        if self.spec.moe is not None:
+            raise ValueError("a MoE model runs one row per program (its MoE block routes one "
+                             "token)")
+        if not self.lookup:
+            raise ValueError("a prompt run needs lookup tables (lookup=True)")
+        if kind not in ("P", "L"):
+            raise ValueError(f"prompt run kind {kind!r}")
+        if R > self.rows:
+            raise ValueError(f"{R} rows, the image's I/O area holds {self.rows}")
+        pos = p0 if p0 is not None else \
+            RunRows(blocks, block, max((blocks - 1) * block, self.spec.conv_k - 1),
+                    self.lookup["zmask"], self.cap, R, 0)
+        bs = [lfm2_prompt_run.trace(self.cfg, s, {"m": self.descriptors(s), "pos": pos, "R": R,
+                                                  "kind": kind, "block": block})
+              for s in range(self.cfg.S)]
+        return [b.finish() for b in bs], list(bs[0].run_args)
+
     # ---- kernel descriptors
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
@@ -810,30 +837,60 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     _lm_head(x, m, spec)
 
 
+def _ring_store(lw, last, ringo: int, K: int, n: int) -> None:
+    """The state ring's rows 1 .. 2K-1 (_ring_rows) from `last`, the B * x rows of the last K
+    positions q = p'-K .. p'-1 (p' the next position): row y holds slot (y - 1) mod K, its
+    position's row last[(y - 1 - p') mod K]. A run-time p' makes that a rotation: the K rows
+    and again their first K - 1 go to a TMEM window, and row y (and its mirror y + K) is the
+    window's row o + y - 1 (o + y - K - 1), o = -p' mod K (the state word at TMEM `ringo`,
+    prefill.words). One ST per row from a register offset, to fixed DRAM rows; every copy is
+    rewritten as R steps would leave it (row 0, the scratch row, not)."""
+    b = current()
+    win = ol.empty([2 * K - 1, n])
+    win[0:K, :].set(last)
+    win[K:2 * K - 1, :].set(last[0:K - 1, :])
+    r = b.scratch()
+    b.emit(I.rld(r, ringo, mul=win.rs, comment="the ring's rotation"))
+    for y in range(1, 2 * K):
+        ra, imm = b.addr(Affine.of(lw.state.base) + 4 * n * y)
+        j = y - 1 if y <= K else y - K - 1
+        b.emit(I.st(imm, win.base + j * win.rs, n, ra=ra, rb=r, comment="ring row"))
+    b.unscratch(r)
+    del win
+
+
 def _conv_rows(x, lw, p0: int, spec: Spec):
     """_conv for R consecutive positions p0 .. p0+R-1 at once: in_proj streams once for the R
     rows (B and x first, C after the convolution: TMEM would not hold all three), and row r
     convolves over the rows before it in the chunk and the ring (positions
     before p0). The same products and sums per row as _conv, in the same order, so the result
-    is bit-identical; the ring ends up holding the chunk's last K rows, each in its slot."""
+    is bit-identical; the ring ends up holding the chunk's last K rows, each in its slot. p0 a
+    RunRows (a prompt run, docs/prefill.md): the ring's rows by its ring word, and the whole ring
+    stored from the last K rows (_ring_store)."""
     K, R = spec.conv_k, x.rows
     n = lw.taps.shape[1]
+    run = isinstance(p0, RunRows)
     taps = ol.load(lw.taps)                     # [K, n]; row K-1 weighs the current token
     E = ol.empty([K - 1 + R, n])                # B * x of positions p0-K+1 .. p0+R-1
-    for j in range(1, min(K, p0 + 1)):          # the ring's rows before the chunk
-        ol.load(lw.state[1 + (p0 - j) % K, :], out=E[K - 1 - j, :])
+    prev = zip(range(1, K), _ring_rows(K, p0)[0]) if run else \
+        ((j, 1 + (p0 - j) % K) for j in range(1, min(K, p0 + 1)))
+    for j, row in prev:                         # the ring's rows before the chunk
+        ol.load(lw.state[row, :], out=E[K - 1 - j, :])
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), spec.eps))
     bx = E[K - 1:K - 1 + R, :]                  # B * x; B, C, x: this slice's channels
     bx.set(ol.dot(xs, lw.win[0:n, :]) * ol.dot(xs, lw.win[2 * n:3 * n, :]))
-    for r in range(max(0, R - K), R):
-        for sl in _ring_rows(K, p0 + r)[1]:
-            ol.store(lw.state[sl:sl + 1, :], E[K - 1 + r:K + r, :])
-    full = max(0, K - 1 - p0)                   # rows before it lack positions < 0
+    if run:
+        _ring_store(lw, E[R - 1:R - 1 + K, :], p0.words["ringo"], K, n)
+    else:
+        for r in range(max(0, R - K), R):
+            for sl in _ring_rows(K, p0 + r)[1]:
+                ol.store(lw.state[sl:sl + 1, :], E[K - 1 + r:K + r, :])
+    full = 0 if run else max(0, K - 1 - p0)     # rows before it lack positions < 0
     groups = [(r, r + 1) for r in range(min(full, R))] + ([(full, R)] if full < R else [])
     y = ol.empty([R, n]) if len(groups) > 1 else None
     for r0, r1 in groups:
         acc = bx[r0:r1, :] * taps[K - 1, :][None, :]
-        for j in range(1, min(K - 1, p0 + r0) + 1):
+        for j in range(1, (K - 1 if run else min(K - 1, p0 + r0)) + 1):
             acc = acc + E[K - 1 + r0 - j:K - 1 + r1 - j, :] * taps[K - 1 - j, :][None, :]
         if y is None:
             y = acc
@@ -851,7 +908,7 @@ def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=No
     logits of the rows in `logit_rows` (a contiguous range, or empty). Bit-identical to R
     lfm2_step runs."""
     spec = m.spec
-    rows = [(0, p0 + r) for r in range(R)]
+    rows = p0 if isinstance(p0, RunRows) else [(0, p0 + r) for r in range(R)]
     x, c, s_ = _inputs_rows(m, rows, tokens)
 
     def layer(li, it):
@@ -864,6 +921,18 @@ def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=No
 
     run_layers(m.plan, layer)
     _lm_head_rows(x, m, spec, logit_rows)
+
+
+@ol.jit
+def lfm2_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
+    """A prompt run of R rows (docs/prefill.md), lfm2_rows with its tokens from out[]: kind
+    "P", or "L" (the prompt's last run: its last row's logits). pos: a RunRows (toks_at 0) at
+    the run-time position (the state's tpos and ring words, RunWords), or the run's first
+    position, a compile-time one (the rows before conv_k - 1)."""
+    run = isinstance(pos, RunRows)
+    with RunWords(m, pos):
+        lfm2_rows.fn(m, pos, R, [R - 1] if kind == "L" else [], block,
+                     None if run else OutTokens(0))
 
 
 def run_layers(runs, layer) -> None:
