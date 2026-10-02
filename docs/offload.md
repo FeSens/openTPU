@@ -1993,3 +1993,9 @@ to R - 1, which the host writes before the run; the slot holds RUN_ROWS records)
 Engine(..., embed_runs=True) brings back the embed runs and the compile-time-position runs; the ISA
 simulator gives the same bits both ways (`test_layer_major_prefill_is_bit_exact`, the 35B's
 layout at R = 1 and 2, and the embed runs at R = 1).
+
+On the card with it (2026-10-02, production g2fix 0885d436, Gen2 x8, session lm3, tree
+bc546a4; `layer_major.sh` RUNS="q35t16 q35lm1 q35lm2 q35lmp2"), the 35B's 16 tokens give the
+same prefill logits (88225ff781699291) and tokens four ways: token by token, layer-major R = 1
+and R = 2 with each layer's slots (840 and 480 requests in the prompt, 2755 and 2705 misses),
+and R = 2 pooled (480, 3027).
