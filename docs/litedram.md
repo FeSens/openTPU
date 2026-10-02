@@ -1843,6 +1843,39 @@ token against main ff186b1, memeff):
   needs the out-of-context timing check of the chooser's priority encoder (sys at 133.33 MHz).
   On the card it needs a read-to-write check: the ECC counters after mixed traffic at `rtw 3`.
 
+### What is left after memeff (2026-10-02)
+
+The breakdown above, again on the production RTL (main 4e0b866: two ports, memeff, port A's
+flush), now in the tree: `OTPU_LDC_BREAK=1 tools/perf_ddr.py ...` passes `+ldc_break` and
+prints and caches each channel's `BRK` line (`sim/verilator/otpu_ldc_mem.sv`). The categories are
+the same, in the same priority order. The co-simulation must run the board's configuration
+(`OTPU_MCOLS=4 OTPU_MXU=systolic OTPU_PAIR=1 OTPU_DSTEP=1 OTPU_STREAM=1`): without the last three
+the program is not the card's (Qwen3 4-bit: 5.37 M cycles against the card's 3.88 M).
+
+The whole model at 133.33 MHz, 4-bit layers, % of channel 0's cycles from its first command to
+its last (channel 1 within 0.1 points):
+
+| | Qwen3 | LFM2 | Qwen3.5 |
+|---|---|---|---|
+| Mcycles/token | 3.844 | 1.398 | 4.841 |
+| column commands (data) | 90.4 | 91.7 | 92.9 |
+| refresh | 2.7 | 2.7 | 2.7 |
+| the multiplexer (turnarounds, empty grants) | 1.6 | 0.9 | 1.9 |
+| rows opening and closing, a bank's timers | 1.5 | 1.3 | 1.3 |
+| the crossbar | 0.2 | 0.2 | 0.3 |
+| nothing asked | 3.6 | 3.2 | 0.9 |
+| of which gaps of 8+ cycles that end in the next beat of a recent read stream (up to 256 a gap) | 1.0 | 0.4 | 0.1 |
+
+- **memeff's A runs halved the rows' share** (2.2-2.7% before). Refresh is unchanged and
+  structural: DDR3 has no per-bank refresh.
+- **A sequential prefetch into the core's gaps** would read, in a gap, the next beats of the read
+  stream the gap interrupted. Its bound is the last row: 0.1 to 1.0%. The other gaps end in a
+  new stream (another matrix, the KV cache), whose address only the program knows. Not taken.
+- **The multiplexer's share** is what `fastmux` takes a third to a half of (-0.3 to -1.0%,
+  above). The rows' and the crossbar's are under 1.5% together.
+- **So the controller is within about 6% of its data rate on decode,** and no single fix is worth
+  more than about 1%. `fastmux` is the one to take, with a build that happens anyway.
+
 ### The core clock at DDR3-1066: the co-simulated grid
 
 Decode, 4-bit layers, int8 head, pos 544, one port per channel (the production controller);
