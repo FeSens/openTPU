@@ -937,11 +937,12 @@ Every step maps to an instruction the ISA already has. **No RTL change.**
 **Two things are new, and both are small.**
 - **Row 1's penalty must count d.** Both rows share `pa` / `pb`, the context up to t, and row
   0 must not see d.
-  - After the head, row 1's stored logit of d is penalized once: l' = min(l / g, l * g),
-    with g = pa[d] * R. That is l itself when d is in the context already, else
-    min(l / R, l * R).
+  - After the head, row 1's stored logit x of d stays when d is in the context already
+    (pb[d] = R), else becomes min(x / R, x * R). A select by MIN / MAX against +-2^127
+    picks between the two exactly; scaling x by R and back would round (section 11.5).
   - Then the maximum of d's 64-wide block is taken again.
-  - In all: an RLD of d's address, two LDs, four VOPs, an ST, an LD of the block and an RMAX.
+  - In all: an RLD of d's address, two LDs, about ten one-word VOPs, an ST, an LD of the
+    block and an RMAX.
 - **Each row needs its own logits buffer.** `lg` becomes two, or a second one beside it in
   the MTP area (1 MB each for a 248K vocabulary).
 
@@ -1011,6 +1012,79 @@ M2's greedy acceptance times phase 0's sampled / greedy ratio:
    TTFT and tok/s on the status line.
 
 The n-gram drafter (section 6.2) is one-hot too, so it would take the same sampled mode.
+
+### 11.5 Phase 4, step 1: the sampled loop on the ISA simulator and the RTL
+
+**What changed.**
+- `_verify_gen(samp=)` gives each row its own `generate.Sampler`:
+  - row 0 uses u[p + 1] and the loop's `lg`;
+  - row 1 uses u[p + 2] and the second `lg`, in the MTP area (`gen_alloc`; `gen_build` pads
+    it with -inf as `lg` is);
+  - `after(a0)` runs at once, and `after(a1)` inside the accepted branch;
+  - E has one Sampler.
+- **Row 1 reuses row 0's penalty factors** (`Sampler(pen_from=)`). Each chunk loads `pa` and
+  `pb` once. Each row then writes l * pa to its own tile and l * pb in place over the head's
+  output, then takes the MIN. That is 8 instructions a chunk for both rows instead of 10, so
+  a 4B verify is 122 instructions shorter (61 chunks at 2 rows). The plain loop's Sampler is
+  unchanged: the plain sampled generate programs hash the same before and after (0.8B, three
+  samplings, buckets 1 and 3).
+- **Row 1's draft penalty is exact** (`_penalize_draft`). With the stored logit x of d and
+  y = min(x / R, x * R):
+  - s = +2^127 when pb[d] > 1 (d in the context already), else -2^127;
+  - the result is max(min(y, -s), min(x, s)), which is x or y exactly for finite logits.
+  - 11.2's first form, min(x * pb[d] / R, x * pa[d] * R), rounds when d is in the context:
+    x * R / R is not always x in fp32.
+- **The host side.**
+  - `MTPDecoder.generate_card(sampling=, rng=, context=)` draws a0 =
+    `reference_pick(prefill logits)` with the generator's first uniform.
+  - `Engine._generate_inputs` then writes u[P + 1 .. P + n] and the penalty vectors over the
+    context and a0.
+  - u[P + n + 1] = 0.5 is a stand-in for the last verify's row 1. That row is never emitted,
+    and the stand-in is not drawn from the generator, which stays aligned with plain decode's.
+- **Programs.** The chain area is rewritten when the mode (forced, `Sampling.key`) changes,
+  and the program cache keys V and E by `Sampling.key`.
+- **The tool.** `tools/mtp_decode.py --loop device --sample T,K,P,R --seed S` runs plain
+  sampled decode and the sampled MTP loop from the same uniforms and checks that their
+  tokens are equal.
+
+**Tests on the ISA simulator** (`test_mtp_sampled_loop_is_plain_sampling`, 8 cases, all
+pass). Each case checks two things against plain sampled decode for the same uniforms
+(`reference_pick` on resident decode's logits): the tokens are equal, and the committed
+DeltaNet states and windows are equal word for word. The cases:
+- across bucket 256 with the right drafts, every third wrong, and the MTP's own drafts (E at
+  255);
+- with no penalty (T 1.5, top-k 20);
+- greedy with penalty 3.0;
+- the varied model with penalty 1.1;
+- a stop id;
+- 16 DeltaNet heads.
+
+**The model choice matters for the penalty.** The varied tiny model (initializer range 0.2)
+never let the penalty of the token before decide a pick in 16 tokens, at penalties 1.1 to
+3.0, because its next token rarely repeats the last. The tied model (0.02) mostly echoes its
+input, so the draft's penalty decides 7 picks in 16 tokens at penalty 1.5 (T 0.8, top-k 5,
+top-p 0.9) and 14 at greedy 3.0. Those are the penalty cases. With `_penalize_draft` turned off,
+both fail; with it, they pass.
+
+**RTL.** `test_mtp_sampled_loop_on_rtl` (Verilator, the board's memory path) starts from a
+251-token prefill with a0 sampled. It runs one sampled loop with penalty 1.5 across the
+bucket end, every third draft wrong. The tokens and the image's DRAM equal the ISA
+simulator's. The greedy `test_mtp_loop_on_rtl` passes too.
+
+**IMEM on the real layouts** (fp4, cap 4096). Each cell is V's instructions at bucket 1 / 16;
+IMEM holds 4096.
+
+| model | greedy | T 0.7, top-k 20, top-p 0.8 (chat) | top-k 64, penalty 1.1 |
+|---|---|---|---|
+| Qwen3.5-0.8B | 2395 / 2687 | 2625 / 2917 | 3150 / 3442 |
+| Qwen3.5-2B | 2165 / 2457 | 2395 / 2687 | 2920 / 3212 |
+| Qwen3.5-4B | 2648 / 3239 | 2879 / 3469 | 3404 / 3994 |
+
+- E is shorter in every case: at most 2679, the 4B at top-k 64 with the penalty.
+- Before row 1 shared the penalty factors, the 4B's bucket-16 V at top-k 64 with the
+  penalty was 4116 instructions, so it did not fit.
+- A V that does not fit raises `CompileError` (`_gen_programs`). A caller then falls back to
+  plain sampled decode.
 
 ## 12. Open questions
 

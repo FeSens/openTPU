@@ -20,6 +20,11 @@ KV caches (the model's and the MTP layer's) are positional and are overwritten b
 are read, and the recurrent state and windows of a rejected row sit in the uncommitted
 slot.
 
+Sampled (the loop on the card, docs/mtp.md 11), a0 and a1 are generate.Sampler's picks with
+the uniforms of positions p + 1 and p + 2, and the draft is accepted iff a0 == d: speculative
+sampling for a one-hot draft. The tokens are plain sampled decode's for the same uniforms;
+row 1's repetition penalty counts d (_penalize_draft).
+
 The prompt's prefill takes plain prefill's runs (qwen3.fit_chunk: the same rows, so its
 MMs pair as plain prefill's do), stores `hid` for every row and runs the MTP layer over the
 prompt's rows (h_i, x_(i+1)), which fills its KV cache; its last row (h_(P-1), a0) gives the
@@ -71,8 +76,9 @@ def mtp_engine(spec, W, cap: int = 4096, **kw) -> Engine:
 
 
 class MTPDecoder:
-    """Greedy speculative decoding with the MTP drafter on an Engine made by mtp_engine.
-    slot: the DeltaNet states' and windows' committed slot (DeltaNetParts)."""
+    """Speculative decoding with the MTP drafter on an Engine made by mtp_engine: greedy, and
+    sampled with the loop on the card (generate_card(sampling=)). slot: the DeltaNet states'
+    and windows' committed slot (DeltaNetParts)."""
 
     def __init__(self, engine: Engine):
         img = engine.image
@@ -119,10 +125,11 @@ class MTPDecoder:
         return self._drafts(len(toks))
 
     # ---- generation
-    def prefill(self, prompt, st: MTPStats, chunk: int = MTP_ROWS):
+    def prefill(self, prompt, st: MTPStats, chunk: int = MTP_ROWS, pick=None):
         """The prompt in plain prefill's runs (qwen3.fit_chunk, Engine.prefill's: their rows
         and so their MMs' pairing are its), each storing its rows' hidden, then the MTP layer
-        over them in runs of up to `chunk` rows; returns (a0, the first draft)."""
+        over them in runs of up to `chunk` rows; returns (a0, the first draft). pick(logits)
+        -> a0 (default the argmax)."""
         prompt = [int(t) for t in prompt]
         P, p = len(prompt), self.eng.pos
         if p != 0:
@@ -143,7 +150,8 @@ class MTPDecoder:
             self._run(progs, "prefill", n, st)
             nxt = prompt[p + 1:p + n + 1]
             if n == left:
-                a0 = int(np.argmax(self._logits(n)[n - 1]))
+                lg = self._logits(n)[n - 1]
+                a0 = int(np.argmax(lg)) if pick is None else int(pick(lg))
                 nxt = nxt + [a0]
             for j in range(0, n, chunk):
                 k = min(chunk, n - j)
@@ -188,15 +196,16 @@ class MTPDecoder:
 
     # ---- the loop on the card
     def _gen_programs(self, b0: int, b1: int, st: MTPStats | None = None,
-                      forced: bool = False) -> dict:
+                      forced: bool = False, samp: G.Sampling | None = None) -> dict:
         """Buckets b0 .. b1's programs of the MTP loop in the chain area and their table
-        entries (each compiled and written once per engine and `forced`); returns {(bucket,
-        kind): programs}."""
+        entries (each compiled and written once per engine, `forced` and sampler); returns
+        {(bucket, kind): programs}."""
         eng, img = self.eng, self.img
         a = img.lookup["mtpgen"]
-        if eng.__dict__.get("_mtp_forced", forced) != forced:
-            eng.__dict__.pop("_mtp_gen", None)      # the chain area holds the other kind
-        eng._mtp_forced = forced
+        mode = (forced, None if samp is None else samp.key)
+        if eng.__dict__.get("_mtp_forced", mode) != mode:
+            eng.__dict__.pop("_mtp_gen", None)      # the chain area holds another kind
+        eng._mtp_forced = mode
         done = eng.__dict__.setdefault("_mtp_gen", {})
         for blk in range(b0, b1 + 1):
             if (blk, V0) in done:
@@ -204,8 +213,11 @@ class MTPDecoder:
             t0 = time.perf_counter()
             tab = np.zeros(2 * NK, np.uint32)
             for k in range(NK):
-                progs = eng.cached(("mtpgen", blk, k, eng.block, forced),
-                                   lambda: (compile_gen(img, blk, k, eng.block, forced), None))[0]
+                sk = samp if KINDS[k][0] in "VE" else None      # (D, D1: either mode's)
+                progs = eng.cached(("mtpgen", blk, k, eng.block, forced,
+                                    None if sk is None else sk.key),
+                                   lambda: (compile_gen(img, blk, k, eng.block, forced, sk),
+                                            None))[0]
                 if progs is None:
                     continue
                 if not G.fits(img, progs):
@@ -224,7 +236,9 @@ class MTPDecoder:
         return done
 
     def generate_card(self, prompt, max_new: int = 32, stop=None, on_token=None,
-                      drafts=None, deadline: float | None = None) -> MTPStats:
+                      drafts=None, deadline: float | None = None,
+                      sampling: G.Sampling | None = None, context=None,
+                      rng=None) -> MTPStats:
         """Greedy MTP decoding with the loop on the device (docs/mtp.md 10): the prefill as
         generate()'s (its last logits' argmax on the host, as Engine.generate_card's callers
         take it), then one device run that verifies, drafts and chains through the buckets'
@@ -236,19 +250,38 @@ class MTPDecoder:
         (tests): the draft of each position q (drafts[q], q < cap + 2) instead of the MTP's,
         from the first iteration's on. deadline (seconds, a card's run_generate): past it the
         host writes the stop word (st.timed_out; the card halts at its next verify), and 10 s
-        later a run still going raises TimeoutError."""
+        later a run still going raises TimeoutError.
+
+        sampling (generate.Sampling) with rng (a numpy Generator): sampled, as
+        Engine.generate_card(sampling=...) (docs/mtp.md 11): a0 is the sampler's pick from
+        the prefill's logits (generate.reference_pick, the device's arithmetic) with the
+        generator's first uniform, then the run's tokens with its next n, one per position
+        (Engine._generate_inputs); the repetition penalty over `context` (default the prompt)
+        and the tokens. The tokens equal the plain sampled loop's for the same uniforms."""
+        samp = sampling
+        if samp is not None and rng is None:
+            raise ValueError("a sampled generate_card needs rng (the uniforms)")
         st = MTPStats(prompt=len(prompt))
         t0 = time.perf_counter()
-        a0, d = self.prefill(prompt, st)
+        ctx = [int(t) for t in (prompt if context is None else context)]
+
+        def pick(lg):
+            u = np.minimum(np.float32(rng.random()), np.float32(1 - 2.0 ** -24))
+            return G.reference_pick(lg, samp, ctx, u, self.img.cfg.S,
+                                    getattr(self.img.spec, "softcap", None))
+        a0, d = self.prefill(prompt, st, pick=None if samp is None else pick)
         st.prefill_s, st.prefill_compile_s = time.perf_counter() - t0, st.compile_s
-        return self.loop_card(a0, d, max_new, stop, on_token, drafts, st, deadline)
+        return self.loop_card(a0, d, max_new, stop, on_token, drafts, st, deadline,
+                              samp, ctx + [a0], rng)
 
     def loop_card(self, a0: int, d: int, max_new: int = 32, stop=None, on_token=None,
                   drafts=None, st: MTPStats | None = None,
-                  deadline: float | None = None) -> MTPStats:
+                  deadline: float | None = None, samp: G.Sampling | None = None,
+                  context=(), rng=None) -> MTPStats:
         """generate_card after its prefill: a0 (the token at Engine.pos, emitted) and d (the
         draft of the next position) -> the device's run of the MTP loop from the committed
-        slot (see generate_card)."""
+        slot (see generate_card); sampled with samp, the uniforms from rng and the penalty's
+        context (the ids so far, a0 with them)."""
         eng, img = self.eng, self.img
         spec, block = img.spec, eng.block
         ids = list(spec.eos if stop is None else stop)
@@ -261,14 +294,18 @@ class MTPDecoder:
         if a0 in ids or n <= 0:
             return st
         b0, b1 = P // block + 1, (P + n) // block + 1
-        progs = self._gen_programs(b0, b1, st, drafts is not None)
+        progs = self._gen_programs(b0, b1, st, drafts is not None, samp)
         g = img.lookup["gen"]
+        if samp is not None:        # u[P + 1 .. P + n], then a stand-in for row 1 of the
+            eng._generate_inputs(samp, P, n, context, rng)      # last verify (not emitted)
+            for s_ in range(img.cfg.S):
+                eng.backend.write(s_, g["uni"] + 4 * (P + n + 1), np.full(1, 0.5, np.float32))
         if drafts is not None:
             dt = np.zeros(img.cap + 2, np.float32)
             dt[:len(drafts)] = np.asarray(drafts, np.float32)[:img.cap + 2]
             eng.backend.write(0, img.lookup["mtpgen"]["dtab"], dt)
             d = int(dt[P + 1])
-        words = G.state_words(spec, a0, P, n, ids, block)
+        words = G.state_words(spec, a0, P, n, ids, block, samp)
         words[S_DRAFT], words[S_PAR] = d, self.slot
         for s_ in range(img.cfg.S):
             eng.backend.write(s_, g["state"], words)
@@ -315,12 +352,21 @@ NK = len(KINDS)
 V0, E0, D2, D1 = 0, 2, 4, 5
 
 
-def gen_alloc(b, cap: int, block: int = ATTN_BLOCK) -> dict:
+def gen_alloc(b, cap: int, spec, block: int = ATTN_BLOCK) -> dict:
     """DRAM of the MTP loop: a program slot per bucket and kind, and the chain table
-    ([address, instructions] per bucket and kind)."""
+    ([address, instructions] per bucket and kind); the sampled verify's row 1 logits (the
+    generate loop's lg holds row 0's: generate.Sampler)."""
     nb = G.buckets(cap, block)
     return {"progs": b.alloc(G.PROG_SLOT * NK * nb), "ptab": b.alloc(8 * NK * nb), "nb": nb,
-            "dtab": b.alloc(4 * (cap + 2))}      # tests: the draft of each position
+            "dtab": b.alloc(4 * (cap + 2)),     # tests: the draft of each position
+            "lg": b.alloc(4 * G._vpad(spec))}
+
+
+def gen_build(put, s: int, S: int, spec, a: dict) -> None:
+    """The row 1 logits' padding: -inf after this slice's rows to a whole block (as
+    generate.build's lg)."""
+    v_loc = spec.vocab // S
+    put(s, a["lg"], np.full(-(-v_loc // G.BLK) * G.BLK, -np.inf, np.float32))
 
 
 def prog_addr(a: dict, blocks: int, kind: int) -> int:
@@ -367,26 +413,43 @@ def _store_state(g, st) -> None:
     ol.store(g.state[S_DRAFT:S_ACC + 1], st[S_DRAFT:S_ACC + 1])
 
 
-def _verify_gen(m, pos, block: int, c: int, R: int):
+def _verify_gen(m, pos, block: int, c: int, R: int, samp: G.Sampling | None = None):
     """V (R = 2: rows t, d at p, p + 1) or E (R = 1: t at the bucket's last position) of
-    parity c: the rows kernel (fork, hidden) with an ARGMAX per row; a0 -> out[p + 1], and
-    with the draft accepted (d == a0, tokens left, a0 not a stop id) a1 -> out[p + 2]; the
-    iteration's words and the commit; HALT at a stop id, the host's stop word or no tokens
-    left, else HALT CHAIN to the bucket's D or D1."""
+    parity c: the rows kernel (fork, hidden) with an ARGMAX per row, or with samp the sampled
+    loop's pick (generate.Sampler: row r with the uniform of position p + 1 + r, row 1's
+    logits in the MTP area's lg); a0 -> out[p + 1], and with the draft accepted (d == a0,
+    tokens left, a0 not a stop id) a1 -> out[p + 2]; the iteration's words and the commit (the
+    penalty's context gets the emitted ids); HALT at a stop id, the host's stop word or no
+    tokens left, else HALT CHAIN to the bucket's D or D1. Sampled, accepting d iff the pick a0
+    equals it is speculative sampling for the one-hot draft (docs/mtp.md 11.1)."""
     from .qwen35 import qwen35_rows
     b = current()
     g, a = m.gen, m.mtpgen
     st, at = _load_state(b, g)
     words = {"tok": st.base + G.S_TOK, "tok1": st.base + S_DRAFT, "tpos": st.base + G.S_TPOS}
     b.run_words = words
-    m.lm_sinks = [G.Greedy(b, m.v_loc, head_rows_chunk(R)) for _ in range(R)]
+    if samp is None:
+        m.lm_sinks = [G.Greedy(b, m.v_loc, head_rows_chunk(R)) for _ in range(R)]
+    else:
+        if b.S != 1:
+            raise CompileError("the sampled MTP loop runs on one slice")
+        consts = G.Sampler.constants(b, g, samp)
+        m.lm_sinks = []
+        for r in range(R):          # row 1 takes row 0's penalty factors of each chunk
+            m.lm_sinks.append(G.Sampler(b, m, g, samp, st, pos, consts,
+                                        lg=a["lg"] if r else None, u_at=pos.pos + 1 + r,
+                                        pen_from=m.lm_sinks[0] if r else None))
     qwen35_rows.fn(m, pos, R, list(range(R)), block, None, R > 1, True)
+    if samp is not None and samp.pen and R > 1:
+        _penalize_draft(b, g, st, m.lm_sinks[1])
     toks = [sk.token() for sk in m.lm_sinks]
-    m.lm_sinks = None
+    sinks, m.lm_sinks = m.lm_sinks, None
     a0, a1 = toks[0], toks[-1]
     left, tpos = st[G.S_LEFT:G.S_LEFT + 1], st[G.S_TPOS:G.S_TPOS + 1]
     stop = _hit(st, a0)
     ol.store(g.out[pos.pos + 1:pos.pos + 2], a0)
+    if samp is not None:
+        sinks[0].after(a0)
     if R > 1:
         d = st[S_DRAFT:S_DRAFT + 1]
         n = (ol.minimum(ol.abs(d - a0), 1.0) * -1.0 + 1.0) * _flag(left - 1.0) * \
@@ -396,6 +459,8 @@ def _verify_gen(m, pos, block: int, c: int, R: int):
         lp = b.begin_loop(0, rcount=r)
         b.unscratch(r)
         ol.store(g.out[pos.pos + 2:pos.pos + 3], a1)
+        if samp is not None:
+            sinks[1].after(a1)
         b.end_loop(lp)
         stop = ol.maximum(stop, _hit(st, a1) * n)
         st[G.S_TOK:G.S_TOK + 1].set(a0 + n * (a1 - a0))
@@ -422,6 +487,35 @@ def _verify_gen(m, pos, block: int, c: int, R: int):
     b.emit(I.halt())
     b.unscratch(r)
     G._chain(b, ptab_addr(a, pos.blocks, D2 if R > 1 else D1), what="the draft")
+
+
+def _penalize_draft(b, g, st, sk) -> None:
+    """Row 1 follows the draft d, so its repetition penalty counts d as in the context (row 0's
+    must not: both rows' chunks took the context's factors pa, pb). Row 1's stored logit x of
+    d stays when d is in the context already (pb[d] = R > 1), else (x the raw logit then)
+    becomes min(x / R, x * R), as Sampler.after's factors would give; a select by min/max with
+    +-2^127, exact for finite logits (x * R / R would round). Then the maximum of d's block
+    again (one slice: the row is d)."""
+    d = st[S_DRAFT:S_DRAFT + 1]
+    t = b.alloc((2,))
+    blk = b.alloc((G.BLK,))
+    r, rk, rb_ = b.scratch(), b.scratch(), b.scratch()
+    b.rld(r, d * 4.0, comment="the draft's bytes")
+    b.emit(I.ld(g.addr["pb"], t.base, 1, ra=r, comment="pb[d]"))
+    b.emit(I.ld(sk.lg, t.base + 1, 1, ra=r, comment="row 1's logit of d"))
+    pb, x = t[0:1], t[1:2]
+    z = ol.minimum(x * st[G.S_PENINV:G.S_PENINV + 1], x * st[G.S_PEN:G.S_PEN + 1])
+    s = (G._step(pb - 1.0) * 2.0 - 1.0) * 2.0 ** 127        # +2^127: d in the context
+    y = ol.maximum(ol.minimum(z, s * -1.0), ol.minimum(x, s))
+    b.emit(I.st(sk.lg, y.base, 1, ra=r, comment="penalized"))
+    k = d * (1.0 / G.BLK)                                   # d's block (f2i: the floor)
+    b.emit(I.rld(rk, k.base, mul=4 * G.BLK, comment="its bytes"))
+    b.emit(I.rld(rb_, k.base, comment="its index"))
+    b.emit(I.ld(sk.lg, blk.base, G.BLK, ra=rk, comment="d's block"))
+    b.emit(I.vop(I.V_RMAX, sk.bm.base, blk.base, 0, 1, G.BLK, 1, G.BLK, 0, ra=rb_,
+                 comment="its maximum"))
+    for x_ in (r, rk, rb_):
+        b.unscratch(x_)
 
 
 def _draft_gen(m, pos, block: int, R: int, forced: bool = False):
@@ -456,10 +550,11 @@ def _draft_gen(m, pos, block: int, R: int, forced: bool = False):
 
 
 def compile_gen(image, blocks: int, kind: int, block: int = ATTN_BLOCK,
-                forced: bool = False) -> list | None:
+                forced: bool = False, samp: G.Sampling | None = None) -> list | None:
     """Program KINDS[kind] of bucket `blocks` of the MTP loop (docs/mtp.md 10), one per slice;
     None when the bucket has no such position (E and D1 past the KV cache's end). forced
-    (tests): D and D1 take the drafts from the host's table (_draft_gen)."""
+    (tests): D and D1 take the drafts from the host's table (_draft_gen). samp: V and E
+    sample (docs/mtp.md 11), D and D1 are the same either way."""
     name = KINDS[kind]
     R = 1 if name in ("E0", "E1", "D1") else 2
     t0 = (blocks - 1) * block
@@ -470,7 +565,7 @@ def compile_gen(image, blocks: int, kind: int, block: int = ATTN_BLOCK,
         return None
     rp = RunRows(blocks, block, lo, image.lookup["zmask"], image.cap, R)
     c = int(name[1]) if name[0] in "VE" else 0
-    fn, kw = ((_verify_gen, {"c": c, "R": R}) if name[0] in "VE" else
+    fn, kw = ((_verify_gen, {"c": c, "R": R, "samp": samp}) if name[0] in "VE" else
               (_draft_gen, {"R": R, "forced": forced}))
     return [ol.jit(fn).trace(image.cfg, s, {"m": image.descriptors(s, c), "pos": rp,
                                             "block": block, **kw}).finish()
