@@ -833,6 +833,35 @@ Programs at cap 4096 (instructions; every one fits its 8K slot):
 | 2B | 2165-2458 | 1749-1895 | 363-655 | 276-422 |
 | 4B | 2648-3240 | 2133-2431 | 613-1197 | 424-716 |
 
+### 10.2 Milestone 2: the loop on the card
+
+Card session 2026-10-01 19:50-19:59 (opentpu), build 72256074 (xfix: Gen1, 133.33 MHz,
+DDR3-1066), tree dfac215. Setup as 10.1: phase 0's prompts 0, 3 and 7, 48 tokens each.
+- Plain greedy is the production loop on the card (`Engine.generate_card`).
+- MTP is `MTPDecoder.generate_card`: one device run per generation.
+
+**Tokens:** every prompt on all three models gives plain greedy's tokens on the card. The 0.8B's and
+2B's also equal the ISA simulator's (10.1).
+
+| model | device tok/s, plain | device tok/s, MTP | speedup | acceptance | best prompt (code) |
+|---|---|---|---|---|---|
+| Qwen3.5-0.8B | 27.71 | 36.64 | 1.322x | 0.68 | 1.372x |
+| Qwen3.5-2B | 12.44 | 19.62 | 1.577x | 0.74 | 1.703x |
+| Qwen3.5-4B | 6.04 | 9.91 | 1.641x | 0.81 | 1.777x (acceptance 0.96) |
+
+- The rates count decode after the prefill's token: 141 tokens per model, in the runs'
+  cycles at the core clock.
+- **The device speedup is phase 2's** (9.1, on build B): 1.336x on the 0.8B and 1.593x on
+  the 2B. The loop's own work costs nothing measurable: the state block, the emission, the
+  chain and E's one-row steps at the bucket ends.
+- **Wall tok/s follows the device's.** The host's one cost is compiling a bucket's programs,
+  once per engine (0.5-0.7 s).
+  - The code prompt, with its programs already compiled: 37.72 / 21.13 / 10.72 tok/s, against
+    the device's 38.03 / 21.19 / 10.73.
+  - Over the three prompts: 28.67 / 16.73 / 8.97 tok/s, and 36.42 / 19.57 / 9.89 without the
+    compiles. Plain greedy: 26.45 / 12.16 / 5.97.
+  - Phase 2's host-driven loop was host-bound (a compile per iteration).
+
 ## 11. Open questions
 
 - The MTP dataflow (section 6.1) is **confirmed against mlx_vlm 0.6.8**'s Qwen3.5 drafter:
