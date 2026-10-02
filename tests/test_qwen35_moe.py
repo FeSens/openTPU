@@ -673,11 +673,13 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
     assert Path(str(b) + ".packed").read_bytes() == bytes([1] * n)
 
 
-def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
+@pytest.mark.parametrize("ahead", ["index", "hint"])
+def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch, ahead):
     """tools/offload/moe_card.py --layer-major 2 --layer-ahead index --prefill-trace (ISA): the
     prompt's timeline holds each run (the embed runs, the layer runs by key, the head last) and
     each request with its ids and misses, as many as the result's prefill_time and
-    prefill_requests count; the layer ahead called once a MoE layer."""
+    prefill_requests count; the layer ahead called once a MoE layer. With --layer-ahead hint
+    (--ahead-part 2048 KiB) each layer run but the last layer's posts a hint, an "h" event."""
     import json
     import pickle
     import runpy
@@ -700,7 +702,8 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", [
         "moe_card.py", str(m), "--check", str(tmp_path / "ref.json"), "-n", "1", "--cap", "256",
         "--cfg", str(tmp_path / "cfg.pkl"), "--experts", str(2 * K), "--layer-major", "2",
-        "--layer-ahead", "index", "--prefill-trace", str(tr), "--out", str(out)])
+        "--layer-ahead", ahead, "--prefill-trace", str(tr), "--out", str(out)]
+        + (["--ahead-part", "2048"] if ahead == "hint" else []))
     runpy.run_path(str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "moe_card.py"),
                    run_name="__main__")
     r, t = json.loads(out.read_text()), json.loads(tr.read_text())
@@ -712,5 +715,9 @@ def test_moe_card_writes_the_prompts_timeline(tiny, tmp_path, monkeypatch):
     assert sorted(set(li) - {-1}) == list(range(len(KINDS)))
     assert all(x[1] <= x[2] for x in t["runs"])                 # started, then done
     assert len(t["requests"]) == len(t["misses"]) == pt["requests"] == r["prefill_requests"]
-    assert sum(t["misses"]) == r["prefill_misses"] and all(e[2] == "d" for e in t["events"])
-    assert r["layer_ahead"] == "index" and pt["ahead"]["calls"] == len(KINDS)  # (one chunk)
+    assert sum(t["misses"]) == r["prefill_misses"]
+    assert r["layer_ahead"] == ahead and pt["ahead"]["calls"] == len(KINDS)    # (one chunk)
+    hints = [e for e in t["events"] if e[2] == "h"]
+    assert all(e[2] in "dh" for e in t["events"])
+    assert len(hints) == pt["ahead"]["hints"] == (len(KINDS) - 1) * li.count(0) * (ahead == "hint")
+    assert r["ahead_part"] == (2 << 20 if ahead == "hint" else None)
