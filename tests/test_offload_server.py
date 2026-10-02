@@ -75,10 +75,11 @@ def test_misses_evict_the_least_recent_not_requested():
     assert _entry(mem, lay, 0)[1] == 1.0 and _entry(mem, lay, 6)[1] == 1.0
 
 
-def test_ahead_sees_a_requests_misses_before_the_first_is_staged():
+def test_ahead_sees_a_requests_later_misses_once_the_first_is_on_its_way():
     """ExpertServer.ahead (moe_card --willneed: PoolFile.willneed) is called with a request's
-    missing ids, before the first of them is read from the pool; a request of hits only does
-    not call it."""
+    missing ids but its first, once that one's first part is on its way (with the answer: the
+    link starts on the first expert, the others' reads queued behind it); a request of one
+    miss or of hits only does not call it."""
     lay, mem, srv = _setup(warm=[0, 1, 2])
     seen, reads = [], []
     pool = srv.pool
@@ -88,10 +89,10 @@ def test_ahead_sees_a_requests_misses_before_the_first_is_staged():
     srv.poll()
     _post(mem, lay, 2, [0, 6])                      # 0 hits (2 was a victim)
     srv.poll()
-    assert seen == [([5, 4], 0), ([6], 2)] and reads == [5, 4, 6]
+    assert seen == [([4], 1)] and reads == [5, 4, 6]
     _post(mem, lay, 3, [6, 0])                      # hits only
     srv.poll()
-    assert len(seen) == 2
+    assert len(seen) == 1
 
 
 def test_one_request_at_a_time():
@@ -200,14 +201,14 @@ def test_preadv_iov_fills_as_preadv_and_resumes_short_reads(tmp_path, monkeypatc
     assert max(calls) == O.IOV_MAX and len(calls) > len(sizes) // 7
 
 
-def test_a_requests_answer_goes_first_and_its_directory_after_its_experts():
-    """A request's answer (its missing experts' slots) is written before any of their bytes,
-    each expert's tag right after its bytes, and the directory's new entries and victims'
-    clears after the last expert, before served (the card waits on the answer and the tags;
-    it reads a victim's entry only in a later request: after served), so the link starts with
-    the answer and then the first expert's bytes; clear_late False clears each victim before
-    its slot is written, as before docs/offload.md 10.8. Either way the victims' entries read
-    empty once poll returns."""
+def test_a_requests_answer_follows_its_first_experts_first_part():
+    """A request's answer (its missing experts' slots) is written once the first expert's
+    first part is on its way (a memory without write_slot: after that expert), each expert's
+    tag right after its bytes, and the directory's new entries and victims' clears after the
+    last expert, before served (the card waits on the answer and the tags; it reads a victim's
+    entry only in a later request: after served), so the link starts with the first expert's
+    bytes; clear_late False clears each victim before its slot is written, as before
+    docs/offload.md 10.8. Either way the victims' entries read empty once poll returns."""
     for late in (True, False):
         lay, mem, srv = _setup(warm=[0, 1, 2])      # layer 0 LRU order: 2, 1, 0 (0 newest)
         srv.clear_late = late
@@ -222,8 +223,8 @@ def test_a_requests_answer_goes_first_and_its_directory_after_its_experts():
         _post(mem, lay, 1, [5, 6])                  # two misses: victims 2 and 1
         mem.write = rec
         assert srv.poll() == 1
-        assert log == (["answer", "slot", "tag", "slot", "tag", "dir", "served"] if late else
-                       ["dir", "dir", "answer", "slot", "tag", "slot", "tag", "dir", "served"])
+        assert log == (["slot", "tag", "answer", "slot", "tag", "dir", "served"] if late else
+                       ["dir", "dir", "slot", "tag", "answer", "slot", "tag", "dir", "served"])
         assert _entry(mem, lay, 2) == _entry(mem, lay, 1) == (0, 0.0)
         assert _entry(mem, lay, 5)[1] == _entry(mem, lay, 6)[1] == 1.0
         assert not srv._victims
@@ -520,6 +521,34 @@ def test_pool_file_touches_what_it_reads_through_its_map(tmp_path):
         else:
             assert pf._mc is None
         del pf
+
+
+def test_a_requests_reads_are_touched_once_it_is_served(tmp_path):
+    """PoolFile.defer_touch (moe.serve sets it): a read's touch waits until the request is
+    served (ExpertServer, after served and the DMA's flush: while the card computes), not
+    between the read and its DMA; with io counting (moe_card's decode) each read still says
+    whether its pages were in the page cache."""
+    from opentpu.host.offload import PoolFile
+    lay = Layout.build(4096, E, K, (3, 3), 4096)
+    x = np.random.default_rng(0).integers(0, 256, (2 * E, 4096), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(x.tobytes())
+    pf = PoolFile(f, 4096, split=False)
+    pf.defer_touch, pf.io = True, {}
+    mem = SimDram(np.zeros(lay.end + 4096, np.uint8))
+    srv = ExpertServer(mem, lay, lambda g: pf.get(g).tobytes())
+    srv.pool_file = pf
+    srv.load()
+    log, touch, w = [], pf._touch, mem.write
+    pf._touch = lambda off, n: (log.append(("touch", off // 4096)), touch(off, n))
+    mem.write = lambda addr, d: (log.append("served") if addr == lay.served else None,
+                                 w(addr, d))
+    _post(mem, lay, 1, [5, 4])
+    srv.poll()
+    assert log == ["served", ("touch", 4), ("touch", 5)] and not pf._touches
+    assert sum(v[0] for v in pf.io.values()) == 2
+    for g in (4, 5):
+        assert mem.read(srv.lru[0][g], 4096) == x[g].tobytes()
 
 
 def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):
@@ -1040,10 +1069,11 @@ def test_an_all_hit_request_left_at_a_runs_end_is_served_before_the_slots_change
 @pytest.mark.parametrize("fmt", ["bytes", "split"])
 @pytest.mark.parametrize("chash", [False, True])
 def test_board_dram_sends_each_tag_as_its_experts_last_beat(fmt, chash, tmp_path):
-    """The link's side of docs/offload.md 10.11, call by call: per request the answer's beat
-    first; then each missing expert's DMA calls (a fifth first for the request's first: two
-    parts), its last part on the other channel and then on its tag's channel, the tag that
-    call's last 64 bytes (nothing of the expert after it); then the directory, then served."""
+    """The link's side of docs/offload.md 10.11, call by call: per request each missing
+    expert's DMA calls (a fifth first for the request's first: two parts), its last part on
+    the other channel and then on its tag's channel, the tag that call's last 64 bytes
+    (nothing of the expert after it); the answer's beat right after the first expert's first
+    part (its two calls); then the directory, then served."""
     from types import SimpleNamespace
 
     from opentpu.host.board import Board
@@ -1081,13 +1111,17 @@ def test_board_dram_sends_each_tag_as_its_experts_last_beat(fmt, chash, tmp_path
         calls.clear()                               # (the card's post: not the server's)
         miss = [g for g in ids if g not in srv.lru[0]]
         assert srv.poll() == 1
-        assert covers(calls[0], lay.answer) and covers(calls[-1], lay.served)
-        last = 0
+        ans = [i for i, c in enumerate(calls) if covers(c, lay.answer)]
+        assert covers(calls[-1], lay.served)
+        last = -1
         for g in miss:
             s = srv.lru[0][g]
             mine = [i for i, c in enumerate(calls)
                     if any(covers(c, a) for a in range(s, s + lay.tag + 128, 64))]
-            assert mine[0] > last and mine == list(range(mine[0], mine[-1] + 1))
+            if g == miss[0]:
+                assert mine[0] == 0 and ans == [2]
+            assert mine[0] > last and [i for i in range(mine[0], mine[-1] + 1)
+                                       if i not in ans] == mine
             *_, other, final = mine
             ct, ot = where(s + lay.tag)
             assert calls[final][0] == ct and calls[other][0] == 1 - ct
@@ -1096,7 +1130,8 @@ def test_board_dram_sends_each_tag_as_its_experts_last_beat(fmt, chash, tmp_path
             parts = 2 if g == miss[0] and m.direct > 2 else 1   # (the first: a fifth, the rest)
             assert len(mine) == 2 * parts
             last = mine[-1]
-        rest = calls[last + 1:-1]                   # the directory's beats, after them all
+        rest = [c for i, c in enumerate(calls[:-1]) if i > last and i not in ans]    # the
+        # directory's beats, after them all
         assert rest and all(any(covers(c, a) for a in range(lay.dir, lay.dir + 64, 64))
                             for c in rest)
     assert (m.direct > 2) == (fmt == "split" and chash)

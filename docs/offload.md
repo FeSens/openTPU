@@ -1607,8 +1607,10 @@ landed, and one 64-byte call per request tells the card where its misses go.
 The host, per request with misses:
 1. **The answer**: one 64-byte beat (a new line after served; a two-line request's answer is
    two beats). Its word r is the slot address of rank r when that expert is missing, and 0 for
-   the hits. It is written before the request's first data call, while the first part of the
-   expert is read from the pool, so it adds nothing to the critical path.
+   the hits. It is written once the first expert's first part is on its way, so the link
+   starts on the expert (10.13; A wrote it before the first data call, which on the card cost
+   its 75-90 us ahead of the lead). The card waits on each word, so its place among the data
+   calls does not matter to the card.
 2. **Each missing expert's data, with a tag**: a 128-byte tag chunk after the record (the 35B's
    pitch grows by one 4 KiB block, the 26B's fits its padding). Its word 0 is nonzero. The
    record goes as today, one call per channel, and the channel that holds the tag word goes
@@ -1684,7 +1686,8 @@ slot keeps its 42 slots a layer (42.66 fit, from 42.77).
 
 The proof:
 - `test_offload_server`, the host's contract:
-  - the answer comes before any data of its request;
+  - the answer comes after its first expert's first part, before the rest (10.13; A: before
+    any data);
   - each record's tag is in the last beat of the last call;
   - the directory comes after the last data, and served after the directory;
   - an armed victim's tag is cleared before its data.
@@ -1746,7 +1749,8 @@ The proof on the ISA simulator (all on the Mac):
   LFM2-MoE and on Gemma 4's layer-major prefill.
 - The three models' existing MoE tests all pass on the new programs (63). That includes the
   live-card ones, BoardDram's threaded and split modes, and the layer-major prefill.
-- `test_offload_server` checks the contract call by call on the link: the answer first; each
+- `test_offload_server` checks the contract call by call on the link: the answer first (since
+  10.13, after the first expert's first part); each
   expert's last part on the other channel and then the tag's, with the tag as that call's last
   beat; the directory after them; served last. It also covers an armed victim's clear before
   its bytes, and a multi-row request's answer at each id's first place.
@@ -1975,6 +1979,107 @@ expert's lead DMA. Measure B's case again after it.
 The window block, WIN_BASE, the CAPS bit and the host side were not written. B is worth
 reconsidering when something uses the link's idle time (router hints) or a build has spare
 area for it.
+
+### 10.13 The request's head (offload-head)
+
+The head is the time from seen to the request's first data call. On the card it is 1.4-2.1 s per
+128 tokens (session 15), and A made it 0.35-0.65 s longer: A's answer went first, as the
+window's cold first call (75-90 us), and the first expert's lead DMA started 397-472 us after
+seen (10.11).
+
+Where the old path's ~300 us go (serve_emu's probe, 35B, medians from seen; 10.11):
+- Python: the row read's ~22 us beyond its 19 us C2H call, the slot pick (18 us) and the iovec
+  (25 us).
+- The pool: mincore (37 us), the lead's preadv (65 us) and its touch (22 us).
+- The handoff: the DMA thread starts the call 74 us after it is queued, as the threads trade
+  the GIL.
+- On the card, willneed adds ~15 us per other miss ahead of the lead.
+
+offload-head changes the host only. The programs and the card's contract stay as they are (the
+card waits on each answer word and each tag, 10.11):
+- The answer goes once the first expert's first part is queued (`BoardDram.write_slot(...,
+  then=)`). On the link it sits between that expert's two parts.
+- The other misses' willneed goes with the answer, no longer ahead of the lead.
+- A mapped pool's touches (10.7) wait until the request is served (`PoolFile.defer_touch`), and
+  run while the card computes.
+- mincore reuses one vector and its address. Each part's iovec is built as it is read, not the
+  whole record's first.
+- `_DmaLock` is reentrant. BoardDram's worker holds it across the calls queued behind each
+  other, so each call inside skips the flock's two system calls (each one more wait for the GIL).
+
+serve_emu (Gen2, card-calibrated, posts from the critical end; 128 tokens) gives crit in s.
+Sweeps hs1-hs3 ran on opentpu with the card idle; A, the merged design, is in every sweep (one
+35B A run right after hs3's warm-up, 15.49, is left out):
+
+| tree | 35B | 26B |
+|:--|:--|:--|
+| A | 13.57-14.72 | 20.26-21.35 |
+| H: the answer after the lead only (hs1) | 14.65-14.78 (A 14.72) | 22.47-22.56 (A 21.16-21.35) |
+| H2: H, willneed after the lead, touches deferred, mincore (hs2, hs3) | 13.09-13.35 (A 13.57-14.01) | 19.85-19.97 (A 20.26-20.49) |
+| H3: H2 and the reentrant lock, offload-head (hs3) | 12.97-13.03 (A 13.57) | 19.80 (A 20.39) |
+
+- The reorder alone did nothing for the 35B and cost the 26B 1.2 s. The gain comes with the
+  head's own steps cut: -0.55 to -0.6 s per 128 tokens on both models.
+- On the link, A's longest wait was the answer's for the first data: 150-185 us a request,
+  0.58-0.74 s per 128 tokens on the 35B. With H3 the answer goes 31-35 us after the lead's
+  part, and the next part 24-28 us after the answer.
+- hs4 adds N: H3 with the answer first again. It ran while a card session was live, so it is
+  indicative only. N matched H3 within 0.15 s on both models. On the emulator the answer's
+  place no longer matters once the head's steps are cut. The card's cold first call (75-90 us,
+  which the emulator does not model) may still favor H3.
+
+Prediction for the card: the 35B 5.08-5.16 -> 5.20-5.27 tok/s, the 26B 3.58 -> 3.63-3.65.
+The check is session 16 (`session16.sh`): main against this tree on the same bitstream, A B A
+B, q35e128s and g26s. Both must match their ISA references bit for bit (refs-s16).
+- Main's Qwen3.5-35B programs changed after f725c2b (b0b2b541 -> 1a32006f, the MTP and
+  layer-compile merges). Their new ISA reference (refs-8100ffb, main a60df35's tree) gives the
+  same tokens and prefill sha as before, 88225ff781699291.
+- The 26B's programs did not change (4400270b, 6d7a8ec2), so refs-f725c2b's 90e6b6e06e19da99
+  still holds for it.
+
+On the card, session 16 (2026-10-02 08:58-09:19 opentpu):
+- Setup: production pa e4db91c9, no reload, one lock. M = main a60df35 (A), H = offload-head
+  40baa60 (A'), M H M H.
+- All ten runs matched bit for bit: the decode runs against refs-s16, the prefill pair against
+  lmtime's sha 95426ebacc3b40a9. The selftests before and after were ALL PASS.
+
+Column meanings in the table below:
+- crit: as in 10.11, seen to the last tag's call, over the requests with misses (4649 / 3661).
+- head: seen to the first data call. body: the rest of crit.
+- lead: the median from seen to the lead's DMA.
+
+| run | tok/s (device) | RUNNING G | DMA_BUSY G | crit s (head + body) | lead us |
+|:--|:--|:--|:--|:--|:--|
+| 35B M | 5.05 (5.06) | 3.370 | 1.558 | 12.55 (2.07 + 10.48) | 403 |
+| 35B H | **5.29** (5.31) | 3.211 | 1.366 | 11.32 (1.43 + 9.89) | 290 |
+| 35B M | 5.14 (5.16) | 3.305 | 1.488 | 12.05 (1.94 + 10.11) | 404 |
+| 35B H | **5.23** (5.25) | 3.249 | 1.417 | 11.61 (1.43 + 10.18) | 297 |
+| 26B M | 3.57 (3.58) | 4.768 | 0.835 | 19.49 (1.85 + 17.64) | 475 |
+| 26B H | **3.59** (3.60) | 4.741 | 0.771 | 19.12 (1.21 + 17.91) | 311 |
+| 26B M | 3.57 (3.58) | 4.773 | 0.847 | 19.57 (1.86 + 17.71) | 477 |
+| 26B H | **3.60** (3.61) | 4.730 | 0.755 | 19.02 (1.21 + 17.82) | 313 |
+
+- The 35B gains +3.2% on the means (5.10 -> 5.26), inside the prediction (5.20-5.27).
+- The head fell as predicted on both models: -0.51 to -0.64 s (35B) and -0.64 s (26B). The
+  lead's DMA now starts 290-313 us after seen, against A's 403-477.
+- The answer now costs its 43-58 us call inside the body: +0.2 s on the 26B.
+- The 26B gains only +0.7% (3.57 -> 3.60, predicted 3.63-3.65).
+  - Its requests with 1 or 2 misses are compute-bound. The card is still on the present
+    experts (3.45 MB each) when the last tag lands, so the head's gain moves into the card's time
+    after the critical end.
+  - That time, from the critical end to the next post, rose 150-200 us a request (1 miss: 4158-4189
+    -> 4332-4334 us median; 2 misses: 3187-3223 -> 3382-3394).
+  - Requests with 3-4 misses are unchanged (2971-2983 us).
+  - serve_emu's card model takes that time per request from the old path's traces, as fixed. It
+    misses the overlap, which is why it predicted the 26B's head gain as wall time.
+- H2C writes during the card's compute: they cost the card ~0.17 s per GB written (gemma4's
+  layer-ahead, 13.8). Here A and A' write the same bytes in the same windows, and the 3-4-miss
+  requests' time after the critical end did not change, so nothing points at a change in
+  contention. The tail (critical end to the poll's return) grew 0.2-0.3 s with the deferred
+  touches, but the next post is never sooner than 1.4 ms after it.
+- The 35B prefill pair (pooled, R = 2, layer-major, one run each): wall 13.04 (M) and 13.08 s
+  (H); demand serve 6.41 and 6.28 s for the same 6241 misses. The prompt is bound by the card's
+  runs (12.1-12.3 s), so the head's gain does not reach its wall time.
 
 ## 11. Gemma 4 26B-A4B: design note
 

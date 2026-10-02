@@ -237,6 +237,8 @@ def serve(layout: Layout, expert, backend, pool_file=None, warm=True,
             return pf.get(g)
     srv = ExpertServer(dram_of(backend, L), L, pool, policy=policy)
     srv.pool_file = pf
+    if pf is not None:                  # (its reads' touches after each request is served)
+        pf.defer_touch = True
     srv.pool_warm = None if pf is None else pf.warm_t
     srv.load([j * L.E + e for j in range(L.layers) for e in range(L.E)] if warm else ())
     return srv
