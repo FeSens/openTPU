@@ -1707,6 +1707,85 @@ Two alternatives:
 The recommendation is A first: no bitstream, +2-3% on Gen2, and the ordering test can run on
 the current production bitstream. B later, with the next bitstream that has room for it.
 
+### 10.12 Alternative B: a host window onto DRAM (design, ld-memch)
+
+B moves the small calls from XDMA's DMA engine to MMIO. The host's 64-byte writes (the answer,
+served, entries, clears) and the poll's reads become loads and stores on a window of BAR0, at
+about 1-3 us instead of a 36-58 us call. The window maps onto DRAM, so the card's programs do
+not change: WAITW still polls a DRAM word through port B.
+
+**What exists.** XDMA's AXI-Lite master (BAR0, 1 MiB) already reaches the control registers
+through `sc_ctl`, which crosses into the core clock (`M_AXI_CTL`, 64 KiB at 0). The host maps BAR0
+with `/dev/xdma0_user` (XdmaTransport.regs, 0x40000 bytes, uncached), and a register read takes
+about 1 us. otpu_ctrl decodes 12 address bits, so the CTL aperture's other 60 KiB are aliases
+today.
+
+**The RTL** (core clock only; no change to XDMA, the block design, the split or otpu_mem_ch):
+- **The window.** CTL offsets 0x8000-0xFFFF (32 KiB) go to a new block, the rest to otpu_ctrl,
+  through an AXI-Lite 1:2 split by address bit 15 in the board top. otpu_ctrl gets one register,
+  WIN_BASE: the window's DRAM base, a logical byte address, 32 KiB aligned. The host moves the
+  window with one register write. A request's answer line, served and the poll's word fit in
+  one 32 KiB window. The directory (8 x E bytes a layer) stays a DMA call, which is off the
+  critical path in A.
+- **A host port H in otpu_native_dram,** a fifth source in each channel's command mux, after B,
+  with its own tag kind, so its read data routes back like the others':
+  - Writes are 32-bit words with byte enables. They gather in a one-beat buffer, as port SW's
+    do. The beat goes out whole when all 16 words are written, when a write to another beat
+    arrives, before a read of the same beat, or after a timeout longer than the host's gap
+    between two stores (about 0.2 us, 27 cycles). A partial beat goes out with its mask, and
+    otpu_mem_ch does the read-modify-write.
+  - Reads are one beat each. The window's word comes back on AXI-Lite R.
+  - H's writes go through the adapter's own stream, so they drop port A's reused beat and runs
+    the way B's and SW's writes do. That is better than XDMA's writes, which the adapter never
+    sees.
+- **How the card sees it:** nothing changes on its side. WAITW polls the word through port B,
+  and a host write is visible once it has entered the channel's stream. The host writes a
+  line's flag word last: within a beat that is the order a partial flush keeps, and a whole
+  beat lands at once.
+- **Area:** about 1-1.5k LUTs and 1k flip-flops (a 576-bit gather buffer, an address register,
+  a 512-to-32 read select, one more mux input and tag kind per channel), no block RAM. The pa
+  build has 175k LUTs (58.8%) and 76% of its slices.
+- **Timing:**
+  - userclk1 and userclk2: no new logic in XDMA's domains (sc_ctl already crosses), so no new
+    risk at 250 / 500 MHz.
+  - Core clock at 133.33 MHz: pa's WNS there is +0.055 ns. The risk is otpu_native_dram's
+    per-channel command mux, which gains an input. Mitigations: H's command is registered and
+    has the lowest priority, and the read select is registered once more.
+  - Before a build, an OOC of otpu_native_dram with H at 7.5 ns: the tournament's
+    otpu_native_dram component flow.
+
+**The host** (no driver change, no reload, no root):
+- The window is inside the 0x40000 bytes of `/dev/xdma0_user` that XdmaTransport maps already.
+  The driver exposes the whole BAR.
+- A 64-byte line is 16 32-bit stores, flag last; on an uncached mapping each is a posted write.
+  XDMA's AXI-Lite master takes one DW per request, so no 64-bit stores.
+- A poll is one 32-bit load: about 1 us of PCIe round trip plus the DRAM read through the adapter
+  (40-60 core cycles, about 0.4 us).
+- The window replaces BoardDram's 64-byte calls and the poll's C2H read. XdmaTransport keeps
+  the DMA calls for the data.
+- CAPS gets a bit (WIN): the host uses the window only on bitstreams that have it.
+
+**Ordering:**
+- **Writes after data.** B's writes are issued after the data call has returned. XDMA has seen
+  B for every beat, so every beat is in the controller's queues (otpu_mem_ch's B comes after
+  the controller has taken a burst's beats). A window write enters later, and the card reads
+  the data only after it has seen the window's flag. Those reads queue behind the data's writes
+  on the beat's port: the WAITW contract of docs/isa.md as it is. It needs none of 10.11's
+  conditions on the order within one transfer.
+- **Design A's tag in the last beat** stays the data call's own order and needs nothing from
+  the window. With both, A's tag removes the per-miss flag and B carries the rest (answer,
+  served, directory, polls).
+- **Window writes among themselves** are in order: AXI-Lite, then one queue. **Against the
+  card's own stores** a window read follows them in the channel's stream once they have gone
+  out (the card posts with a store; the host polls with a load).
+- **A posted MMIO write and a later DMA call** are not ordered against each other: neither
+  path waits for the other. B never needs that order: the card waits on the window's flag, and
+  any data it then reads came in an earlier, completed call.
+
+**What B is worth after A:** offload's serve_emu, with these costs on top of design A: a
+64-byte window write 3 us of host CPU and no link time, a poll read 1.5 us. That is the number
+that decides whether B is worth a bitstream.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
