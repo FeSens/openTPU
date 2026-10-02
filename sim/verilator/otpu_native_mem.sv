@@ -26,6 +26,11 @@
 // prints each channel's reads, writes, DDR3 row opens and partial writes (MEM ch<c> rd=<n> ...).
 // +nat_trace=FILE writes every command taken, one line each: core cycle, channel, we, beat (the
 // trace sim/verilator/tb_ldc_replay.sv replays through LiteDRAM's controller).
+// The host's writes come through its own master (XDMA on the card), not the n_* port, so the
+// adapter does not see them: <dir>/poke_<SID>.txt, lines "cycle word value" (hex; the logical
+// word address), written at that core cycle (a run's: WAITW's tests); <dir>/pokeb_<SID>.txt,
+// lines "run word value", written when run `run` - 1 ends (run_rst, the core's reset, rises: tb_top
+// +runs).
 module otpu_native_mem #(
   parameter int WORDS = 1 << 18,
   parameter int PHYS  = 0,
@@ -35,6 +40,7 @@ module otpu_native_mem #(
 ) (
   input  logic                  clk,
   input  logic                  rst,
+  input  logic                  run_rst,    // the core's reset: a rise ends a run (pokeb lines)
   input  logic [1:0]            n_cvalid,
   output logic [1:0]            n_cready,
   input  logic [1:0]            n_cwe,
@@ -140,6 +146,24 @@ module otpu_native_mem #(
   longint       wd [2][$];               // the times writes count in n_wdone
 
   always_ff @(posedge clk) cyc <= cyc + 1;
+
+  localparam int NPOKE = 4096;
+  longint      pk_c [NPOKE];
+  logic [31:0] pk_a [NPOKE], pk_v [NPOKE], pb_r [NPOKE], pb_a [NPOKE], pb_v [NPOKE];
+  int          pk_n = 0, pk_i = 0, pb_n = 0;
+  int          epoch = 0;                // runs ended
+  logic        rr_q = 1'b1;
+  always @(posedge clk) begin
+    while (pk_i < pk_n && cyc >= pk_c[pk_i]) begin
+      wrw(int'(pk_a[pk_i]), pk_v[pk_i]);
+      pk_i++;
+    end
+    if (run_rst && !rr_q) begin          // a run ended: the host's writes before the next
+      epoch++;
+      for (int k = 0; k < pb_n; k++) if (int'(pb_r[k]) == epoch) wrw(int'(pb_a[k]), pb_v[k]);
+    end
+    rr_q = run_rst;
+  end
 
   for (genvar c = 0; c < 2; c++) begin : g_ch
     logic crr, wrr, rv;
@@ -269,6 +293,18 @@ module otpu_native_mem #(
         if (fd != 0) begin
           nread = $fread(mem_lo, fd);  // the second continues where the first stopped
           nread = $fread(mem_hi, fd);
+          $fclose(fd);
+        end
+        fd = $fopen($sformatf("%s/poke_%0d.txt", dir, SID), "r");
+        if (fd != 0) begin
+          while (pk_n < NPOKE && $fscanf(fd, "%h %h %h", pk_c[pk_n], pk_a[pk_n], pk_v[pk_n]) == 3)
+            pk_n++;
+          $fclose(fd);
+        end
+        fd = $fopen($sformatf("%s/pokeb_%0d.txt", dir, SID), "r");
+        if (fd != 0) begin
+          while (pb_n < NPOKE && $fscanf(fd, "%h %h %h", pb_r[pb_n], pb_a[pb_n], pb_v[pb_n]) == 3)
+            pb_n++;
           $fclose(fd);
         end
       end else begin

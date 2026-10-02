@@ -50,6 +50,7 @@ module otpu_dma
   output logic                    rdy,
   output logic                    done,
   output logic                    err,        // a WAITW timed out
+  output logic                    ww_held,    // a WAITW's word held: one cycle, as it ends (below)
   // DRAM port B (the DMA has priority on it; read responses are routed back by tag)
   output logic                    b_req,
   input  logic                    b_gnt,      // the request is taken this cycle
@@ -498,6 +499,12 @@ module otpu_dma
       default: return !dif[31];                    // GE: the difference >= 0, signed
     endcase
   endfunction
+
+  // A WAITW's word held. The host wrote what the program reads after it before the word (the
+  // WAITW's footprint orders every younger DRAM reader after it), through its own master, which
+  // the board's DRAM adapter does not see: the adapter drops what it holds for port A (its reused
+  // beat and runs: otpu_native_dram a_flush). One cycle, with ld_fin
+  always_ff @(posedge clk) ww_held <= !rst && busy && is_ww && ww_c2 && ww_ok;
 
   // the delivered segment (in lb_q) goes to the TMEM write register; its position in the
   // chunk, lanes and TMEM address come with it (dv_*)

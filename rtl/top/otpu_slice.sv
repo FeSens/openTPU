@@ -93,6 +93,7 @@ module otpu_slice
   output logic          halted,
   output logic          error,
   output logic          wait_to,    // the error is a WAITW timeout (STATUS WAIT_TO)
+  output logic          a_inval,    // a WAITW held: port A's held beats may be stale (otpu_dma ww_held)
   output logic [31:0]   icount,
   output perf_t         pf,         // activity and trace events, a cycle late (otpu_pkg)
   input  logic          dump
@@ -266,7 +267,7 @@ module otpu_slice
 
   otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
-    .err(dma_err),
+    .err(dma_err), .ww_held(a_inval),
     .b_req(dma_breq), .b_gnt(b_rdy), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
     .b_addr(dma_baddr), .b_rvalid(b_rvalid && b_rtag), .b_rdata, .wr_idle,
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rdata(r_data[P_DMA]),

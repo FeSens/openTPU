@@ -85,7 +85,7 @@ module tb_board;
   end else begin : g_native
     assign nerr = '0;
     otpu_native_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1)) u_mem (
-      .clk, .rst,
+      .clk, .rst, .run_rst(1'b0),       // (no pokeb lines: the host writes through the board)
       .n_cvalid(ncv), .n_cready(ncr), .n_cwe(ncwe), .n_caddr(nca), .n_wvalid(nwv),
       .n_wready(nwr), .n_wdata(nwd), .n_wmask(nwm), .n_rvalid(nrv), .n_rdata(nrd),
       .n_wdone(nwdone), .dump);

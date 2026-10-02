@@ -75,6 +75,13 @@
 //   take a beat fetched before it. So the QSTs that stream while an MM runs, and DSTEP's state
 //   write-back, cost the MXU's scale stream no runs.
 // - wr_idle: every accepted write has gone out and is counted in n_wdone.
+// - The host's writes come through the channels' other master (XDMA), which this adapter does not
+//   see, so they drop neither the reused beat nor the runs. a_flush drops both where the host may
+//   have written since the beats were fetched: between runs (the core's reset), at a program load
+//   and when a WAITW's word holds (the host writes the words a program reads after a WAITW before
+//   the word it waits for). Their beats not yet taken are dropped by the next miss, as after a
+//   write. Without it a run's first A reads took the previous run's beat over the host's rewrite
+//   (the 35B's back-to-back embed runs: token 0's block scales for tokens 1 and 2).
 // Requests are taken when req && rdy; rdy depends on registered state only. Reads return in
 // order per port (the B tag with its data).
 module otpu_native_dram #(
@@ -92,6 +99,7 @@ module otpu_native_dram #(
 ) (
   input  logic              clk,
   input  logic              rst,
+  input  logic              a_flush,    // drop port A's reused beat and runs (see Ordering)
   // slice side
   output logic              a_rdy_x,
   input  logic              a_req_x,
@@ -691,6 +699,12 @@ module otpu_native_dram #(
         al_v <= 1'b1;
         al_beat <= a_beat;
         al_c <= a_ch;
+      end
+      // ---- the host may have written since (last: an A read taken now decided with the old
+      // state, and its run is dropped too)
+      if (a_flush) begin
+        pv <= '0;
+        al_v <= 1'b0;
       end
     end
   end
