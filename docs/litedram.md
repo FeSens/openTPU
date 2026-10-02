@@ -2129,6 +2129,12 @@ With 8, 8, 2, 4:
 - **The balance reaches DDR3's limits:** LFM2's ran from -8 to +8, so busy stretches do postpone
   all 8. LiteDRAM's refresher (postponing 2) stays within 0 to 2. A version for the card would
   keep a margin (BEHIND 7).
+- **tREFI:** the core and the model refresh at LiteDRAM's DDR3 tREFI, 64 ms / 8192 = 7.8 us
+  (1042 cycles at 133.33 MHz; ld_test.py's MT41K256M8_tRFC160). That is the normal temperature
+  range, up to 85 C; the 3.9 us of the extended range is not configured. The idle refresher keeps
+  the same average: one refresh per tick, at most 8 owed or ahead.
+- **Before any card use:** a simulation test that counts the refreshes over a long window under a
+  worst-case stream (no idle gaps), showing the balance never passes 8 either way.
 - **Parked:** -0.2 to -0.4% is under the 1% that pays for a build, and it changes the refresh
   timing the card's DRAM sees. It could ride along with a build that happens anyway, after a
   card check of its own (BIST and the ECC counters through a warm soak).
