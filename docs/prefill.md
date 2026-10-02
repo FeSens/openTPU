@@ -136,8 +136,11 @@ programs come on top (0.2-0.8 s, then the disk cache):
 
 - A chat's later turns feed only what the template added, often 10-40 tokens: their TTFT
   becomes 0.2-0.8 s (0.8B, 2B).
-- The 4B stays device-bound. Fitting R = 4 rows (one more MXU column's worth of TMEM) would
-  take its prefill from 79 runs to 60 for 237 tokens, about -24%. That is a separate item.
+- The 4B stays device-bound. Fitting R = 4 rows would buy nothing: with PAIR a 4-bit MM of
+  at most MCOLS / 2 rows streams two blocks a cycle, so R = 4 costs R = 2's MXU time a row,
+  and R = 3 pays R = 4's (ld-memch's RTL co-sim, LDC DDR3-1066, 133.33 MHz, position 544: the
+  4B 278.0K cycles a row-layer at R = 2, 322.3K at R = 3). The 4B runs R = 2 instead (section
+  7, prefer_rows). (Retired: the -24% item this line had.)
 
 ## 5. Plan
 
@@ -163,7 +166,7 @@ days; the chain about 1 more day, then RTL and a card session.
   registers, but this needs checking on the real layouts first (step 1).
 - R_max is per bucket (its L program's fit; prefill.r_max), since a bucket's programs are all
   at one R and a later bucket's attention makes a longer program. The Qwen3.5 models take the
-  same R in every bucket (4 / 4 / 3; the 4B's R = 4 runs out of TMEM, a separate item);
+  same R in every bucket (4 / 4 / 3; the 4B now 2, section 7);
   Phi-4-mini's mix takes 3 rows in bucket 1 and 1 in bucket 16, as fit_chunk's runs shrink
   with the context today. Plain and MTP share it, so they split alike.
 - The gate keeps test_qwen35_moe's layer-major tests (test_layer_major_prefill_is_bit_exact,
@@ -240,20 +243,65 @@ three prompts (P tokens from p0), prompt runs / today's:
   context. A long context there costs 3-4x the passes of bucket 1 either way (below).
 - **Runs.** Qwen3-0.6B and LFM2.5-230M fit 8 rows (two passes) in one run of today's in
   bucket 1, where a prompt run takes one pass's 4: the same passes, more runs (30 tokens 8 / 5,
-  237 tokens 60 / 31). On the card that costs Qwen3-0.6B's 236-token prompt 7% more device
-  cycles and 2.2% of its TTFT (below). Next: R_max in fit_chunk's sizes (one pass, then whole
-  passes up to the image's rows where the L program fits; Qwen3.5 stays at one pass, its MTP
-  runs take R_max too), and covers() on the literal rule (R_max >= today's rows).
+  237 tokens 60 / 31). On the card that cost Qwen3-0.6B's 236-token prompt 7% more device
+  cycles and 2.2% of its TTFT (below), so R_max now takes fit_chunk's sizes: one pass, then
+  whole passes up to the image's rows where the L program fits (Qwen3.5 stays at one pass: its
+  MTP runs take R_max too, and its real layouts fit 4 rows at most). A new context's first run
+  (compile-time positions before conv_k - 1) is sized on its own, R_max(0): LFM2.5-230M's fits
+  8 rows at a run-time position but 4 from position 0 (its first card recheck stopped there).
 - **A bucket's end.** A run-time run's rows stay in its bucket, so a prompt that crosses one
   can take one pass more than today's (3 tokens from 255: runs of 1 and 2 rows, today's one of
   3), at most one per bucket crossed.
 
+**Which runs R_max must hold.** The split cuts a run at the prompt's end and at a bucket's end,
+so a prompt asks for every R' <= R_max of a bucket, as P and as L (an MTP engine: its rows with
+their hidden, and the MTP layer's M), and with convolutions for the first run at every
+compile-time position 0 .. conv_k - 2. The probe takes the largest size at which all of those
+fit, not the L program alone: main's L-only probe had LFM2-2.6B (int8 and the mix) at R = 4
+from position 1 out of TMEM (a prompt after a one-token one); every other kind and size of
+the 14 real layouts (the 12 above, Qwen3.5's MTP images, E2B) fit. Their programs land in the
+program cache, so a later prompt compiles none.
+
+**Odd R.** PAIR exists only for 4-bit MMs (of at most MCOLS / 2 rows): at MCOLS 4 a 4-bit run
+of 3 rows takes 4 rows' MXU time and 2 rows cost 25% less a row by the MXU stream (13.8% in the
+co-sim, the rest is attention and the vector unit; on the card the 4B's 237 tokens 18.355 ->
+15.918 s, -13.3%, 79 -> 119 runs), while an int8 MM streams once per MCOLS rows, so 3 rows
+cost 33% less a row than 2. prefer_rows (qwen3) takes R - 1 rows for an odd R > 1 where the
+compiled runs' MXU time a row (mxu_time: each MM's streamed rows x K blocks, half of it
+PAIRed, times its loops' counts) is at least PREFER_MARGIN = 10% lower; both routes use it
+(the probe and fit_chunk), so they compare alike. The margin is ld-memch's co-sim's: mxu_time
+leaves out what a run and a layer pay once, so it overstates R - 1's gain (Phi-4-mini's
+fp4-MLP layer: 6.1% cheaper a row at 2 rows by mxu_time, 0.5% dearer in the co-sim, where 2
+rows reach 89% of their MXU roofline and 3 rows 95%; the 4B: -25%, co-sim -13.8%). A layout
+whose R - 1 lands at 5-15% is co-simmed before its rows change. A mix falls between, at about 2/3 of its MXU
+blocks 4-bit (by the weights' shapes: Phi-4-mini's mix about 56% fp4 blocks, SmolLM3's
+about 43%, both keep 3); the 4B, fp4 and its mix, goes from 3 rows to 2.
+
+**Card, the row choice** (fmvf 542fc43a, 2026-10-02, tree 666b2ef 13:14 and 5dd7823 14:15-14:18
+opentpu; one engine a model, warm-ups first, then A / B / B / A; tokens equal in every phase,
+and the 4B's R = 3 and R = 2 splits give the same 16 tokens a turn):
+
+| model | prompt | A | B | per pair (B - A) |
+|---|---|---|---|---|
+| Qwen3.5-4B fp4 (A: R = 3, B: R = 2) | 237 | 18.350 / 18.360 | 15.904 / 15.932 | -2.437 s (-13.3%) |
+| | 24 | 1.893 / 1.896 | 1.639 / 1.642 | -0.254 s |
+| | 13 at 252 | 1.097 / 1.099 | 0.971 / 0.973 | -0.126 s |
+| Qwen3-0.6B int8 (A: off, B: on at R = 8) | 236 | 2.203 / 2.215 | 2.145 / 2.143 | -0.065 s (-2.9%) |
+| LFM2.5-230M int8 (A: on at R = 8, B: off) | 238 | 0.749 / 0.746 | 1.925 / 1.953 | off +1.19 s |
+
+The 4B's device cycles fall 13.5% (2441.7 -> 2113.1 M, 79 -> 119 runs), the co-sim's 13.8%;
+mxu_time a row at R = 2 against 3: the 4B fp4 -24.9%, its mix -18.8%, LFM2-2.6B's mix -22.3%
+(they take 2), Phi-4-mini int8 +49.2%, its mix +7.7%, SmolLM3's mix +17.4%, E2B int8 +49.1%
+(they keep 3). Qwen3-0.6B (0.6B, 8 rows a run in bucket 1) now prefills its 236 tokens in
+today's 30 runs, 2.9% faster than today's route; its device cycles are still 5.4% more (the
+open item below).
+
 **The rule (prefill.covers).** A prompt takes prompt runs when in every bucket it touches
-R_max(bucket) >= min(today's rows there, MCOLS), so no bucket streams the weights more often;
-otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route for the whole prompt.
-Today's rows are checked only where R_max is below one pass's rows (MCOLS, the image's rows, the
-cache's end): compile_rows of R_max + 1 rows at the bucket's first run-time position, which
-must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
+R_max(bucket) >= today's rows there (Qwen3.5: up to one pass), so no bucket streams the weights
+or runs more often; otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route
+for the whole prompt. Today's rows are checked only where R_max is below the largest size (the
+image's rows, the cache's end): compile_rows of the next larger size at the bucket's first
+run-time position must not fit, or take no more rows than R_max by prefer_rows. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
 
 **Card** (fmvf 542fc43a, 2026-10-02 11:04-11:13 opentpu, E2B 11:16-11:28; tree ce0f3b1, cap
@@ -290,7 +338,10 @@ prefill's runs and device Mcycles (on / off):
   runs took 3 rows (78 runs) and the prompt runs 4 (60).
 - Cold (the first prompt of a new program cache) the programs are compiled once: +0.2-1.3 s
   (E2B's first prompt 3.6 s).
-- Slower on: Qwen3-0.6B's B0, +2.2% (the 8-row runs above), and E2B's B0, +3.5% (below).
+- Slower on: Qwen3-0.6B's B0, +2.2% (the 8-row runs above, since taken by R_max: the card's
+  recheck pending), and E2B's B0, +3.5% (below). Prompt runs stay on by default for E2B too:
+  its 224-token first prompt costs 0.27 s more, its short prompts and next turns take 0.58 s
+  against 0.75-0.82 s (and a chat's later turns compile nothing).
 - **Open: more device cycles at the same runs**, +0.7-1.2% on LFM2-2.6B, SmolLM3 and Phi, and
   on E2B by position: +8.5% for rows at 0-12 (A0), +6.8% at 0-223 (B0), +0.8% at 224-236 (B1).
   A guess, not measured: a run-time row attends over its whole bucket (256 positions) with a

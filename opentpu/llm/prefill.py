@@ -10,8 +10,9 @@ first run) are at compile-time positions, cached the same way.
 
 The runs' split depends only on the first position, the prompt's length, R_max and the attention
 block: R_max rows a run, cut where a run would cross a bucket's end (a run-time run's rows stay in
-its bucket). R_max, per bucket: the most rows of one MXU pass (MCOLS, at most the image's rows)
-whose L program in that bucket compiles and fits IMEM (a later bucket's attention makes a longer
+its bucket). R_max, per bucket: the most rows in fit_chunk's sizes (one MXU pass of MCOLS rows,
+then whole passes, at most the image's rows; Qwen3.5: one pass) whose L program in that bucket
+compiles and fits IMEM (a later bucket's attention makes a longer
 program: Phi-4-mini's mix takes 3 rows in bucket 1, 1 in bucket 16). Plain and MTP engines of a
 model take the same split, so their logits are the same bit for bit. Where today's prefill
 (compile_rows) would fit more rows in a bucket than its prompt run, a prompt that reaches the
@@ -33,13 +34,15 @@ from .qwen3 import RUN_WORDS
 
 def split(p0: int, P: int, R_max, block: int, K: int) -> list[tuple[int, int, str]]:
     """The runs (first position, rows, kind) of the prompt positions [p0, P). R_max: the most
-    rows of a run, an int, or R_max(blocks) for bucket `blocks`."""
+    rows of a run, an int, or R_max(blocks) for bucket `blocks` (0: the first run of a new
+    context, before conv_k - 1)."""
     rm = R_max if callable(R_max) else (lambda blocks: R_max)
     runs, p = [], p0
     while p < P:
-        n = min(rm(p // block + 1), P - p)
         if p >= K - 1:                      # a run-time run: its rows in one bucket
-            n = min(n, block - p % block)
+            n = min(rm(p // block + 1), P - p, block - p % block)
+        else:                               # a new context's first run (R_max(0))
+            n = min(rm(0), P - p)
         runs.append((p, n, "L" if p + n == P else "P"))
         p += n
     return runs
@@ -69,10 +72,19 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
     a run of another program loads its words, not an assembly of them (3-5 ms a run; MTP's
     rows and M runs alternate). hidden, slot: MTP's rows (their hidden stored, the states'
     slot); M's take neither."""
+    done = eng.__dict__.setdefault("_prompt_progs", {})
+    what, blocks, compile = _what(eng, p, R, kind, hidden, slot)
+    with _lock(eng):
+        if what not in done:
+            done[what] = _prepared(eng, what, blocks, *eng.cached(what, compile))
+    return done[what]
+
+
+def _what(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0):
+    """A run's (program cache key, bucket (0: compile-time positions), compile())."""
     img, block = eng.image, eng.block
     if kind == "M":
         hidden, slot = False, 0
-    done = eng.__dict__.setdefault("_prompt_progs", {})
     kw = dict(hidden=hidden, slot=slot) if hidden or slot else {}
     if p < conv_k(eng) - 1:
         blocks, kw["p0"] = 0, p
@@ -80,13 +92,7 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
     else:
         blocks = p // block + 1
         what = ("prompt", kind, R, blocks, hidden, slot)
-
-    def compile():
-        return img.compile_prompt_run(blocks, R, kind, block, **kw)
-    with _lock(eng):
-        if what not in done:
-            done[what] = _prepared(eng, what, blocks, *eng.cached(what, compile))
-    return done[what]
+    return what, blocks, lambda: img.compile_prompt_run(blocks, R, kind, block, **kw)
 
 
 def _prepared(eng, what, blocks: int, progs, ra):
@@ -107,10 +113,10 @@ def _prepared(eng, what, blocks: int, progs, ra):
 
 
 def r_max(eng, blocks: int = 1) -> int:
-    """The most rows of a run in bucket `blocks`: one MXU pass (MCOLS) at most, the image's
-    rows at most, and the bucket's (plain) L program compiled and fitting IMEM (kept by the
-    engine). MTP's runs take the same R_max (their programs must fit it), so plain and MTP
-    prefills of a model split alike. With the engine's program cache the answer is kept there
+    """The most rows of a run in bucket `blocks`: fit_chunk's sizes (one MXU pass, then whole
+    passes) up to the image's rows (Qwen3.5: one pass), the bucket's (plain) L program
+    compiled and fitting IMEM (kept by the engine). MTP's runs take the same R_max (their
+    programs must fit it), so plain and MTP prefills of a model split alike. With the engine's program cache the answer is kept there
     too (progcache.fact), so a new process does not try the larger R again (the 4B's R = 4,
     traced until TMEM runs out)."""
     return _fit(eng, blocks)[0]
@@ -118,9 +124,9 @@ def r_max(eng, blocks: int = 1) -> int:
 
 def covers(eng, p0: int, P: int) -> bool:
     """Prompt runs take the positions [p0, P): in every bucket they touch a run takes today's
-    rows (compile_rows, fit_chunk's) up to one MXU pass, so they stream no weight more often
-    (docs/prefill.md 7); else Engine.prefill_chunks and MTPDecoder.prefill take today's
-    route for the prompt."""
+    rows (compile_rows, fit_chunk's; Qwen3.5's up to one MXU pass), so they stream no weight
+    more often and run no more often (docs/prefill.md 7); else Engine.prefill_chunks and
+    MTPDecoder.prefill take today's route for the prompt."""
     P = min(P, eng.cap)                 # (past the cache: the route's own error)
     return all(_fit(eng, b)[1] for b in range(p0 // eng.block + 1, (P - 1) // eng.block + 2))
 
@@ -138,18 +144,50 @@ def _fit(eng, blocks: int):
 
 
 def _probe(eng, blocks: int) -> list:
-    """[R_max, covered] at the bucket's first run-time position: R_max from one pass's rows
-    down; below them, covered when compile_rows does not fit R_max + 1 rows there either (a
-    prompt program larger than today's would run fewer rows)."""
-    img, block = eng.image, eng.block
-    p = max((blocks - 1) * block, conv_k(eng) - 1)
-    top = min(img.cfg.MCOLS, img.rows, img.cap - p)
-    for R in range(top, 0, -1):
-        if _fits(lambda: programs(eng, p, R, "L")):
+    """[R_max, covered] of bucket `blocks`: the largest of fit_chunk's run sizes (up to MCOLS
+    rows, then whole passes of MCOLS up to the image's rows; Qwen3.5's, whose MTP runs take
+    R_max too, one pass at most) at which every run a prompt can ask for in the bucket fits
+    (_kinds: P and L, MTP's rows and M, at every R' <= R: the split cuts a run at the prompt's
+    and the bucket's end), then prefer_rows' choice (an odd R's R - 1 where PAIR makes it
+    cheaper per row); covered when compile_rows (today's prefill) does not fit the next larger
+    size there either, or would take no more rows by the same choice (a prompt program larger
+    than today's would run fewer rows). blocks 0: a new context's first run, at compile-time
+    positions 0 .. conv_k - 2 (convolutions), sized on its own (LFM2.5-230M's fits 8 rows at a
+    run-time position, 4 from position 0; LFM2-2.6B's 4 from 0, not from 1), covered."""
+    from .qwen3 import _whole_passes, prefer_rows
+    img, block, mc, K = eng.image, eng.block, eng.image.cfg.MCOLS, conv_k(eng)
+    ps = range(K - 1) if not blocks else [max((blocks - 1) * block, K - 1)]
+    n = _whole_passes(min(img.rows, img.cap - ps[-1],
+                          mc if hasattr(eng.spec, "mtp") else img.rows), mc)
+    sizes = []
+    while n:
+        sizes.append(n)
+        n = _whole_passes(n - 1, mc)
+    kinds = _kinds(eng)
+    for i, R in enumerate(sizes):
+        if all(_fits(lambda: programs(eng, p, r, k, h)) for r in range(R, 0, -1)
+               for k, h in kinds for p in ps):
             break
     else:
         raise CompileError(f"no prompt run fits bucket {blocks}")
-    return [R, R == top or not _fits(lambda: _today(eng, p, R + 1))]
+
+    def cost(r):                    # a run of r rows without logits, its programs
+        what, _, compile = _what(eng, ps[0], r, "P")
+        return eng.cached(what, compile)[0]
+    R = prefer_rows(img, R, cost)
+    if i == 0 or not blocks:
+        return [R, True]
+    up = sizes[i - 1]               # today's next larger size: fits, and would take more rows?
+    return [R, not _fits(lambda: _today(eng, ps[0], up)) or
+            prefer_rows(img, up, lambda r: _today(eng, ps[0], r, logits=False)) <= R]
+
+
+def _kinds(eng) -> list:
+    """The (kind, hidden) of the runs a prompt asks for: P and L; an MTP engine's rows (their
+    hidden) and its MTP layer's M."""
+    if getattr(eng.spec, "mtp", False):
+        return [("L", True), ("P", True), ("M", False)]
+    return [("L", False), ("P", False)]
 
 
 def _fits(compile) -> bool:
@@ -163,14 +201,15 @@ def _fits(compile) -> bool:
     return True
 
 
-def _today(eng, p: int, n: int) -> None:
-    """Today's run of n rows at p, the prompt's last (compile_rows); CompileError where it
-    does not fit."""
+def _today(eng, p: int, n: int, logits: bool = True):
+    """Today's run of n rows at p (compile_rows), the prompt's last with logits; its programs,
+    CompileError where they do not fit."""
     img = eng.image
-    progs = img.compile_rows([(0, p + j) for j in range(n)], [n - 1], eng.block,
-                             **eng._tokens_kw([0] * n))
+    progs = img.compile_rows([(0, p + j) for j in range(n)], [n - 1] if logits else [],
+                             eng.block, **eng._tokens_kw([0] * n))
     if not G.fits(img, progs):
         raise CompileError(f"rows at {p}: {max(map(len, progs))} instructions, IMEM")
+    return progs
 
 
 def _lock(eng):
@@ -191,7 +230,7 @@ def warm(eng) -> None:
         try:
             R, K = r_max(eng, 1), conv_k(eng)
             mtp = bool(getattr(eng.spec, "mtp", False))
-            todo = [(0, R, "P")] if K > 1 else []
+            todo = [(0, r_max(eng, 0), "P")] if K > 1 else []
             todo += [(K - 1 if K > 1 else 0, r, k) for r in range(R, 0, -1)
                      for k in (("P", "L") if r == R else ("L",))]
             for p, r, k in todo:
