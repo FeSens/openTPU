@@ -34,7 +34,8 @@ from .. import progcache as PC
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import Affine, CompileError, KVDesc, QTensor, RunVar, Tensor, arg_words, current
+from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, RunVar, Tensor, arg_words,
+                        current)
 from . import formats as FM
 from . import generate as G
 from ..isasim import Config, Machine, design_config
@@ -1035,15 +1036,19 @@ class RunRows(RunPos):
     """R consecutive rows at a run-time position (MTP's verify and draft runs, docs/mtp.md 10):
     row r is position t0 + tpos + r, every row in the bucket (tpos <= block - R), its token the
     run-time value toks[r] (tok, tok1, ...); row r attends over the bucket with the mask row
-    of its own position (bucket_row). values(tokens, p) gives the run's argument values."""
+    of its own position (bucket_row). values(tokens, p) gives the run's argument values.
+    toks_at k (a prefill run, docs/prefill.md): the tokens from the generate area's out[]
+    instead, row r's at out[p + k + r], loaded once by the run: no argument per token."""
 
-    def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int, R: int):
+    def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int, R: int,
+                 toks_at: int | None = None):
         super().__init__(blocks, block, lo, zmask, cap)
         if not 0 < R <= min(block, cap - self.t0):
             raise ValueError(f"{R} rows do not fit bucket {blocks}")
-        self.R = R
+        self.R, self.toks_at = R, toks_at
         self.tpos.bound = min(block, cap - self.t0) - R + 1
-        self.toks = [self.tok] + [RunVar(f"tok{r}") for r in range(1, R)]
+        self.toks = [] if toks_at is not None else \
+            [self.tok] + [RunVar(f"tok{r}") for r in range(1, R)]
 
     def bucket_row(self, r: int) -> Bucket:
         return Bucket(self.blocks, self.bucket.z - 4 * r)
@@ -1262,6 +1267,44 @@ def _embed(m, tok):
     return next(_gather(m, eq, [tok]))
 
 
+class OutTokens:
+    """Rows' tokens from the generate area's out[] (a prefill run, docs/prefill.md): row r's
+    at out[p + k + r], p the run's first position; loaded by the run, so the program does not
+    depend on them (_inputs_rows's `tokens`)."""
+
+    def __init__(self, k: int = 0):
+        self.k = k
+
+
+def _embed_word(m, t):
+    """_embed of the token id in the one-word tile t (a prefill run's, docs/prefill.md): its
+    row's address from a scratch register (RLD MUL into a compiler.DevVar) instead of a
+    run-time argument; the int8 table's row and its scales from two."""
+    b = current()
+    b.check_live(t)
+    if getattr(m, "embed_mbox", None) is not None:
+        raise CompileError("a token from DRAM needs the embedding table on the card")
+    eq = getattr(m, "embed_q", None)
+    if eq is None:
+        e = m.embed
+        r = b.scratch()
+        b.emit(I.rld(r, t.base, mul=4 * e.strides[0], comment="the token's row"))
+        row = ol.load(Tensor(Affine.of(e.base) + DevVar("token row", r), (1, e.shape[1]),
+                             e.strides))
+        b.unscratch(r)
+        return row
+    rd, rs = b.scratch(), b.scratch()
+    b.emit(I.rld(rd, t.base, mul=eq.rs, comment="the token's row"))
+    b.emit(I.rld(rs, t.base, mul=eq.srs, comment="its scales"))
+    one = QTensor(Affine.of(eq.data) + DevVar("token row", rd),
+                  Affine.of(eq.scale) + DevVar("token scales", rs), (1, eq.shape[1]), eq.rs,
+                  eq.srs, eq.D, wf=eq.wf)
+    row = next(_gather(m, one, [0]))
+    b.unscratch(rd)
+    b.unscratch(rs)
+    return row
+
+
 def _inputs_rows(m, rows, tokens=None):
     """_inputs for token rows (rows[r] = (sequence, position)): from the I/O area, or with
     `tokens` (their ids, compile-time values) from the image's tables, the embedding row of
@@ -1274,6 +1317,12 @@ def _inputs_rows(m, rows, tokens=None):
         s_ = ol.empty([R, m.sinr.shape[1]], dense=True)
         ol.load(m.cos_t[rows.pos:rows.pos + R, :], out=c)
         ol.load(m.sin_t[rows.pos:rows.pos + R, :], out=s_)
+        if rows.toks_at is not None:        # the tokens from out[] (docs/prefill.md)
+            k = rows.toks_at
+            tk = ol.load(m.gen.out[rows.pos + k:rows.pos + k + R])
+            for r in range(R):
+                x[r:r + 1, :].set(_embed_word(m, tk[r:r + 1]))
+            del tk
         for r, t in enumerate(rows.toks):
             x[r:r + 1, :].set(_embed(m, t))
             ol.release(t)
@@ -1281,6 +1330,19 @@ def _inputs_rows(m, rows, tokens=None):
     R = len(rows)
     if tokens is None:
         return ol.load(m.xr[0:R, :]), ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
+    if isinstance(tokens, OutTokens):
+        x = ol.empty([R, m.xr.shape[1]], dense=True)
+        c = ol.empty([R, m.cosr.shape[1]], dense=True)
+        s_ = ol.empty([R, m.sinr.shape[1]], dense=True)
+        p0 = rows[0][1] + tokens.k
+        tk = ol.load(m.gen.out[p0:p0 + R])
+        for r in range(R):
+            x[r:r + 1, :].set(_embed_word(m, tk[r:r + 1]))
+        del tk
+        for _, q0, r0, n in _runs(rows):
+            ol.load(m.cos_t[q0:q0 + n, :], out=c[r0:r0 + n, :])
+            ol.load(m.sin_t[q0:q0 + n, :], out=s_[r0:r0 + n, :])
+        return x, c, s_
     eq = getattr(m, "embed_q", None)
     # x, c and s first, side by side as the host path loads them: the gathers' temporaries
     # after them are freed whole (TMEM does not fragment)
@@ -1684,6 +1746,10 @@ class Engine:
     disk for the next process. Default: on when OTPU_PROG_CACHE is set (to a directory, or 1
     for the default one) and not 0. Off, every engine compiles its own (tests patch the
     kernels' constants, which the cache's key does not see).
+
+    prompt_runs (docs/prefill.md): prefill_chunks runs a prompt (sequence 0) from programs at
+    run-time positions, its tokens from out[] (opentpu/llm/prefill.py): compiled once per
+    bucket and kind, not per prompt. A dense model's resident image (prefill.supported).
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1693,9 +1759,11 @@ class Engine:
                  resident: bool = False, experts: int | None = None, pool_file=None,
                  embed_host: bool | None = None, layer_major: int = 0, pooled: bool = True,
                  restore: str = "lazy", embed_runs: bool = False, release_weights: bool = True,
-                 pool_map: bool = True, prog_cache: bool | None = None):
+                 pool_map: bool = True, prog_cache: bool | None = None,
+                 prompt_runs: bool = False):
         self.spec, self.cap, self.block = spec, cap, block
         self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
+        self.prompt_runs = prompt_runs
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
         if experts is not None:             # a MoE model's expert slots per layer
@@ -2082,6 +2150,10 @@ class Engine:
         pass streams every weight: fit_chunk).
         With the pipeline, the next run's program (after the last run: the first decode
         step's) is compiled while the device runs the current one."""
+        from . import prefill as PF
+        if self.prompt_runs and seq == 0 and chunk is None and PF.supported(self):
+            yield from PF.chunks(self, tokens)          # docs/prefill.md
+            return
         tokens = [int(t) for t in tokens]
         whole = chunk is None               # else runs of exactly `chunk` where they fit
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))

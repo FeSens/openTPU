@@ -103,7 +103,7 @@ def run(a) -> None:
     wants = [(plain_sim[i], {"seconds": 0.0}) for i, _, _ in prompts] if a.no_plain else []
     t0 = time.time()
     eng = None if a.no_plain else Engine(spec, W, cap=a.cap, cfg=cfg, resident=True, **wkw,
-                                         **_backend(a, path))
+                                         prompt_runs=a.prompt_runs, **_backend(a, path))
     if eng is not None:
         # no host -> card write while a run is in flight: a streamed step (the prefill's
         # one-row run) marks its logits region again after the start, and XDMA's H2C
@@ -124,7 +124,8 @@ def run(a) -> None:
         _close(eng)
     del eng
     t0 = time.time()
-    eng = mtp_engine(spec, W, cap=a.cap, cfg=cfg, **wkw, **_backend(a, path))
+    eng = mtp_engine(spec, W, cap=a.cap, cfg=cfg, **wkw, prompt_runs=a.prompt_runs,
+                     **_backend(a, path))
     print(f"MTP engine built in {time.time() - t0:.0f} s", flush=True)
     for (i, kind, ids), (want, pl) in zip(prompts, wants):
         t0 = time.time()
@@ -343,6 +344,8 @@ def main() -> None:
     ap.add_argument("--sample", help="T,K,P,R: sampled decoding (temperature, top-k, top-p, "
                                      "repetition penalty), with --loop device")
     ap.add_argument("--seed", type=int, default=0, help="--sample's uniforms")
+    ap.add_argument("--prompt-runs", action="store_true",
+                    help="both prefills from programs at run-time positions (docs/prefill.md)")
     ap.add_argument("--summary", nargs="+")
     ap.add_argument("--cycles", help="decode step, verify and draft cycles (perf_qwen)")
     a = ap.parse_args()
