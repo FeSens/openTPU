@@ -1438,6 +1438,132 @@ row read and served, plus the first part's read. Only a faster link (PCIe Gen2, 
 fewer calls on the card's side (an expert's present flag in its slot, a program change) would
 remove these.
 
+### 10.9 PCIe Gen2 x8: the prediction
+
+The Gen2 build (g2fix 0885d436, production since 2026-10-02 00:03) moves 2.29 GB/s host->card in
+the selftest, against 1.35 on Gen1: 1.70x. Session 13's DMA calls give the Gen1 link as offload
+uses it during a run:
+- an expert's whole record (two calls, one per channel): 1183 us for the 35B's 1.67 MB (a fit of
+  ~132 us fixed + 1.59 GB/s), 2360 us for the 26B's 3.45 MB;
+- a request's first miss: 371 + 972 us (35B), 604 + 2032 us (26B);
+- a 64-byte call (entry, clear, served): 49 us (35B), 61 us (26B).
+
+Two bounds for Gen2: (a) only the bytes go 1.70x faster, and each call keeps its fixed cost
+(`serve_emu.py --h2c-call 66e-6 --h2c-bps 2.70e9`); (b) the whole call goes 1.70x faster
+(`--h2c-call 39e-6`). Either way the 64-byte calls stay 49-61 us (latency).
+
+`serve_emu.py` replayed session 13's own traces (N2, gN1) with the Gen1 link calibrated to the
+card's calls (`--h2c-call 66e-6 --h2c-bps 1.59e9 --beat-call 49e-6`; the 26B's 1.547e9 and 61e-6;
+two runs each). Device stall is crit + detect:
+
+| model | Gen1 (calibrated) | Gen2 (a) | Gen2 (b) | change |
+|:--|:--|:--|:--|:--|
+| 35B | 20.63-20.70 s | 14.58-14.59 | 13.85-13.92 | -29.5 to -32.8% |
+| 26B | 31.30-31.48 s | 20.93-21.11 | 20.36-20.40 | -33 to -35% |
+
+The emulator runs 5-11% slower than the card on Gen1 (its windows 22.3 against the card's 20.0;
+33.1 against 31.3), so its relative change is applied to the card's windows. Session 13's N2 /
+gN1 at 4.05 / 2.78 device tok/s then go to:
+- 35B: -5.7 to -6.3 s per 128 tokens, about **5.0 tok/s** (4.9-5.1, +23-26%). The per-record
+  arithmetic alone (102.85 misses a token, 36.6 of them a request's first) gives -45 to -52 ms a
+  token: 4.95-5.13.
+- 26B: -10.1 to -10.8 s, about **3.6 tok/s** (3.56-3.63, +28-31%). Per record: -78 to -89 ms a
+  token: 3.55-3.69.
+
+Below that, look at MXU_STARVE first. Session 13 already showed the expert DMA overlapping the
+MXU's weight reads (10.8), and at 1.7x the writes take more of the DRAM.
+
+What the 35B's pool in RAM costs at each rate: cachesim's disk reads per token (10.6), scaled to
+the card's 102.85 misses per token (x1.21), each 3.8 ms on the critical path:
+
+| pool GB in RAM | disk reads / token | Gen1 tok/s | Gen2 tok/s |
+|:--|:--|:--|:--|
+| 17.1 (all) | 0 | 4.05 | 5.0 |
+| 14 | 2.7 | 3.89 | 4.76 |
+| 12 | 5.4 | 3.73 | 4.53 |
+| 10 | 11.7 | 3.43 | 4.09 |
+| 8 | 22.4 | 3.01 | 3.51 |
+
+At Gen2 the SSD costs relatively more: 8 GB of RAM loses 30% there, against 26% on Gen1. The 26B's
+13.2 GB pool fits. With 8 GB of it in RAM (1.9 disk reads a token) it would make about 3.5 tok/s
+on Gen2.
+
+The check on the card is q35e128s and g26s (the default serving, `--hint-trace` with the DMA
+calls), from session 13's tree, so the programs and references (refs-d29bfe9) are the same:
+- tokens and prefill sha bit for bit;
+- a whole expert's record about 0.70-0.75 ms (35B) and 1.39-1.49 ms (26B), from 1.18 and 2.36;
+- the window fits near 0.45 + 1.01-1.07 ms per miss (35B) and 0.55 + 1.75-1.82 (26B);
+- tok/s as above.
+
+The card check (2026-10-02 00:31-00:37, production g2fix 0885d436 with no reload; session 13's
+tree b40fc6f with d29bfe9's programs; `g2check.sh`: q35e128s twice, then g26s). Every run
+matched the ISA simulator bit for bit (tokens, prefill sha 88225ff781699291 / 90e6b6e06e19da99).
+Gen1 is session 13's N2 / gN1 (10.8):
+
+| run | link | tok/s (device) | decode Gcycles | windows s | window fit (ms) | record, median | first miss (lead + rest) | 64-byte call | DMA_BUSY G | RUNNING - DMA_BUSY G | MXU_STARVE G | poll reads |
+|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|:--|
+| 35B | Gen1 | 4.04 (4.05) | 4.217 | 20.02 | 0.34 + 1.39 / miss | 1183 us | 371 + 972 us | 48.6 us | 2.386 | 1.831 | 0.108 | 352k |
+| 35B | Gen2 | **5.07** (5.09) | 3.355 | 13.25 | 0.33 + 0.88 | 661 | 327 + 595 | 36.6 | 1.502 | 1.853 | 0.126 | 435k |
+| 35B | Gen2 | **5.10** (5.12) | 3.336 | 13.07 | 0.37 + 0.85 | 659 | 324 + 597 | 35.6 | 1.478 | 1.858 | 0.129 | 456k |
+| 26B | Gen1 | 2.78 (2.78) | 6.138 | 31.34 | 0.52 + 2.60 | 2360 | 604 + 2032 | 61.0 | 2.256 | 3.882 | 0.284 | 456k |
+| 26B | Gen2 | **3.54** (3.55) | 4.810 | 20.68 | 0.79 + 1.56 | 1346 | 427 + 1318 | 49.3 | 0.842 | 3.968 | 0.316 | 561k |
+
+- 35B: +25.5% and +26.2%, at the top of the predicted 4.9-5.1. Its windows fell 6.8-7.0 s (-5.7
+  to -6.3 predicted).
+- 26B: +27.3%, just under the predicted 3.56-3.63. Its windows fell 10.66 s, as predicted (-10.1
+  to -10.8).
+- The link beat bound (b): a record goes 1.75-1.79x faster, not 1.70x, so part of each call's
+  fixed cost is the link's. The data calls run at 2.19-2.28 GB/s.
+- The 64-byte calls are not pure latency either: 36 us on the 35B and 49 us on the 26B, from 49
+  and 61.
+- The 26B's shortfall is on the device's side. RUNNING - DMA_BUSY, the time the card computes,
+  rose 0.086 G cycles (0.65 s per 128 tokens). Of that, MXU_STARVE accounts for 0.032 G. Without
+  that rise, the 26B makes 3.61 tok/s. The 35B's compute rose too, by only 0.02-0.03 G.
+- Two causes are possible. The expert writes now take 2.28 GB/s of the DRAM while the hits
+  compute. The spinning poll reads 23% more often, because a Gen2 read returns sooner (one every
+  ~27 us outside the windows on the 26B). The poll A/B (10.10) separates the two.
+
+### 10.10 Pacing the poll
+
+Session 13's spinning poll reads the card's seq every ~33 us while the card computes between
+requests: 346k reads per 128 tokens on the 35B (98k with the 50 us sleep), 456k on the 26B (64k).
+MXU_STARVE rose with it (+0.03 G and +0.07 G cycles), about 120-180 cycles per extra read if the
+reads are the cause. The other candidate is the expert DMA, which now starts earlier and overlaps
+the hits' compute (10.8).
+
+`PollPacer` (`opentpu.host.offload`) wraps the servers' polls for the decode. For each kind of
+request it keeps the last 8 gaps between serving a request and seeing the next one. The kind is
+(server, layer, demand or hint), or a row. After serving, it sleeps 0.75 x the shortest of
+those gaps (at most 5 ms), minus 100 us for the sleep's late wake-up, and then spins. The sleep
+is skipped when it would be under 100 us or when a server has hints pending, and a hint's part
+step is not a request. Detection stays the spin's ~26 us unless a gap comes in shorter than 0.75
+x the shortest of its last 8.
+
+moe_card `--poll-idle spin | S | predict` sets the decode's poll: spin (the card's default), a
+fixed sleep of S seconds between empty polls (the legacy 50e-6), or the pacer. The JSON records
+`poll_idle`, plus `pacer` (sleeps, seconds slept, kinds).
+
+Session 14 (`tools/offload/sessions/session14.sh`, session 13's tree with the pacer: 17e99eb,
+d29bfe9's programs and refs-d29bfe9) runs on the Gen2 production build:
+- q35e128s, q35e128sp: the 35B spinning and paced (spinning on Gen2: 5.07-5.10 tok/s, 10.9);
+- g26s, g26s50, g26sp, g26s, g26sp: the 26B's poll A/B (spinning on Gen2: 3.54 tok/s, 561k reads).
+
+The prediction for the 26B A/B, per 128 tokens (about 3840 requests):
+- Poll reads: spin about 560k (Gen2's check), 50 us 110-130k, paced 140-200k.
+- If the reads cost the MXU (session 13's 120-180 cycles each):
+  - MXU_STARVE falls 0.04-0.06 G both paced and with 50 us.
+  - Paced gains 0.3-0.45 s (+1%).
+  - 50 us gains 0.1-0.25 s, because its detection costs 56 us per request (82 against 26 us),
+    0.2 s in all.
+- If the reads don't cost the MXU:
+  - MXU_STARVE stays within 0.01 G.
+  - Paced equals spin within noise (0.1 s).
+  - 50 us loses about 0.2 s (-0.6%).
+
+The pacer becomes the decode's default if MXU_STARVE falls and it is not slower. Otherwise
+spinning stays, and the RUNNING - DMA_BUSY rise is the expert DMA's overlap, a matter for the
+DRAM's arbitration.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The

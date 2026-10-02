@@ -20,6 +20,8 @@
 #     session 10's names for the defaults since
 #   q35e128s, q35e128sl: q35e128r with its timeline and DMA calls (--hint-trace), served as now
 #     and as before docs/offload.md 10.8 (--legacy-serve); g26s, g26sl: g26r's the same
+#   q35e128sp, g26sp: q35e128s / g26s with the decode's polls paced (--poll-idle predict:
+#     PollPacer, docs/offload.md 10.10); g26s50: g26s with a 50 us sleep between empty polls
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
 #     layer), 128 tokens after wiki.txt's first paragraph (q26-hf.json, q26ref16.json: 16 tokens)
 #   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
@@ -73,6 +75,7 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35e128rw]="$Q35 128 q35-hf.json q35ref16 q35card128erw 0 lfu --embed-table host --hints off --release-weights --willneed --hint-trace $R/q35card128erw.trace.json"
   [q35e128s]="$Q35 128 q35-hf.json q35ref16 q35card128es 0 lfu --embed-table host --hints off --hint-trace $R/q35card128es.trace.json"
   [q35e128sl]="$Q35 128 q35-hf.json q35ref16 q35card128esl 0 lfu --embed-table host --hints off --legacy-serve --hint-trace $R/q35card128esl.trace.json"
+  [q35e128sp]="$Q35 128 q35-hf.json q35ref16 q35card128esp 0 lfu --embed-table host --hints off --poll-idle predict --hint-trace $R/q35card128esp.trace.json"
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"
   [q35c128b]="$Q35 128 q35-hf.json q35ref16 q35card128cb 0 lfu --embed-table card --hints off"
   [g26a]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128a 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
@@ -80,6 +83,8 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [g26r]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128r 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --release-weights"
   [g26s]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128s 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --hint-trace $R/g26card128s.trace.json"
   [g26sl]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128sl 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --legacy-serve --hint-trace $R/g26card128sl.trace.json"
+  [g26s50]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128s50 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --poll-idle 50e-6 --hint-trace $R/g26card128s50.trace.json"
+  [g26sp]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128sp 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --poll-idle predict --hint-trace $R/g26card128sp.trace.json"
   [g26t16]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1"
   [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2")
