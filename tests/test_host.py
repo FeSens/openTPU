@@ -732,6 +732,41 @@ def test_status_file_lifecycle(run_dir):
     assert d["process"]["stale"] and d["dram"] is None
 
 
+def test_chat_wformat_auto_and_weights_label(run_dir, monkeypatch):
+    """otpu-chat's --wformat auto: the model's recommended mix where it has one (Spec.mix),
+    else int8; weights_label names the image's formats (OTPU_FORMATS included), and otpu-smi
+    shows the runner's."""
+    from dataclasses import replace
+
+    from opentpu import lens as L
+    from opentpu.host import chat as C
+    from opentpu.host.board import sim_config
+    from opentpu.llm import formats as FM
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    spec, _ = L._tiny_qwen()
+    mixed = replace(spec, mix="mlp@1-1=fp4")
+    assert [FM.auto(s, w) for s, w in ((spec, "auto"), (mixed, "auto"), (mixed, "fp4"),
+                                       (spec, "int8"))] == ["int8", "mix", "fp4", "int8"]
+    cfg = sim_config(spec, 256)
+
+    def label(s, w, hf=None):
+        w = FM.auto(s, w)
+        return C.weights_label(s.image(cfg, 256, 1, 1, w, hf), w)
+    assert label(spec, "auto") == "int8, head int8"
+    assert label(mixed, "auto") == "mix: int8 + mlp@1-1=fp4, head int8"
+    assert label(mixed, "fp4", "int8") == "fp4, head int8"
+    monkeypatch.setenv("OTPU_FORMATS", "attn=fp4,head=fp4")
+    assert label(spec, "auto") == "int8 + attn=fp4, head fp4"
+    assert label(mixed, "auto") == "mix: int8 + attn=fp4, head fp4"
+    st = RunnerStatus("fake8", model="m", weights="mix: int8 + mlp@1-1=fp4, head int8")
+    try:
+        row = smi.table([smi.query(FakeTransport(devname="fake8"), "/dev/fake8",
+                                   sleep=lambda s: None)])
+        assert "Weights mix: int8 + mlp@1-1=fp4, head int8" in row
+    finally:
+        st.remove()
+
+
 def test_runner_status_is_atomic(run_dir):
     s = RunnerStatus("fake4", model="m")
     for k in range(50):

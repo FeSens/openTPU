@@ -39,6 +39,9 @@ the model's own default.
 `tools/decode_profile.py`) is int8 with `Spec.mix` unless the caller or `OTPU_FORMATS` gives a
 string. `formats.mix_for` finds a checkpoint's mix in `formats.MIXES` by its text config's
 (model_type, num_hidden_layers, hidden_size, vocab_size); a model without one refuses "mix".
+`otpu-chat`'s default, `--wformat auto` (`formats.auto`), is "mix" where the model has one and
+int8 elsewhere; it prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head
+int8`), and `otpu-smi` shows them. `Engine`'s own default stays int8.
 
 ## Layouts, runs and IMEM
 

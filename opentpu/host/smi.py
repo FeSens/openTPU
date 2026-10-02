@@ -329,6 +329,8 @@ def table(devs: list[dict]) -> str:
             out.append(_line(f"Model {p.get('model') or '?'}   tokens {p.get('tokens', 0)}   "
                              f"{f2(p.get('tok_s_device'))} tok/s device   "
                              f"{f2(p.get('tok_s_wall'))} tok/s wall"))
+            if p.get("weights"):
+                out.append(_line(f"Weights {p['weights']}"))
         out.append("╰" + "─" * (W - 2) + "╯")
     return "\n".join(out)
 

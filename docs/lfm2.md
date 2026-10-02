@@ -244,6 +244,7 @@ softmax chain adds ~0.7 K cycles after them.
 
 ```sh
 hf download LiquidAI/LFM2-2.6B --local-dir models/LFM2-2.6B
+otpu-chat --model lfm2-2.6b --backend board            # its mix: conv=fp4,mlp=fp4 (docs/formats.md)
 otpu-chat --model lfm2-2.6b --backend board --wformat fp4 --head-format int8
 python3 tools/compare_hf.py --model lfm2-2.6b --cfg board --tokens 16
 ```
