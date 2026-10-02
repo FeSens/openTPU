@@ -3388,3 +3388,60 @@ request dropping one, ahead_layer's slot at its stage, the card's memories as Bo
 `test_a_held_idle_poll_leaves_no_dma_in_flight`; test_qwen35_moe's live card
 (BoardDram, CHASH, a split pool) bit for bit with v2: the decode hints and the layer-ahead
 prefill (`test_layer_ahead_on_a_live_card_with_idle_parts_v2`), and moe_card's `--idle-parts`.
+
+### 13.13 The need path on the host (offload-need)
+
+The server's share of 13.11, host only (opentpu/host/offload.py). The card and Engine parts are
+gemma4's.
+- `Layout.need_off` is 2 x layers x E. A post whose first id is at or above it is a need line;
+  from layers x E up it is a hint, and below that a request. `poll` writes served at once, with
+  no answer, no use and no `history` entry; `last` and the events say "n".
+- `ExpertServer.need`: each id in no slot (one on its way is in a slot) joins the end of
+  `needs`, once, in arrival order. An id in ahead_layer's queue moves to `needs`. An id that
+  ahead_layer has on its way becomes a need's (`_needed`), so the next ahead_layer call,
+  which drops its own experts on their way, keeps it. A hint for the queue's layer never
+  queues an id that `needs` holds.
+- Idle polls start a need before any queued ahead expert (`_next_ahead` calls `_next_need`
+  first). Each need takes its slot when its first part goes; its tag goes with its last part,
+  then its entry, all in the same poll, flushed before the poll returns. halt_aware holds and
+  read-ahead apply as to any idle part (13.12). A request that names a need on its way
+  promotes it, as it would a hint's expert. Requests' `drop` never withdraws a need.
+- Victims (`_at`, `_pool_slot`): the running layer j is set by each need line and each request.
+  While the prefill is expert-major, no victim comes from layers j - 1, j and j + 1 (mod
+  layers), for a need's slot, a request's miss and an ahead expert alike. A need with no such
+  victim stops with an error; it is never dropped.
+- Tags: the first need line of layer j + 1 means layer j's expert run is done, and that run
+  zeroed the tag of every expert its need lines named. Those slots leave `armed`, so reusing
+  one later costs no zero-tag write first (one DMA call each: about 138 a layer on the 35B).
+- `begin_prefill(expert_major=True, scratch=bytes)` returns the scratch's base: the slot
+  region's last ceil(bytes / pitch) slots (`Layout.scratch`, one span across layers if it needs
+  to; the programs can take the address from the layout alone). Those slots leave the free
+  lists. Their experts are evicted, and their entries cleared and flushed, before the base is
+  returned. No slot of the scratch is handed out until end_prefill.
+- `end_prefill` serves the last post (settle), drops ahead_layer's queue, then sends every need
+  still queued or on its way whole (`drained` counts them; the expert runs waited on them all,
+  so a nonzero count means a run did not). It zeroes the scratch's tag beats (scratch data in a
+  tag beat would read as a landed expert's tag), returns those slots to the free lists, and
+  restores each layer's slots as before.
+- `need_report()`, for the Engine's error on an expert run's WAITW timeout (Board's 'a WAITW
+  timed out', the ISA's 'never holds'): the running layer's needed experts whose entries are
+  not present, and for each whether it is on its way (bytes sent), queued, or in no slot.
+- Counters: `need_lines`, `needs_queued`, `need_hits` (ids already in a slot), `needs_landed`,
+  `drained`.
+
+Open points for the card A/B:
+- In expert-major mode only requests count a use, so end_prefill's lazy restore keeps
+  each layer's earliest-landed experts (ties keep LRU order).
+- Whether halt_aware should hold needs at all. On the 35B the mixer phase is link-bound
+  (13.11), so a hold there idles the link.
+
+Tests (test_offload_server):
+- `test_a_need_line_queues_its_experts_and_idle_polls_land_them_ahead_of_the_queue`;
+- `test_a_need_takes_over_an_ahead_expert_and_no_ahead_layer_call_drops_it`;
+- `test_expert_major_victims_spare_the_running_layer_and_its_neighbours`;
+- `test_the_next_layers_need_line_disarms_the_tags_the_expert_run_zeroed`;
+- `test_end_prefill_drains_the_needs_and_hands_the_scratch_back_with_zeroed_tags`;
+- `test_need_report_names_the_running_layers_experts_without_an_entry`.
+
+Each test fails with its rule removed: the victims' guard, the scratch's removal from the free
+lists, the drain, the disarm, the tag zeroing.

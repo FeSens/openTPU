@@ -1499,3 +1499,183 @@ def test_ahead_layer_serves_the_last_request_first_and_end_prefill_drops_the_que
     lay, mem, srv = _ahead_setup(ahead=False)
     srv.ahead_layer(1, [9, 8])
     assert not srv.queue and srv.poll() == 0
+
+
+def _em_setup(slots=(2, 2, 2, 2), scratch=0, warm=()):
+    """An expert-major prefill (docs/offload.md 13.11) on layers of `slots`, experts of three
+    4 KiB parts (the last 128 bytes), an idle poll's part 4 KiB; begin_prefill's scratch."""
+    from opentpu.host.offload import RUN
+    slot = 2 * RUN + 128
+    lay = Layout.build(4096, E, K, slots, slot, lines=2)
+    mem = SimDram(np.zeros(lay.end + 4096, np.uint8))
+    srv = ExpertServer(mem, lay, lambda g: np.full(slot, g + 1, np.uint8).tobytes(),
+                       policy="lfu")
+    srv.load(list(warm))
+    base = srv.begin_prefill(ahead=True, part=RUN, expert_major=True, scratch=scratch)
+    return lay, mem, srv, base
+
+
+def test_a_need_line_queues_its_experts_and_idle_polls_land_them_ahead_of_the_queue():
+    """A need line (ids from Layout.need_off = 2 x layers x E up): served at once, no answer,
+    no use counted, no slot taken; each id in no slot joins `needs` once, in arrival order.
+    Idle polls send them before ahead_layer's queue: each takes a slot when its first part
+    goes, its tag with its last part, then its entry. Outside an expert-major prefill a need
+    line is an error."""
+    lay, mem, srv, _ = _em_setup()
+    N = lay.need_off
+    assert N == 2 * lay.E * lay.layers
+    srv.ahead_layer(1, [9, 8])
+    _post_n(mem, lay, 1, [g + N for g in (1, 0, 1, 3)])
+    assert srv.poll() == 1 and _served(mem, lay) == 1 and srv.last == ("n", 0)
+    assert list(srv.needs) == [1, 0, 3] and not srv.lru[0] and not srv.pending
+    assert _answer(mem, lay) == [0] * 16 and srv.use[0] == {} and srv.t[0] == 0
+    assert (srv.need_lines, srv.needs_queued, srv.misses, srv.hits) == (1, 3, 0, 0)
+    for i in range(9):                              # 1, 0, 3: three parts each
+        assert srv.poll() == 1
+    assert all(_landed(mem, lay, srv, g) for g in (1, 0, 3)) and not srv.needs
+    assert _tag(mem, lay, srv.lru[0][1]) == 2 and not srv.lru[1] and srv.needs_landed == 3
+    while srv.poll():                               # then the queue's
+        pass
+    assert _landed(mem, lay, srv, 9) and _landed(mem, lay, srv, 8)
+    assert list(srv.order)[-5:] == [1, 0, 3, 9, 8]
+    _post_n(mem, lay, 2, [g + N for g in (1, 2)])   # 1 in a slot: a hit
+    assert srv.poll() == 1 and list(srv.needs) == [2] and srv.need_hits == 1
+    lay, mem, srv = _ahead_setup()                  # layer-major, not expert-major
+    _post_n(mem, lay, 1, [lay.need_off])
+    with pytest.raises(RuntimeError, match="need line outside"):
+        srv.poll()
+
+
+def test_a_need_takes_over_an_ahead_expert_and_no_ahead_layer_call_drops_it():
+    """A need naming an expert ahead_layer queued moves it to `needs`; one ahead_layer has on
+    its way becomes a need's, so the next call (which drops its own on their way) keeps it.
+    A hint for the queue's layer does not queue a need again."""
+    lay, mem, srv, _ = _em_setup()
+    N, G = lay.need_off, lay.E * lay.layers
+    srv.ahead_layer(1, [9, 8, 10])
+    assert srv.poll() == 1 and 9 in srv.pending     # 9's first part
+    _post_n(mem, lay, 1, [9 + N, 8 + N])
+    assert srv.poll() == 1
+    assert list(srv.needs) == [8] and list(srv.queue) == [10] and srv.need_hits == 1
+    _post_n(mem, lay, 2, [8 + G, 11 + G])           # the queue's layer: 11 only
+    assert srv.poll() == 1 and list(srv.queue) == [10, 11]
+    srv.ahead_layer(2, [17])
+    assert 9 in srv.pending and srv.dropped == 0 and list(srv.queue) == [17]
+    while srv.poll():
+        pass
+    assert all(_landed(mem, lay, srv, g) for g in (9, 8, 17)) and srv.needs_landed == 2
+    assert 10 not in srv.lru[1] and 11 not in srv.lru[1]
+
+
+def test_expert_major_victims_spare_the_running_layer_and_its_neighbours():
+    """Expert-major, every slot taken during layer j's runs (a need's, a request's miss, an
+    ahead expert's) has its victim outside layers j - 1, j and j + 1, the running layer the
+    last need line's or request's. A need with no such victim is an error, not dropped."""
+    lay, mem, srv, _ = _em_setup(slots=(1, 1, 1, 1, 1))
+    N = lay.need_off
+    for seq, g in enumerate((0, 8, 16, 24, 32), 1):     # one need a layer: every slot taken
+        _post_n(mem, lay, seq, [g + N])
+        assert srv.poll() == 1
+        while srv.poll():
+            pass
+    _post_n(mem, lay, 6, [1 + N])                   # layer 0: spared 4, 0, 1; 16 the oldest
+    srv.poll()
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 1) and _empty(mem, lay, 16) and 16 not in srv.lru[2]
+    _post_n(mem, lay, 7, [9 + N])                   # layer 1: spared 0, 1, 2; 24 the oldest
+    srv.poll()
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 9) and _empty(mem, lay, 24)
+    _post_n(mem, lay, 8, [17])                      # a request of layer 2: spared 1, 2, 3
+    assert srv.poll() == 1 and srv.misses == 1
+    assert _landed(mem, lay, srv, 17) and _empty(mem, lay, 0) and 32 in srv.lru[4]
+    srv.ahead_layer(3, [25])                        # ahead: also outside 2 and 3; 32 is layer 4
+    while srv.poll():
+        pass
+    assert _landed(mem, lay, srv, 25) and _empty(mem, lay, 32)
+    lay, mem, srv, _ = _em_setup(slots=(1, 1, 1))
+    N = lay.need_off
+    for seq, g in enumerate((0, 8, 16), 1):
+        _post_n(mem, lay, seq, [g + N])
+        srv.poll()
+        while srv.poll():
+            pass
+    _post_n(mem, lay, 4, [9 + N])                   # every layer spared
+    with pytest.raises(RuntimeError, match="need 9"):
+        while srv.poll():
+            pass
+
+
+def test_the_next_layers_need_line_disarms_the_tags_the_expert_run_zeroed():
+    """The first need line of layer j + 1 means layer j's expert run is done, and it zeroed
+    the tags of the experts its need lines named: their slots are no longer armed, so a slot
+    reused later does not cost a write of a zero tag first."""
+    lay, mem, srv, _ = _em_setup()
+    N = lay.need_off
+    _post_n(mem, lay, 1, [0 + N, 1 + N])
+    srv.poll()
+    while srv.poll():
+        pass
+    s0, s1 = srv.lru[0][0], srv.lru[0][1]
+    assert {s0, s1} <= srv.armed
+    for s in (s0, s1):                              # the expert run zeroes them
+        mem.write(s + lay.tag, np.zeros(1, np.uint32))
+    _post_n(mem, lay, 2, [8 + N])
+    srv.poll()
+    assert s0 not in srv.armed and s1 not in srv.armed
+
+
+def _em_pitch():
+    """_em_setup's slot pitch (two 4 KiB blocks and a tag chunk, in whole blocks)."""
+    from opentpu.host.offload import RUN
+    return Layout.build(4096, E, K, (1,), 2 * RUN + 128, lines=2).pitch
+
+
+def test_end_prefill_drains_the_needs_and_hands_the_scratch_back_with_zeroed_tags():
+    """begin_prefill(scratch=n): the slot region's last ceil(n / pitch) slots (Layout.scratch:
+    here layer 2's last and layer 3's two) leave the free lists, their experts evicted with
+    their entries cleared on the card before the base is returned, and no need or miss is
+    given one. end_prefill sends every need still queued or on its way whole (drained),
+    zeroes the scratch's tag beats (the card's scratch data there would read as a landed
+    expert's tag) and gives each layer its slots back."""
+    lay, mem, srv, base = _em_setup(scratch=2 * _em_pitch() + 1, warm=(24, 25))
+    p, a2, a3 = lay.pitch, lay.slots[2][0], lay.slots[3][0]
+    scratch = [a2 + p, a3, a3 + p]
+    assert base == a2 + p == lay.scratch(2 * p + 1)[0] and srv.scratch_slots == scratch
+    assert _empty(mem, lay, 24) and _empty(mem, lay, 25) and not srv.lru[3]
+    assert srv.free[2] == [a2] and not srv.free[3] and 24 not in srv.order
+    mem.write(base, np.full(3 * p, 0xAB, np.uint8))     # the card's scratch
+    N = lay.need_off
+    for seq, ids in enumerate(([0, 1], [8, 9], [16, 17, 18]), 1):
+        _post_n(mem, lay, seq, [g + N for g in ids])
+        assert srv.poll() == 1
+    assert len(srv.needs) == 7 and srv.poll() == 1  # 0's first part only
+    while len(srv.needs) > 1:                       # (up to 17: a victim of layer 0)
+        srv.poll()
+    assert not {a for lru in srv.lru for a in lru.values()} & set(scratch)
+    srv.end_prefill()
+    assert not srv.needs and not srv.pending and 0 < srv.drained < 7 and srv.needs_landed == 7
+    assert all(_tag(mem, lay, a) == 0 for a in scratch)
+    assert not srv.scratch_slots and not srv.expert_major and not srv.pooled
+    _consistent(mem, lay, srv)
+    back = {a for lru in srv.lru for a in lru.values()} | {a for fr in srv.free for a in fr}
+    assert set(scratch) <= back and back == set(lay.all_slots())
+
+
+def test_need_report_names_the_running_layers_experts_without_an_entry():
+    """For an expert run's WAITW timeout: the running layer's needed experts whose entries are
+    not present, and where each stands."""
+    lay, mem, srv, _ = _em_setup()
+    N = lay.need_off
+    assert "no need line" in srv.need_report()
+    _post_n(mem, lay, 1, [1 + N, 0 + N, 3 + N])
+    srv.poll()
+    srv.poll()                                      # 1's first part
+    r = srv.need_report()
+    assert r.startswith("layer 0: 3 experts needed, 3 without an entry")
+    assert "1 (expert 1): on its way, 4096 of" in r and "0 (expert 0): queued" in r
+    while srv.poll():
+        pass
+    assert srv.need_report() == "layer 0: 3 experts needed, 0 without an entry"
