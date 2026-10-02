@@ -1638,16 +1638,30 @@ than the card's next post, so it lands before the host can pick the slot as a vi
 nonzero tag then means this load's data. The answer works the same way: zeroed by the card
 before its next post, written by the host only after it sees that post.
 
-The new ordering contract, and the risk: the tag is the last beat of the last call. The card
-must not see it before that call's earlier beats on the same channel. The other channel's call
-has completed before then, which is the current ordering contract. Within one XDMA transfer,
-the writes reach otpu_mem_ch in order (AXI writes are not interleaved), and LiteDRAM keeps a
-port's commands in order per bank. ld-memch should confirm that nothing on the path (the Gen2
-register slices, otpu_mem_ch's arbitration, the native adapter) lets a later beat of a transfer
-become visible before an earlier one. A card test checks it on the bitstream:
-`tools/qual/waitw.py` grows a case where the host sends 1-4 MB with a flag in its last beat
-while the card waits on the flag and checksums the data, thousands of times on both channel
-orders.
+The new ordering contract: the tag is the last beat of the last call, and the card must not
+see it before that call's earlier beats on the same channel. The other channel's call has
+completed before then, which is the old contract. ld-memch confirmed the new one (2026-10-02)
+for g2fix 0885d436 and for the porta-flush build; otpu_mem_ch is the same in both. Three
+conditions:
+1. The bitstream has xdma_rnum_rids 8 (xfix, g2fix, pa). On the 32-RID builds, XDMA could lap
+   its 8 KiB completion ring under write backpressure, which the WAITW's polls create, and data
+   from 8 KiB later appeared mid-burst.
+2. One pwrite is one transfer on h2c_0, inside one channel's window, with the tag at its
+   highest address.
+   - XDMA emits a transfer's bursts in ascending address order. otpu_axi_split2 and otpu_mem_ch
+     keep AW order per channel, and W follows AW.
+   - LiteDRAM's two bank-parity ports may write the tag before an earlier beat. But the core
+     reads that beat only after its tag read has returned, and the read goes to the same port,
+     behind XDMA's write.
+3. Port A, on g2fix only: an expert's scale arrays must not start in the beat of the last
+   port-A read before the WAITW, nor in the next channel beat of a live port-A run. Every slot
+   meets this, since each scale array follows its own port-B data. On porta-flush there is no
+   condition: the WAITW's hold drops port A's reused beat and its runs.
+
+`tools/qual/waitw.py --tag-rounds 2000` checks it on the bitstream. Each round sends 1-4 MiB with
+the tag in either channel and bank parity, while the card's WAITW reads the tag's channel back
+to back. The card then copies the 64 beats before the tag on each channel, and 64 random beats,
+and all must be the new data.
 
 The prediction, from the Gen2 traces (g2check). Entries removed, plus one answer call per
 request with misses where it is not hidden (the upper bound):
