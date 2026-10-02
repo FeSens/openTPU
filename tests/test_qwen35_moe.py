@@ -451,6 +451,34 @@ def test_layer_runs_hint_the_next_layer_and_change_no_logit(tiny):
     assert hints == got[runs:] and any(len(h) > K for h in hints)  # (two rows' ids)
 
 
+def test_layer_hints_queue_the_next_layer_and_its_experts_land_early(tiny):
+    """The server's side of layer_ahead "hint" (ExpertServer.hint with ahead_layer's queue on
+    the hinted layer: its ids to the end of the queue, docs/offload.md 13.4): with the link's
+    idle time before each run (polls until none sends: the ISA simulator polls only while a
+    run waits) the hinted experts land before the next layer's runs ask for them, so fewer
+    misses than layer-major runs without the layer ahead; the logits and the decode steps
+    after equal theirs bit for bit."""
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    a, b = (Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K,
+                   layer_major=2, **kw) for kw in ({"layer_ahead": "hint"}, {}))
+    srv, run = a.server, a.backend.run
+
+    def idle_then_run(*args, **kw):
+        while srv.poll():
+            pass
+        return run(*args, **kw)
+    a.backend.run = idle_then_run
+    toks = [int(t) for t in np.random.default_rng(9).integers(0, 1000, 20)]
+    m0 = a.server.misses, b.server.misses
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert srv.hinted_ahead > 0 and srv.landed > 0 and not srv.queue
+    assert a.server.misses - m0[0] < b.server.misses - m0[1]
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    for t in (5, 6):
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
+
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 
