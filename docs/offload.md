@@ -2072,6 +2072,22 @@ Column meanings in the table below:
   - Requests with 3-4 misses are unchanged (2971-2983 us).
   - serve_emu's card model takes that time per request from the old path's traces, as fixed. It
     misses the overlap, which is why it predicted the 26B's head gain as wall time.
+  - The card model since then (`serve_emu.py --card-w`, fit by `card_fit.py w` on the M runs):
+    the next post comes no sooner than the critical end + F, nor than the post + W(m) for m
+    misses.
+    - 26B: F 2.956 ms; W 6.39 / 7.08 / 7.89 ms for 1 / 2 / 3 misses.
+    - 35B: F 1.705 ms; W never binds.
+    - Checked on the H runs: after the critical end, 4314 / 4255 us (measured / model) for 1
+      miss and 3367 / 3300 for 2.
+  - On serve_emu with it (sweep hw1, opentpu, the link as above), A -> A' saves:
+    - 26B: 0.34 s per 128 tokens, wall 36.52-36.56 -> 36.18-36.22 s. The card saved 0.20-0.32 s;
+      the fixed model said 0.59.
+    - 35B: 0.56 s, 27.40 -> 26.84. The card saved 0.4-1.2 s.
+    - Predictions use it from now on. `tests/test_serve_emu.py` runs the emulator on a tiny
+      trace and checks the fit on a made-up run.
+    - serve_emu does not run while the card is in use: its lock with a live holder, a live
+      runner's status, or a session's quiet file. It checks as runstate's monitors do, without
+      taking the lock; `--force` overrides.
 - H2C writes during the card's compute: they cost the card ~0.17 s per GB written (gemma4's
   layer-ahead, 13.8). Here A and A' write the same bytes in the same windows, and the 3-4-miss
   requests' time after the critical end did not change, so nothing points at a change in
