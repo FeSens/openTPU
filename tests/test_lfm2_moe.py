@@ -509,6 +509,24 @@ class _LiveCard:
         return Live()
 
 
+def _wait_first(card, srv):
+    """srv serves its next request with a miss only once the threaded fake card waits (at
+    its WAITW on the answer, or the next post's fence), so card.waits counts the wait whatever
+    the host's speed: a fast host serves before the card's thread reaches its WAITW, and the
+    count stays put (omarchy, 2026-10-02). Returns a function that arms it again."""
+    import time
+    serve, armed = srv.serve, [True]
+
+    def serve_waited(ids, pos=None):
+        if armed[0] and any(g not in srv.lru[g // srv.L.E] for g in ids):
+            armed[0], w0, t0 = False, card.waits, time.perf_counter()
+            while card.waits == w0 and time.perf_counter() - t0 < 10:
+                time.sleep(1e-4)
+        return serve(ids, pos)
+    srv.serve = serve_waited
+    return lambda: armed.__setitem__(0, True)
+
+
 @pytest.mark.parametrize("chash", [False, True])
 def test_waitw_tag_check_on_a_live_card(chash):
     """checks.waitw_tag (tools/qual/waitw.py --tag-rounds: docs/offload.md 10.11's order on the
@@ -556,6 +574,7 @@ def test_the_host_serves_the_card_during_its_runs(tiny, mode, tmp_path):
     assert brd.resident and brd.can_generate and brd.backend.host is not None
     assert not brd.stream_logits
     assert isinstance(brd.server.mem, BoardDram if threaded else BackendDram)
+    again = _wait_first(card, brd.server) if threaded else (lambda: None)
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 6)]
     for tok in toks:
         a, b = isa.step(tok), brd.step(tok)
@@ -563,6 +582,7 @@ def test_the_host_serves_the_card_during_its_runs(tiny, mode, tmp_path):
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
     assert brd.server.misses > len(toks) and card.waits > 0
     t0, misses, waits = int(np.argmax(a)), brd.server.misses, card.waits
+    again()
     got = brd.generate_card(t0, 8, stop_ids=[])
     assert card.error is None, card.error
     assert got == isa.generate_card(t0, 8, stop_ids=[])

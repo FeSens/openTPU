@@ -523,7 +523,7 @@ def main():
     ap.add_argument("--expert-major", action="store_true",
                     help="--layer-major with pooled slots: each MoE layer of a chunk routed in "
                          "its runs, its experts in one expert run (Engine expert_major; "
-                         "docs/offload.md 13.11, 13.13; the server's need lines and scratch)")
+                         "docs/offload.md 13.11, 13.13; the server's need lines and scratch: 13.14)")
     ap.add_argument("--ahead-part", type=int, metavar="KiB",
                     help="--layer-ahead hint: the KiB an idle poll sends of a queued expert "
                          "(default qwen3.AHEAD_PART, 1024; at least a slot: one part an expert)")

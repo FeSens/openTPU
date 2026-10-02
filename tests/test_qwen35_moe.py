@@ -176,7 +176,7 @@ def test_the_live_card_asks_the_host_for_experts_and_embedding_rows(tiny, tmp_pa
     and the embedding rows (embed_host) through one BoardDram, its DMA thread writing while the
     card waits. Resident steps and the card's generate loop give the ISA simulator's logits
     and tokens bit for bit, every expert and row request served during the runs."""
-    from test_lfm2_moe import _LiveCard
+    from test_lfm2_moe import _LiveCard, _wait_first
     from opentpu.host.board import BoardBackend
     from opentpu.host.offload import BoardDram
     from opentpu.isasim import board_config
@@ -190,12 +190,14 @@ def test_the_live_card_asks_the_host_for_experts_and_embedding_rows(tiny, tmp_pa
                  pool_file=tmp_path / "pool.bin")
     assert brd.image.embed_host and isinstance(brd.server.mem, BoardDram)
     assert brd.row_server.mem is brd.server.mem
+    again = _wait_first(card, brd.server)   # (card.waits whatever the host's speed)
     toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 6)]
     for t in toks:
         a, b = isa.step(t), brd.step(t)
         assert card.error is None, card.error
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
     t0, waits = int(np.argmax(a)), card.waits
+    again()
     got = brd.generate_card(t0, 8, stop_ids=[])
     assert card.error is None, card.error
     assert got == isa.generate_card(t0, 8, stop_ids=[]) and card.waits > waits

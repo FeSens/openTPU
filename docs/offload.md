@@ -2129,6 +2129,39 @@ the lead's part and the rest: 43-58 us a request with misses.
 - Recommendation: at about 1% on the 35B, (1) only if a fused build has room. Propose (3) to the
   user first, since it is the cheapest to measure.
 
+### 10.14 The link alone (serve_emu, 2026-10-02): lever 2 parked
+
+ld-memch's H2C sweep (docs/host.md 2) measures a placed write call alone: about 30 us of fixed
+cost plus 345 us a MiB (~3.0 GB/s), and a 64-byte call at 13.3 us. Run inside a card run, the
+same calls cost more (session 16's per-size fit). The serve_emu run on opentpu (emu/link1.jsonl,
+tree 2ce26c5) replays session 16's runs under three calibrations: session 16's own fit, the link
+alone with no --size-cost, and the link alone at 15 us less a data call. All use the card model of
+its own compute (--card-w, 10.13), the default v1 path, and a discarded warm run first.
+
+| calibration (emulated time per 128 tokens) | 26B | 35B |
+|:--|--:|--:|
+| session 16's in-run fit | 36.15 s | 26.96 s |
+| the link alone (two runs) | 34.52 / 34.52 s: -1.63 s (-4.5%) | 25.71 / 25.62 s: -1.29 s (-4.8%) |
+| the link alone, a data call 15 us cheaper | 34.38 s: -0.14 s more (-0.4%) | 25.40 s: -0.27 s more (-1.1%) |
+
+The first row reproduces session 16's emulation (36.2 and 26.8 s). The repeats differ by 0.005 s
+(26B) and 0.09 s (35B).
+
+- Removing the in-run excess entirely is worth about 4.5-4.8%. On the 26B this matches the
+  analytic bound (-1.51 s). On the 35B it is three times the analytic -0.43 s, because the
+  analytic counted only the data records. The 35B's ~19,000 small calls (answers, entries,
+  served) cost 35.6 us each in-run against 13.3 us alone, and that difference is most of its
+  excess.
+- The excess is the card's DRAM traffic slowing the link while the card computes (13.8's
+  contention, on the link's side). The host cannot remove it. B's window writes (10.12; the
+  bsweep emulation) gave ~0 on top of A.
+- The host's own per-call cost is worth 0.4-1.1% (-15 us a data call). Two calls in flight
+  across records (the tag rule: a tag-carrying call only after the call before it returns) is
+  not in the emulator.
+
+So lever 2, the host's link path, is parked behind the idle parts' v2 (13.12). It comes back if
+a session shows the small calls as the gap.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The
@@ -3444,3 +3477,72 @@ Compiled for the card (the board's config; the 35B fp4 with an int8 head, the 26
 experts; cap 4096): the layer runs take at most 1005 (35B) and 1525 (26B) of IMEM's 4096
 instructions. The expert run at 512 rows is 106 / 128 instructions and fits TMEM: its tables, at
 most 4096 entries and 2304 passes, take about 21K words.
+
+### 13.14 The need path on the host (offload-need)
+
+The server's share of 13.11, host only (opentpu/host/offload.py). The card and Engine parts are
+gemma4's.
+- `Layout.need_off` is 2 x layers x E. A post whose first id is at or above it is a need line;
+  from layers x E up it is a hint, and below that a request. `poll` writes served at once, with
+  no answer, no use and no `history` entry; `last` and the events say "n".
+- `ExpertServer.need`: each id in no slot (one on its way is in a slot) joins the end of
+  `needs`, once, in arrival order. An id in ahead_layer's queue moves to `needs`. An id that
+  ahead_layer has on its way becomes a need's (`_needed`), so the next ahead_layer call,
+  which drops its own experts on their way, keeps it. A hint for the queue's layer never
+  queues an id that `needs` holds.
+- Idle polls start a need before any queued ahead expert (`_next_ahead` calls `_next_need`
+  first). Each need takes its slot when its first part goes; its tag goes with its last part,
+  then its entry, all in the same poll, flushed before the poll returns. halt_aware holds and
+  read-ahead apply as to any idle part (13.12). A request that names a need on its way
+  promotes it, as it would a hint's expert. Requests' `drop` never withdraws a need.
+- Victims (`_at`, `_pool_slot`): the running layer j is set by each need line and each request.
+  While the prefill is expert-major, no victim comes from layers j - 1, j and j + 1 (mod
+  layers), for a need's slot, a request's miss and an ahead expert alike. A need with no such
+  victim stops with an error; it is never dropped.
+- Tags: the first need line of layer j + 1 means layer j's expert run is done, and that run
+  zeroed the tag of every expert its need lines named. Those slots leave `armed`, so reusing
+  one later costs no zero-tag write first (one DMA call each: about 138 a layer on the 35B).
+- `begin_prefill(expert_major=True, scratch=bytes)` returns the scratch's base: the slot
+  region's first ceil(bytes / pitch) slots, from the first slot on (`Layout.scratch`, the same
+  as the card side's `moe.em_slots`: one span across layers if it needs to, and the programs
+  take the address from the layout alone; 13.11 said the last). Those slots leave the free
+  lists. Their experts are evicted, and their entries cleared and flushed, before the base is
+  returned. No slot of the scratch is handed out until end_prefill.
+- `end_prefill` serves the last post (settle), drops ahead_layer's queue, then sends every need
+  still queued or on its way whole (`drained` counts them; the expert runs waited on them all,
+  so a nonzero count means a run did not). It zeroes the scratch's tag beats (scratch data in a
+  tag beat would read as a landed expert's tag), returns those slots to the free lists, and
+  restores each layer's slots as before.
+- `need_report()`, for the Engine's error on an expert run's WAITW timeout (Board's 'a WAITW
+  timed out', the ISA's 'never holds'): the running layer's needed experts whose entries are
+  not present, and for each whether it is on its way (bytes sent), queued, or in no slot.
+- Counters: `need_lines`, `needs_queued`, `need_hits` (ids already in a slot), `needs_landed`,
+  `drained`.
+- On the ISA simulator, the Engine's WAITW hook (`qwen3._isa_host`) polls until a waiting
+  slice's WAITW holds (`isasim.Slice.holds`), or until a poll has nothing to do. The simulator
+  calls its host once when every slice waits, and a wait still not holding after that is the
+  timeout. A request is served whole in one poll, but an expert run waiting on a need's entry
+  takes one idle poll a part. The card's backend polls the same way while a run is in flight.
+
+Checked against the card side (gemma4's expert-major 2ad3129 merged onto this, not pushed):
+test_qwen35_moe's `test_expert_major_prefill_is_bit_exact` (4 cases) and test_gemma4_moe's
+`test_moe_expert_major_prefill_is_bit_exact` (3 cases) pass with this ExpertServer in place of
+their stand-in. The logits, states, KV and decode are bit for bit; up to 48 needs land on
+victims outside the guarded layers, and none is drained at end_prefill.
+
+Open points for the card A/B:
+- In expert-major mode only requests count a use, so end_prefill's lazy restore keeps
+  each layer's earliest-landed experts (ties keep LRU order).
+- Whether halt_aware should hold needs at all. On the 35B the mixer phase is link-bound
+  (13.11), so a hold there idles the link.
+
+Tests (test_offload_server):
+- `test_a_need_line_queues_its_experts_and_idle_polls_land_them_ahead_of_the_queue`;
+- `test_a_need_takes_over_an_ahead_expert_and_no_ahead_layer_call_drops_it`;
+- `test_expert_major_victims_spare_the_running_layer_and_its_neighbours`;
+- `test_the_next_layers_need_line_disarms_the_tags_the_expert_run_zeroed`;
+- `test_end_prefill_drains_the_needs_and_hands_the_scratch_back_with_zeroed_tags`;
+- `test_need_report_names_the_running_layers_experts_without_an_entry`.
+
+Each test fails with its rule removed: the victims' guard, the scratch's removal from the free
+lists, the drain, the disarm, the tag zeroing.

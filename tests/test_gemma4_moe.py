@@ -479,7 +479,7 @@ def test_moe_live_card_streams_from_a_split_pool(moe, tmp_path):
     the channel runs and written by BoardDram's DMA thread while the card's MoE layers wait.
     Resident steps and the card's generate loop give the ISA simulator's logits and tokens bit
     for bit, with misses served during the runs."""
-    from test_lfm2_moe import _LiveCard
+    from test_lfm2_moe import _LiveCard, _wait_first
     from opentpu.host.board import BoardBackend
     from opentpu.host.offload import BoardDram
     _, W, spec = moe
@@ -492,6 +492,7 @@ def test_moe_live_card_streams_from_a_split_pool(moe, tmp_path):
                  pool_file=tmp_path / "pool.bin")
     assert brd.backend.board.chash and brd.can_generate and brd.backend.host is not None
     assert isinstance(brd.server.mem, BoardDram) and brd.server.pool_file.split
+    again = _wait_first(card, brd.server)   # (card.waits whatever the host's speed)
     toks = [int(t) for t in np.random.default_rng(8).integers(0, 1000, 6)]
     for t in toks:
         a, b = isa.step(t), brd.step(t)
@@ -499,6 +500,7 @@ def test_moe_live_card_streams_from_a_split_pool(moe, tmp_path):
         assert np.array_equal(a.view(np.uint32), b.view(np.uint32)), brd.pos
     assert brd.server.misses > len(toks) and card.waits > 0
     t0, misses, waits = int(np.argmax(a)), brd.server.misses, card.waits
+    again()
     got = brd.generate_card(t0, 8, stop_ids=[])
     assert card.error is None, card.error
     assert got == isa.generate_card(t0, 8, stop_ids=[])
