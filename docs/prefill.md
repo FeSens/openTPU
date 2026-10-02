@@ -208,3 +208,33 @@ table, the first pick on the device, RTL and a card session) would save only tha
 above stays the plan if prefill runs get much shorter (more rows per weight pass, a faster
 link to the host's pick) or the host's per-run cost grows. Next: the other dense models
 (step 5).
+
+## 7. The device's part: co-sim levers
+
+RTL co-simulation (the board's configuration, LiteDRAM at DDR3-1066, 133.33 MHz), position 544,
+the whole model (tools/perf_qwen.py; timing hacks replace instructions with NOPs).
+
+**The DeltaNet rows' VOPs (0.8B), measured: below the bar, not merged.** On the RTL an
+elementwise VOP runs at 8 words a cycle plus about one cycle (14 more when it waits for the one
+before); EXP2 and RECIP at 2.7 and 4 words a cycle; a small composite (a 1 x 8 RSQRT, a 1 x 16
+EXP2) holds the unit 21-27 cycles and its result comes 85-110 cycles later. `_deltanet_rows`'
+VPU time is therefore element work that today's ISA has no shorter form for: the convolution
+(4 MUL and 3 ADD over a pair's [R, 2C] channels), the SiLUs (5 VOPs, 2 of them composites) and
+the norms; there is no multiply-add. What merges with the same words per element (test_qwen35's
+bit-exact tests pass): the gates over all R rows at once (one chain of [R, nl] VOPs instead of
+R chains, exp2(A_log) once, one store) and the q and k L2 norms' sums side by side (one add and
+one RSQRT for both). In the 0.8B's R = 4 program that is 192 fewer VOPs and 21 fewer stores;
+prefill at R = 4 goes from 6,820,714 to 6,789,479 cycles (-0.46%), the MTP verify from
+5,771,493 to 5,741,573 (-0.52%). Merging the convolution's two channel blocks per tap (a
+(tap, block) taps layout) would save about a cycle per VOP.
+
+**Later (RTL area: the MCOLS = 4 build is at ~97% of the FPGA's slices).**
+- **DSTEP over several rows.** If one DSTEP stepped a head's R rows in one pass over the state at
+  no extra cost, the 0.8B's prefill at R = 4 would take -28.6% (6.82 -> 4.87 M cycles, port B
+  3.28 -> 2.39 M chunks) and its MTP verify -11.6% (the last row's STREAM into the other slot
+  dropped: 5.77 -> 5.10 M). The 2B's DeltaNet waits on its DSTEPs the same way (mm_x blocked
+  ~6.7% of its run). But DSTEP is bound by its datapath, 8 state words a cycle (2,048 cycles of
+  a 128 x 128 head and ~200 of fill, against 1,024 of port-B chunks; docs/isa.md DSTEP): at 8
+  lanes, one pass for R rows saves only the fill, about -2.5% on the 0.8B. The gain needs 16
+  lanes.
+- **MCOLS = 8:** the 0.8B's prefill at R = 4 -17.2% (1.705 -> 1.413 M cycles a row).
