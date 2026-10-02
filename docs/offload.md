@@ -1192,6 +1192,35 @@ After session 9's 35B (the same misses and DMA, staging 10.5 -> 20-32 s), moe_ca
   with the WAITW stalls, DRAM_RD / WR, INSTR, ...);
 - `misses_per_request_decode`: each request's misses (a token's layers in order).
 
+What the 35B needs (cachesim, the decode's misses under lfu_layer at the card's 1680 slots
+replayed against a host cache over the pool; four 2048-token router traces, 128-token windows,
+85 misses a token): disk reads a token by the pool's GB in the page cache:
+
+| pool GB in RAM | LRU (the page cache) | admit the profile's 5000 / 7000 best only (O_DIRECT the rest) | the profile's best pinned (O_DIRECT the rest) | Belady |
+|:--|:--|:--|:--|:--|
+| 8 | 18.5 | 32.4 / 20.6 | 33.9 | 6.2 |
+| 10 | 9.7 | 32.4 / 16.0 | 22.2 | 3.6 |
+| 12 | 4.5 | 32.4 / 15.5 | 13.2 | 2.2 |
+| 14 | 2.2 | 32.4 / 15.5 | 6.9 | 1.8 |
+
+- The page cache's own LRU beats keeping cold experts out of it and pinning a hot set at every
+  size; other slot policies miss more (lru_layer 95 a token, a global LFU 175). The 26B's 13.2 GB
+  pool needs about 8 GB (1.9 disk reads a token; 0.4 at 10).
+- opentpu's SSD (a SATA BX500, btrfs on dm-crypt) reads an expert dropped from the page cache in
+  4.2 ms one at a time (400 MB/s), 3.4-3.6 ms with a request's misses queued at once
+  (POSIX_FADV_WILLNEED, threads, or O_DIRECT in threads): about 3.8 ms more than a cached read.
+- With no disk read a token takes the card's 101 ms outside the windows plus 144 ms of windows
+  (session 5's traces: 0.12-0.26 ms a request plus 1.27-1.36 ms a miss, the link's 1.24 ms): 4.08
+  tok/s; by pool GB in RAM 14 -> 3.95, 12 -> 3.82, 10 -> 3.55, 8 -> 3.17.
+
+So the lever is RAM for the pool. moe_card's `--release-weights` gives the checkpoint's pages back
+after the build (`LazyWeights.release`: safe_open maps each file whole, and the pages the build
+read stay mapped, held over the pool's; the 35B's stripped checkpoint is 4.9 GB, the 26B's 4.5;
+a tensor read after reopens its file). On Linux a 537 MB checkpoint read whole held 526 MB of
+RssFile and its pages; after release() neither. `--willneed` queues a request's misses' reads at
+once (`ExpertServer.ahead`, `PoolFile.willneed`). card_moe.sh's q35e128t / r / rw and g26r run
+them with each request's window (`--hint-trace`).
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The

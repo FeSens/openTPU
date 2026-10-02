@@ -504,3 +504,20 @@ def test_lazy_weights_build_the_same_engine(tiny, tmp_path, embed):
             for w in (W, LazyWeights(tmp_path)))
     for t in (5, 77, 900, 13, 4):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
+
+
+def test_lazy_weights_release_closes_and_reopens(tiny, tmp_path):
+    """LazyWeights.release (moe_card --release-weights): the files closed and their pages
+    dropped; a tensor read after reopens its file and reads the same values."""
+    from safetensors.numpy import save_file
+    from opentpu.llm.qwen3 import LazyWeights
+    _, W, _ = tiny
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
+              str(tmp_path / "model.safetensors"))
+    lw = LazyWeights(tmp_path)
+    k = "model.embed_tokens.weight"
+    a = lw[k]
+    lw.release()
+    assert not lw._h
+    assert np.array_equal(lw[k], a) and np.array_equal(lw.part(k, 3), a[3])
+    assert len(lw._h) == 1
