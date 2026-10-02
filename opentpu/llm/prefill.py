@@ -13,15 +13,19 @@ block: R_max rows a run, cut where a run would cross a bucket's end (a run-time 
 its bucket). R_max, per bucket: the most rows of one MXU pass (MCOLS, at most the image's rows)
 whose L program in that bucket compiles and fits IMEM (a later bucket's attention makes a longer
 program: Phi-4-mini's mix takes 3 rows in bucket 1, 1 in bucket 16). Plain and MTP engines of a
-model take the same split, so their logits are the same bit for bit.
+model take the same split, so their logits are the same bit for bit. Where today's prefill
+(compile_rows) would fit more rows in a bucket than its prompt run, a prompt that reaches the
+bucket takes today's route (covers).
 """
 from __future__ import annotations
 
+import threading
 import time
 
 import numpy as np
 
 from .. import isa as I
+from .. import progcache as PC
 from ..compiler import CompileError
 from . import generate as G
 from .qwen3 import RUN_WORDS
@@ -77,43 +81,125 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
 
     def compile():
         return img.compile_prompt_run(blocks, R, kind, block, **kw)
-    if what not in done:
-        progs, ra = eng.cached(what, compile)
-        if not G.fits(img, progs):
-            raise CompileError(f"prompt run {what}: {max(map(len, progs))} instructions, "
-                               f"IMEM {img.cfg.IMEM_WORDS // 8}")
-        prep = getattr(eng.backend, "prepare", None)
-        if getattr(eng.backend, "runs_words", False) and len(progs) == 1:
-            progs = np.asarray(I.assemble(progs[0]), np.uint32)
-        elif prep is not None:
-            prep(progs)
-        names = {v.name for v, _ in ra or ()}
-        if blocks:                  # a run-time run: and the words its kernel reads itself
-            names |= set(getattr(img, "prompt_words", ()))
-        done[what] = progs, sorted(names)
+    with _lock(eng):
+        if what not in done:
+            done[what] = _prepared(eng, what, blocks, *eng.cached(what, compile))
     return done[what]
+
+
+def _prepared(eng, what, blocks: int, progs, ra):
+    """programs()' entry of a compiled run (blocks 0: a compile-time one)."""
+    img = eng.image
+    if not G.fits(img, progs):
+        raise CompileError(f"prompt run {what}: {max(map(len, progs))} instructions, "
+                           f"IMEM {img.cfg.IMEM_WORDS // 8}")
+    prep = getattr(eng.backend, "prepare", None)
+    if getattr(eng.backend, "runs_words", False) and len(progs) == 1:
+        progs = np.asarray(I.assemble(progs[0]), np.uint32)
+    elif prep is not None:
+        prep(progs)
+    names = {v.name for v, _ in ra or ()}
+    if blocks:                      # a run-time run: and the words its kernel reads itself
+        names |= set(getattr(img, "prompt_words", ()))
+    return progs, sorted(names)
 
 
 def r_max(eng, blocks: int = 1) -> int:
     """The most rows of a run in bucket `blocks`: one MXU pass (MCOLS) at most, the image's
     rows at most, and the bucket's (plain) L program compiled and fitting IMEM (kept by the
     engine). MTP's runs take the same R_max (their programs must fit it), so plain and MTP
-    prefills of a model split alike."""
+    prefills of a model split alike. With the engine's program cache the answer is kept there
+    too (progcache.fact), so a new process does not try the larger R again (the 4B's R = 4,
+    traced until TMEM runs out)."""
+    return _fit(eng, blocks)[0]
+
+
+def covers(eng, p0: int, P: int) -> bool:
+    """Prompt runs take the positions [p0, P): in every bucket they touch a run takes today's
+    rows (compile_rows, fit_chunk's) up to one MXU pass, so they stream no weight more often
+    (docs/prefill.md 7); else Engine.prefill_chunks and MTPDecoder.prefill take today's
+    route for the prompt."""
+    P = min(P, eng.cap)                 # (past the cache: the route's own error)
+    return all(_fit(eng, b)[1] for b in range(p0 // eng.block + 1, (P - 1) // eng.block + 2))
+
+
+def _fit(eng, blocks: int):
+    """(R_max, covered) of bucket `blocks` (_probe), kept by the engine and the program
+    cache."""
     done = eng.__dict__.setdefault("_prompt_rmax", {})
-    if blocks in done:
+    with _lock(eng):
+        if blocks not in done:
+            what = ("prompt fit", blocks)
+            done[blocks] = tuple(PC.fact(eng.layout, what, lambda: _probe(eng, blocks))
+                                 if eng.prog_cache else _probe(eng, blocks))
         return done[blocks]
+
+
+def _probe(eng, blocks: int) -> list:
+    """[R_max, covered] at the bucket's first run-time position: R_max from one pass's rows
+    down; below them, covered when compile_rows does not fit R_max + 1 rows there either (a
+    prompt program larger than today's would run fewer rows)."""
     img, block = eng.image, eng.block
-    p = max((blocks - 1) * block, conv_k(eng) - 1)      # the bucket's first run-time position
-    for R in range(min(img.cfg.MCOLS, img.rows, img.cap - p), 0, -1):
+    p = max((blocks - 1) * block, conv_k(eng) - 1)
+    top = min(img.cfg.MCOLS, img.rows, img.cap - p)
+    for R in range(top, 0, -1):
+        if _fits(lambda: programs(eng, p, R, "L")):
+            break
+    else:
+        raise CompileError(f"no prompt run fits bucket {blocks}")
+    return [R, R == top or not _fits(lambda: _today(eng, p, R + 1))]
+
+
+def _fits(compile) -> bool:
+    """compile() compiles and fits IMEM; False where TMEM, ACT RAM or IMEM do not hold it."""
+    try:
+        compile()
+    except CompileError as e:
+        if not any(w in str(e) for w in ("TMEM", "ACT RAM", "IMEM")):
+            raise
+        return False
+    return True
+
+
+def _today(eng, p: int, n: int) -> None:
+    """Today's run of n rows at p, the prompt's last (compile_rows); CompileError where it
+    does not fit."""
+    img = eng.image
+    progs = img.compile_rows([(0, p + j) for j in range(n)], [n - 1], eng.block,
+                             **eng._tokens_kw([0] * n))
+    if not G.fits(img, progs):
+        raise CompileError(f"rows at {p}: {max(map(len, progs))} instructions, IMEM")
+
+
+def _lock(eng):
+    """The engine's lock over its prompt programs (warm's thread compiles them too)."""
+    return eng.__dict__.setdefault("_prompt_lock", threading.RLock())
+
+
+def warm(eng) -> None:
+    """Bucket 1's prompt programs ahead, on a thread, when the engine starts: R_max, a new
+    context's first (compile-time) run, and the bucket's P and L runs, MTP's (hidden rows, the
+    MTP layer) on an MTP image, from the program cache or compiled, while the host waits for
+    a prompt (a chat). A prompt that comes first takes the lock in turn: none is compiled
+    twice. Engines without the pipeline (the simulators' tests) warm nothing."""
+    if not (eng.prompt_runs and eng.pipeline and supported(eng)):
+        return
+
+    def go():
         try:
-            programs(eng, p, R, "L")
-        except CompileError as e:
-            if not any(w in str(e) for w in ("TMEM", "ACT RAM", "IMEM")):
-                raise
-            continue
-        done[blocks] = R
-        return R
-    raise CompileError(f"no prompt run fits bucket {blocks}")
+            R, K = r_max(eng, 1), conv_k(eng)
+            mtp = bool(getattr(eng.spec, "mtp", False))
+            todo = [(0, R, "P")] if K > 1 else []
+            todo += [(K - 1 if K > 1 else 0, r, k) for r in range(R, 0, -1)
+                     for k in (("P", "L") if r == R else ("L",))]
+            for p, r, k in todo:
+                programs(eng, p, r, k, mtp, 0)
+                if mtp:
+                    programs(eng, p, r, "M")
+        except Exception:           # (the prompt meets the same error and reports it)
+            pass
+    eng._prompt_warm = threading.Thread(target=go, daemon=True, name="otpu-prompt-warm")
+    eng._prompt_warm.start()
 
 
 def write_tokens(eng, p0: int, tokens) -> None:

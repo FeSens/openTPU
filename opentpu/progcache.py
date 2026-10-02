@@ -23,6 +23,10 @@ cache: OTPU_PROG_CACHE=<dir>; with 1 (or an engine's prog_cache=True and the var
 ~/otpu-build/qcache/prog on a host with ~/otpu-build (the build and card hosts), else none. Entries are .npz files written to a
 temporary name, then renamed; the least recently used go past CAP_BYTES (OTPU_PROG_CACHE_GB).
 `stats` counts memory hits, disk hits, compiles and disk writes.
+
+`fact(layout, what, compute)` keeps a small JSON value the same way (.json beside the
+programs), e.g. the rows a prompt run of a bucket takes (prefill.r_max): what a compile found
+out, including that a larger one does not fit, which no program records.
 """
 from __future__ import annotations
 
@@ -102,6 +106,31 @@ def get(layout, what, compile, disk: bool = True):
         v = compile()
         if f is not None and v[0] is not None:
             _store(d, f, v)
+    _mem[k] = v
+    return v
+
+
+def fact(layout, what, compute, disk: bool = True):
+    """A small JSON value of `what` for this layout, as get() keeps programs: from an earlier
+    call, the disk cache, or compute() (then kept, and written with disk)."""
+    k = key(layout, what)
+    if k in _mem:
+        stats["memory"] += 1
+        return _mem[k]
+    d = cache_dir() if disk else None
+    f = None if d is None else d / k[:2] / f"{k}.json"
+    try:
+        v = json.loads(f.read_text())
+        stats["disk"] += 1
+    except (AttributeError, OSError, ValueError):   # (no disk cache, no entry, a damaged one)
+        stats["compile"] += 1
+        v = compute()
+        if f is not None:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_name(f".{f.stem}.{os.getpid()}.json")
+            tmp.write_text(json.dumps(v))
+            os.replace(tmp, f)
+            stats["write"] += 1
     _mem[k] = v
     return v
 

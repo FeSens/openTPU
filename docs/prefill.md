@@ -211,3 +211,46 @@ table, the first pick on the device, RTL and a card session) would save only tha
 above stays the plan if prefill runs get much shorter (more rows per weight pass, a faster
 link to the host's pick) or the host's per-run cost grows. Next: the other dense models
 (step 5).
+
+## 7. Prompt runs against today's rows
+
+A run's device time is about its weight passes, ceil(rows / MCOLS): each pass streams every
+weight. A bucket where prompt runs took fewer rows than today's prefill (fit_chunk's
+compile_rows runs) at the same positions would stream the weights more often. Compiled on
+the real layouts (omarchy, compile only; cap 4096, block 256, MCOLS 4, image rows 8; fp4 and
+the mixes with an int8 head), the rows of a run in buckets 1 and 16 and the weight passes of
+three prompts (P tokens from p0), prompt runs / today's:
+
+| model | format | rows, bucket 1 | rows, bucket 16 | p0 0, P 30 | p0 3850, P 30 | p0 0, P 237 |
+|---|---|---|---|---|---|---|
+| Qwen3-0.6B | int8 | 4 / 8 | 4 / 4 | 8 / 8 | 8 / 8 | 60 / 60 |
+| SmolLM3-3B | int8 | 4 / 4 | 4 / 4 | 8 / 8 | 8 / 8 | 60 / 60 |
+| SmolLM3-3B | mix | 4 / 4 | 3 / 3 | 8 / 8 | 10 / 10 | 60 / 60 |
+| Phi-4-mini | int8 | 3 / 3 | 3 / 3 | 10 / 10 | 10 / 10 | 79 / 79 |
+| Phi-4-mini | mix | 3 / 3 | 1 / 1 | 10 / 10 | 30 / 30 | 79 / 79 |
+| LFM2.5-230M | int8 | 4 / 8 | 4 / 4 | 8 / 8 | 8 / 8 | 60 / 60 |
+| LFM2-2.6B | int8 | 4 / 4 | 1 / 1 | 8 / 8 | 30 / 30 | 60 / 60 |
+| Qwen3.5-0.8B | fp4, int8 | 4 / 4 | 4 / 4 | 8 / 8 | 8 / 8 | 60 / 60 |
+| Qwen3.5-2B | fp4 | 4 / 4 | 4 / 4 | 8 / 8 | 8 / 8 | 60 / 60 |
+| Qwen3.5-4B | fp4, mix | 3 / 3 | 3 / 3 | 10 / 10 | 10 / 10 | 79 / 79 |
+
+- **The passes are equal everywhere.** In bucket 16 Phi-4-mini's mix and LFM2-2.6B take one
+  row a run with both routes: today's two-row run at 3840 is over IMEM too (4538 and 5116
+  instructions), since attention is unrolled per row, head and block and so grows with the
+  context. A long context there costs 3-4x the passes of bucket 1 either way. A looped
+  attention would lift both routes; that is a separate item.
+- **Runs.** Qwen3-0.6B and LFM2.5-230M fit 8 rows (two passes) in one run of today's in
+  bucket 1, where a prompt run takes one pass's 4: the same passes, more runs (30 tokens 8 / 5,
+  237 tokens 60 / 31). The host adds 0.5-0.8 ms a run (section 6), about 2 and 20 ms; today's
+  route spent 0.6-0.9 s compiling on short prompts (section 1).
+- **A bucket's end.** A run-time run's rows stay in its bucket, so a prompt that crosses one
+  can take one pass more than today's (3 tokens from 255: runs of 1 and 2 rows, today's one of
+  3), at most one per bucket crossed.
+
+**The rule (prefill.covers).** A prompt takes prompt runs when in every bucket it touches
+R_max(bucket) >= min(today's rows there, MCOLS), so no bucket streams the weights more often;
+otherwise Engine.prefill_chunks and MTPDecoder.prefill take today's route for the whole prompt.
+Today's rows are checked only where R_max is below one pass's rows (MCOLS, the image's rows, the
+cache's end): compile_rows of R_max + 1 rows at the bucket's first run-time position, which
+must not fit. The answer is kept with R_max (progcache.fact: once per layout and bucket).
+Every layout above is covered in buckets 1 and 16.

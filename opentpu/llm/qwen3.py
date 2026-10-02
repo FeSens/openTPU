@@ -1830,7 +1830,9 @@ class Engine:
 
     prompt_runs (docs/prefill.md): prefill_chunks runs a prompt (sequence 0) from programs at
     run-time positions, its tokens from out[] (opentpu/llm/prefill.py): compiled once per
-    bucket and kind, not per prompt. A dense model's resident image (prefill.supported).
+    bucket and kind, not per prompt. A dense model's resident image (prefill.supported). With
+    the pipeline, bucket 1's are loaded or compiled on a thread as the engine starts
+    (prefill.warm).
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1958,6 +1960,9 @@ class Engine:
             self._start_pool()
         if hasattr(self.backend, "attach"):
             self.backend.attach(self)
+        if self.prompt_runs:                # bucket 1's prompt programs, ahead (prefill.warm)
+            from . import prefill as PF
+            PF.warm(self)
 
     # ---- the compile pipeline
     def _compile(self, pos: int, tok: int | None = None) -> list:
@@ -2233,10 +2238,11 @@ class Engine:
         With the pipeline, the next run's program (after the last run: the first decode
         step's) is compiled while the device runs the current one."""
         from . import prefill as PF
-        if self.prompt_runs and seq == 0 and chunk is None and PF.supported(self):
+        tokens = [int(t) for t in tokens]
+        if self.prompt_runs and seq == 0 and chunk is None and PF.supported(self) \
+                and PF.covers(self, self.poss[0], self.poss[0] + len(tokens)):
             yield from PF.chunks(self, tokens)          # docs/prefill.md
             return
-        tokens = [int(t) for t in tokens]
         whole = chunk is None               # else runs of exactly `chunk` where they fit
         chunk = self.rows if chunk is None else max(1, min(chunk, self.rows))
         i = 0
