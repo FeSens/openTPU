@@ -73,7 +73,7 @@ def test_card_fit_finds_the_cards_own_time_and_the_wait_after_the_last_tag(tmp_p
         card_fit.main(["w", str(tmp_path)])
     finally:
         del card_fit.print
-    v = lines[-1].split()[1].split(",")
+    v = next(x for x in lines if x.startswith("--card-w") and ",1:" in x).split()[1].split(",")
     assert abs(float(v[0]) - F) < 10e-6
     got = {int(x): float(y) for x, y in (u.split(":") for u in v[1:])}
     assert set(got) == {1, 2} and all(abs(got[k] - W[k]) < 10e-6 for k in W)

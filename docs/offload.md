@@ -2079,6 +2079,14 @@ Column meanings in the table below:
     - 35B: F 1.705 ms; W never binds.
     - Checked on the H runs: after the critical end, 4314 / 4255 us (measured / model) for 1
       miss and 3367 / 3300 for 2.
+    - W(m) holds the waits of the runs it was fit on, and for the 35B it is not identified (it
+      never binds there). For levers that shorten the windows far, the floor is W0 instead:
+      the card's own time per request, the median of the requests with no miss (35B 2.47 ms,
+      26B 5.70 ms).
+    - With next post = max(critical end + F, post + W0), replaying session 16 reproduces A ->
+      A' to within 0.04 s:
+      - 35B: -1.23 / -0.44 s, measured -1.19 / -0.42.
+      - 26B: -0.22 / -0.34 s, measured -0.20 / -0.32.
   - On serve_emu with it (sweep hw1, opentpu, the link as above), A -> A' saves:
     - 26B: 0.34 s per 128 tokens, wall 36.52-36.56 -> 36.18-36.22 s. The card saved 0.20-0.32 s;
       the fixed model said 0.59.

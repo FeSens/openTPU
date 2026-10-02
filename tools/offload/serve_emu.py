@@ -14,8 +14,10 @@ them can be split by what comes before and after. When the card posts:
   (card_fit.py post-c on the trace's run), and no sooner than served (its fence);
 - --card-w F,m:W,...: with --post-c, the card's own compute too (docs/offload.md 10.13): no
   sooner than the critical end + F, nor than the previous post + W(m) for a request of m
-  misses (the card computing its present experts while the link brings the rest); a C above
-  F + 1 ms (a token's end) stays. card_fit.py w fits F and W on a session's runs.
+  misses (the card computing its present experts while the link brings the rest; 0:W for every
+  m not named); a C above F + 1 ms (a token's end) stays. card_fit.py w fits F and W on a
+  session's runs, and W0, the card's own time a request (its requests with no miss): the floor
+  for levers that shorten the windows far (W(m) holds the waits of the runs it was fit on).
 The link: --h2c-call + bytes / --h2c-bps a write call, --beat-call a 64-byte one, --size-cost
 the card's measured cost of the parts' sizes, --c2h-call a beat read. Gen2 on the card (the
 link: g2check's calibration; --card-w: session 16's fit), the 35B:
@@ -170,8 +172,9 @@ def main():
     ap.add_argument("--card-w", default="",
                     help="F,m:W,...: the card model with its own compute (session 16): the next "
                          "post no sooner than the critical end + F (s), nor than its post + W(m) "
-                         "for a request of m misses (the card never waiting); a trace C_r above "
-                         "F + 1 ms (a token's end) is kept as is")
+                         "for a request of m misses (0:W: every m not named, e.g. card_fit's W0, "
+                         "the card never waiting); a trace C_r above F + 1 ms (a token's end) is "
+                         "kept as is")
     ap.add_argument("--size-cost", default="",
                     help="pwrite bytes:seconds,...: the card's measured cost of a write of about "
                          "that size (within 256 bytes)")
@@ -240,7 +243,7 @@ def main():
                 c = card_f                  # (the card's own compute: W below)
             due = max(ce + c, st["served"][r - 1])
             if card_f is not None and st["entry"][r - 1] is not None:
-                due = max(due, st["post"][r - 1] + card_w.get(R[r - 1][1], 0.0))
+                due = max(due, st["post"][r - 1] + card_w.get(R[r - 1][1], card_w.get(0, 0.0)))
         else:
             due = st["served"][r - 1] + gaps[r]
         if now < due:

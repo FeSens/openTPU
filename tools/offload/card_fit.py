@@ -10,7 +10,9 @@ with their .calls.json; docs/offload.md 10.13):
       = max(critical end + F, post + W(m)). F is the median critical end -> next post of the
       requests with 3 or more misses (the card waited for their last tag); W(m) per miss count m
       the value that fits the runs' next posts best (median absolute error), requests whose
-      next post came within --cap s of their critical end only (a token's end excluded).
+      next post came within --cap s of their critical end only (a token's end excluded). Also
+      W0, the median post -> next post of the requests with no miss: the card's own time, the
+      floor for levers that shorten the windows far (W(m) holds the fit runs' waits).
 
 A post is the next request's seen less DET (the poll's detection, 15 us). Prints the fit and the
 measured / modelled time after the critical end by misses; w prints the --card-w string.
@@ -79,12 +81,17 @@ def fit_w(a) -> None:
         err = [np.median(np.abs(np.maximum(ce[s] + F, post[s] + w) - nxt[s])) for w in ws]
         W[k] = float(ws[int(np.argmin(err))])
     model = np.maximum(ce + F, post + np.array([W.get(int(x), 0.0) for x in m]))
+    allr = np.vstack([_requests(f)[:-1] for f in files])
+    hits = allr[(allr[:, 3] == 0) & (allr[:, 2] - allr[:, 0] < a.cap)]
+    W0 = float(np.median(hits[:, 2] - hits[:, 0])) if len(hits) else float("nan")
     by = " ".join(f"{k}:{np.median((nxt - ce)[m == k]) * 1e6:.0f}/"
                   f"{np.median((model - ce)[m == k]) * 1e6:.0f}" for k in W)
     print(f"{len(files)} runs, {len(r)} requests: F {F * 1e6:.0f} us; after the critical end "
           f"(us, measured/model) by misses {by}; next posts' error median "
           f"{np.median(model - nxt) * 1e6:+.0f} us")
+    print(f"W0 {W0 * 1e6:.0f} us: the card's own time a request ({len(hits)} with no miss)")
     print("--card-w " + ",".join([f"{F:.4g}"] + [f"{k}:{w:.4g}" for k, w in W.items() if w > 0]))
+    print(f"--card-w {F:.4g},0:{W0:.4g}")
 
 
 def main(argv=None) -> int:
