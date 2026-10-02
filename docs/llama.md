@@ -179,7 +179,8 @@ take '212'. So the device's 4-bit path is quantization, not a kernel error.
 **For SmolLM3, int8 is the format that stays with Hugging Face** (`--wformat int8`, 5.0 tok/s).
 4-bit (8.7 tok/s) gives fluent text, but it leaves HF's greedy path after 1 to 11 tokens on
 the four prompts. No cheaper mix helps, because the error is in the MLP, which holds most of the
-weights.
+weights. Phi-4-mini's recommended mix (`wformat="mix"`) is `mlp@4-27=fp4`, estimated 28% faster
+than int8 (`docs/formats.md`).
 
 ## Tests
 

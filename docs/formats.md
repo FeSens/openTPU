@@ -133,9 +133,11 @@ slower than `delta=fp4,mlp=fp4` anyway. Finals, 2000 tokens:
 | `gateup=fp4` | +1.77 (0.05) | +2.31 (0.55) | 3415 | 4.29 | +19.8% | 1.98 |
 
 fp4 sits on its bar (0.3 SE over; the bar itself rests on the projected int8 speed), so the
-mix is `delta=fp4,mlp=fp4`, 1.7 SE under its bar: the eight attention layers stay int8, 5%
-slower than fp4 for 1.2 points less dKL. Its image is 2675 MiB at a 2048-token capacity (2713
-at 4096), one layout, generate 2099 / 2396 instructions.
+mix is the conservative `delta=fp4,mlp=fp4`, 1.7 SE under its bar: the eight attention layers
+stay int8, 5% slower than fp4 for 1.2 points less dKL. fp4 stays one choice away: wformat fp4
+with an int8 head, or "mix" with `OTPU_FORMATS=attn=fp4,delta=fp4,mlp=fp4`. The mix's image is
+2675 MiB at a 2048-token capacity (2713 at 4096), one layout, generate 2099 / 2396
+instructions.
 
 ### Qwen3.5-2B
 

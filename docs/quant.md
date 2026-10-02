@@ -198,7 +198,8 @@ What the tables say:
   all weights, so "+head8" costs 25% more bytes for a modest gain. Per extra bit, "+attn8" and
   "+ends8" gain the most. The Engine supports one format for the layers and one for the LM
   head; per-matrix formats ("+attn8", "+down8") would be a small change to the images, and
-  per-layer formats ("+ends8") would split the hardware layer loop.
+  per-layer formats ("+ends8") would split the hardware layer loop. Both exist now (formats
+  per kind and layer range, and the recommended mixes: `docs/formats.md`).
 
 Recommendation: `e2m1k-s`, called `fp4` in the code: nearly NVFP4's accuracy at MXFP4's size,
 and (next section) the cheapest of the accurate formats to build. It is what `wformat="fp4"`
