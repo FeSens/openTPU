@@ -26,7 +26,8 @@
 #     by layer in runs of 1 or 2 rows (--layer-major; docs/offload.md 13)
 #   q35t16, q35lm1, q35lm2: the same for the 35B as q35e (the table on the host, no hints)
 #   (lm1, lm2: each layer's own slots, --per-layer-slots; g26lmp2, q35lmp2: layer-major R = 2
-#   with the slots pooled, every slot serving the running layer)
+#   with the slots pooled, every slot serving the running layer; q35lm1e: q35lm1 with the embed
+#   runs, --embed-runs, for a bitstream with port A's fix: docs/offload.md 13.6)
 # Before each run the other pools leave the page cache and the run's pool is read into it. A run
 # whose files are not staged in O is skipped. Selftest before and after.
 # Run: otpu-lock --wait 3600 -- tools/offload/sessions/card_moe.sh   (RUNS="8b16 8b160 q35";
@@ -90,7 +91,8 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35t16]="$Q35 16 q35-hf.json q35ref16 q35card16t 0 lfu --embed-table host --hints off"
   [q35lm1]="$Q35 16 q35-hf.json q35ref16 q35card16lm1 0 lfu --embed-table host --hints off --layer-major 1 --per-layer-slots"
   [q35lm2]="$Q35 16 q35-hf.json q35ref16 q35card16lm2 0 lfu --embed-table host --hints off --layer-major 2 --per-layer-slots"
-  [q35lmp2]="$Q35 16 q35-hf.json q35ref16 q35card16lmp2 0 lfu --embed-table host --hints off --layer-major 2")
+  [q35lmp2]="$Q35 16 q35-hf.json q35ref16 q35card16lmp2 0 lfu --embed-table host --hints off --layer-major 2"
+  [q35lm1e]="$Q35 16 q35-hf.json q35ref16 q35card16lm1e 0 lfu --embed-table host --hints off --layer-major 1 --per-layer-slots --embed-runs")
 for name in ${RUNS:-8b16 8b160 q35}; do
   read -r md pool n hf ref out ex pol extra <<< "${RUN[$name]}"
   if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $RF/$ref.json ]; then
@@ -178,8 +180,8 @@ print(f"  [{'PASS' if same and c['prefill_logits_sha'] == r['prefill_logits_sha'
 k = ("tok_s_wall", "tok_s_device", "hits", "misses", "misses_per_token_decode",
      "misses_per_token_decode_2nd_half", "bytes_per_token_decode", "host_decode_s", "load_s",
      "prefill_s", "generate_s", "experts_per_layer", "policy", "pool_warm", "embed_host",
-     "hints", "layer_major", "pooled", "prefill_requests", "prefill_misses", "host_mem",
-     "device_counters")
+     "hints", "layer_major", "pooled", "embed_runs", "prefill_requests", "prefill_misses",
+     "host_mem", "device_counters")
 print("  " + json.dumps({x: c.get(x) for x in k}))
 PY
 done

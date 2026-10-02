@@ -107,7 +107,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
          formats: str | None = None, layer_major: int = 0, pooled: bool = True,
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
-         legacy_serve: bool = False) -> dict:
+         legacy_serve: bool = False, embed_runs: bool = False) -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -136,7 +136,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                                                model=Path(model).name)
     t = time.time()
     if layer_major:                             # the prompt a layer at a time, runs of R rows
-        ekw.update(layer_major=layer_major, pooled=pooled)  # (docs/offload.md 13)
+        ekw.update(layer_major=layer_major, pooled=pooled,  # (docs/offload.md 13)
+                   embed_runs=embed_runs)           # (13.6: a bitstream with port A's fix)
     eng = Engine(spec, W, cap=cap, cfg=cfg, rows=1, wformat=wformat, head_format=head_format,
                  resident=True, experts=experts, pool_file=pool, backend=backend,
                  release_weights=release_weights, pool_map=pool_map,  # (10.6, 10.7)
@@ -297,6 +298,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 if len(dec) else None,
                 misses_per_token=mpt.tolist(), layer_major=layer_major,
                 pooled=pooled if layer_major else None,
+                embed_runs=embed_runs if layer_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
@@ -368,6 +370,10 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
+    ap.add_argument("--embed-runs", action="store_true",
+                    help="--layer-major with the embed runs and compile-time-position runs "
+                         "for an embedding table on the host (Engine embed_runs; needs a "
+                         "bitstream whose port A drops its beats at RUN: docs/offload.md 13.6)")
     ap.add_argument("--keep-weights", action="store_true",
                     help="keep the checkpoint mapped after the image is built (by default "
                          "LazyWeights.release gives its pages back: page cache for the pool; "
@@ -398,7 +404,7 @@ def main():
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
              a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
-             not a.no_pool_map, a.legacy_serve)
+             not a.no_pool_map, a.legacy_serve, a.embed_runs)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))
