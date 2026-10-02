@@ -1,35 +1,49 @@
 """Weight formats per kind and layer range (opentpu/llm/formats.py) for the Qwen3 / Llama-like
-(SmolLM3, Phi-4-mini), LFM2 and Qwen3.5 models: perplexity over the first --tokens tokens of
-docs/isa.md (quant_eval.py's text: prose the models have not memorized) in float64 emulations
-of the device's quantization. emulate() is the families' emulated_logits with the loops swapped:
-layers outer, the whole sequence and every variant of a pass at once, so each layer's weights
-are quantized once per format (4-bit: through the image cache, opentpu/qcache.py) and only one
-layer's weights are held.
+(SmolLM3, Phi-4-mini), LFM2, Qwen3.5 and Gemma 4 models: perplexity over the first --tokens
+tokens of docs/isa.md (quant_eval.py's text: prose the models have not memorized) in float64
+emulations of the device's quantization. emulate() is the families' emulated_logits with the
+loops swapped: layers outer, the whole sequence and every variant of a pass at once, so each
+layer's weights are quantized once per format (4-bit: through the image cache,
+opentpu/qcache.py) and only one layer's weights are held. Gemma 4 (E2B) runs
+tools/gemma4_quant_eval.py's emulation a variant at a time (its KV-shared layers read earlier
+layers' K / V) up to the head's input, which --cache keeps, then one pass over the soft-capped
+head for every variant; its kinds are attn, gateup, down and ple (a layer's PLE gate and
+projection; unranged, the PLE model projection too), its groups the own-K / V layers and the
+shared ones, each halved at a multiple of the attention pattern (E2B: 0-9, 10-14, 15-24,
+25-34), and the head is not in the greedy order (head=fp4 a row of its own). A variant's PLE
+table takes the format its image does at otpu-chat's 2048 tokens (int8 where it fits the card,
+else fp4: E2B's int8 layers).
 
     python tools/formats_scan.py scan MODEL OUT.json [--tokens 900] [--fmt fp4]
         pass 1: float weights (no quantization at all), int8, the 4-bit image (WF --fmt, head
         int8), and int8 with one group of weights in --fmt: a kind in all layers, a kind in a
         quarter of them, the head. pass 2: the uniform mixes (each kind one format in every
         layer: what a model with one layer layout runs) and the quarter groups and the head
-        added in order of NLL lost per byte saved (cumulative). OUT.json: every variant's
+        added in order of dKL per byte saved (cumulative; the scans of docs/formats.md before
+        Gemma 4's: NLL). OUT.json: every variant's
         formats string, mean NLL, perplexity, weight bytes per token, top-1 agreement and its
         KL divergence from float's next-token distribution beyond int8's (dKL: the log
         perplexity ratio to int8 where the float model is calibrated, without the noise of the
         sampled tokens), each with its standard error paired over the tokens
     python tools/formats_scan.py ppl MODEL FORMATS... [--wformat int8] [--tokens 900] [--out J]
+                                 [--cache DIR]
         the perplexity and dKL of formats strings (as OTPU_FORMATS; "" for none), each with the
         standard error of its difference from int8's (paired over the tokens)
     python tools/formats_scan.py check
         tiny random models of each family (SmolLM3, Phi-3, Qwen3.5 with 4 key heads, LFM2):
         emulate() against emulated_logits (formats including ranged ones) and the NLL of the
-        chunked head against the full logits
+        chunked head against the full logits (Gemma 4's: tests/test_gemma4.py)
 
 MODEL: a short name of opentpu.llm.MODELS or a checkpoint directory. A dense model only (the
-MoE models' experts are not a kind here).
+MoE models' experts are not a kind here). --cache DIR (Gemma 4; scan: OUT.json's name + .xl):
+each variant's rows into the head, by its tokens, formats and the emulation's sources.
 """
 import argparse
+import functools
+import hashlib
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -40,6 +54,7 @@ import numpy as np
 from opentpu import qcache as QC
 from opentpu import quant as Q
 from opentpu.llm import formats as FM
+from opentpu.llm import gemma4 as G
 from opentpu.llm import lfm2 as L2
 from opentpu.llm import load_spec, model_dir
 from opentpu.llm import qwen3 as Q3
@@ -256,17 +271,34 @@ def emulate(spec, W, tokens, variants: dict, D: int = 128, logits: bool = False,
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
     Wh = W[head]
     shapes[("head", 0)] = {head: Wh.shape}
+    fmts = {lab: None if f is None else f("head") for lab, f in variants.items()}
+    return _head(hs, fmts, lambda: ((r0, Wh[r0:r0 + head_rows])
+                                    for r0 in range(0, Wh.shape[0], head_rows)),
+                 tokens, D, logits, kl_to)
+
+
+def _head(hs: dict, fmts: dict, chunks, tokens, D: int = 128, logits: bool = False,
+          kl_to: tuple = (), cap: float | None = None) -> dict:
+    """emulate's results from the head's inputs hs {label: [T, hidden]} (the final norm's,
+    quantized) in the head formats fmts {label: format, None: unquantized}, over chunks()
+    (the head's (first row, rows) in turn; twice with kl_to). cap: the logits' soft cap,
+    c tanh(z / c) (Gemma 4)."""
+    T = len(tokens)
     tgt = np.asarray(tokens[1:])
+    hq: dict = {}                   # the head chunk's rows per format
+
+    def lg_of(lab, a):
+        fmt = fmts[lab]
+        if fmt not in hq:
+            hq[fmt] = dequant(a, fmt, D)
+        z = hs[lab] @ hq[fmt].T
+        return z if cap is None else cap * np.tanh(z / cap)
+
     acc = {lab: [np.full(T, -np.inf), np.zeros(T), np.zeros(T - 1), np.full(T, -np.inf),
-                 np.zeros(T, np.int64), []] for lab in variants}
-    for r0 in range(0, Wh.shape[0], head_rows):
-        a = Wh[r0:r0 + head_rows]
-        deq = {}
-        for lab, f in variants.items():
-            fmt = None if f is None else f("head")
-            if fmt not in deq:
-                deq[fmt] = dequant(a, fmt, D)
-            lg = hs[lab] @ deq[fmt].T
+                 np.zeros(T, np.int64), []] for lab in hs}
+    for r0, a in chunks():
+        for lab in hs:
+            lg = lg_of(lab, a)
             m, se, tl, best, arg, full = acc[lab]
             if logits:
                 full.append(lg)
@@ -279,33 +311,23 @@ def emulate(spec, W, tokens, variants: dict, D: int = 128, logits: bool = False,
             j = lg.argmax(1)
             up = lg[np.arange(T), j] > best
             best[up], arg[up] = lg[np.arange(T), j][up], j[up] + r0
-        del deq
+        hq.clear()
     if logits:
         return {lab: np.concatenate(v[5], 1) for lab, v in acc.items()}
     lse = {lab: m + np.log(se) for lab, (m, se, *_) in acc.items()}
     out = {lab: (lse[lab][:-1] - tl, arg) for lab, (_, _, tl, _, arg, _) in acc.items()}
     if not kl_to:
         return out
-    kl = {lab: {r: np.zeros(T) for r in kl_to} for lab in variants}
-    hq: dict = {}                   # the head chunk's rows per format
-
-    def logp(lab, a):
-        f = variants[lab]
-        fmt = None if f is None else f("head")
-        if fmt not in hq:
-            hq[fmt] = dequant(a, fmt, D)
-        return hs[lab] @ hq[fmt].T - lse[lab][:, None]
-
-    for r0 in range(0, Wh.shape[0], head_rows):
-        a = Wh[r0:r0 + head_rows]
-        ref = {r: logp(r, a) for r in kl_to}
+    kl = {lab: {r: np.zeros(T) for r in kl_to} for lab in hs}
+    for r0, a in chunks():
+        ref = {r: lg_of(r, a) - lse[r][:, None] for r in kl_to}
         pr = {r: np.exp(v) for r, v in ref.items()}
-        for lab in variants:
-            lq = ref[lab] if lab in ref else logp(lab, a)
+        for lab in hs:
+            lq = ref[lab] if lab in ref else lg_of(lab, a) - lse[lab][:, None]
             for r in kl_to:
                 kl[lab][r] += (pr[r] * (ref[r] - lq)).sum(1)
         hq.clear()
-    return {lab: (*out[lab], kl[lab]) for lab in variants}
+    return {lab: (*out[lab], kl[lab]) for lab in hs}
 
 
 def weight_bytes(shapes: dict, fmt, D: int = 128) -> int:
@@ -338,7 +360,12 @@ def _run(spec, W, ids, specs: dict, shapes, D, log) -> dict:
     """{label: row} for specs {label: (formats, wformat, head) or None (float)}."""
     M = family(spec)
     variants = {lab: None if v is None else _resolver(M, *v) for lab, v in specs.items()}
-    res = emulate(spec, W, ids, variants, D, shapes=shapes, log=log, kl_to=("float", "int8"))
+    return _rows(specs, emulate(spec, W, ids, variants, D, shapes=shapes, log=log,
+                                kl_to=("float", "int8")))
+
+
+def _rows(specs: dict, res: dict) -> dict:
+    """_run's rows of emulate's results."""
     out = {}
     for lab, (nll, top1, kl) in res.items():
         v = specs[lab]
@@ -351,10 +378,181 @@ def _run(spec, W, ids, specs: dict, shapes, D, log) -> dict:
     return out
 
 
-def _finish(rows: dict, shapes, M, D) -> None:
-    """Weight bytes, the bytes saved against int8, top-1 agreement with int8 and float (the
-    rows' "top1" lists dropped), and the standard error of the mean NLL's difference from
-    int8's (paired over the tokens: the perplexity ratio's relative error). dkl: the mean KL
+# Gemma 4: tools/gemma4_quant_eval.py's emulation, a variant at a time
+G4KINDS = ("attn", "gateup", "down", "ple")     # a layer's formats (gemma4.layer_formats')
+G4CAP = 2048        # the image whose PLE table format a variant takes (otpu-chat's --cap)
+G4SRC = ("tools/gemma4_quant_eval.py", "opentpu/llm/gemma4.py", "opentpu/quant.py",
+         "opentpu/kernels/gather.py", "opentpu/qcache.py")   # (_g4_run's cache keys)
+
+
+def _g4q():
+    """tools/gemma4_quant_eval.py (emulate)."""
+    import importlib.util
+    s = importlib.util.spec_from_file_location("gemma4_quant_eval",
+                                               ROOT / "tools/gemma4_quant_eval.py")
+    m = importlib.util.module_from_spec(s)
+    s.loader.exec_module(m)
+    return m
+
+
+def _g4_args(spec, v, cap: int = G4CAP) -> tuple:
+    """emulate's wformat, head format, wmap and PLE table format for a variant (formats,
+    wformat, head), None: float ("none"): each checkpoint layer's formats as the image resolves
+    them (gemma4.layer_formats; wmap "kind@c-c"), the PLE projection's ("ple"), the head's
+    (head, else the formats' head rule, else wformat) and the PLE table's the image of cap
+    tokens takes (int8 where it fits the card beside the rest, else fp4: E2B's int8 layers)."""
+    if v is None:
+        return "none", "none", {}, "none"
+    formats, wformat, head = v
+    lf, ple, hf = G.layer_formats(spec, wformat, formats)
+    wmap = {"ple": ple}
+    for i, f in enumerate(lf):
+        c = spec.src(i)
+        wmap.update({f"{k}@{c}-{c}": x for k, x in zip(G4KINDS, f)})
+    hf = head or hf or wformat
+    return wformat, hf, wmap, _g4_ple(spec, v, cap)[0]
+
+
+@functools.lru_cache(maxsize=None)
+def _g4_ple(spec, v, cap: int) -> tuple:
+    """The PLE table's (format, on the host) in variant v's image (a layout, no weights;
+    OTPU_PLE_HOST=1: int8 on the host)."""
+    from opentpu.isasim import board_config
+    img = spec.image(board_config(), cap, 1, Q3.PREFILL_ROWS, v[1], v[2], lookup=True,
+                     formats=v[0])
+    return img.ple_format, img.ple_host
+
+
+def _g4_spans(spec) -> list:
+    """The scan's layer groups: the layers with their own K / V and the KV-shared ones, each
+    halved at a multiple of the attention pattern's period (E2B: 0-9, 10-14, 15-24, 25-34)."""
+    L = spec.layers
+    s = next((i for i in range(L) if spec.kv_src[i] != i), L)
+    per = spec.kinds.index(G.FULL) + 1
+    out = []
+    for a, b in ((0, s), (s, L)):
+        m = a + max(1, round((b - a) / 2 / per)) * per
+        out += [(a, m - 1), (m, b - 1)] if m < b else [(a, b - 1)] if a < b else []
+    return out
+
+
+def _g4_shapes(spec, W) -> dict:
+    """{name: (rows, cols)} of the matrices a token reads but the head (the embedding's and
+    the PLE table's rows are gathered): each layer's attention (K / V where it has its own),
+    MLP, PLE gate and projection, and the layers' rows of the PLE model projection."""
+    def shape(n):
+        if isinstance(W, G.Weights):
+            f, k = W._files[n]
+            return tuple(f.get_slice(k).get_shape())
+        return W[n].shape
+
+    names = []
+    for i in range(spec.layers):
+        p = f"model.layers.{spec.src(i)}."
+        a = p + "self_attn."
+        names += [a + "q_proj.weight", a + "o_proj.weight"]
+        if spec.kv_src[i] == i:
+            names += [a + "k_proj.weight"] + ([] if spec.kv_same(i) else [a + "v_proj.weight"])
+        names += [p + f"mlp.{m}_proj.weight" for m in ("gate", "up", "down")]
+        if spec.ple_dim:
+            names += [p + "per_layer_input_gate.weight", p + "per_layer_projection.weight"]
+    out = {n: shape(n) for n in names}
+    if spec.ple_dim:
+        out["model.per_layer_model_projection.weight"] = (spec.layers * spec.ple_dim,
+                                                          spec.hidden)
+    return out
+
+
+def _g4_bytes(spec, shapes: dict, v, D: int = 128) -> int:
+    """weight_bytes for Gemma 4: the matrices shapes (_g4_shapes') and the LM head in variant
+    v's formats (_g4_args')."""
+    _, hf, wmap, _ = _g4_args(spec, v)
+
+    def fmt(n):
+        if not n.startswith("model.layers."):
+            return wmap["ple"]                              # the PLE model projection
+        c = n.split(".")[2]
+        k = "attn" if ".self_attn." in n else "down" if ".down_proj" in n else \
+            "gateup" if ".mlp." in n else "ple"
+        return wmap[f"{k}@{c}-{c}"]
+
+    n = 0
+    for f, (rows, cols) in [(fmt(k), s) for k, s in shapes.items()] + \
+            [(hf, (spec.vocab, spec.hidden))]:
+        cols = -(-cols // D) * D
+        n += rows * (Q.row_bytes(cols, f, D) + 4 * (cols // D))
+    return n
+
+
+def _g4_run(spec, W, ids, specs: dict, D, log, cache=None, head_rows: int = HEAD_ROWS) -> dict:
+    """_run for Gemma 4: each variant's head inputs (gemma4_quant_eval.emulate's, hidden), a
+    variant at a time (the whole sequence layer after layer: a KV-shared layer reads an
+    earlier one's K / V, so variants do not share a pass), each saved in the directory cache
+    and read back from it (a run killed at the memory floor goes on at its variant; a later
+    run reuses the references), then _head over them all with the soft cap (a row's
+    "ple_table": the PLE table's format)."""
+    E = _g4q()
+    src = b"".join((ROOT / p).read_bytes() for p in G4SRC)
+    hs, fmts, pfs = {}, {}, {}
+    for lab, v in specs.items():
+        wf, hf, wmap, pf = _g4_args(spec, v)
+        fmts[lab], pfs[lab] = None if hf == "none" else hf, pf
+        key = repr((str(getattr(W, "model_dir", "")), spec, list(ids), D, wf, hf, pf,
+                    sorted(wmap.items())))
+        f = Path(cache) / f"{hashlib.sha256(key.encode() + src).hexdigest()[:20]}.npy" \
+            if cache else None
+        if f is not None and f.exists():
+            hs[lab] = np.load(f)
+            continue
+        t0 = time.time()
+        hs[lab] = E.emulate(spec, W, ids, D, wformat=wf, hf=hf, ple_format=pf, wmap=wmap,
+                            hidden=True)
+        if f is not None:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            np.save(f"{f}.tmp.npy", hs[lab])
+            os.replace(f"{f}.tmp.npy", f)
+        if log:
+            log(f"{lab}: {time.time() - t0:.0f} s (PLE table {pf})")
+    head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
+
+    def chunks():
+        t = G._Rows(*W._files[head]) if isinstance(W, G.Weights) else W[head]
+        for r0 in range(0, spec.vocab, head_rows):
+            yield r0, t[r0:r0 + head_rows]
+    rows = _rows(specs, _head(hs, fmts, chunks, ids, D, kl_to=("float", "int8"),
+                              cap=spec.softcap))
+    for lab, r in rows.items():
+        r["ple_table"] = pfs[lab] + (" (host)" if specs[lab] is not None and
+                                     _g4_ple(spec, specs[lab], G4CAP)[1] else "")
+    return rows
+
+
+def _open(path, D: int = 128, cache=None) -> tuple:
+    """(spec, run, nbytes, kinds, spans) of a checkpoint: run(specs, ids, log) -> {label: row}
+    (_run, or _g4_run), nbytes((formats, wformat, head)) -> weight bytes a token reads (after a
+    run), the scan's kinds and its layer groups."""
+    spec = load_spec(path)
+    L = spec.layers
+    if isinstance(spec, G.Spec):
+        W = G.load_weights(path)
+        shapes = _g4_shapes(spec, W)
+        return (spec, lambda specs, ids, log: _g4_run(spec, W, ids, specs, D, log, cache),
+                lambda v: _g4_bytes(spec, shapes, v, D), list(G4KINDS), _g4_spans(spec))
+    W = Q3.load_weights(path)
+    M = family(spec)
+    present = {M.weight_kind(n)[0] for n in W if n.startswith("model.layers.")}
+    kinds = [k for k in M.KINDS if k not in ("mlp", "head") and k in present]
+    shapes: dict = {}
+    return (spec, lambda specs, ids, log: _run(spec, W, ids, specs, shapes, D, log),
+            lambda v: weight_bytes(shapes, _resolver(M, *v), D), kinds,
+            [(round(j * L / 4), round((j + 1) * L / 4) - 1) for j in range(4)])
+
+
+def _finish(rows: dict, nbytes) -> None:
+    """Weight bytes (nbytes((formats, wformat, head))), the bytes saved against int8, top-1
+    agreement with int8 and float (the rows' "top1" lists dropped), and the standard error of
+    the mean NLL's difference from int8's (paired over the tokens: the perplexity ratio's
+    relative error). dkl: the mean KL
     divergence from float's distribution beyond int8's (the NLL a variant loses against int8
     where the float model's predictions are calibrated: an estimate of the log perplexity
     ratio without the sampled token's noise), se_dkl its standard error (paired)."""
@@ -369,51 +567,49 @@ def _finish(rows: dict, shapes, M, D) -> None:
         dk = np.asarray(r["kl_tok"]) - k8
         r["dkl"], r["se_dkl"] = float(dk.mean()), float(dk.std(ddof=1) / math.sqrt(len(dk)))
         if r["wformat"] is not None:
-            r["bytes"] = weight_bytes(shapes, _resolver(M, r["formats"], r["wformat"], r["head"]),
-                                      D)
+            r["bytes"] = nbytes((r["formats"], r["wformat"], r["head"]))
     for r in rows.values():
         if "bytes" in r:
             r["saved"] = rows["int8"]["bytes"] - r["bytes"]
 
 
-def scan(name, out, n_tok: int, f4: str, D: int = 128) -> None:
+def scan(name, out, n_tok: int, f4: str, D: int = 128, cache=None) -> None:
     path = model_dir(name)
-    spec, W = load_spec(path), Q3.load_weights(path)
-    M = family(spec)
+    spec, run, nbytes, kinds, qs = _open(path, D, cache or f"{out}.xl")
+    g4 = isinstance(spec, G.Spec)
     ids = text_ids(path, n_tok)
     t0 = time.time()
 
     def log(m):
         print(f"[{time.time() - t0:6.0f} s] {m}", flush=True)
 
-    kinds = [k for k in M.KINDS if k not in ("mlp", "head")]
-    L = spec.layers
-    qs = [(round(j * L / 4), round((j + 1) * L / 4) - 1) for j in range(4)]
-    present = {M.weight_kind(n)[0] for n in W if n.startswith("model.layers.")}
-    kinds = [k for k in kinds if k in present]
     groups = {f"{k}@{a}-{b}": f"{k}@{a}-{b}={f4}" for k in kinds for a, b in qs}
-    groups["head"] = f"head={f4}"
+    if not g4:                  # (Gemma 4's head: a row of its own)
+        groups["head"] = f"head={f4}"
     p1 = {"float": None, "int8": ("", "int8", None), f4: ("", f4, "int8")}
     p1.update({f"{k}={f4}": (f"{k}={f4}", "int8", None) for k in kinds})
+    if g4:                      # the layers' PLE alone; the head
+        p1[f"ple@0-{spec.layers - 1}={f4}"] = (f"ple@0-{spec.layers - 1}={f4}", "int8", None)
+        p1[f"head={f4}"] = (f"head={f4}", "int8", None)
     p1.update({g: (fs, "int8", None) for g, fs in groups.items()})
-    shapes: dict = {}
     log(f"{name}: {len(ids)} tokens, pass 1: {len(p1)} variants")
-    rows = _run(spec, W, ids, p1, shapes, D, log)
-    nll8 = rows["int8"]["nll"]
-    b8 = weight_bytes(shapes, _resolver(M, ""), D)
-    saved = {g: b8 - weight_bytes(shapes, _resolver(M, groups[g]), D) for g in groups}
-    gain = sorted(groups, key=lambda g: (rows[g]["nll"] - nll8) / max(saved[g], 1))
-    log("order (NLL per byte saved): " + ", ".join(gain))
+    rows = run(p1, ids, log)
+    b8 = nbytes(("", "int8", None))
+    saved = {g: b8 - nbytes((groups[g], "int8", None)) for g in groups}
+    dkl = {g: rows[g]["kl_float"] - rows["int8"]["kl_float"] for g in groups}
+    gain = sorted(groups, key=lambda g: dkl[g] / max(saved[g], 1))
+    log("order (dKL per byte saved): " + ", ".join(gain))
     p2 = {"float": None, "int8": ("", "int8", None)}      # (the KL references again)
-    for m in range(2, 1 << (len(kinds) + 1)):           # every subset of the kinds and the head
-        sel = [k for j, k in enumerate(kinds + ["head"]) if m >> j & 1]
-        if len(sel) > 1:
+    pool = kinds if g4 else kinds + ["head"]
+    for m in range(2, 1 << len(pool)):                  # every subset of the kinds (and the head)
+        sel = [k for j, k in enumerate(pool) if m >> j & 1]
+        if len(sel) > 1 and sel != kinds:               # (all the kinds: the f4 row)
             p2["uniform " + "+".join(sel)] = (",".join(f"{k}={f4}" for k in sel), "int8", None)
     for j in range(2, len(gain) + 1):
         p2[f"greedy {j}"] = (",".join(groups[g] for g in gain[:j]), "int8", None)
     log(f"pass 2: {len(p2)} variants")
-    rows.update(_run(spec, W, ids, p2, shapes, D, log))
-    _finish(rows, shapes, M, D)
+    rows.update(run(p2, ids, log))
+    _finish(rows, nbytes)
     Path(out).write_text(json.dumps({"model": str(name), "tokens": len(ids), "fmt": f4,
                                      "order": gain, "variants": rows}, indent=1))
     log(f"wrote {out}")
@@ -423,16 +619,16 @@ def scan(name, out, n_tok: int, f4: str, D: int = 128) -> None:
               f"{r.get('bytes', 0) / 2**20:8.1f} MiB  top1/int8 {r['agree_int8']:.3f}")
 
 
-def ppl(name, formats: list, wformat: str, n_tok: int, D: int = 128, out=None) -> None:
+def ppl(name, formats: list, wformat: str, n_tok: int, D: int = 128, out=None,
+        cache=None) -> None:
     path = model_dir(name)
-    spec, W = load_spec(path), Q3.load_weights(path)
-    M = family(spec)
+    spec, run, nbytes, _, _ = _open(path, D, cache)
     ids = text_ids(path, n_tok)
     specs = {"float": None, "int8": ("", "int8", None)}
     specs.update({f or "(none)": (f, wformat, None) for f in formats})
-    shapes: dict = {}
-    rows = _run(spec, W, ids, specs, shapes, D, None)
-    _finish(rows, shapes, M, D)
+    rows = run(specs, ids, (lambda m: print(m, flush=True)) if isinstance(spec, G.Spec)
+               else None)
+    _finish(rows, nbytes)
     if out:
         Path(out).write_text(json.dumps({"model": str(name), "tokens": len(ids), "variants": rows},
                                         indent=1))
@@ -535,18 +731,20 @@ def main():
     a.add_argument("out")
     a.add_argument("--tokens", type=int, default=900)
     a.add_argument("--fmt", default="fp4", choices=["fp4", "int4"])
+    a.add_argument("--cache", help="Gemma 4: the head inputs' directory (default OUT.json.xl)")
     a = sub.add_parser("ppl")
     a.add_argument("model")
     a.add_argument("formats", nargs="+")
     a.add_argument("--wformat", default="int8")
     a.add_argument("--tokens", type=int, default=900)
     a.add_argument("--out", help="the rows as JSON (scan's format)")
+    a.add_argument("--cache", help="Gemma 4: the head inputs' directory")
     sub.add_parser("check")
     a = ap.parse_args()
     if a.cmd == "scan":
-        scan(a.model, a.out, a.tokens, a.fmt)
+        scan(a.model, a.out, a.tokens, a.fmt, cache=a.cache)
     elif a.cmd == "ppl":
-        ppl(a.model, a.formats, a.wformat, a.tokens, out=a.out)
+        ppl(a.model, a.formats, a.wformat, a.tokens, out=a.out, cache=a.cache)
     else:
         check()
 

@@ -120,7 +120,12 @@ At 2048 tokens the image is 3.636 GiB (372 MiB free). The on-card decode loop's 
 default picks int8 whenever the image fits 4 GiB. The build
 quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`, default 4), the 4-bit ones through
 the image caches' disk cache (`opentpu/qcache.py`, [board.md](board.md); int8 matrices and the
-PLE records are quantized at each build): 324 s cold on omarchy.
+PLE records are quantized at each build): 324 s cold on omarchy. An image with the fp4 PLE table
+(explicit int8 layers) spends most of its build on the table's 4-bit search: 697 of 773 s on one
+core, about 10 minutes with four jobs on the card host, at every build. Caching those records
+(branch qcache-ple: `gather.pack_records` through `opentpu/qcache.py`, rows stored without their
+padding, prebuild covering such runs) would take 1.27 GB of the card host's disk; it is parked
+while that disk is at its floor, as only an explicit `--wformat int8` E2B pays it.
 
 ## Accuracy
 
@@ -189,7 +194,53 @@ Over the whole text, the next-token NLL of the soft-capped logits at its 899 pos
 
 As on the other models ([quant.md](quant.md)), the int8 head is the default: the fp4 head costs 4%
 in perplexity for 14% of decode speed. Attention in int8 would recover a third of the 4-bit
-loss for 9% more bytes; the image has one format for all layers today.
+loss for 9% more bytes.
+
+Per layer ([formats.md](formats.md), 2000 tokens of docs/isa.md): the recommended mix
+(`wformat="mix"`, otpu-chat's default) is `attn@15-24=fp4,mlp@15-34=fp4`, the KV-shared layers'
+MLP and the attention of layers 15-24 in fp4, 30.0% faster than int8 on the card (8.30 tok/s on
+fmvf, session mix5) for dKL +2.60% (SE 0.06), 6.7 SE under its bar; fp4 layers are about +21%.
+The first pick, `attn@15-34=fp4,mlp@15-34=fp4`, measured 8.47 tok/s on the card (32.5%) for
++3.34%: 1.1 SE over its bar. The PLE table and its lookup stay on the card: int8 where the image
+leaves room, else fp4. The mix keeps the int8 table at 2048 and 4096 tokens (3.955 and 3.973 GiB,
+46 and 28 MiB spare); int8 layers leave none (4.52 GiB with the int8 table), so an explicit
+`wformat="int8"` takes the fp4 table: perplexity 19.15 against 18.62 with the int8 table on the
+host (float 18.60), dKL +2.42% (SE 0.08). The host table (`OTPU_PLE_HOST=1`, 0.3% slower on fmvf)
+is the accurate int8 the mixes are measured against, an opt-in reference, not a default.
+
+The mix runs three layer runs (format boundaries at 15 and 25) with six layer bodies, where the
+first pick and int8 run two with four: more than the two layouts the other families allow,
+taken because its programs compile (resident decode 2579 instructions, 20,632 of the IMEM's
+32,768 words at bucket 16). Its prompt runs ([prefill.md](prefill.md)) hold fewer rows; R_max
+by bucket at a 4096-token cap (main 1f9e69e; `!` where today's route fits more rows, so a prompt
+touching that bucket takes today's route):
+
+| Weights | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
+|:--|--|--|--|--|--|--|--|--|--|--|--|--|--|--|--|--|
+| int8 | 4 | 4 | 4 | 4 | 4 | 3! | 3 | 3 | 3! | 3 | 3 | 3! | 3 | 3 | 3! | 3 |
+| `attn@15-34=fp4,mlp@15-34=fp4` | 4 | 4 | 4 | 4 | 4 | 4 | 3! | 3 | 4 | 3! | 3 | 4 | 3! | 3 | 4 | 3! |
+| the mix | 4 | 3! | 3 | 3 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 | 2 |
+
+On fp4 MMs (PAIR) a run of R = 2 rows costs the same per row as R = 4; int8 MMs stream their
+weights once a pass of up to 4 rows, so at R = 2 they take half the rows per stream.
+
+The limit is IMEM: a prompt run's program grows with its bucket (attention is unrolled per
+block), and the mix's three runs add about 1160 instructions to the first pick's at bucket 2
+(4106 at 4 rows, 10 over the 4096; the first pick's 2946). Bucket 2 is uncovered, so a prompt
+past 256 tokens takes today's route, which compiles every run's program on the host. On the card
+(session mix5, fmvf, cap 2048) a 1500-token prompt takes 536 runs: 100.3-101.4 s to the first
+token in the two warm runs (the cold one 98.7 s: today's route keeps no programs between
+prompts, so cold and warm differ by the host's noise only), 69.3 s of it on the device (a run
+129-146 ms at 4 rows in buckets 1-2, 149-152 at 3 in 3-4, 109-110 at 2 in 5-6) and 58 ms a run
+on the host in series with the device (today's route compiles each run's program before it
+starts): 31 s. The first pick would take prompt runs, 375 of 4 rows: an estimated 62 s, of which
+59.4 s on the device (each bucket's rows at 4 a run: the weights by the model above, int8 and
+fp4 MMs apart, and the rest of a row as the mix's measured runs in that bucket), 1.9-3.3 s for
+the prompt runs' whole-bucket attention and 0.3 s on the host (0.7 ms a run).
+Prompts within bucket 1 (up to 256 tokens) take prompt runs of 4 rows, as the first pick's. With
+bucket 2 covered the mix would take prompt runs too (estimated 72 s); with attention looped over
+blocks instead of unrolled ([prefill.md](prefill.md) 7), 4 rows in every bucket. The fix, in the
+prompt runs, is in progress.
 
 ## 26B-A4B: accuracy
 

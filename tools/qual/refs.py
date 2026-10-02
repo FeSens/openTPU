@@ -5,9 +5,12 @@
                                          references for the runs (default all six), in parallel
                                          as memory allows; exit 1 if any job failed or died
     python3 tools/qual/refs.py card CFG.pkl MODEL WF HF NTOK [--resident [--card-loop]]
+                                         [--prompt-runs]
                                          the card's greedy tokens against the cached reference
                                          (--card-loop: after the prompt's token, the decode
-                                         loop on the card, Engine.generate_card, CAPS bit30)
+                                         loop on the card, Engine.generate_card, CAPS bit30;
+                                         --prompt-runs: the prompt in prompt runs where
+                                         prefill.covers it, docs/prefill.md)
     python3 tools/qual/refs.py key CFG.pkl MODEL WF HF NTOK  the cache file of one reference
     python3 tools/qual/refs.py one CFG.pkl MODEL WF HF NTOK  (worker: one reference)
 
@@ -327,10 +330,12 @@ def wait_ref(kp: Path) -> str | None:
     return None
 
 
-def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False) -> int:
+def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False,
+         prompt_runs: bool = False) -> int:
     import numpy as np
 
     from opentpu.host.board import BoardBackend, XdmaTransport
+    from opentpu.llm import prefill as PF
     from opentpu.llm.qwen3 import Engine
     cfg = pickle.loads(cfgf.read_bytes())
     kp, _ = key(cfg, model, wf, hf, n)
@@ -345,7 +350,11 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False) -> in
     tr = XdmaTransport("/dev/xdma0")
     hf_ = None if hf == "-" else hf
     dev = Engine(spec, W, cap=CAP, cfg=cfg, wformat=wf, head_format=hf_, resident=resident,
-                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=path.name))
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=path.name),
+                 prompt_runs=prompt_runs)
+    if prompt_runs:                     # (where prefill.covers it; else today's runs)
+        label += " prompt runs" if PF.supported(dev) and PF.covers(dev, 0, len(ids)) else \
+            " (prompt runs not taken)"
     if loop and not dev.can_generate:
         print(f"  [FAIL] {label}: the card does not run the decode loop (CAPS bit30, resident)")
         dev.backend.close()
@@ -393,6 +402,7 @@ def main():
     ap.add_argument("--ntok", type=int, default=32)
     ap.add_argument("--resident", action="store_true")
     ap.add_argument("--card-loop", action="store_true")
+    ap.add_argument("--prompt-runs", action="store_true")
     a = ap.parse_args()
     cfgf = Path(a.cfg)
     if a.mode == "cfg":
@@ -417,7 +427,7 @@ def main():
         return 0
     if a.mode == "one":
         return one(cfg, model, wf, hf, n)
-    return card(cfgf, model, wf, hf, n, a.resident or a.card_loop, a.card_loop)
+    return card(cfgf, model, wf, hf, n, a.resident or a.card_loop, a.card_loop, a.prompt_runs)
 
 
 if __name__ == "__main__":

@@ -126,6 +126,7 @@ class Spec:
     fit_formats: str = ""   # the formats an int8 image takes when it does not fit the card
                             # (Image): from_hf's, the LM head and the own-KV layers' down
                             # projections in fp4 (docs/gemma4_e4b.md)
+    mix: str = ""           # the recommended mix (wformat "mix": formats.named, MIXES)
     n_kv_global: int = 0    # the global layers' KV heads (0: n_kv)
     k_eq_v: bool = False    # global layers: V is the K projection (no v_proj), normed
                             # without a weight before K's norm and RoPE (26B-A4B)
@@ -215,7 +216,7 @@ class Spec:
                     softcap=c.get("final_logit_softcapping"),
                     tied=top.get("tie_word_embeddings", c.get("tie_word_embeddings", True)),
                     bos=c.get("bos_token_id", 2),
-                    eos=(c.get("eos_token_id", 1), 106), fit_formats=fit,
+                    eos=(c.get("eos_token_id", 1), 106), fit_formats=fit, mix=FM.mix_for(c),
                     n_kv_global=gkv.pop() if gkv else 0, k_eq_v=kev,
                     experts=c["num_experts"] if moe else 0,
                     top_k=c["top_k_experts"] if moe else 0,
@@ -503,6 +504,7 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
     `routing` {(position, layer): experts} replaces the top k where it has an entry (the
     card's choices: a near-tie routes either way). Before the soft cap."""
     from .qwen3 import _fake_q, _fake_w
+    wformat, formats = FM.named(spec, wformat, formats)
     lf, pf, fh = layer_formats(spec, wformat, formats)
     ef = expert_format(spec, wformat, formats) if spec.experts else None
     hf = head_format or fh or wformat
@@ -749,6 +751,7 @@ class Image:
         if cap % block:
             raise ValueError(f"KV capacity must be a multiple of the attention block {block}")
         import os
+        wformat, formats = FM.named(spec, wformat, formats)
         if formats is None:
             formats = os.environ.get("OTPU_FORMATS")
         if formats is None:
