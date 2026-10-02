@@ -1281,15 +1281,22 @@ times in 1.67 MB records of zipf popularity), with PoolFile itself for the first
 | read(), the run's own checkpoint still mapped | 10.9% | 0.96 | 1.00 |
 | read() + touch, the run's own checkpoint still mapped | 4.6% | 1.40 | 0.56 |
 
-So PoolFile (`mapped`, the default) keeps a read-only map of the pool and touches every expert
-it reads or warms through it, a byte a page, after the preadv (which keeps the reads' size and
-their GIL release). The pool's pages then compete as mapped ones and the dead checkpoint goes
-first. Costs: the page tables of the pool's touched pages (8 bytes per 4 KiB: 33 MB for the
-35B's 17.1 GB), the touch (fault-around maps 16 pages a fault: about 26 minor faults for an
-expert of 1.67 MB, the first time), and the pool counting in the process's `rss_file` (page
-cache, as before). Not tried: MADV_HUGEPAGE (file-backed huge pages need READ_ONLY_THP_FOR_FS and
-khugepaged; the touch already gives the standing). It does not change what the pool needs (about
-14 GB of RAM for the 35B, 10.6) or the SSD's 4.2 ms an expert.
+So PoolFile (`mapped`, the default; `Engine(pool_map=False)`, moe_card `--no-pool-map` for
+read() alone) keeps a read-only map of the pool (PROT_READ: its view is not writeable, nothing
+writes through it) and touches every expert it reads or warms through it, a byte a page, after
+the preadv (which keeps the reads' size and their GIL release). The pool's pages then compete
+as mapped ones and the dead checkpoint goes first. Costs:
+- the page tables of the pool's touched pages, 8 bytes per 4 KiB: about 33 MB for the 35B's
+  17.1 GB pool (2 MB per GB);
+- the touch, measured on omarchy for an expert of 1.67 MB already in the page cache: 44 us the
+  first time (fault-around maps 16 pages a fault: about 26 minor faults), 7.9 us after, against
+  214 us for its cached preadv. The warm thread pays the first touches (0.45 s for the 35B's
+  10,240 experts, off the critical path); a decode token's 102.7 misses pay about 0.8 ms;
+- the pool counts in the process's `rss_file` (page cache, as before).
+
+Not tried: MADV_HUGEPAGE (file-backed huge pages need READ_ONLY_THP_FOR_FS and khugepaged; the
+touch already gives the standing). It does not change what the pool needs (about 14 GB of RAM
+for the 35B, 10.6) or the SSD's 4.2 ms an expert.
 
 The card's check: card_moe.sh `HOG=dir:dir` maps and touches those files from another process
 before a run (the Qwen3.5 0.8B / 2B / 4B checkpoints, session 10's 13.6 GB), with DROPOTHER="":

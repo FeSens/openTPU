@@ -414,8 +414,9 @@ def test_pool_file_touches_what_it_reads_through_its_map(tmp_path):
         for g in (1, 4):
             assert bytes(pf.get(g)) == x[g].tobytes()
         pf.warm([5]).join(timeout=60)
-        if mapped:
+        if mapped:                                    # (read-only: nothing writes through it)
             assert pf._mc and (rss() is None or rss() >= 3 * slot)
+            assert not pf._mc[1].flags.writeable
         else:
             assert pf._mc is None
         del pf

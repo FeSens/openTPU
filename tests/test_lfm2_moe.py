@@ -295,6 +295,25 @@ def test_engine_releases_the_checkpoint_when_streaming_from_a_pool(tiny, tmp_pat
     assert lw._h
 
 
+def test_engine_reads_its_pool_through_a_read_only_map(tiny, tmp_path):
+    """Engine(pool_map=True), the default (moe_card --no-pool-map: False): the pool file's
+    reads touched through its read-only map (PoolFile's mapped: the page cache's standing under
+    MGLRU, docs/offload.md 10.7); the same logits bit for bit either way."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 3)]
+    cfg = device_config(spec, 256, S=1, experts=K)
+    got = []
+    for i, pool_map in enumerate((True, False)):
+        eng = Engine(spec, W, cap=256, cfg=cfg, experts=K, pool_file=tmp_path / f"p{i}.bin",
+                     pool_map=pool_map)
+        pf = eng.server.pool_file
+        got.append(np.array([eng.step(t) for t in toks]))
+        assert pf.mapped == pool_map and bool(pf._mc) == pool_map
+        if pool_map:
+            assert not pf._mc[1].flags.writeable
+    assert np.array_equal(got[0].view(np.uint32), got[1].view(np.uint32))
+
+
 def test_compile_worker_builds_the_moe_image(tiny):
     """The compile worker process (the card's backend compiles ahead in it) builds the engine's
     image, K expert slots per layer included: with E it would be over the DRAM that
