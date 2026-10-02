@@ -2332,8 +2332,13 @@ second half missed less than the per-layer run's, 84.9 experts a token against 1
 prompt saved 3.86 s and 7.10 s.
 
 What is left:
-1. The compiles. Layer j + 1's programs can compile while layer j runs, 200-430 ms against
-   22-46 ms, or come from the program cache.
+1. The compiles, now done. The layer runs' programs compile in the compile worker processes
+   ahead of their runs, in run order (Engine._precompile_layers), 22-46 ms each against a
+   layer's 200-460 ms. On the card (session pfcomp, same build and prompts) this took the 35B's
+   pooled R = 2 prompt from 14.64 to 13.32 s. The gap at a new layer fell from 33 ms to 16 us.
+   The 26B's was unchanged (17.30 s): its prompt starts right after the engine, before the
+   workers are up, and nothing had been queued. Now the compiles are queued anyway, and a run
+   compiles in line until the workers are up.
 2. The pooled misses, 4.5 s of link on the 35B and 3.4 s on the 26B. Streamed a layer ahead
    into the pooled slots while the layer before runs, they can hide behind the compute. A
    layer's compute is 207 ms on the 35B and 457 ms on the 26B. All of a layer's experts take
