@@ -28,9 +28,9 @@ In short:
   `conv=fp4,mlp=fp4` (the attention layers int8), 77% for 7.4% (fp4: 82% for 11.8%). Gemma 4
   E2B: `attn@15-24=fp4,mlp@15-34=fp4` (the KV-shared layers' MLP, layers 15-24's attention),
   30% for 2.6% against int8 with the int8 PLE table (fp4 layers: 56% for about 21%).
-  Qwen3.5-2B: none qualifies. On the card
-  the mixes run at the predicted speed (within 0.1%), and their images give the ISA simulator's
-  tokens (Phi's and SmolLM3's through a proxy).
+  Qwen3.5-2B: none qualifies. Qwen3.5-35B-A3B's fp4 head: +1.55% for 13%, so it stays int8.
+  On the card the mixes run at the predicted speed (within 0.1%), and their images give the ISA
+  simulator's tokens (Phi's and SmolLM3's through a proxy).
 
 ## Formats strings
 
@@ -284,6 +284,31 @@ over its bar; `mlp@15-34=fp4` alone (9.1 SE under, 2% slower) keeps the int8 tab
 about 2048 tokens (10 MiB spare) and takes the fp4 table at 4096, so it is not a default. Against
 int8 with the fp4 table the faster mixes would qualify (`attn@15-34=fp4,mlp=fp4` +4.59% for
 +48.9%); the bar is the accurate int8's, so the degraded table does not loosen it.
+
+### Qwen3.5-35B-A3B's head
+
+The 35B ([offload.md](offload.md): fp4 layers, the experts streamed into slots, the int8 head)
+would read 254 MB less a token with an fp4 head and free 3 expert slots a layer: +13.3% decode,
+a bar of 1.33% (offload's model, 2026-10-02: the reads, 254.28 MB a token at 14.1 GB/s, -2.31 s
+per 128 tokens; 42 -> 45 slots a layer, cachesim lfu_layer 84.0 -> 79.7 misses a token, -0.52 s;
+against session 17's 5.30 tok/s). formats_scan does not emulate its experts, so the head is
+scored alone (`tools/head_proxy.py`): the model's final states from Hugging Face in bf16, the
+float head on them against the int8 and fp4 heads on them quantized as the device's head input.
+Over 2000 tokens of docs/isa.md the fp4 head costs dKL +1.549% (SE 0.030), 0.22 points (7 SE)
+over its bar: the head stays int8.
+
+The proxy keeps the layers float, so it misses how the head's error adds to theirs. Against the
+scans' head rows (int8 layers, 900 tokens) it reads Qwen3.5-4B's within 1% but Gemma 4 E2B's 26%
+low: on E2B's quantized states the same fp4 head costs 35% more than on float ones.
+
+| Model | Tokens | Proxy dKL % (SE) | The scan's head=fp4 row (SE) | Row / proxy |
+|:--|--:|--:|--:|--:|
+| Gemma 4 E2B | 900 | +1.217 (0.028) | +1.644 (0.072) | 1.35 |
+| Qwen3.5-4B | 900 | +1.958 (0.048) | +1.977 (0.051) | 1.01 |
+| Qwen3.5-35B-A3B | 2000 | +1.549 (0.030) | (not emulated) | 1.01, the 4B's: +1.56 (estimate) |
+
+A proxy that reads low still decides a fail: at or over its bar the head fails; under it the
+proxy would be inconclusive.
 
 ## On the card
 
