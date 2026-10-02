@@ -429,6 +429,69 @@ def test_one_sequence_one_slice(tiny):
         spec.image(design_config(), 256)
 
 
+def _tool(name):
+    import importlib.util
+    s = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent.parent /
+                                               "tools" / f"{name}.py")
+    mod = importlib.util.module_from_spec(s)
+    s.loader.exec_module(mod)
+    return mod
+
+
+def test_formats_scan(tiny, tmp_path, monkeypatch):
+    """tools/formats_scan.py's Gemma 4 rows (gemma4_quant_eval.emulate's head inputs, then one
+    pass over the soft-capped head in chunks): each variant's NLL, argmax and KL divergence
+    from float's distribution are emulate's logits' under the formats as layer_formats
+    resolves them, and within rounding ties of emulated_logits' (ranged rules, the PLE
+    projection, the head); a second run reads the head inputs from the cache. A token reads
+    K / V only in the layers with their own; the groups halve the own and the shared layers."""
+    FS, E = _tool("formats_scan"), _tool("gemma4_quant_eval")
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 40)]
+    specs = {"float": None, "int8": ("", "int8", None),
+             "mix": ("attn@0-3=fp4,down@6-8=fp4,ple=fp4", "int8", None),
+             "head": ("gateup@4-6=fp4,head=fp4", "int8", None)}
+    rows = FS._g4_run(spec, W, toks, specs, 128, None, tmp_path, head_rows=256)
+
+    def logp(lg):
+        lg = 30.0 * np.tanh(lg / 30.0)
+        m = lg.max(1, keepdims=True)
+        return lg - m - np.log(np.exp(lg - m).sum(1, keepdims=True))
+
+    lf = logp(E.emulate(spec, W, toks, wformat="none"))
+    tgt = np.arange(len(toks) - 1), toks[1:]
+    for lab, v in specs.items():
+        r = rows[lab]
+        wf, hf, wmap, pf = FS._g4_args(spec, v)
+        assert pf == r["ple_table"] == ("none" if v is None else "int8")    # (the tiny fits)
+        lq = logp(E.emulate(spec, W, toks, wformat=wf, hf=hf, ple_format=pf, wmap=wmap))
+        assert np.abs(np.asarray(r["nll_tok"]) + lq[:-1][tgt]).max() < 1e-4
+        assert r["top1"] == lq.argmax(1).tolist()
+        kl = (np.exp(lf) * (lf - lq)).sum(1)
+        assert np.abs(np.asarray(r["kl_tok"]) - kl).max() < 1e-6
+        if v is not None:
+            lg = logp(G.emulated_logits(spec, W, toks, wformat=v[1], head_format=v[2],
+                                        formats=v[0]))
+            assert abs(r["nll"] + lg[:-1][tgt].mean()) < 1e-2 * r["nll"], lab
+            assert np.mean(lg.argmax(1) == lq.argmax(1)) > 0.9, lab
+    assert FS._g4_args(spec, specs["head"])[1] == "fp4"
+    assert FS._g4_args(spec, specs["mix"])[2]["ple"] == "fp4"
+    assert len(list(tmp_path.glob("*.npy"))) == 4
+    monkeypatch.setattr(FS, "_g4q", lambda: None)               # (no emulate: the cache)
+    assert FS._g4_run(spec, W, toks, specs, 128, None, tmp_path, head_rows=256) == rows
+
+    shapes = FS._g4_shapes(spec, W)
+    kv = {i for i in range(spec.layers) if f"model.layers.{i}.self_attn.k_proj.weight" in shapes}
+    assert kv == set(range(6))
+    by = {lab: FS._g4_bytes(spec, shapes, v) for lab, v in specs.items() if v is not None}
+    n8 = sum(r * c * 33 // 32 for r, c in shapes.values()) + 1000 * 256 * 33 // 32
+    assert by["int8"] == n8 > by["mix"] and by["int8"] > by["head"]
+    assert FS._g4_spans(spec) == [(0, 2), (3, 5), (6, 8)]
+    e2b = replace(spec, kinds=((G.SLIDE,) * 4 + (G.FULL,)) * 7,
+                  kv_src=tuple(range(15)) + (13, 14, 13, 13, 14) * 4, ffn=(512,) * 35)
+    assert FS._g4_spans(e2b) == [(0, 9), (10, 14), (15, 24), (25, 34)]
+
+
 @pytest.mark.skipif(not (REAL / "config.json").exists(), reason="no models/gemma-4-E2B")
 def test_real_model_programs_fit():
     """Gemma 4 E2B on the board: fp4 layers, int8 LM head and PLE fit 4 GiB at 4096 tokens;
