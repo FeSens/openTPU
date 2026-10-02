@@ -10,9 +10,10 @@ first run) are at compile-time positions, cached the same way.
 
 The runs' split depends only on the first position, the prompt's length, R_max and the attention
 block: R_max rows a run, cut where a run would cross a bucket's end (a run-time run's rows stay in
-its bucket). R_max: the most rows of one MXU pass (MCOLS, at most the image's rows) whose last
-bucket's L program compiles and fits IMEM. Plain and MTP engines of a model take the same split,
-so their logits are the same bit for bit.
+its bucket). R_max, per bucket: the most rows of one MXU pass (MCOLS, at most the image's rows)
+whose L program in that bucket compiles and fits IMEM (a later bucket's attention makes a longer
+program: Phi-4-mini's mix takes 3 rows in bucket 1, 1 in bucket 16). Plain and MTP engines of a
+model take the same split, so their logits are the same bit for bit.
 """
 from __future__ import annotations
 
@@ -25,11 +26,13 @@ from ..compiler import CompileError
 from . import generate as G
 
 
-def split(p0: int, P: int, R_max: int, block: int, K: int) -> list[tuple[int, int, str]]:
-    """The runs (first position, rows, kind) of the prompt positions [p0, P)."""
+def split(p0: int, P: int, R_max, block: int, K: int) -> list[tuple[int, int, str]]:
+    """The runs (first position, rows, kind) of the prompt positions [p0, P). R_max: the most
+    rows of a run, an int, or R_max(blocks) for bucket `blocks`."""
+    rm = R_max if callable(R_max) else (lambda blocks: R_max)
     runs, p = [], p0
     while p < P:
-        n = min(R_max, P - p)
+        n = min(rm(p // block + 1), P - p)
         if p >= K - 1:                      # a run-time run: its rows in one bucket
             n = min(n, block - p % block)
         runs.append((p, n, "L" if p + n == P else "P"))
@@ -86,15 +89,16 @@ def programs(eng, p: int, R: int, kind: str, hidden: bool = False, slot: int = 0
     return done[what]
 
 
-def r_max(eng) -> int:
-    """The most rows of a run: one MXU pass (MCOLS) at most, the image's rows at most, and the
-    last bucket's (plain) L program compiled and fitting IMEM. MTP's runs take the same R_max
-    (their programs must fit it), so plain and MTP prefills of a model split alike."""
-    if "_prompt_rmax" in eng.__dict__:
-        return eng._prompt_rmax
+def r_max(eng, blocks: int = 1) -> int:
+    """The most rows of a run in bucket `blocks`: one MXU pass (MCOLS) at most, the image's
+    rows at most, and the bucket's (plain) L program compiled and fitting IMEM (kept by the
+    engine). MTP's runs take the same R_max (their programs must fit it), so plain and MTP
+    prefills of a model split alike."""
+    done = eng.__dict__.setdefault("_prompt_rmax", {})
+    if blocks in done:
+        return done[blocks]
     img, block = eng.image, eng.block
-    last = (img.cap - 1) // block * block               # the last bucket's first position
-    p = max(last, conv_k(eng) - 1)
+    p = max((blocks - 1) * block, conv_k(eng) - 1)      # the bucket's first run-time position
     for R in range(min(img.cfg.MCOLS, img.rows, img.cap - p), 0, -1):
         try:
             programs(eng, p, R, "L")
@@ -102,9 +106,9 @@ def r_max(eng) -> int:
             if not any(w in str(e) for w in ("TMEM", "ACT RAM", "IMEM")):
                 raise
             continue
-        eng._prompt_rmax = R
+        done[blocks] = R
         return R
-    raise CompileError("no prompt run fits")
+    raise CompileError(f"no prompt run fits bucket {blocks}")
 
 
 def write_tokens(eng, p0: int, tokens) -> None:
@@ -144,9 +148,8 @@ def chunks(eng, tokens):
         raise RuntimeError("KV cache full")
     if not tokens:
         return
-    R_max = r_max(eng)
     write_tokens(eng, p0, tokens)
-    for p, R, kind in split(p0, P, R_max, eng.block, conv_k(eng)):
+    for p, R, kind in split(p0, P, lambda b: r_max(eng, b), eng.block, conv_k(eng)):
         progs = programs(eng, p, R, kind)
         if kind == "L":
             eng._prefetch(P)            # the first decode step's, while the device runs
@@ -165,10 +168,10 @@ def mtp(dec, tokens, st, pick=None, on_run=None):
     P = p0 + len(toks)
     a0 = draft = None
     t0 = time.perf_counter()
-    R_max = r_max(eng)
+    runs = split(p0, P, lambda b: r_max(eng, b), eng.block, conv_k(eng))
     st.compile_s += time.perf_counter() - t0
     write_tokens(eng, p0, toks)
-    for p, R, kind in split(p0, P, R_max, eng.block, conv_k(eng)):
+    for p, R, kind in runs:
         t0 = time.perf_counter()
         rows, mp = programs(eng, p, R, kind, True, dec.slot), programs(eng, p, R, "M")
         st.compile_s += time.perf_counter() - t0
