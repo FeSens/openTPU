@@ -73,7 +73,8 @@ HINTS = {
                "(opentpu/host/board.py) "
                "against rtl/mem/otpu_native_dram.sv.",
     "bandwidth": "DMA is slow or failed: check the PCIe link width and speed (lspci -vv, "
-                 "LnkSta should be 2.5GT/s x8).",
+                 "LnkSta should be the card's LnkCap at x8: 2.5GT/s on Gen1 bitstreams, 5GT/s "
+                 "on Gen2 ones).",
     "kernel": "The accelerator computed something different from the ISA simulator: run the "
               "same program on the RTL model (tests/test_board.py) and compare the counters.",
     "vops": "On register map 3 or later the VPU computes RDOT / OUTER / LOG2 wrong: run "

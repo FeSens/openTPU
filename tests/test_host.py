@@ -1388,6 +1388,18 @@ def test_sampler_stream_picks_as_pick():
 
 
 # ------------------------------------------------------------------------------ otpu-diag
+def test_diag_link_is_the_cards_own_speed_at_x8():
+    """otpu-diag's PCIe link check: the link at the card's own speed (its LnkCap, the bitstream's
+    PCIE_GEN) and x8 passes, Gen1 or Gen2; a Gen2 card trained at 2.5 GT/s or fewer lanes fail."""
+    from opentpu.host.diag import link_verdict
+    gen1, gen2 = "2.5 GT/s PCIe", "5.0 GT/s PCIe"
+    assert link_verdict((gen1, "8", gen1, "8"))[0]
+    assert link_verdict((gen2, "8", gen2, "8"))[0]
+    ok, msg = link_verdict((gen1, "8", gen2, "8"))
+    assert not ok and "5.0 GT/s" in msg
+    assert not link_verdict((gen2, "4", gen2, "8"))[0]
+
+
 def test_diag_sim_registers_and_memory_pass(have_verilator, tmp_path, no_cfg_env):
     from opentpu.host import diag
     out = tmp_path / "diag.json"

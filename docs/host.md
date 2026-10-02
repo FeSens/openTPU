@@ -1,6 +1,7 @@
 # Host PC: driving the openTPU card over PCIe
 
-The YPCB-00338 card runs the accelerator behind a Xilinx XDMA PCIe bridge (Gen1 x8). This page
+The YPCB-00338 card runs the accelerator behind a Xilinx XDMA PCIe bridge (Gen2 x8; Gen1 x8 on
+PCIE_GEN=1 bitstreams). This page
 covers the host side: the PC the card is plugged into, its driver, and the tools that talk to
 the card. Building and loading the bitstream is in [board.md](board.md); the registers,
 counters and trace buffer the tools read are specified in [observability.md](observability.md).
@@ -101,7 +102,7 @@ kernel 7.1.4, 2026-09-27; kernel and JTAG lines left out):
    ok    /etc/modprobe.d/otpu-xdma.conf: poll_mode=0
 == card 0000:01:00.0: [10ee:7028] subsystem 10ee:0007 revision 00
    ok    class 0x070001: 16450 serial port (bitstream before the PCI identity change; ...)
-   ok    link 2.5 GT/s PCIe x8 (the design: Gen1 x8)
+   ok    link 2.5 GT/s PCIe x8 (the card's own speed, x8)
    ok    bound to xdma
    ok    /dev/xdma0_{user,h2c_0,c2h_0} usable by bonetto
    ok    ID register 0x4f545055 (OTPU)
@@ -294,8 +295,9 @@ section 2), or program over JTAG and then rescan:
 sudo otpu-setup --rescan             # remove the card, rescan, bind xdma, read the ID register
 lspci -d 10ee: -nn                   # the card: "... [10ee:7028]"
 sudo lspci -d 10ee: -vv | grep -E "LnkCap|LnkSta|Region"
-#   LnkCap/LnkSta: Speed 2.5GT/s, Width x8  <- Gen1 x8 is the design (not a downtrained link);
-#                                             fewer lanes cost DMA bandwidth only
+#   LnkCap/LnkSta: Speed 5GT/s, Width x8    <- LnkSta should equal LnkCap: 5GT/s x8 on Gen2
+#                                             bitstreams, 2.5GT/s x8 on Gen1 ones (not downtrained);
+#                                             a lower speed or fewer lanes cost DMA bandwidth only
 #   Region 0: Memory at ... [size=1M]   <- BAR0, the control registers (AXI-Lite master, 1 MiB)
 #   Region 1: Memory at ... [size=64K]  <- the XDMA's own registers (the driver uses them)
 ```
@@ -394,7 +396,7 @@ the failing checks with their details and the diagnosis. Exit code 1 on any FAIL
 
 | Section | Checks |
 |---|---|
-| platform | PCIe link speed and width (sysfs; expected 2.5 GT/s x8), XDMA module and device nodes, ID, VERSION -> configuration, BUILD_ID and CORE_KHZ, calibration of each channel, STATUS ERROR / AXI_ERR (cleared with CLEAR if left by an earlier run; AXI_ERR from a controller's broken port contract stays), die temperature, the power estimate from `power.json` (an estimate, INFO) |
+| platform | PCIe link speed and width (sysfs; expected the card's own speed, its LnkCap, at x8), XDMA module and device nodes, ID, VERSION -> configuration, BUILD_ID and CORE_KHZ, calibration of each channel, STATUS ERROR / AXI_ERR (cleared with CLEAR if left by an earlier run; AXI_ERR from a controller's broken port contract stays), die temperature, the power estimate from `power.json` (an estimate, INFO) |
 | regs | SCRATCH, PROG_ADDR, PROG_N, TRACE_ADDR: 68 write / read patterns each (walking 1, walking 0, all 0 / 1, checkerboards; stuck bits named); TRACE_CTRL bits; read-only registers: sane values (VERSION, REGMAP, CAPS, CORE_KHZ, 0xDEADBEEF on an undefined offset) and ignoring writes; SNAP and the free-running counters |
 | mem | per channel (raw channel addresses): walking 1 and walking 0 over the 512 bits of a beat, walking address bits (aliasing named), 16 random blocks spread over the channel, 200 sub-beat updates (merged into whole beats on the host, see section 2), DMA bandwidth each way; the interleave through the accelerator's address map; with `--mem full` a march C- over every byte with address-in-address data (progress line; errors per byte lane, DQ bit and address bit) |
 | isa | one program per instruction variant (`opentpu/host/opchecks.py`, 93 at MCOLS=2), each compared with the ISA simulator bit for bit: NOP, HALT, LI / ADDI, LOOP (nested, count from a register, count 0), BAR; LD / ST aligned, unaligned, short, register offsets; MM plain, UNIT, ACC, RMAX, ACC+RMAX, UNIT+ACC+ASCALE, M=1, another ACT block, a row stride, register operands; QACT ROW / CSCALE / RSCALE; QST dense, strided, ROW; GATHER; every VOP function under each legal broadcast mode (FULL / ROW / COL / SCALAR for the binary ones and RDOT), OUTER with each decay mode; the composite and simple functions on edge values (zeros, denormals, the largest floats, infinities) |

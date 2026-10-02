@@ -25,14 +25,19 @@ OUT = Path(os.environ.get("MEMCH_OUT", ROOT / "build" / "memch"))
 RTL = ROOT / "rtl" / "boards" / "ypcb-00338"
 TB = ROOT / "sim" / "verilator"
 SRC = [RTL / "otpu_afifo.sv", RTL / "otpu_axi_split2.sv", RTL / "otpu_mem_ch.sv",
-       TB / "otpu_ldn_model.sv", TB / "tb_memch.sv"]
+       TB / "otpu_ldn_model.sv", TB / "otpu_ldc_model.sv", TB / "otpu_ldc_ch.v", TB / "tb_memch.sv"]
 JOBS = os.environ.get("MEMCH_JOBS", "4")      # C++ compile jobs per build
 PAR = int(os.environ.get("MEMCH_PAR", "3"))   # simulations at once
 
-# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO)
+# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO; xreg: otpu_dma_split's
+# register slices, as at PCIe Gen2)
 BUILDS = {
     "ldn": dict(),
     "cred": dict(ARD=16),
+    "xreg": dict(XREG=1),
+    # LiteDRAM's own controller (otpu_ldc_ch.v, the production core's settings) for the model
+    "ldc": dict(LDC=1),
+    "ldcx": dict(LDC=1, XREG=1),
 }
 
 SCEN = {
@@ -88,6 +93,20 @@ SCEN["xresetshort"] = ["+xreset=2000", "+xrep=3001", "+xrlen=2", "+axi_stall=85"
 # controller takes a command in 3% of its cycles, so the output register outlasts the hold,
 # and XDMA writes only, so the hold does not wait for its reads)
 SCEN["xresetshortsh"] = ["+psh=60", "+axi_stall=97", "+wpct=100", "+ntx=1000"] + SCEN["xresetshort"]
+# PCIe Gen2's clocks (xdma_aclk 250 MHz, the core and the controller at 133.33): mixed traffic,
+# repeated XDMA resets, partial beats, and B / R held with up to 32 bursts in flight, so the split's
+# B and R order FIFOs and the bridges' AW / AR queues run full (+cov counts their full cycles)
+G2 = ["+xp=200", "+up=375", "+cp=375"]
+SCEN["gen2"] = G2 + ["+ntx=10000", "+seed=40"]
+SCEN["gen2xres"] = G2 + ["+xreset=3000", "+xrep=6151", "+outs=32", "+mstall=70", "+seed=41"]
+SCEN["gen2part"] = G2 + ["+ppct=60", "+raw=60", "+xfull=20", "+psh=30", "+psp=30", "+seed=42"]
+SCEN["gen2full"] = G2 + ["+outs=32", "+mstall=85", "+axi_stall=50", "+ldn_busy=30", "+seed=43"]
+# W far ahead of AW (+awdly: each AW up to 200-300 cycles after its W beats are queued) with up to
+# 64 bursts in flight, 128-byte bursts (+wlen=8) or mixed, and with repeated XDMA resets
+SCEN["gen2deep"] = G2 + ["+awdly=200", "+outs=64", "+wlen=8", "+gapw=0", "+mstall=60", "+wpct=80", "+seed=44"]
+SCEN["gen2deepx"] = G2 + ["+awdly=300", "+outs=64", "+gapw=0", "+mstall=40", "+xreset=3000", "+xrep=6151", "+seed=45"]
+SCEN["gen2deep128"] = G2 + ["+awdly=100", "+outs=64", "+wlen=8", "+psh=40", "+gapw=0", "+mstall=85",
+                            "+axi_stall=50", "+seed=46"]
 for i in range(10, 30):
     SCEN[f"s{i}"] = [f"+seed={i}", f"+psh={5 + i % 4 * 15}", f"+ppct={i % 5 * 20}", f"+wpct={30 + i % 3 * 20}"]
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
@@ -99,6 +118,11 @@ FUNC = [("ldn", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "ar
                              "doublebeat"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
 FUNC += [("cred", s) for s in ["default", "credstress"]]
+FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetlat", "xresetrep",
+                               "resetsrep", "xresetshort", "xresetshortsh", "mstall70", "nogaps",
+                               "partial", "ctlstall", "fastcore", "slowcore", "shared", "shared21",
+                               "pubstall", "seqrd", "seqwr", "seqmix", "gen2", "gen2xres",
+                               "gen2part", "gen2full", "gen2deep", "gen2deepx", "gen2deep128"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
@@ -116,6 +140,8 @@ PERF += [("ldn", "acc seq rd busy2", ["+wpct=0", "+xdma_ntx=0", "+ldn_busy=2"] +
          ("ldn", "acc seq wr busy2", ["+wpct=100", "+xdma_ntx=0", "+ldn_busy=2"] + PERF_BASE),
          ("ldn", "acc seq rd stall10", ["+wpct=0", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE),
          ("ldn", "acc seq wr stall10", ["+wpct=100", "+xdma_ntx=0", "+axi_stall=10"] + PERF_BASE)]
+PERF += [("xreg", "xdma seq rd", ["+wpct=0", "+acc0_ntx=0", "+acc1_ntx=0"] + PERF_BASE),
+         ("xreg", "xdma seq wr", ["+wpct=100", "+acc0_ntx=0", "+acc1_ntx=0"] + PERF_BASE)]
 
 # mutations: (name, build, substitutions, scenarios[, "missed": a known blind spot])
 MUT = [
@@ -218,6 +244,23 @@ MUT = [
      [("x_req <= xrst || (x_req && !x_hs2);", "x_req <= xrst;")], ["xresetshort"]),
     ("reset: the accelerator's request not kept up until its hold is seen (a short reset)", "ldn",
      [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
+    # otpu_dma_split's register slices
+    ("slice: the skid entry not loaded (a beat taken under backpressure lost)", "xreg",
+     [("otpu_axi_split2.sv", "if (!sk_v) sk_d <= s_data;", "if (1'b0) sk_d <= s_data;")],
+     ["mstall70", "default"]),
+    ("slice: ready not dropped with the skid entry full (a beat overwritten)", "xreg",
+     [("otpu_axi_split2.sv", "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b0; end",
+       "else if (take) begin sk_v <= 1'b1; s_ready <= 1'b1; end")], ["mstall70", "default"]),
+    # otpu_sfifo RO (registered flags): the split's order FIFOs, the bridges' XDMA queues
+    ("RO: wready from the pointers before this cycle's push and pop (a push into a full queue)", "xreg",
+     [("else begin rv <= wp_n != rp_n; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end",
+       "else begin rv <= wp_n != rp_n; wr <= (wp - rp) != (AW + 1)'(DEPTH); end")], ["gen2full", "gen2deep"]),
+    ("RO: rvalid from the pointers before this cycle's push and pop (a pop from an empty queue)", "xreg",
+     [("else begin rv <= wp_n != rp_n; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end",
+       "else begin rv <= wp != rp; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end")], ["gen2full", "gen2deep"]),
+    ("split: an AW taken with its B route FIFO full (a route entry lost)", "xreg",
+     [("otpu_axi_split2.sv", "assign s_awready = ow_wr && ob_wr && m_awready[awc];",
+       "assign s_awready = ow_wr && m_awready[awc];")], ["gen2full", "gen2deep"]),
 ]
 
 
