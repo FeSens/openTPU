@@ -2323,9 +2323,13 @@ The misses are bound by the link:
 
 Over this prompt each layer uses 144 of the 35B's 256 experts (100-226) and 75 of the 26B's
 128 (49-101): 5777 and 2237 in all. Pooled slots load each of them once. That gives the 35B's
-6241 misses (with the token steps' 645) against per-layer slots' 12198. The pooled prompt
-leaves fewer of the decode's experts in place: the 16 tokens after it run at 4.54 tok/s against
-4.76 (35B) and 3.35 against 3.53 (26B), the lazy restore's cost (13.4).
+6241 misses (with the token steps' 645) against per-layer slots' 12198.
+
+The pooled prompt leaves fewer of the decode's experts in place, so the lazy restore (13.4)
+costs the decode a re-warming of its slots: a fixed 0.16 s on the 35B and 0.24 s on the 26B. The
+16 tokens after the prompt took 3.52 s against 3.36 s and 4.78 s against 4.53 s. The 35B's
+second half missed less than the per-layer run's, 84.9 experts a token against 101.6. The
+prompt saved 3.86 s and 7.10 s.
 
 What is left:
 1. The compiles. Layer j + 1's programs can compile while layer j runs, 200-430 ms against
