@@ -1007,6 +1007,36 @@ def test_an_armed_victims_tag_is_cleared_before_its_slot_takes_another_expert():
     assert s6 in srv.armed and srv.lru[0][7] not in srv.armed
 
 
+def test_an_all_hit_request_left_at_a_runs_end_is_served_before_the_slots_change():
+    """A request whose experts are all present does not wait for the host, so the run that
+    posted it can halt first (a layer-major prefill's last run). end_prefill and begin_prefill
+    serve it before they change the slots, as the card ran it: all hits, no answer, no tags.
+    Served after the restore it could name misses, and the next request would read their
+    answer for its own (the card never zeroes it)."""
+    for restore in ("lazy", "eager"):
+        lay, mem, srv = _setup(slots=(2, 2, 2))
+        srv.begin_prefill()
+        for seq, run in enumerate(([0, 1, 1, 2], [1, 1, 2, 2], [8, 9, 9, 10]), 1):
+            _post_n(mem, lay, seq, run)
+            assert srv.poll() == 1
+            mem.write(lay.answer, np.zeros(16, np.uint32))      # (the card, after its experts)
+        _post_n(mem, lay, 4, [0, 0, 0, 0])              # all present; the run halts unseen
+        srv.end_prefill(restore)
+        assert srv.seq == 4 and _served(mem, lay) == 4.0 and srv.misses == 6
+        assert _answer(mem, lay) == [0] * 16
+        _consistent(mem, lay, srv)
+        missing = [g not in srv.lru[0] for g in (0, 3)]
+        _post_n(mem, lay, 5, [0, 3])                    # the next request's answer: its own
+        assert srv.poll() == 1
+        assert _answer(mem, lay)[:2] == [srv.lru[0][g] if m else 0
+                                         for g, m in zip((0, 3), missing)]
+        _consistent(mem, lay, srv)
+    lay, mem, srv = _setup(warm=[0, 1, 2])
+    _post(mem, lay, 1, [0, 1])                          # a step's last request, unseen
+    srv.begin_prefill()
+    assert srv.seq == 1 and srv.misses == 0 and _answer(mem, lay) == [0] * 16
+
+
 @pytest.mark.parametrize("fmt", ["bytes", "split"])
 @pytest.mark.parametrize("chash", [False, True])
 def test_board_dram_sends_each_tag_as_its_experts_last_beat(fmt, chash, tmp_path):

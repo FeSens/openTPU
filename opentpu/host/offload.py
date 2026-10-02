@@ -825,10 +825,22 @@ class ExpertServer:
             self._clear()
         return self._reuse(self.lru[victim // self.L.E].pop(victim))
 
+    def settle(self) -> None:
+        """Serve the card's last request if it is still unserved, before the host changes its
+        slots outside a request (begin_prefill, end_prefill). A request whose experts were all
+        present does not wait for the host, so its run can halt before the host has seen it.
+        Served later against changed slots, it would name misses: an answer line and tags
+        the card never reads or zeroes, which the next request would take for its own. Served
+        now, it is all hits, as the card ran it."""
+        seq = int(np.frombuffer(bytes(self.mem.read(self.L.mbox, 4)), np.float32)[0])
+        if seq != self.seq:
+            self.poll()
+
     def begin_prefill(self) -> None:
         """A layer-major prefill starts (docs/offload.md 13): every slot serves the layer its
         requests name. Hints still on their way are dropped (their slots free; their entries
         read 0 already)."""
+        self.settle()
         for g in list(self.pending):
             del self.pending[g]
             j = g // self.L.E
@@ -845,6 +857,7 @@ class ExpertServer:
         layer's experts of most use not in a slot are loaded now."""
         if restore not in ("lazy", "eager"):
             raise ValueError(f"restore {restore!r}")
+        self.settle()
         self.armed -= self._used            # (the prefill's runs are done: the card zeroed
         self._used = set()                  # the last request's tags)
         spare = [a for fr in self.free for a in fr]

@@ -1717,6 +1717,12 @@ The implementation (branch offload-onecall):
   - `armed` holds the slots whose tag the card may not have zeroed; `_reuse` clears one before
     its slot takes another expert;
   - `load` zeroes every tag and the answer.
+  - `settle`: begin_prefill and end_prefill first serve the card's last request if it is
+    still unserved. A request whose experts are all present does not wait for the host, so a
+    run can halt before the host sees it, as a layer-major prefill's last run can. Served
+    after the restore, such a request could name misses. Its answer line would then stay
+    nonzero, because the card is done with that request, and the next request would read it
+    as its own. Main's Qwen3.5 layer-major test, merged in, caught this.
 - `BoardDram.write_slot(addr, data, tag)` puts the tag beat after the expert's runs in their
   staging buffers, and the last part's DMA goes on the other channel first, then on the tag's
   channel. A whole beat outside the shadow (a tag's clear) is one call with no read.
