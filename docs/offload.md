@@ -2338,7 +2338,9 @@ What is left:
    pooled R = 2 prompt from 14.64 to 13.32 s. The gap at a new layer fell from 33 ms to 16 us.
    The 26B's was unchanged (17.30 s): its prompt starts right after the engine, before the
    workers are up, and nothing had been queued. Now the compiles are queued anyway, and a run
-   compiles in line until the workers are up.
+   compiles in line until the workers are up. With that (pfcomp2, tree 94e635e) the 26B's
+   prompt went from 17.33 to 16.25 s, bit-exact. Its time between runs fell from 1.28 to
+   0.18 s; the only wait left is layer 0's first run (130 ms while the workers came up).
 2. The pooled misses, 4.5 s of link on the 35B and 3.4 s on the 26B. Streamed a layer ahead
    into the pooled slots while the layer before runs, they can hide behind the compute. A
    layer's compute is 207 ms on the 35B and 457 ms on the 26B. All of a layer's experts take
