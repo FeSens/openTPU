@@ -101,17 +101,29 @@ def random_blocks(t, ch: int, ch_bytes: int, n: int = 16, size: int = 1 << 20,
 
 
 def bandwidth(t, ch: int, nbytes: int) -> dict:
-    buf = np.random.default_rng(0).integers(0, 256, nbytes, dtype=np.uint8)
+    """One channel's H2C and C2H GB/s from a host buffer placed for full DMA speed
+    (board.DMA_PLACE), and H2C from one that is not (through XdmaTransport.mem_write's staging
+    copy)."""
+    from .board import BASE, placed
+    buf = placed(nbytes, BASE[ch])
+    buf[:] = np.random.default_rng(0).integers(0, 256, nbytes, dtype=np.uint8)
     t0 = time.perf_counter()
     t.mem_write(ch, 0, buf)
     w = nbytes / (time.perf_counter() - t0) / 1e9
     t0 = time.perf_counter()
-    t.mem_read(ch, 0, nbytes)
+    t.mem_read(ch, 0, nbytes, buf)
     r = nbytes / (time.perf_counter() - t0) / 1e9
+    raw = np.empty(nbytes + 128, np.uint8)              # 16 bytes past a beat: not placed
+    src = raw[(16 - raw.ctypes.data) % 64:][:nbytes]
+    src[:] = buf
+    t0 = time.perf_counter()
+    t.mem_write(ch, 0, src)
+    wb = nbytes / (time.perf_counter() - t0) / 1e9
     ok = w > 0.25 and r > 0.25
     return {"ok": ok, "msg": f"host->card {w:.2f} GB/s, card->host {r:.2f} GB/s "
-                             f"({nbytes >> 20} MiB)",
-            "write_gbs": w, "read_gbs": r}
+                             f"({nbytes >> 20} MiB, placed; host->card through the staging copy "
+                             f"{wb:.2f})",
+            "write_gbs": w, "read_gbs": r, "write_bounced_gbs": wb}
 
 
 # ------------------------------------------------------------------------------ march

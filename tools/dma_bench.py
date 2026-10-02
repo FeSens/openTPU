@@ -7,7 +7,9 @@ Takes the device lock. Uses channel 0 from 1 GiB up (writes before it reads: the
 DRAM hangs on a read of a never-written beat) and checks every read against what was written.
 Reports per-call latency (median, p99) for small transfers, GB/s for large ones, and the
 CPU time per transfer of the process plus the driver's completion threads (poll mode waits
-there).
+there). The host buffers are placed for full DMA speed (board.DMA_PLACE), so the rates are the
+link's; the large writes are timed again from a buffer that is not placed, through
+XdmaTransport.mem_write's staging copy (docs/host.md section 2, "H2C rate at PCIe Gen2 x8").
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from opentpu.host.board import XdmaTransport  # noqa: E402
+from opentpu.host.board import XdmaTransport, placed  # noqa: E402
 from opentpu.host.runstate import DeviceLock  # noqa: E402
 
 BASE = 1 << 30                                 # channel-0 offset of the test region
@@ -76,9 +78,9 @@ def main() -> int:
           f"p99 {out['reg_read_us']['p99']:7.2f} us")
 
     for n, reps in ((64, 2000), (4096, 2000), (65536, 1000)):
-        buf = rng.integers(0, 256, n).astype(np.uint8)
+        buf, got = placed(n, BASE), placed(n, BASE)
+        buf[:] = rng.integers(0, 256, n).astype(np.uint8)
         wt, wc = timed(lambda: t.mem_write(0, BASE, buf), reps)
-        got = np.empty(n, np.uint8)
         rt, rc = timed(lambda: t.mem_read(0, BASE, n, got), reps)
         if not np.array_equal(got, buf):
             raise SystemExit(f"{n} B: read back differs")
@@ -92,18 +94,24 @@ def main() -> int:
               f" p99 {row['read_us'][1]:7.1f} cpu {row['read_cpu_us']:6.1f}")
 
     for n, reps in ((1 << 20, 64), (8 << 20, 16), (64 << 20, 4)):
-        buf = rng.integers(0, 256, n).astype(np.uint8)
+        buf, got = placed(n, BASE), placed(n, BASE)
+        buf[:] = rng.integers(0, 256, n).astype(np.uint8)
         wt, wc = timed(lambda: t.mem_write(0, BASE, buf), reps)
-        got = np.empty(n, np.uint8)
         rt, rc = timed(lambda: t.mem_read(0, BASE, n, got), reps)
         if not np.array_equal(got, buf):
             raise SystemExit(f"{n} B: read back differs")
+        raw = np.empty(n + 128, np.uint8)               # 16 bytes past a beat: not placed
+        src = raw[(16 - raw.ctypes.data) % 64:][:n]
+        src[:] = buf
+        bt, _ = timed(lambda: t.mem_write(0, BASE, src), reps)
         row = {"bytes": n, "reps": reps,
                "write_gbs": n * reps / wt.sum() / 1e9, "read_gbs": n * reps / rt.sum() / 1e9,
-               "write_cpu_frac": wc / wt.sum(), "read_cpu_frac": rc / rt.sum()}
+               "write_cpu_frac": wc / wt.sum(), "read_cpu_frac": rc / rt.sum(),
+               "write_bounced_gbs": n * reps / bt.sum() / 1e9}
         out["bandwidth"].append(row)
         print(f"{n >> 20:>4} MiB  write {row['write_gbs']:5.2f} GB/s (cpu {row['write_cpu_frac']:4.2f} cores)"
-              f" | read {row['read_gbs']:5.2f} GB/s (cpu {row['read_cpu_frac']:4.2f} cores)")
+              f" | read {row['read_gbs']:5.2f} GB/s (cpu {row['read_cpu_frac']:4.2f} cores)"
+              f" | write through the staging copy {row['write_bounced_gbs']:5.2f} GB/s")
 
     if a.json:
         Path(a.json).write_text(json.dumps(out, indent=1))

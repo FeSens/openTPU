@@ -226,7 +226,8 @@ otpu-setup --check           # the whole host setup, the card and the link
 ```
 
 Expect the link at the card's own `LnkCap`: 5 GT/s x8 on a Gen2 bitstream (PCIE_GEN 2, the default
-since g2fix 0885d436, 2026-10-01: 2.29 GB/s host to card on opentpu), 2.5 GT/s x8 on a Gen1 one
+since g2fix 0885d436, 2026-10-01: ~3.0 GB/s host to card on opentpu from placed buffers, 2.3 through
+the staging copy; docs/host.md section 2), 2.5 GT/s x8 on a Gen1 one
 (PCIE_GEN=1, section 5), where 2.5 GT/s is not a downtrained link. `otpu-diag` and `otpu-setup
 --check` compare the link with the card's own speed. Device ID 7028 is set in the block
 design (Xilinx's default for a 7-series Gen2 x8 core; 7018 would be Gen1 x8; both are in the

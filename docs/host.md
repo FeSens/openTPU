@@ -300,9 +300,11 @@ unpinning.
 - **A call costs about 20-37 us plus 345 us per MiB (3.0 GB/s).** The engine runs at 3.0-3.17
   GB/s, about 92% of the link. The completion sizes come out at 128 bytes or more: Gen1 reached
   1.70-1.76 GB/s in September. At that size, Gen2 x8 tops out near 3.4 GB/s.
-- **The 2.3 GB/s figure is the staging copy's.** The selftest and `tools/dma_bench.py` write from
-  buffers that are not placed. Through `XdmaTransport.mem_write`'s staging copy, those calls ran
-  at 2.22 (0.83 MB), 2.33 (1 MiB) and 2.47-2.53 GB/s (4-8 MiB), 14-18% below placed calls.
+- **The 2.3 GB/s figure is the staging copy's.** Until 2026-10-02 the selftest and
+  `tools/dma_bench.py` wrote from buffers that are not placed. Through `XdmaTransport.mem_write`'s
+  staging copy, those calls ran at 2.22 (0.83 MB), 2.33 (1 MiB) and 2.47-2.53 GB/s (4-8 MiB),
+  14-18% below placed calls. Now they write from placed buffers and report the copy's rate on the
+  side (the selftest's bandwidth line, `otpu-diag`'s, dma_bench's large rows).
   `offload.BoardDram` gathers into page-aligned buffers and is not bounced. Its records took
   659-661 us (35B) and 1346 us (26B) during the runs of docs/offload.md 10.9. Here, alone on an
   idle card, they take 627 and 1212 us.
