@@ -386,6 +386,41 @@ def test_slots_are_whole_run_blocks_apart_so_every_expert_reads_in_place(tmp_pat
         assert np.array_equal(np.asarray(b.read(srv.lru[g // 4][g], slot)).view(np.uint8), x[g])
 
 
+def test_pool_file_touches_what_it_reads_through_its_map(tmp_path):
+    """PoolFile's `mapped` (the default): each expert read (get, warm) is touched through a
+    read-only map of the pool, so its pages stand as mapped ones under MGLRU (docs/offload.md
+    10.7); the bytes are preadv's either way. On Linux the map's resident pages
+    (/proc/self/smaps) cover what was read, and mapped=False leaves no map."""
+    import sys
+
+    from opentpu.host.offload import PoolFile
+    slot, n = 4096 * 3 + 2048, 6                      # (experts off a page too)
+    x = np.random.default_rng(0).integers(0, 256, (n, slot), dtype=np.uint8)
+    f = tmp_path / "pool.bin"
+    f.write_bytes(x.tobytes())
+
+    def rss():                                        # the pool's maps' resident bytes
+        if sys.platform != "linux":
+            return None
+        out, cur = 0, False
+        for ln in open("/proc/self/smaps"):
+            if ln[0] in "0123456789abcdef" and "-" in ln.split()[0]:
+                cur = ln.rstrip().endswith(str(f))
+            elif cur and ln.startswith("Rss:"):
+                out += int(ln.split()[1]) * 1024
+        return out
+    for mapped in (True, False):
+        pf = PoolFile(f, slot, split=False, mapped=mapped)
+        for g in (1, 4):
+            assert bytes(pf.get(g)) == x[g].tobytes()
+        pf.warm([5]).join(timeout=60)
+        if mapped:
+            assert pf._mc and (rss() is None or rss() >= 3 * slot)
+        else:
+            assert pf._mc is None
+        del pf
+
+
 def test_board_dram_keeps_a_staging_pair_until_its_last_part(tmp_path):
     """A staging pair goes back to the free list only after its expert's last part is on the
     card: with one pair and a slow link, the next expert's read waits for it (else it would

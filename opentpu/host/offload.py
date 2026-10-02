@@ -162,19 +162,48 @@ class PoolFile:
     page cache: the card's host SSD reads an expert of 1.67 MB that is not in the page cache
     in 4.2 ms (400 MB/s; docs/offload.md 10.6). It moves bytes only.
 
+    `mapped` (the default): every expert read (and warmed) is then touched through a read-only
+    map of the file, a byte a page. Under MGLRU (Linux's multi-generational LRU) a file page
+    read only through read() ages out before one a process has mapped and touched: a
+    checkpoint any process mmapped once outlived the pool's pages (docs/offload.md 10.7).
+
     `io`, when set to {} (moe_card's decode), counts the reads by where they came from:
     "cached" the reads whose pages were all in the page cache just before (mincore), "disk"
     the others ("unknown" where mincore cannot tell), each [reads, seconds, bytes, bytes not
     in the page cache]."""
 
-    def __init__(self, path, slot: int, split: bool):
+    def __init__(self, path, slot: int, split: bool, mapped: bool = True):
         import mmap
         self.fd, self.slot, self.split = os.open(path, os.O_RDONLY), slot, split
         self.bufs = [mmap.mmap(-1, slot) for _ in range(2)]
         self.k, self.warm_t = 0, None
         self.arr = self.packed = self.ids = self.resident_at_open = None    # (moe.open_pool)
         self.io: dict | None = None
-        self._mc = None                 # io's mincore: (the file's map, its view, libc)
+        self.mapped = mapped
+        self._mc = None                 # the file's read-only map: (map, its view, libc)
+        if mapped:                      # (made here: the warm thread and the server share it)
+            self._map()
+
+    def _map(self):
+        """The file's read-only map, its uint8 view and libc (io's mincore, mapped's touches),
+        or None where the host has none."""
+        import ctypes
+        import mmap
+        if self._mc is None:
+            try:
+                mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
+                self._mc = (mm, np.frombuffer(mm, np.uint8),
+                            ctypes.CDLL(None, use_errno=True))
+            except (OSError, AttributeError, ValueError):
+                self._mc = False
+        return self._mc or None
+
+    def _touch(self, off: int, n: int) -> None:
+        """A byte of every page under [off, off + n) read through the map (mapped)."""
+        import mmap
+        m = self._map()
+        if m is not None and n > 0:
+            int(m[1][off // mmap.PAGESIZE * mmap.PAGESIZE:off + n:mmap.PAGESIZE].sum())
 
     def resident(self, ids) -> int | None:
         """Bytes of these experts in the page cache (mincore over the file's pages), or None
@@ -209,36 +238,33 @@ class PoolFile:
         None where the host cannot tell."""
         import ctypes
         import mmap
-        if self._mc is None:
-            try:
-                mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
-                self._mc = (mm, np.frombuffer(mm, np.uint8),
-                            ctypes.CDLL(None, use_errno=True))
-            except (OSError, AttributeError, ValueError):
-                self._mc = False
-        if not self._mc or n <= 0:
+        m = self._map()
+        if m is None or n <= 0:
             return None
         pg = mmap.PAGESIZE
         lo, hi = off // pg, -(-(off + n) // pg)
         vec = (ctypes.c_ubyte * (hi - lo))()
-        if self._mc[2].mincore(ctypes.c_void_p(self._mc[1].ctypes.data + lo * pg),
-                               ctypes.c_size_t((hi - lo) * pg), vec) != 0:
+        if m[2].mincore(ctypes.c_void_p(m[1].ctypes.data + lo * pg),
+                        ctypes.c_size_t((hi - lo) * pg), vec) != 0:
             return None
         return (hi - lo - int((np.frombuffer(vec, np.uint8) & 1).sum())) * pg
 
     def _read(self, bufs, off: int) -> None:
-        if self.io is None:
-            return preadv(self.fd, bufs, off)
         n = sum(map(len, bufs))
-        gone = self._absent(off, n)
-        t0 = time.perf_counter()
-        preadv(self.fd, bufs, off)
-        s = self.io.setdefault("unknown" if gone is None else "disk" if gone else "cached",
-                               [0, 0.0, 0, 0])
-        s[0] += 1
-        s[1] += time.perf_counter() - t0
-        s[2] += n
-        s[3] += gone or 0
+        if self.io is None:
+            preadv(self.fd, bufs, off)
+        else:
+            gone = self._absent(off, n)
+            t0 = time.perf_counter()
+            preadv(self.fd, bufs, off)
+            s = self.io.setdefault("unknown" if gone is None else "disk" if gone else "cached",
+                                   [0, 0.0, 0, 0])
+            s[0] += 1
+            s[1] += time.perf_counter() - t0
+            s[2] += n
+            s[3] += gone or 0
+        if self.mapped:
+            self._touch(off, n)
 
     def get(self, g: int):
         if self.split:
@@ -263,6 +289,8 @@ class PoolFile:
         def run():
             for g in ids:
                 preadv(self.fd, [scratch], int(g) * self.slot)
+                if self.mapped:
+                    self._touch(int(g) * self.slot, self.slot)
                 t.bytes += self.slot
         t = threading.Thread(target=run, daemon=True, name="otpu-pool-warm")
         t.bytes = 0

@@ -1259,6 +1259,43 @@ every run:
   program changes (program_sha.py: main's hashes under both configurations). Expected: about
   16 s less staging, the 26B near 2.8 tok/s.
 
+### 10.7 The pool under MGLRU
+
+Session 10's 35B lost its pool's page cache to checkpoints that had been mapped once: the run's
+own (LazyWeights' safe_open maps) and a session before's. With MGLRU (Linux's multi-generational
+LRU: opentpu's 7.2.5 and omarchy's 7.1.4 kernels, `/sys/kernel/mm/lru_gen/enabled` 0x0007) a file
+page some process mapped and touched outlives one read only through read(). The Engine now
+releases its own checkpoint (10.6) and card sessions drop the others (DROPOTHER), but a user's
+host has files a session cannot evict: other models, other applications.
+
+The host test (omarchy: a 1.9 GB memory cgroup, `systemd-run --user --scope -p MemoryMax`; a
+1.0 GB "checkpoint" a child process mapped, touched and left; a 1.5 GB pool warmed, then read 3000
+times in 1.67 MB records of zipf popularity), with PoolFile itself for the first and third rows:
+
+| the pool read by | disk reads | pool resident (of 1.50 GB) | checkpoint resident (of 1.0) |
+|:--|:--|:--|:--|
+| read() (PoolFile before) | 11.0-16.5% | 0.96-1.13 | 0.82-1.00 |
+| read() + POSIX_FADV_WILLNEED | 11.2% | 0.97 | 1.00 |
+| read(), each read touched through a map (PoolFile now) | 0 | 1.50 | 0.45 |
+| memcpy from a map (+ MADV_WILLNEED: the same) | 0 | 1.50 | 0.46 |
+| read(), the run's own checkpoint still mapped | 10.9% | 0.96 | 1.00 |
+| read() + touch, the run's own checkpoint still mapped | 4.6% | 1.40 | 0.56 |
+
+So PoolFile (`mapped`, the default) keeps a read-only map of the pool and touches every expert
+it reads or warms through it, a byte a page, after the preadv (which keeps the reads' size and
+their GIL release). The pool's pages then compete as mapped ones and the dead checkpoint goes
+first. Costs: the page tables of the pool's touched pages (8 bytes per 4 KiB: 33 MB for the
+35B's 17.1 GB), the touch (fault-around maps 16 pages a fault: about 26 minor faults for an
+expert of 1.67 MB, the first time), and the pool counting in the process's `rss_file` (page
+cache, as before). Not tried: MADV_HUGEPAGE (file-backed huge pages need READ_ONLY_THP_FOR_FS and
+khugepaged; the touch already gives the standing). It does not change what the pool needs (about
+14 GB of RAM for the 35B, 10.6) or the SSD's 4.2 ms an expert.
+
+The card's check: card_moe.sh `HOG=dir:dir` maps and touches those files from another process
+before a run (the Qwen3.5 0.8B / 2B / 4B checkpoints, session 10's 13.6 GB), with DROPOTHER="":
+q35e128r before this change (session 10's tree) against after. Expected: s10's 3.05-3.50 against
+s10b's 3.79.
+
 ## 11. Gemma 4 26B-A4B: design note
 
 This is the next MoE target: Gemma 4's MoE, with its experts offloaded to host storage. The

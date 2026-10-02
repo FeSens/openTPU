@@ -32,7 +32,9 @@ PSFX=${PSFX-.split}       # the pool files: the split format (.split.bin), or ""
 G26POOL=${G26POOL:-../g26/pool-g26-fp4.split.bin}     # (relative to O)
 # before each run every other file of 100 MB or more under these leaves the page cache (MGLRU
 # keeps once-mmapped checkpoints over the pool's reads: docs/offload.md 10.6); "" for none. A
-# link whose target is outside ~/openTPU and ~/otpu-build is skipped (and logged), never opened
+# link whose target is outside ~/openTPU and ~/otpu-build is skipped (and logged), never opened.
+# HOG=dir:dir (after DROPOTHER): the files of 100 MB or more there mapped and touched first by
+# another process, as a user's host would have them (docs/offload.md 10.7)
 DROPOTHER=${DROPOTHER-$HOME/openTPU/models:$O:$O/$(dirname $G26POOL)}
 echo "card_moe start $(date +%T) tree $rev mem $(mem) GB"
 timeout 1800 python -m opentpu.host.selftest 2>&1 | grep -E "\[(PASS|FAIL)\]|config" | tail -12
@@ -113,6 +115,27 @@ for d in sys.argv[3].split(":"):
             os.close(fd)
             gb, n = gb + os.path.getsize(r) / 1e9, n + 1
 print(f"  dropped from the page cache: {n} other files of {gb:.1f} GB")
+PY
+  fi
+  if [ -n "${HOG:-}" ]; then                  # a user's host: files another process mapped
+    python - $HOG <<'PY'                        # and touched (and exited), which a session
+import mmap, os, sys                          # cannot evict (docs/offload.md 10.7)
+import numpy as np
+ours = tuple(os.path.realpath(os.path.expanduser(d)) + os.sep for d in ("~/openTPU", "~/otpu-build"))
+gb = 0
+for d in sys.argv[1].split(":"):
+    for root, _, files in os.walk(os.path.expanduser(d)):
+        for f in files:
+            r = os.path.realpath(os.path.join(root, f))
+            if not r.startswith(ours) or os.path.getsize(r) < 100 << 20:
+                continue
+            fd = os.open(r, os.O_RDONLY)
+            mm = mmap.mmap(fd, os.path.getsize(r), prot=mmap.PROT_READ)
+            int(np.frombuffer(mm, np.uint8)[::mmap.PAGESIZE].sum())
+            mm.close()
+            os.close(fd)
+            gb += os.path.getsize(r) / 1e9
+print(f"  hog: {gb:.1f} GB mapped and touched")
 PY
   fi
   t0=$SECONDS; cat $O/$pool > /dev/null      # the RAM tier warm before each timed run, and how
