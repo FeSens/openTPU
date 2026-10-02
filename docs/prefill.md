@@ -429,6 +429,13 @@ maxima (ACC + RMAX: docs/isa.md, the maxima of the values written, after the add
   lookup tables (the ones that run prompt runs) hold them; MoE images keep their slots. A row's
   tile is at the table + (tpos + r) x its stride: an argument register, no instruction.
   Decode at a run-time position keeps its mask rows.
+- **Cycles** (RTL co-sim of E2B's mix, a checkpoint of layers 0-4, 15, 19, 25 and 29 with the
+  mix's formats, its PLE table on the host to fit the RTL's 1 GiB DRAM model; the board's
+  memory path, LiteDRAM DDR3-1066 at 133.33 MHz; a 208-token prompt in prompt runs of 4 rows,
+  runs 0 and 50 on the RTL, RTL = ISA after each): 4,669,594 -> 4,670,456 cycles at position 0,
+  4,669,694 -> 4,671,976 at 200 (+0.02% / +0.05%), 2382 -> 2283 instructions; the prompt's
+  logits' argmax the same. Neutral: the VOPs it drops were off the critical path, the tile's
+  LD (1027 words for 4 rows, against the row's 256) sits before its MM. Its gain is IMEM.
 - **DRAM fit** (fit_check, the board configuration, caps 2048 and 4096): every layout keeps its
   fit and its choices; the tightest, E4B int8 at 4096, 4092.2 -> 4094.2 MiB (PLE table on the
   host either way, its formats unchanged), E2B's mix at 4096 4068.5 -> 4070.5 MiB with its int8
