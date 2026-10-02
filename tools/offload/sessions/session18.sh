@@ -7,12 +7,13 @@
 #     the layer-ahead predictor and whole-expert parts (--layer-ahead hint --ahead-part 4096):
 #     A = --idle-parts ra, B = --idle-parts v2. Pass: lmtime's sha 95426ebacc3b40a9 and tokens.
 #     B must show holds > 0.
-# (2) the 35B decode, 128 tokens: A = q35e128s (no hints; ref q35ref16), B = the hints (pre,
-#     top 4, n 1, whole-expert parts, --hint-drop; ref q35ref16h) with the default parts;
-#     hint traces kept. Hints become the default only at >= 2% with both pairs positive.
+# (2) the 35B decode, 128 tokens, A B C C B A: A = q35e128s (no hints; ref q35ref16), B = the
+#     hints (pre, top 4, n 1, whole-expert parts, --hint-drop; ref q35ref16h) with --idle-parts
+#     ra, C = the same with v2; hint traces kept. Hints become the default only at >= 2% with
+#     both pairs positive, on the parts mode (1) makes the default.
 # Host only against main's programs, so session 17's references hold (RF: card2/refs-s17). A
 # build other than EXPECT, a failed selftest, a failed or timed-out run or a mismatch stops it;
-# no retries. About 20 min.
+# no retries. About 25 min.
 # Run: setsid -f otpu-lock --wait 3600 -- bash tools/offload/sessions/session18.sh   (no pipe)
 set -u
 SESSION=s18
@@ -33,8 +34,10 @@ declare -A RUN=(         # checkpoint, pool, HF's, tokens, reference, moe_card's
   [pA2]="$Q $QP $LM 16 sha:95426ebacc3b40a9 $P --idle-parts ra"
   [dW]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16.json --embed-table host --hints off"
   [dA1]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16.json --embed-table host --hints off --hint-trace TRACE"
-  [dB1]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16h.json $HN --hint-trace TRACE"
-  [dB2]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16h.json $HN --hint-trace TRACE"
+  [dB1]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16h.json $HN --idle-parts ra --hint-trace TRACE"
+  [dC1]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16h.json $HN --idle-parts v2 --hint-trace TRACE"
+  [dC2]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16h.json $HN --idle-parts v2 --hint-trace TRACE"
+  [dB2]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16h.json $HN --idle-parts ra --hint-trace TRACE"
   [dA2]="$Q $QP $O/q35-hf.json 128 $RF/q35ref16.json --embed-table host --hints off --hint-trace TRACE")
 Q35TOK="[8160, 579, 264, 7047, 1817, 421]"        # (lmtime's first tokens)
 echo "session18 start $(date +%T) tree $rev mem $(mem) GB; $(uptime)"
@@ -43,7 +46,7 @@ echo "$st" | grep -E "\[(PASS|FAIL)\]|ALL" | tail -14
 echo "$st" | grep -q "build $EXPECT" || { echo "STOP: the card's build is not $EXPECT"; exit 2; }
 echo "$st" | grep -q "ALL PASS" || { echo "STOP: selftest"; exit 2; }
 timeout 300 python tools/qual/refs.py cfg $R/cfg-dev.pkl > /dev/null 2>&1; echo "cfg exit $?"
-for run in pW pA1 pB1 pB2 pA2 dW dA1 dB1 dB2 dA2; do
+for run in pW pA1 pB1 pB2 pA2 dW dA1 dB1 dC1 dC2 dB2 dA2; do
   read -r md pool hf n ref extra <<< "${RUN[$run]}"
   extra=${extra//TRACE/$R/$run.hint.json}
   ptr=""; [ $n = 16 ] && ptr="--prefill-trace $R/$run.trace.json"
@@ -104,18 +107,19 @@ r = sys.argv[1]
 def get(run):
     f = f"{r}/{run}.json"
     return json.load(open(f)) if os.path.exists(f) else None
-for name, runs, key in (("35B prefill, ra -> v2", "p", "prefill_s"),
-                        ("35B decode, hints top 4 + ra", "d", "tok_s_wall")):
-    a1, b1, b2, a2 = (get(runs + x) for x in ("A1", "B1", "B2", "A2"))
+for name, runs, b, key in (("35B prefill, ra -> v2", "p", "B", "prefill_s"),
+                           ("35B decode, hints top 4 + ra", "d", "B", "tok_s_wall"),
+                           ("35B decode, hints top 4 + v2", "d", "C", "tok_s_wall")):
+    a1, b1, b2, a2 = (get(runs + x) for x in ("A1", b + "1", b + "2", "A2"))
     if None in (a1, b1, b2, a2):
         print(f"  {name}: incomplete"); continue
     v = lambda c: c[key] if key != "prefill_s" else c["prefill_time"]["wall_s"]   # noqa: E731
     d1, d2 = v(b1) - v(a1), v(b2) - v(a2)
     ma, mb = (v(a1) + v(a2)) / 2, (v(b1) + v(b2)) / 2
     rel = f" ({mb / ma - 1:+.2%})" if key == "tok_s_wall" else ""
-    print(f"  {name} ({key}): A {v(a1):.3f} {v(a2):.3f}, B {v(b1):.3f} {v(b2):.3f}; pairs B-A "
-          f"{d1:+.3f} {d2:+.3f}; means B-A {mb - ma:+.3f}{rel}")
-    for x, c in (("B1", b1), ("B2", b2)):
+    print(f"  {name} ({key}): A {v(a1):.3f} {v(a2):.3f}, {b} {v(b1):.3f} {v(b2):.3f}; pairs "
+          f"{b}-A {d1:+.3f} {d2:+.3f}; means {b}-A {mb - ma:+.3f}{rel}")
+    for x, c in ((b + "1", b1), (b + "2", b2)):
         print(f"    {x} idle_parts {json.dumps(c.get('idle_parts'))}")
 PY
 date > $R/DONE
