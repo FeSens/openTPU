@@ -243,9 +243,11 @@ int8 + mlp@4-27=fp4`), SmolLM3 6.3 / 6.26 (`gateup@9-35=fp4`), LFM2-2.6B 10.9 / 
 (`conv=fp4,mlp=fp4`), Qwen3.5-4B 5.7 / 5.67 (`delta=fp4,mlp=fp4`), and Qwen3.5-2B, which has no
 mix, 8.2 / 8.09 in int8. The wall rate is within 1.5% of the device's.
 
-**The 4B's mix under MTP** (`--mtp`, the same prompt, 160 tokens, greedy): 16.04 M cycles per
-token against 23.27 without the drafter (1.45x; 8.3 device tok/s, 7.82 wall), acceptance 0.61.
-fp4 on the same prompt: 14.56 M cycles (1.53x over fp4's plain 22.21, mix1; 9.2 tok/s),
-acceptance 0.67. So with the drafter the mix is 10% slower than fp4 (5% without), most of it the
-drafter's lower acceptance; the MTP layer takes the mix's unranged formats (attention int8, MLP
-fp4).
+**The 4B's mix under MTP** (`--mtp`, the chat prompt above, 160 tokens, greedy): 16.04 M cycles
+per token against 23.27 without the drafter (1.45x, 8.3 device tok/s), acceptance 0.61; fp4 on
+the same prompt 14.56 M cycles (1.53x over fp4's plain 22.21 from mix1, 9.2 device tok/s),
+acceptance 0.67. A single-prompt observation: at 160 tokens the acceptance's SE is about 0.05,
+so 0.61 against 0.67 is about 1 SE, and fp4's own 1.53x here against 1.62x in [mtp.md](mtp.md)
+shows how much the prompt moves it. The MTP layer takes the mix's unranged formats (attention
+int8, MLP fp4). The wall rates of these MTP runs overlapped another job on the card host and are
+not quoted; the device cycles are the card's own count.
