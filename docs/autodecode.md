@@ -209,6 +209,18 @@ models'), per token against the resident step (2,477,675 cycles):
 - with sampling: the uniforms and the penalty vectors;
 - once per bucket and mode (greedy or sampled): the chain area and its table.
 
+**The program cache.** An engine with `prog_cache` (on when `OTPU_PROG_CACHE` is set: a
+directory, or 1 for `~/otpu-build/qcache/prog`) takes its bucket programs from
+`opentpu/progcache.py`. These are the generate loop's, the resident decode's and MTP's loop
+programs (docs/mtp.md 10).
+- They are compiled once per process and image layout, and kept on disk for the next process.
+- The key hashes the layout (Spec, Config, KV capacity, rows, block, the image's keywords), the
+  program and its arguments, the source of opentpu (but `opentpu/host`) and the OTPU_*
+  environment.
+- A bucket costs 0.02-0.08 s of compile for the plain loop and 0.35-0.5 s for MTP's six. That
+  delays the second token, not the first: the first comes from the prefill.
+- Tests leave the cache off: they patch kernels' module constants, which the key does not see.
+
 **On the card**, `BoardBackend.run_generate` starts the program and reads new beats of `out[]`
 as the tokens land. It sleeps between reads on the expected token gap. If `stop()` returns
 true, it writes the state's stop word, and the card halts after the token in flight.

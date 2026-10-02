@@ -138,6 +138,26 @@ def test_padded_expert_width(tiny):
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
 
 
+def test_formats_by_layer_range_keep_one_dense_layout(tiny, monkeypatch):
+    """Weight formats per layer range on a MoE model: the mixers' ranges give layer block
+    layouts of their own, the MoE layers in a loop of theirs; the dense layers' MLPs (a region
+    of their own, one MLP per dense layer) keep one layout, so an MLP range inside them is
+    refused. Layout-only images, no weights."""
+    from opentpu.isasim import board_config
+    monkeypatch.delenv("OTPU_FORMATS", raising=False)
+    _, _, spec = tiny
+    cfg = board_config(DRAM_BYTES=1 << 24)
+    img = spec.image(cfg, 256, formats="conv@1-4=fp4,attn@1-4=fp4")
+    g0, g = img.lf[0], ("fp4", "fp4", "int8", "int8")
+    assert img.lf[1:] == (g,) * 4 and img.layouts[g0].size != img.layouts[g].size
+    assert img.plan == [(0, ((("conv", False), g0),), 1),
+                        (1, ((("attn", True), g), (("conv", True), g)), 2)]
+    two = dataclasses.replace(spec, moe=dataclasses.replace(spec.moe, first=2))
+    assert two.image(cfg, 256, formats="mlp@0-1=fp4").mf["wd"] == "fp4"
+    with pytest.raises(ValueError, match="weight formats"):
+        two.image(cfg, 256, formats="mlp@0=fp4")
+
+
 def test_moe_ffn_beside_and_no_residual(tiny, monkeypatch):
     """moe_ffn's `beside` (work emitted right after the request is posted: Gemma 4's dense MLP,
     while the host streams), residual=False (the caller adds x) and y_first (the experts'
@@ -245,6 +265,53 @@ def test_pool_file_is_the_same_pool(tiny, tmp_path):
         packed = int(np.fromfile(str(f) + ".packed", np.uint8).sum())
         assert packed > 0 and warm.bytes == (packed if i else 0) * eng.image.offload.slot_bytes
     assert f.stat().st_size == (len(KINDS) - 1) * E * eng.image.offload.slot_bytes
+
+
+def test_engine_releases_the_checkpoint_when_streaming_from_a_pool(tiny, tmp_path):
+    """Engine with a pool file releases its LazyWeights once the image is written and the slots
+    warm (release_weights, the default: the checkpoint's mapped pages would outlive the
+    pool's in the page cache, docs/offload.md 10.6): its files closed, the same logits bit
+    for bit, an expert packed later reading its file again; release_weights=False keeps
+    them, and without a pool nothing is released."""
+    from safetensors.numpy import save_file
+    from opentpu.llm.qwen3 import LazyWeights
+    _, W, spec = tiny
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
+              str(tmp_path / "model.safetensors"))
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 3)]
+    full = _engine(spec, W, experts=K)
+    ref = np.array([full.step(t) for t in toks])
+    cfg = device_config(spec, 256, S=1, experts=K)
+    for i, keep in enumerate((False, True)):
+        lw = LazyWeights(tmp_path)
+        eng = Engine(spec, lw, cap=256, cfg=cfg, experts=K, pool_file=tmp_path / f"p{i}.bin",
+                     release_weights=not keep)
+        assert bool(lw._h) == keep
+        got = np.array([eng.step(t) for t in toks])
+        assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
+        assert len(lw._h) == 1                          # (the experts packed since: reopened)
+    lw = LazyWeights(tmp_path)
+    Engine(spec, lw, cap=256, cfg=cfg, experts=K)
+    assert lw._h
+
+
+def test_engine_reads_its_pool_through_a_read_only_map(tiny, tmp_path):
+    """Engine(pool_map=True), the default (moe_card --no-pool-map: False): the pool file's
+    reads touched through its read-only map (PoolFile's mapped: the page cache's standing under
+    MGLRU, docs/offload.md 10.7); the same logits bit for bit either way."""
+    _, W, spec = tiny
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 3)]
+    cfg = device_config(spec, 256, S=1, experts=K)
+    got = []
+    for i, pool_map in enumerate((True, False)):
+        eng = Engine(spec, W, cap=256, cfg=cfg, experts=K, pool_file=tmp_path / f"p{i}.bin",
+                     pool_map=pool_map)
+        pf = eng.server.pool_file
+        got.append(np.array([eng.step(t) for t in toks]))
+        assert pf.mapped == pool_map and bool(pf._mc) == pool_map
+        if pool_map:
+            assert not pf._mc[1].flags.writeable
+    assert np.array_equal(got[0].view(np.uint32), got[1].view(np.uint32))
 
 
 def test_compile_worker_builds_the_moe_image(tiny):
@@ -464,8 +531,9 @@ def test_the_host_serves_the_card_during_its_runs(tiny, mode, tmp_path):
     assert brd.server.seq == isa.server.seq == (len(toks) + 8) * len(brd.image.offload.slots)
     if threaded:                            # the experts went the one-pass way, not Board.write
         assert brd.server.mem._bufs is not None
-    if mode == "split":                     # and read into the runs (the split format)
-        assert 0 < brd.server.mem.direct < brd.server.misses and brd.server.pool_warm
+    if mode == "split":                     # and read into the runs (the split format):
+        # every one (each slot on a RUN block, Layout's pitch; direct counts the load's too)
+        assert brd.server.mem.direct >= brd.server.misses > 0 and brd.server.pool_warm
 
 
 @pytest.mark.parametrize("embed", ["f32", "int8"])
@@ -484,3 +552,20 @@ def test_lazy_weights_build_the_same_engine(tiny, tmp_path, embed):
             for w in (W, LazyWeights(tmp_path)))
     for t in (5, 77, 900, 13, 4):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), a.pos
+
+
+def test_lazy_weights_release_closes_and_reopens(tiny, tmp_path):
+    """LazyWeights.release (moe_card --release-weights): the files closed and their pages
+    dropped; a tensor read after reopens its file and reads the same values."""
+    from safetensors.numpy import save_file
+    from opentpu.llm.qwen3 import LazyWeights
+    _, W, _ = tiny
+    save_file({k: np.ascontiguousarray(v) for k, v in W.items()},
+              str(tmp_path / "model.safetensors"))
+    lw = LazyWeights(tmp_path)
+    k = "model.embed_tokens.weight"
+    a = lw[k]
+    lw.release()
+    assert not lw._h
+    assert np.array_equal(lw[k], a) and np.array_equal(lw.part(k, 3), a[3])
+    assert len(lw._h) == 1

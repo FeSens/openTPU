@@ -30,6 +30,7 @@ import numpy as np
 
 from .. import fp32 as F
 from .. import isa as I
+from .. import progcache as PC
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
@@ -210,29 +211,53 @@ def load_weights(model_dir, mtp: bool = False) -> Weights:
 class LazyWeights(dict):
     """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
     it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
-    MoE; its experts are packed one at a time, opentpu.llm.moe)."""
+    MoE; its experts are packed one at a time, opentpu.llm.moe). release() gives the files'
+    pages back once the image is built (a later read reopens its file)."""
 
     def __init__(self, model_dir):
         super().__init__()
         from safetensors import safe_open
-        self._at = {}
+        self._at, self._h = {}, {}          # name -> (file, its name there); file -> handle
         for f in sorted(Path(model_dir).glob("*.safetensors")):
-            h = safe_open(str(f), "pt")
+            h = self._h[str(f)] = safe_open(str(f), "pt")
             for k in h.keys():
                 if not k.startswith(("model.visual.", "mtp.")):
-                    self._at[k.replace("model.language_model.", "model.", 1)] = (h, k)
+                    self._at[k.replace("model.language_model.", "model.", 1)] = (str(f), k)
+
+    def _open(self, k):
+        from safetensors import safe_open
+        f, name = self._at[k]
+        if f not in self._h:
+            self._h[f] = safe_open(f, "pt")
+        return self._h[f], name
 
     def __getitem__(self, k):
         import torch
-        h, name = self._at[k]
+        h, name = self._open(k)
         return h.get_tensor(name).to(torch.float32).numpy()
 
     def part(self, k, i):
         """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
         read alone."""
         import torch
-        h, name = self._at[k]
+        h, name = self._open(k)
         return h.get_slice(name)[i].to(torch.float32).numpy()
+
+    def release(self) -> None:
+        """Close the files (safe_open maps each whole: the pages a read touched stay mapped,
+        and the kernel keeps them over other page cache, a pool file's) and drop their pages
+        (POSIX_FADV_DONTNEED, where the host has it). A tensor read after reopens its file."""
+        import gc
+        import os
+        files = list(self._h)
+        self._h.clear()
+        gc.collect()                        # (a handle in a cycle would keep its map)
+        for f in files if hasattr(os, "posix_fadvise") else ():
+            fd = os.open(f, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
 
     def __contains__(self, k):
         return k in self._at
@@ -997,6 +1022,30 @@ class RunPos:
         return {"tpos": p % block, "tok": token, "ring": (p + 1) % K}
 
 
+class RunRows(RunPos):
+    """R consecutive rows at a run-time position (MTP's verify and draft runs, docs/mtp.md 10):
+    row r is position t0 + tpos + r, every row in the bucket (tpos <= block - R), its token the
+    run-time value toks[r] (tok, tok1, ...); row r attends over the bucket with the mask row
+    of its own position (bucket_row). values(tokens, p) gives the run's argument values."""
+
+    def __init__(self, blocks: int, block: int, lo: int, zmask: int, cap: int, R: int):
+        super().__init__(blocks, block, lo, zmask, cap)
+        if not 0 < R <= min(block, cap - self.t0):
+            raise ValueError(f"{R} rows do not fit bucket {blocks}")
+        self.R = R
+        self.tpos.bound = min(block, cap - self.t0) - R + 1
+        self.toks = [self.tok] + [RunVar(f"tok{r}") for r in range(1, R)]
+
+    def bucket_row(self, r: int) -> Bucket:
+        return Bucket(self.blocks, self.bucket.z - 4 * r)
+
+    @staticmethod
+    def values(tokens, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
+        v = RunPos.values(tokens[0], p, K, block)
+        v.update({f"tok{r}": t for r, t in enumerate(tokens) if r})
+        return v
+
+
 def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for one token, this slice's heads; returns the new residual
     (replicated on every slice).
@@ -1206,7 +1255,19 @@ def _embed(m, tok):
 def _inputs_rows(m, rows, tokens=None):
     """_inputs for token rows (rows[r] = (sequence, position)): from the I/O area, or with
     `tokens` (their ids, compile-time values) from the image's tables, the embedding row of
-    each token and the RoPE rows of each run of consecutive positions."""
+    each token and the RoPE rows of each run of consecutive positions. rows a RunRows: its
+    tokens' rows (run-time ids) and its positions' RoPE rows from the tables."""
+    if isinstance(rows, RunRows):
+        R = rows.R
+        x = ol.empty([R, m.xr.shape[1]], dense=True)
+        c = ol.empty([R, m.cosr.shape[1]], dense=True)
+        s_ = ol.empty([R, m.sinr.shape[1]], dense=True)
+        ol.load(m.cos_t[rows.pos:rows.pos + R, :], out=c)
+        ol.load(m.sin_t[rows.pos:rows.pos + R, :], out=s_)
+        for r, t in enumerate(rows.toks):
+            x[r:r + 1, :].set(_embed(m, t))
+            ol.release(t)
+        return x, c, s_
     R = len(rows)
     if tokens is None:
         return ol.load(m.xr[0:R, :]), ol.load(m.cosr[0:R, :]), ol.load(m.sinr[0:R, :])
@@ -1295,7 +1356,9 @@ def _rope_rows_padded(x, c, s_, out=None):
 
 def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     """x + W_o . attention(x) for R token rows; row r is token position rows[r][1] of sequence
-    rows[r][0] (its own KV cache). Every row's K/V is appended first, then each row attends
+    rows[r][0] (its own KV cache), or rows is a RunRows (sequence 0, run-time positions; the
+    V^T appends a row at a time, each row's mask its own). Every row's K/V is appended first,
+    then each row attends
     over positions 0..pos of its sequence -- for consecutive rows of one sequence (a prefill
     chunk) that is exactly the causal mask. Each projection streams its weights once for all
     R rows (ceil(R / MCOLS) MMs); the (row, KV head) pairs then run as one pipelined
@@ -1304,7 +1367,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     may cover part of a head (Qwen3.5), `gated` multiplies the output by sigmoid(W_gate x),
     and a query group wider than the MXU attends in parts of MCOLS heads."""
     d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
-    R = len(rows)
+    R = rows.R if isinstance(rows, RunRows) else len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     k = ol.dot(xs, lw.wk)                       # [R, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
@@ -1315,10 +1378,14 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
     heads = list(lw.kv.owned_heads(spec.n_kv))
     nh = len(heads)
     nq = nh * G
+    run = isinstance(rows, RunRows)
     for j, hh in enumerate(heads):
         kj = _rope_rows_padded(_norm_heads(k[:, j * d:(j + 1) * d], kn, eps), c, s_)
         vj = _padded(v[:, j * d:(j + 1) * d])
-        for sq, p0, r0, n in _runs(rows):
+        if run:                                 # V^T at a run-time position: a row at a time
+            for r in range(R):
+                ol.kv_append(lw.kvs[0], hh, rows.pos + r, kj[r:r + 1, :], vj[r:r + 1, :])
+        for sq, p0, r0, n in [] if run else _runs(rows):
             ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
         del kj, vj
     del k, v
@@ -1339,9 +1406,10 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False):
         o[r, (j * G + g0) * d:(j * G + g1) * d].reshape(g1 - g0, d).set(acc / l[:, None])
 
     _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
-                  [lw.kvs[rows[r][0]] for r, *_ in ent], [heads[j] for _, j, _, _ in ent],
-                  [rows[r][1] + 1 for r, *_ in ent], block, scale, depth=ATTN_DEPTH,
-                  emit=emit)
+                  [lw.kvs[0 if run else rows[r][0]] for r, *_ in ent],
+                  [heads[j] for _, j, _, _ in ent],
+                  [rows.bucket_row(r) if run else rows[r][1] + 1 for r, *_ in ent], block,
+                  scale, depth=ATTN_DEPTH, emit=emit)
     del Q
     if gated:                                   # after the heads: o * sigmoid(gate), rounded
         for h0 in range(0, nq, mc):             # as _attention's (acc / l) * sg; mc heads at
@@ -1366,19 +1434,33 @@ def qwen3_rows(m, rows, logit_rows, block: int = ATTN_BLOCK, tokens=None):
     _lm_head_rows(x, m, spec, logit_rows)
 
 
+def head_rows_chunk(rows: int) -> int:
+    """The LM head's vocabulary rows per MM for `rows` token rows (their fp32 logits fit TMEM)."""
+    return min(HEAD_CHUNK, ol.tmem_words() // (8 * rows))
+
+
 def _lm_head_rows(x, m, spec, logit_rows):
     """Final norm and this slice's vocabulary rows of the LM head for the rows `logit_rows`
-    of x (a contiguous range, or empty: nothing) -> m.logitsr."""
+    of x (a contiguous range, or empty: nothing) -> m.logitsr, or, with m.lm_sinks (one sink
+    per logit row, generate.Greedy over head_rows_chunk's chunks: MTP's verify run), each
+    chunk's row r to sink r instead."""
     if not logit_rows:
         return
     sid = ol.program_id()
     a, e = logit_rows[0], logit_rows[-1] + 1
     xs = ol.quantize(rmsnorm(x[a:e, :], ol.load(m.g_final), spec.eps))
-    chunk = min(HEAD_CHUNK, ol.tmem_words() // (8 * (e - a)))
+    chunk = head_rows_chunk(e - a)
+    sinks = getattr(m, "lm_sinks", None)
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
         col = sid * m.v_loc + c0
-        ol.store(m.logitsr[a:e, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+        if sinks is None:
+            ol.store(m.logitsr[a:e, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
+            continue
+        y = ol.dot(xs, m.head[c0:c0 + n, :])
+        for r, sk in enumerate(sinks):
+            sk(y[r:r + 1, :], col)
+        del y
 
 
 # =============================================================================== engine
@@ -1564,6 +1646,18 @@ class Engine:
     Python, and in a thread it would hold the GIL the step's host work needs -- else on a worker
     thread; pipeline="thread" forces the thread. The process starts with the engine; until it
     is ready, steps compile in line.
+
+    release_weights: with the experts streamed from a pool file, the checkpoint's files are
+    released once the image is written and the slots warm (W.release(), a LazyWeights': its
+    mapped pages would stay in the page cache over the pool's, docs/offload.md 10.6; a later
+    read reopens its file). Default on; False keeps them. pool_map: the pool file's reads
+    touched through a read-only map (PoolFile's mapped, docs/offload.md 10.7). Default on.
+
+    prog_cache: the bucket programs (the generate loop's, the resident decode's, MTP's loop's)
+    come from opentpu/progcache.py: compiled once per process and image layout, and kept on
+    disk for the next process. Default: on when OTPU_PROG_CACHE is set (to a directory, or 1
+    for the default one) and not 0. Off, every engine compiles its own (tests patch the
+    kernels' constants, which the cache's key does not see).
     """
 
     def __init__(self, spec: Spec, W: dict, cap: int = 4096, cfg: Config | None = None,
@@ -1571,8 +1665,11 @@ class Engine:
                  rows: int = PREFILL_ROWS, pipeline: bool | str | None = None,
                  wformat: str = "int8", head_format: str | None = None,
                  resident: bool = False, experts: int | None = None, pool_file=None,
-                 embed_host: bool | None = None, layer_major: int = 0):
+                 embed_host: bool | None = None, layer_major: int = 0,
+                 release_weights: bool = True, pool_map: bool = True,
+                 prog_cache: bool | None = None):
         self.spec, self.cap, self.block = spec, cap, block
+        self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
         self.batch, self.rows = batch, max(rows, batch)
         wkw = dict(wformat=wformat, head_format=head_format)
         if experts is not None:             # a MoE model's expert slots per layer
@@ -1610,7 +1707,7 @@ class Engine:
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         if pool_file is not None and getattr(self.image, "offload", None) is not None:
             from .moe import open_pool      # its read into the page cache runs during the build
-            pool_file = open_pool(self.image.offload, pool_file)
+            pool_file = open_pool(self.image.offload, pool_file, mapped=pool_map)
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
@@ -1621,6 +1718,8 @@ class Engine:
         self.server = None
         if getattr(self.image, "offload", None) is not None:
             self.server = self.image.serve(W, self.backend, pool_file)
+            if release_weights and pool_file is not None and hasattr(W, "release"):
+                W.release()                 # (the pool holds the experts; the image is written)
         # rows of tables the host keeps, asked for by the generate loop (Gemma 4 E4B: each
         # token's PLE record into the slot, opentpu.host.offload.RowServer)
         rs = getattr(self.image, "row_server", None)
@@ -1730,6 +1829,12 @@ class Engine:
         """The step program for `pos`: the precompiled one when it is for `pos`."""
         return self._take(("step", pos), self._compile, pos)
 
+    @property
+    def layout(self) -> tuple:
+        """What decides the image's layout and so its programs (opentpu/progcache.py)."""
+        return (self.spec, self.cfg, self.cap, self.batch, self.rows, self.block,
+                tuple(sorted(self._image_kw.items())))
+
     def _compile_decode(self, blocks: int, lo: int | None = None):
         """lo: the bucket's first position (_worker_decode's; the compile thread gets it too)."""
         lo = max((blocks - 1) * self.block, self._conv_lo) if lo is None else lo
@@ -1746,8 +1851,17 @@ class Engine:
             return None
         b = pos // self.block + 1
         if b not in self._decodes:
-            self._decodes[b] = self._take(("decode", b), self._compile_decode, b)
+            self._decodes[b] = self.cached(self._decode_what(b),
+                                           lambda: self._take(("decode", b),
+                                                              self._compile_decode, b))
         return self._decodes[b]
+
+    def cached(self, what, compile):
+        """compile() -> (programs, run_args), through the program cache with prog_cache."""
+        return PC.get(self.layout, what, compile) if self.prog_cache else compile()
+
+    def _decode_what(self, b: int) -> tuple:
+        return ("decode", b, max((b - 1) * self.block, self._conv_lo))
 
     def _prefetch(self, pos: int) -> None:
         """Precompile the steps at pos .. pos + ahead - 1 (those not in flight yet); resident:
@@ -1756,7 +1870,8 @@ class Engine:
         if self.resident and pos >= self._conv_lo:
             for p in (pos, pos + DECODE_LEAD):
                 b = p // self.block + 1
-                if p < self.cap and b not in self._decodes and ("decode", b) not in queued:
+                if p < self.cap and b not in self._decodes and ("decode", b) not in queued \
+                        and not (self.prog_cache and PC.has(self.layout, self._decode_what(b))):
                     self._submit(("decode", b), self._compile_decode, _worker_decode, b,
                                  max((b - 1) * self.block, self._conv_lo))
             return
@@ -2106,9 +2221,13 @@ class Engine:
         key = (blocks, None if samp is None else samp.key, self.gen_debug)
         if key not in self._gens:
             lo = max((blocks - 1) * self.block, self._conv_lo)
-            progs = G.compile_bucket(self.image, blocks, lo, self.block,
-                                     chain=bool(getattr(self.backend, "chains", False)),
-                                     samp=samp, debug=self.gen_debug, split=self.gen_split)
+            chain = bool(getattr(self.backend, "chains", False))
+            progs = self.cached(("gen", blocks, lo, chain, key[1], self.gen_debug,
+                                 self.gen_split),
+                                lambda: (G.compile_bucket(self.image, blocks, lo, self.block,
+                                                          chain=chain, samp=samp,
+                                                          debug=self.gen_debug,
+                                                          split=self.gen_split), None))[0]
             prep = getattr(self.backend, "prepare", None)
             if prep is not None:
                 for p in (progs if isinstance(progs, tuple) else (progs,)):

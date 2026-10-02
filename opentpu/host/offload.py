@@ -13,9 +13,11 @@ DRAM words (`Layout`), all 4-byte words at 64-byte aligned bases:
     mbox + 4               its count of ids, as a float (the card writes it with each request:
                            k; a prefill run of R rows R k, repeats included, moe.moe_ffn_rows;
                            0.0 is read as k)
-    mbox + 64              the global expert ids of request seq (floats)
+    mbox + 64              the global expert ids of request seq (floats): the first 16
     served                 the last request the host has finished, as a float
     dir + 8 * g            expert g's entry: {slot address (u32), present (f32: 1.0 or 0.0)}
+    row2                   ids 17-32 of a request of more than 16 (a layout of 2 lines only:
+                           the 128-byte block after the directory)
 
 A global expert id is `j * E + e` for the j-th MoE layer's expert e (the card's ARGMAX gives it
 with base j * E). Per request the host, for each id missing from its copy of the directory:
@@ -24,6 +26,14 @@ to its entry, writes the new expert into its slot and then {slot, 1.0} to the ne
 the last id, `served = seq`. The card fences each layer before it posts, `WAITW served >= seq`
 (its last request), so one request row is enough, and no eviction for a layer is in flight
 while it uses that layer's slots (docs/offload.md 5.2).
+
+During a layer-major prefill (docs/offload.md 13: one MoE layer at a time over the whole
+prompt) the slots are pooled (`begin_prefill`): a missing expert of the running layer takes a
+free slot of any layer, else the slot of the least recently used expert the request does not
+name, of any layer (a finished layer's first). `end_prefill` restores each layer's own number
+of slots: a layer keeps its experts of most decayed use up to it, the rest leave (their entries
+cleared), and with "lazy" (the default; docs/offload.md 13) decode's misses fill the slots, with
+"eager" each layer's experts of most use in the prompt are loaded at once.
 
 A request whose ids are at G = layers x E and above is a hint (docs/offload.md 12: the layer's
 router on its input, before its mixer). With the "lfu" policy the host gives each hinted expert
@@ -149,15 +159,51 @@ class PoolFile:
     format, get(g) a SplitRecord; else the slot format, get(g) the bytes in one of two
     page-aligned buffers in turn (used before the next get: the server writes an expert
     before it asks for the next). warm(ids) reads those experts once in a thread, into the
-    page cache: the card's host disk serves about 115 MB/s to scattered reads, 13 ms an
-    expert of 1.67 MB. It moves bytes only."""
+    page cache: the card's host SSD reads an expert of 1.67 MB that is not in the page cache
+    in 4.2 ms (400 MB/s; docs/offload.md 10.6). It moves bytes only.
 
-    def __init__(self, path, slot: int, split: bool):
+    `mapped` (the default): every expert read (and warmed) is then touched through a read-only
+    map of the file, a byte a page. Under MGLRU (Linux's multi-generational LRU) a file page
+    read only through read() ages out before one a process has mapped and touched: a
+    checkpoint any process mmapped once outlived the pool's pages (docs/offload.md 10.7).
+
+    `io`, when set to {} (moe_card's decode), counts the reads by where they came from:
+    "cached" the reads whose pages were all in the page cache just before (mincore), "disk"
+    the others ("unknown" where mincore cannot tell), each [reads, seconds, bytes, bytes not
+    in the page cache]."""
+
+    def __init__(self, path, slot: int, split: bool, mapped: bool = True):
         import mmap
         self.fd, self.slot, self.split = os.open(path, os.O_RDONLY), slot, split
         self.bufs = [mmap.mmap(-1, slot) for _ in range(2)]
         self.k, self.warm_t = 0, None
         self.arr = self.packed = self.ids = self.resident_at_open = None    # (moe.open_pool)
+        self.io: dict | None = None
+        self.mapped = mapped
+        self._mc = None                 # the file's read-only map: (map, its view, libc)
+        if mapped:                      # (made here: the warm thread and the server share it)
+            self._map()
+
+    def _map(self):
+        """The file's read-only map, its uint8 view and libc (io's mincore, mapped's touches),
+        or None where the host has none."""
+        import ctypes
+        import mmap
+        if self._mc is None:
+            try:
+                mm = mmap.mmap(self.fd, os.fstat(self.fd).st_size, prot=mmap.PROT_READ)
+                self._mc = (mm, np.frombuffer(mm, np.uint8),
+                            ctypes.CDLL(None, use_errno=True))
+            except (OSError, AttributeError, ValueError):
+                self._mc = False
+        return self._mc or None
+
+    def _touch(self, off: int, n: int) -> None:
+        """A byte of every page under [off, off + n) read through the map (mapped)."""
+        import mmap
+        m = self._map()
+        if m is not None and n > 0:
+            int(m[1][off // mmap.PAGESIZE * mmap.PAGESIZE:off + n:mmap.PAGESIZE].sum())
 
     def resident(self, ids) -> int | None:
         """Bytes of these experts in the page cache (mincore over the file's pages), or None
@@ -187,13 +233,54 @@ class PoolFile:
         lo, hi = g * self.slot // pg, -(-(g + 1) * self.slot // pg)
         return int(np.minimum((cum[hi] - cum[lo]) * pg, self.slot).sum())
 
+    def _absent(self, off: int, n: int) -> int | None:
+        """Bytes of the file's pages under [off, off + n) not in the page cache (mincore), or
+        None where the host cannot tell."""
+        import ctypes
+        import mmap
+        m = self._map()
+        if m is None or n <= 0:
+            return None
+        pg = mmap.PAGESIZE
+        lo, hi = off // pg, -(-(off + n) // pg)
+        vec = (ctypes.c_ubyte * (hi - lo))()
+        if m[2].mincore(ctypes.c_void_p(m[1].ctypes.data + lo * pg),
+                        ctypes.c_size_t((hi - lo) * pg), vec) != 0:
+            return None
+        return (hi - lo - int((np.frombuffer(vec, np.uint8) & 1).sum())) * pg
+
+    def _read(self, bufs, off: int) -> None:
+        n = sum(map(len, bufs))
+        if self.io is None:
+            preadv(self.fd, bufs, off)
+        else:
+            gone = self._absent(off, n)
+            t0 = time.perf_counter()
+            preadv(self.fd, bufs, off)
+            s = self.io.setdefault("unknown" if gone is None else "disk" if gone else "cached",
+                                   [0, 0.0, 0, 0])
+            s[0] += 1
+            s[1] += time.perf_counter() - t0
+            s[2] += n
+            s[3] += gone or 0
+        if self.mapped:
+            self._touch(off, n)
+
     def get(self, g: int):
         if self.split:
             return SplitRecord(self.slot,
-                               lambda bufs, at=0: preadv(self.fd, bufs, g * self.slot + at))
+                               lambda bufs, at=0: self._read(bufs, g * self.slot + at))
         self.k ^= 1
-        preadv(self.fd, [memoryview(self.bufs[self.k])], g * self.slot)
+        self._read([memoryview(self.bufs[self.k])], g * self.slot)
         return np.frombuffer(self.bufs[self.k], np.uint8)
+
+    def willneed(self, ids) -> None:
+        """Queue these experts' reads into the page cache at once (POSIX_FADV_WILLNEED, where
+        the host has it): a request's misses that are not there read in parallel, not one
+        after another (opentpu's SATA SSD: 4.2 -> 3.4-3.6 ms an expert of 1.67 MB)."""
+        if hasattr(os, "posix_fadvise"):
+            for g in ids:
+                os.posix_fadvise(self.fd, int(g) * self.slot, self.slot, os.POSIX_FADV_WILLNEED)
 
     def warm(self, ids) -> threading.Thread:
         import mmap
@@ -202,6 +289,8 @@ class PoolFile:
         def run():
             for g in ids:
                 preadv(self.fd, [scratch], int(g) * self.slot)
+                if self.mapped:
+                    self._touch(int(g) * self.slot, self.slot)
                 t.bytes += self.slot
         t = threading.Thread(target=run, daemon=True, name="otpu-pool-warm")
         t.bytes = 0
@@ -220,23 +309,43 @@ class Layout:
     mbox: int
     served: int
     dir: int
+    row2: int = 0          # a request's second line of ids (0: requests of at most 16)
+    pitch: int = 0         # from a slot to the next (0: slot_bytes)
+
+    def __post_init__(self):
+        if not self.pitch:
+            object.__setattr__(self, "pitch", self.slot_bytes)
 
     @staticmethod
-    def build(base: int, E: int, k: int, slots_per_layer, slot_bytes: int) -> "Layout":
+    def build(base: int, E: int, k: int, slots_per_layer, slot_bytes: int,
+              lines: int = 1) -> "Layout":
         """The words from `base` up (64-byte aligned), then the slots, layer after layer, from
-        the next 4 KiB page (slot_bytes keeps them D-byte aligned: the MXU streams whole
-        chunks)."""
-        if base % LINE or slot_bytes % LINE or not 0 < k <= LINE // 4:
-            raise ValueError("unaligned base or slot size, or k too large")
+        the next 4 KiB page, each slot_bytes rounded up to whole RUN blocks from the last (the
+        split pool format's blocks land on the card's: BoardDram reads an expert straight into
+        its DMA runs only at a RUN-aligned slot; a slot under RUN keeps its size, which keeps
+        them D-byte aligned: the MXU streams whole chunks). lines=2: requests of up to 32 ids
+        (a layer-major prefill's runs of 4 rows),
+        their second line after the directory on a 128-byte block of its own (outside
+        BoardDram's shadow of the host's words); 1 leaves every address as it was."""
+        if base % LINE or slot_bytes % LINE or not 0 < k <= LINE // 4 or lines not in (1, 2):
+            raise ValueError("unaligned base or slot size, k too large, or not 1 or 2 lines")
         mbox = base
         served = mbox + 2 * LINE
         d = served + LINE
-        a = -(-(d + 8 * E * len(slots_per_layer)) // 4096) * 4096     # slots page-aligned
+        end = d + 8 * E * len(slots_per_layer)
+        row2 = -(-end // (2 * LINE)) * 2 * LINE if lines == 2 else 0
+        a = -(-(row2 + LINE if row2 else end) // 4096) * 4096        # slots page-aligned
+        pitch = -(-slot_bytes // RUN) * RUN if slot_bytes > RUN else slot_bytes
         slots = []
         for n in slots_per_layer:
             slots.append((a, int(n)))
-            a += int(n) * slot_bytes
-        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d)
+            a += int(n) * pitch
+        return Layout(E, k, tuple(slots), slot_bytes, mbox, served, d, row2, pitch)
+
+    @property
+    def max_ids(self) -> int:
+        """The most ids a request carries."""
+        return (2 if self.row2 else 1) * LINE // 4
 
     @property
     def layers(self) -> int:
@@ -245,7 +354,7 @@ class Layout:
     @property
     def end(self) -> int:
         a, n = self.slots[-1]
-        return a + n * self.slot_bytes
+        return a + (n - 1) * self.pitch + self.slot_bytes if n else a
 
     def entry(self, g: int) -> int:
         return self.dir + 8 * g
@@ -284,8 +393,10 @@ class ExpertServer:
         self.lru = [OrderedDict() for _ in range(layout.layers)]    # g -> slot address
         self.t = [0] * layout.layers                                # requests per layer
         self.use: list = [{} for _ in range(layout.layers)]          # g -> log2 use + t / half
-        self.free = [[a + i * layout.slot_bytes for i in range(n)] for a, n in layout.slots]
+        self.free = [[a + i * layout.pitch for i in range(n)] for a, n in layout.slots]
         self.pending: OrderedDict = OrderedDict()   # hinted, in a slot, not landed: g -> bytes sent
+        self.pooled = False                 # a layer-major prefill: every slot serves its layer
+        self.order: OrderedDict = OrderedDict()      # pooled: the experts in slots, oldest first
         self.seq = 0                        # the last request served
         self.hits = self.misses = self.bytes = 0
         # hints served; hinted experts landed on idle time, sent by the request that named
@@ -296,6 +407,9 @@ class ExpertServer:
         # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
         # the hints (moe_card --hint-trace)
         self.events: list | None = None
+        # called with a request's missing ids before the first is staged (PoolFile.willneed:
+        # the reads of those not in the page cache queued at once)
+        self.ahead = None
 
     def load(self, warm=()) -> None:
         """At image load: an empty directory and mailbox, then the experts `warm` names (global
@@ -309,6 +423,8 @@ class ExpertServer:
             fr.extend(lru.values())
             lru.clear()
         self.pending.clear()
+        self.pooled = False
+        self.order.clear()
         self.seq = 0
         self.t = [0] * L.layers
         self.use = [{} for _ in range(L.layers)]
@@ -345,8 +461,14 @@ class ExpertServer:
             raise RuntimeError(f"the card posted request {seq} with {self.seq} served: its "
                                f"fence (WAITW served >= seq) is missing")
         n = n or self.L.k                   # (a multi-row request's count: its ids, repeats
-        ids = list(dict.fromkeys(int(g) for g in np.frombuffer(     # included, each served once)
-            bytes(self.mem.read(self.L.row, 4 * n)), np.float32)))
+        if not 0 < n <= self.L.max_ids:     # included, each served once)
+            raise RuntimeError(f"request {seq} of {n} ids: the layout's lines hold "
+                               f"{self.L.max_ids}")
+        h = LINE // 4
+        raw = bytes(self.mem.read(self.L.row, 4 * min(n, h)))
+        if n > h:
+            raw += bytes(self.mem.read(self.L.row2, 4 * (n - h)))
+        ids = list(dict.fromkeys(int(g) for g in np.frombuffer(raw, np.float32)))
         G = self.L.E * self.L.layers
         m0 = self.misses
         if ids[0] >= G:
@@ -382,6 +504,10 @@ class ExpertServer:
         lru, use, t = self.lru[j], self.use[j], self.t[j] / self.half
         for g in ids:                       # the decayed use count, kept as log2 + t / half
             use[g] = math.log2(2.0 ** (use[g] - t) + 1.0) + t if g in use else t
+        if self.ahead is not None:
+            miss = [g for g in ids if g not in lru]
+            if miss:
+                self.ahead(miss)
         for g in ids:
             if g in lru:
                 lru.move_to_end(g)
@@ -393,7 +519,11 @@ class ExpertServer:
                     self.hits += 1
                 continue
             self.misses += 1
-            self._insert(j, g, self._slot(j, ids))
+            self._insert(j, g, self._pool_slot(j, ids) if self.pooled else self._slot(j, ids))
+        if self.pooled:
+            for g in ids:
+                self.order[g] = None
+                self.order.move_to_end(g)
         if self.drop:                       # its layer's hints it does not name, withdrawn
             for g in [g for g in self.pending if g // self.L.E == j and g not in ids]:
                 del self.pending[g]
@@ -408,7 +538,7 @@ class ExpertServer:
         5.4: an LRU victim of a wrong hint is a recent expert)."""
         j = self._layer(ids)
         self.hints += 1
-        if self.policy != "lfu":
+        if self.policy != "lfu" or self.pooled:
             return
         lru = self.lru[j]
         for g in ids:
@@ -466,6 +596,64 @@ class ExpertServer:
         else:
             self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
         return lru.pop(victim)
+
+    def _pool_slot(self, j: int, ids) -> int:
+        """Pooled: a free slot of layer j, else of any layer, else the slot of the least
+        recently used expert of any layer the request does not name (its entry cleared)."""
+        for fr in [self.free[j]] + self.free:
+            if fr:
+                return fr.pop(0)
+        victim = next((v for v in self.order if v not in ids), None)
+        if victim is None:
+            raise RuntimeError(f"{len(self.order)} slots for a request of {len(ids)}")
+        del self.order[victim]
+        self.mem.write(self.L.entry(victim), np.zeros(2, np.uint32))
+        return self.lru[victim // self.L.E].pop(victim)
+
+    def begin_prefill(self) -> None:
+        """A layer-major prefill starts (docs/offload.md 13): every slot serves the layer its
+        requests name. Hints still on their way are dropped (their slots free; their entries
+        read 0 already)."""
+        for g in list(self.pending):
+            del self.pending[g]
+            j = g // self.L.E
+            self.free[j].append(self.lru[j].pop(g))
+            self.dropped += 1
+        self.order = OrderedDict((g, None) for lru in self.lru for g in lru)
+        self.pooled = True
+
+    def end_prefill(self, restore: str = "lazy") -> None:
+        """The prefill ends: each layer gets its own number of slots back. A layer keeps its
+        experts of most decayed use (the prompt's requests) up to it; the others leave, their
+        entries cleared. "lazy": decode's misses fill the free slots (docs/offload.md 13: a
+        restore of every layer's set costs more than the misses it saves); "eager": each
+        layer's experts of most use not in a slot are loaded now."""
+        if restore not in ("lazy", "eager"):
+            raise ValueError(f"restore {restore!r}")
+        spare = [a for fr in self.free for a in fr]
+        for fr in self.free:
+            fr.clear()
+        for j, (_, n) in enumerate(self.L.slots):
+            lru, use = self.lru[j], self.use[j]
+            if len(lru) > n:
+                keep = set(sorted(lru, key=lambda g: use.get(g, -math.inf), reverse=True)[:n])
+                for g in [g for g in lru if g not in keep]:
+                    self.mem.write(self.L.entry(g), np.zeros(2, np.uint32))
+                    spare.append(lru.pop(g))
+        for j, (_, n) in enumerate(self.L.slots):
+            while len(self.lru[j]) + len(self.free[j]) < n:
+                self.free[j].append(spare.pop())
+        self.pooled = False
+        self.order.clear()
+        if restore == "eager":
+            for j in range(self.L.layers):
+                use = self.use[j]
+                for g in sorted(use, key=lambda g: use[g], reverse=True):
+                    if not self.free[j]:
+                        break
+                    if g not in self.lru[j]:
+                        self._insert(j, g, self.free[j].pop(0))
+        self._flush()
 
     def _insert(self, j: int, g: int, slot: int) -> None:
         data = self.pool(g)
@@ -607,6 +795,7 @@ class BoardDram:
         self._thread: threading.Thread | None = None
         self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
         self.direct = 0                         # experts read from the file into their runs
+        self.wait_s = 0.0                       # the server's waits for a free staging pair
         self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
 
     # ---- the worker
@@ -671,6 +860,13 @@ class BoardDram:
         for i in range(self.depth):
             self._free.put(i)
 
+    def _pair(self) -> int:
+        """A staging pair the worker is done with (waiting for it: wait_s)."""
+        t0 = time.perf_counter()
+        i = self._free.get()
+        self.wait_s += time.perf_counter() - t0
+        return i
+
     def _split_pieces(self, nbytes: int) -> list:
         """Per staging pair, an nbytes record's RUN / 2-byte pieces of the two runs, in file
         order for either parity ([block, parity, run])."""
@@ -691,7 +887,7 @@ class BoardDram:
         if (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
                 and len(data) % self.blk == 0):
             self._staging(len(data))            # the file's runs, read in place
-            i = self._free.get()
+            i = self._pair()
             pieces = self._split_pieces(len(data))[i]
             nb = pieces.shape[0]
             iov = pieces[np.arange(nb), _parity(addr // RUN + np.arange(nb))]
@@ -719,7 +915,7 @@ class BoardDram:
                                        else self._base[:n])
         i1 = self._i1[:n]
         np.bitwise_xor(i0, 1, out=i1)           # channel 1 takes each chunk's other beat
-        i = self._free.get()                    # a staging pair the worker is done with
+        i = self._pair()                        # a staging pair the worker is done with
         bufs, beats, h = self._bufs[i], src.view("V64"), n * self.blk // 2
         np.take(beats, i0, out=bufs[0][:h].view("V64"))       # channel 0's run
         np.take(beats, i1, out=bufs[1][:h].view("V64"))       # channel 1's

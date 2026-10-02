@@ -14,6 +14,10 @@
 #   q35eht, q35ehd, q35ehs, q35ehds: q35eh with the decode's hint timeline (--hint-trace), and
 #     with a request withdrawing its layer's unnamed hints (--hint-drop) and/or 128 KiB parts
 #   q35e128a/b, q35c128a/b: q35e and q35c at 128 tokens (their first 16 against the reference)
+#   q35e128t: q35e128a with each request's window and misses (--hint-trace); q35e128k: the same
+#     with the checkpoint kept mapped and the pool read one expert after another (--keep-weights
+#     --no-willneed: before session 10; docs/offload.md 10.6); q35e128r, q35e128rw, g26r:
+#     session 10's names for the defaults since
 #   g26a, g26b: gemma-4-26B-A4B (int8 layers, fp4 experts and head, slots filling the DRAM: 18 a
 #     layer), 128 tokens after wiki.txt's first paragraph (q26-hf.json, q26ref16.json: 16 tokens)
 #   g26t16, g26lm1, g26lm2: the 26B at 16 tokens, its prompt token by token (as g26a) or layer
@@ -21,11 +25,17 @@
 # Before each run the other pools leave the page cache and the run's pool is read into it. A run
 # whose files are not staged in O is skipped. Selftest before and after.
 # Run: otpu-lock --wait 3600 -- tools/offload/sessions/card_moe.sh   (RUNS="8b16 8b160 q35";
-# env.sh's T, O, R; PSFX=.split or "" for the pools' format; G26POOL)
+# env.sh's T, O, R, RF; PSFX=.split or "" for the pools' format; G26POOL)
 set -u
 source "$(dirname "$0")/env.sh"
 PSFX=${PSFX-.split}       # the pool files: the split format (.split.bin), or "" for the slot format
 G26POOL=${G26POOL:-../g26/pool-g26-fp4.split.bin}     # (relative to O)
+# before each run every other file of 100 MB or more under these leaves the page cache (MGLRU
+# keeps once-mmapped checkpoints over the pool's reads: docs/offload.md 10.6); "" for none. A
+# link whose target is outside ~/openTPU and ~/otpu-build is skipped (and logged), never opened.
+# HOG=dir:dir (after DROPOTHER): the files of 100 MB or more there mapped and touched first by
+# another process, as a user's host would have them (docs/offload.md 10.7)
+DROPOTHER=${DROPOTHER-$HOME/openTPU/models:$O:$O/$(dirname $G26POOL)}
 echo "card_moe start $(date +%T) tree $rev mem $(mem) GB"
 timeout 1800 python -m opentpu.host.selftest 2>&1 | grep -E "\[(PASS|FAIL)\]|config" | tail -12
 timeout 300 python tools/qual/refs.py cfg $R/cfg-dev.pkl > /dev/null 2>&1; echo "cfg exit $?"
@@ -55,16 +65,21 @@ declare -A RUN=(         # checkpoint, pool, tokens, HF's, reference, output, sl
   [q35ehds]="$Q35 16 q35-hf.json q35ref16 q35card16ehds 0 lfu --embed-table host --hints on --hint-drop --hint-part 128 --hint-trace $R/q35card16ehds.trace.json"
   [q35e128a]="$Q35 128 q35-hf.json q35ref16 q35card128ea 0 lfu --embed-table host --hints off"
   [q35e128b]="$Q35 128 q35-hf.json q35ref16 q35card128eb 0 lfu --embed-table host --hints off"
+  [q35e128t]="$Q35 128 q35-hf.json q35ref16 q35card128et 0 lfu --embed-table host --hints off --hint-trace $R/q35card128et.trace.json"
+  [q35e128k]="$Q35 128 q35-hf.json q35ref16 q35card128ek 0 lfu --embed-table host --hints off --keep-weights --no-willneed --hint-trace $R/q35card128ek.trace.json"
+  [q35e128r]="$Q35 128 q35-hf.json q35ref16 q35card128er 0 lfu --embed-table host --hints off --release-weights --hint-trace $R/q35card128er.trace.json"
+  [q35e128rw]="$Q35 128 q35-hf.json q35ref16 q35card128erw 0 lfu --embed-table host --hints off --release-weights --willneed --hint-trace $R/q35card128erw.trace.json"
   [q35c128a]="$Q35 128 q35-hf.json q35ref16 q35card128ca 0 lfu --embed-table card --hints off"
   [q35c128b]="$Q35 128 q35-hf.json q35ref16 q35card128cb 0 lfu --embed-table card --hints off"
   [g26a]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128a 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26b]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128b 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
+  [g26r]="gemma-4-26B-A4B $G26POOL 128 q26-hf.json q26ref16 g26card128r 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --release-weights"
   [g26t16]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4"
   [g26lm1]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm1 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 1"
   [g26lm2]="gemma-4-26B-A4B $G26POOL 16 q26-hf.json q26ref16 g26card16lm2 0 lfu --wformat int8 --formats experts=fp4 --head-format fp4 --layer-major 2")
 for name in ${RUNS:-8b16 8b160 q35}; do
   read -r md pool n hf ref out ex pol extra <<< "${RUN[$name]}"
-  if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $O/$ref.json ]; then
+  if [ ! -f $O/$md/config.json ] || [ ! -f $O/$pool ] || [ ! -f $RF/$ref.json ]; then
     echo "  [SKIP] $name: not staged"; continue; fi
   echo "=== $name $(date +%T)"
   python - $O/$pool $O/pool-*.bin $O/$(dirname $G26POOL)/pool-*.bin <<'PY'
@@ -75,6 +90,54 @@ for f in set(map(os.path.realpath, sys.argv[2:])) - {os.path.realpath(sys.argv[1
         os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         os.close(fd)
 PY
+  if [ -n "${DROPOTHER:-}" ]; then            # every other checkpoint's pages out too (session
+    python - $O/$md $O/$pool $DROPOTHER <<'PY'  # 10: MGLRU kept the mmapped checkpoints of the
+import os, sys                                # session before, 13.6 GB, over the pool's reads)
+keep = {os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])}
+ours = tuple(os.path.realpath(os.path.expanduser(d)) + os.sep for d in ("~/openTPU", "~/otpu-build"))
+gb = n = 0
+seen = set()
+for d in sys.argv[3].split(":"):
+    for root, _, files in os.walk(os.path.expanduser(d)):     # (links to files followed,
+        for f in files:                                      # to directories not)
+            r = os.path.realpath(os.path.join(root, f))
+            if not r.startswith(ours):                       # a link out of our trees: the
+                if r not in seen:                            # host's other files are not
+                    print(f"  DROPOTHER skipped {os.path.join(root, f)} -> {r}")   # ours
+                seen.add(r)
+                continue
+            if (r in seen or not os.path.isfile(r) or os.path.getsize(r) < 100 << 20
+                    or r in keep or os.path.dirname(r) in keep):
+                continue
+            seen.add(r)
+            fd = os.open(r, os.O_RDONLY)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            os.close(fd)
+            gb, n = gb + os.path.getsize(r) / 1e9, n + 1
+print(f"  dropped from the page cache: {n} other files of {gb:.1f} GB")
+PY
+  fi
+  if [ -n "${HOG:-}" ]; then                  # a user's host: files another process mapped
+    python - $HOG <<'PY'                        # and touched (and exited), which a session
+import mmap, os, sys                          # cannot evict (docs/offload.md 10.7)
+import numpy as np
+ours = tuple(os.path.realpath(os.path.expanduser(d)) + os.sep for d in ("~/openTPU", "~/otpu-build"))
+gb = 0
+for d in sys.argv[1].split(":"):
+    for root, _, files in os.walk(os.path.expanduser(d)):
+        for f in files:
+            r = os.path.realpath(os.path.join(root, f))
+            if not r.startswith(ours) or os.path.getsize(r) < 100 << 20:
+                continue
+            fd = os.open(r, os.O_RDONLY)
+            mm = mmap.mmap(fd, os.path.getsize(r), prot=mmap.PROT_READ)
+            int(np.frombuffer(mm, np.uint8)[::mmap.PAGESIZE].sum())
+            mm.close()
+            os.close(fd)
+            gb += os.path.getsize(r) / 1e9
+print(f"  hog: {gb:.1f} GB mapped and touched")
+PY
+  fi
   t0=$SECONDS; cat $O/$pool > /dev/null      # the RAM tier warm before each timed run, and how
   python - $O/$pool <<'PY'                    # much of the pool the page cache holds
 import os, sys
@@ -90,7 +153,7 @@ PY
     > $R/$out.log 2>&1
   echo "  exit $? $(date +%T)"; grep -E "Error|Traceback" $R/$out.log | tail -3
   [ -f $R/$out.json ] || continue
-  python - $R/$out.json $O/$ref.json $O/$hf <<'PY'
+  python - $R/$out.json $RF/$ref.json $O/$hf <<'PY'
 import json, sys
 c, r, h = (json.load(open(f)) for f in sys.argv[1:])
 same = c["tokens"][:len(r["tokens"])] == r["tokens"]      # (a longer run: the reference's prefix)
@@ -101,7 +164,7 @@ print(f"  [{'PASS' if same and c['prefill_logits_sha'] == r['prefill_logits_sha'
 k = ("tok_s_wall", "tok_s_device", "hits", "misses", "misses_per_token_decode",
      "misses_per_token_decode_2nd_half", "bytes_per_token_decode", "host_decode_s", "load_s",
      "prefill_s", "generate_s", "experts_per_layer", "policy", "pool_warm", "embed_host",
-     "hints", "layer_major", "prefill_requests", "prefill_misses")
+     "hints", "layer_major", "prefill_requests", "prefill_misses", "host_mem", "device_counters")
 print("  " + json.dumps({x: c.get(x) for x in k}))
 PY
 done

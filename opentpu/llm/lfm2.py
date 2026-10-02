@@ -172,6 +172,26 @@ class Spec:
                      embed_host, formats)
 
 
+def _place(b, runs, size) -> dict:
+    """The layer blocks of the runs (plan's) from b.next on, each run's units one after the
+    other (size(key): a block's bytes): {layer: (run base, unit stride, iteration, offset in
+    the unit, unit length)}."""
+    loc = {}
+    for first, unit, reps in runs:
+        offs = np.cumsum([0] + [size(k) for k in unit]).tolist()
+        us, base = offs[-1], b.next
+        for it in range(reps):
+            for e in range(len(unit)):
+                loc[first + it * len(unit) + e] = (base, us, it, offs[e], len(unit))
+        b.next = base + reps * us
+    return loc
+
+
+def _kind(key) -> str:
+    """A layer's kind from its Spec.lkinds entry (for a MoE model: kind, is a MoE layer)."""
+    return key[0] if isinstance(key, tuple) else key
+
+
 def plan(kinds) -> list:
     """The layers as runs [(first layer, unit of kinds, repeats)]: the repeated unit covering
     the most layers becomes one hardware loop; the layers before and after it are planned the
@@ -368,13 +388,16 @@ class Image(EmbedHost):
     """Per-slice DRAM layout of an LFM2 model. Every slice uses the same addresses.
 
     [ I/O: x_in, cos, sin | final norm | logits ] [ layer 0 block ] ... [ layer L-1 block ]
-    [ LM head rows of this slice ]. All layer blocks have one size: both kinds start with the
-    norms and this slice's MLP rows; a conv block then holds the taps, the state ring and this
-    slice's rows of in_proj (its channels of B, C and x) and out_proj; an attention block holds
-    the q/k norms, the projections and this slice's KV heads with room for `cap` tokens. The
-    I/O area holds `rows` token rows (x, cos, sin, logits) for chunked prefill. Weight formats
-    as qwen3.Image (`formats` over the KINDS of this file; a MoE's experts in `wformat`, its
-    router int8).
+    [ LM head rows of this slice ]. A layer block's layout and size are its kind's in its
+    formats group (a layer's conv, attention, gate / up and down formats: Image.lf); both kinds
+    start with the norms and this slice's MLP rows, at the same offsets in a group; a conv
+    block then holds the taps, the state ring and this slice's rows of in_proj (its channels of
+    B, C and x) and out_proj; an attention block holds the q/k norms, the projections and this
+    slice's KV heads with room for `cap` tokens. The I/O area holds `rows` token rows (x, cos,
+    sin, logits) for chunked prefill. Weight formats as qwen3.Image (`formats` over the KINDS
+    of this file, per layer range; a MoE's experts in `wformat`, its router int8, its dense
+    layers' MLPs one format): the layers run as the runs of plan over their (kind, formats
+    group) keys, each run's blocks one after the other.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
@@ -390,69 +413,49 @@ class Image(EmbedHost):
         H, d, F_, K = spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
         wformat, formats = FM.named(spec, wformat, formats)
         fmt = FM.resolver(formats, KINDS, spec.formats, wformat, head_format)
-        dense = [i for i in range(spec.layers) if not spec.is_moe(i)]
-        kf = FM.uniform(fmt, {k: [i for i, t in enumerate(spec.kinds) if t == k]
-                              for k in (CONV, ATTN)} | {"gateup": dense, "down": dense})
+        # each layer's formats group: conv, attention, gate / up, down where it is (the
+        # layers of a group share a block size and the common part's offsets, as one group did)
+        self.lf = tuple((fmt(CONV, i), fmt(ATTN, i), fmt("gateup", i), fmt("down", i))
+                        for i in range(spec.layers))
+        if spec.moe is not None:    # the dense layers' MLP region: one layout
+            FM.uniform(fmt, dict.fromkeys(("gateup", "down"), range(spec.moe.first)))
         self.wformat, self.head_format = wformat, fmt("head")
-        self.mf = {"win": kf[CONV], "wout": kf[CONV], "wq": kf[ATTN], "wk": kf[ATTN],
-                   "wv": kf[ATTN], "wo": kf[ATTN], "wg": kf["gateup"], "wu": kf["gateup"],
-                   "wd": kf["down"]}            # each projection's format (KINDS)
         self.formats = _formats(spec, formats)
         rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         self.dk = -(-d // D) * D                        # cached K row / query width
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
-        self.plan = plan(spec.lkinds)
-        self.mlp_loop = sum(len(u) for _, u, _ in self.plan) > MLP_UNROLL_BODIES
         mo = spec.moe
         b = _Bump()
         R = rows
         self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
                    "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab * R)}
         self.layer0 = b.next
-        lb = _Bump()                                    # offsets inside one layer block
-        common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
         mlp = {"wg": (self.f_loc, H), "wu": (self.f_loc, H)}
-        self.dchunk = _chunk(self.f_loc, D, D if self.mf["wd"] == "int8" else 2 * D)
-        # the dense MLP: in every layer block, or for a MoE model (whose MoE layers have none)
-        # in a region of its own, one MLP per dense layer (layers 0 .. moe.first - 1)
-        mb = lb if mo is None else _Bump()
-        dense = {name: (mb.alloc(n * rb(k, self.mf[name])), mb.alloc(4 * n * (k // D)))
-                 for name, (n, k) in mlp.items()}
-        dense["wd"] = [(mb.alloc(self.h_loc * rb(self.dchunk, self.mf["wd"])),
-                        mb.alloc(4 * self.h_loc * (self.dchunk // D)))
-                       for _ in range(F_ // self.dchunk)]
-        if mo is None:
-            common.update(dense)
-        else:                       # the router (int8 in every format), its bias, j * E
-            self.mlp_ofs, self.DS = dense, (mb.next + 4095) // 4096 * 4096
-            common.update(router=(lb.alloc(mo.E * H), lb.alloc(4 * mo.E * (H // D))),
-                          ebias=lb.alloc(4 * mo.E), gbase=lb.alloc(4))
-            mlp = {}
-        self.mats = {CONV: {"win": (3 * self.h_loc, H), "wout": (self.h_loc, H), **mlp},
+        self.mats = {CONV: {"win": (3 * self.h_loc, H), "wout": (self.h_loc, H)},
                      ATTN: {"wq": (self.nq_loc * d, H), "wk": (self.nkv_loc * d, H),
-                            "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d), **mlp}}
-        cb = _Bump(lb.next)
-        conv = dict(common, taps=cb.alloc(4 * K * self.h_loc),
-                    state=cb.alloc(4 * 2 * K * self.h_loc))         # mirrored (_ring_rows)
-        ab = _Bump(lb.next)
-        attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
-        for kind, bump, L in ((CONV, cb, conv), (ATTN, ab, attn)):
-            for name, (n, k) in self.mats[kind].items():
-                if name not in L:
-                    L[name] = (bump.alloc(n * rb(k, self.mf[name])), bump.alloc(4 * n * (k // D)))
+                            "wv": (self.nkv_loc * d, H), "wo": (self.h_loc, spec.n_q * d)}}
+        if mo is None:
+            for kind in (CONV, ATTN):
+                self.mats[kind].update(mlp)
+        # formats group -> its block layouts (_layout); layer 0's those of the image (and of
+        # a MoE's dense MLP region)
+        self.layouts = {g: self._layout(g, mlp, rb) for g in dict.fromkeys(self.lf)}
+        g0 = self.layouts[self.lf[0]]
+        self.lofs, self.mf, self.dchunk = g0.lofs, g0.mf, g0.dchunk
+        if mo is not None:
+            self.mlp_ofs, self.DS = g0.mlp_ofs, g0.DS
+        # the runs (plan): a layer's key is its kind and formats group
+        self.keys = tuple(zip(spec.lkinds, self.lf))
+        self.plan = plan(self.keys)
+        self.mlp_loop = sum(len(u) for _, u, _ in self.plan) > MLP_UNROLL_BODIES
+        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].size[_kind(k[0])])
         dk = self.dk
-        attn["kv"] = [{"k": ab.alloc(cap * dk), "ks": ab.alloc(4 * cap * (dk // D)),
-                       "vt": ab.alloc(dk * cap), "vs": ab.alloc(4 * cap)}
-                      for _ in range(self.nkv_loc)]
-        self.lofs = {CONV: conv, ATTN: attn}
-        self.LS = (max(cb.next, ab.next) + 4095) // 4096 * 4096
         n_attn = spec.kinds.count(ATTN)
         head = cap * dk + 4 * cap * (dk // D) + dk * cap + 4 * cap
         self.kv_bytes = (n_attn * self.nkv_loc * head                   # KV cache and
                          + (spec.layers - n_attn) * 8 * K * self.h_loc)  # conv state, per sequence
-        b.next = self.layer0 + spec.layers * self.LS
         self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
                      b.alloc(4 * self.v_loc * (H // D)))
         # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
@@ -483,6 +486,63 @@ class Image(EmbedHost):
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
 
+    def _layout(self, g: tuple, mlp: dict, rb) -> SimpleNamespace:
+        """The layer block layouts of formats group g (conv, attention, gate / up, down): each
+        projection's format (mf), W_down's chunk, the conv and attention blocks' offsets (the
+        norms and the dense MLP first, at the same offsets in both) and sizes (size)."""
+        spec, cfg, cap = self.spec, self.cfg, self.cap
+        D, H, d, F_, K = cfg.D, spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
+        fc, fa, fg, fd = g
+        mf = {"win": fc, "wout": fc, "wq": fa, "wk": fa, "wv": fa, "wo": fa, "wg": fg,
+              "wu": fg, "wd": fd}
+        mo = spec.moe
+        lb = _Bump()                                    # offsets inside one layer block
+        common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
+        dchunk = _chunk(self.f_loc, D, D if fd == "int8" else 2 * D)
+        # the dense MLP: in every layer block, or for a MoE model (whose MoE layers have none)
+        # in a region of its own, one MLP per dense layer (layers 0 .. moe.first - 1)
+        mb = lb if mo is None else _Bump()
+        dense = {name: (mb.alloc(n * rb(k, mf[name])), mb.alloc(4 * n * (k // D)))
+                 for name, (n, k) in mlp.items()}
+        dense["wd"] = [(mb.alloc(self.h_loc * rb(dchunk, fd)),
+                        mb.alloc(4 * self.h_loc * (dchunk // D)))
+                       for _ in range(F_ // dchunk)]
+        ns = SimpleNamespace(mf=mf, dchunk=dchunk)
+        if mo is None:
+            common.update(dense)
+        else:                       # the router (int8 in every format), its bias, j * E
+            ns.mlp_ofs, ns.DS = dense, (mb.next + 4095) // 4096 * 4096
+            common.update(router=(lb.alloc(mo.E * H), lb.alloc(4 * mo.E * (H // D))),
+                          ebias=lb.alloc(4 * mo.E), gbase=lb.alloc(4))
+        cb = _Bump(lb.next)
+        conv = dict(common, taps=cb.alloc(4 * K * self.h_loc),
+                    state=cb.alloc(4 * 2 * K * self.h_loc))         # mirrored (_ring_rows)
+        ab = _Bump(lb.next)
+        attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
+        for kind, bump, L in ((CONV, cb, conv), (ATTN, ab, attn)):
+            for name, (n, k) in self.mats[kind].items():
+                if name not in L:
+                    L[name] = (bump.alloc(n * rb(k, mf[name])), bump.alloc(4 * n * (k // D)))
+        dk = self.dk
+        attn["kv"] = [{"k": ab.alloc(cap * dk), "ks": ab.alloc(4 * cap * (dk // D)),
+                       "vt": ab.alloc(dk * cap), "vs": ab.alloc(4 * cap)}
+                      for _ in range(self.nkv_loc)]
+        ns.lofs = {CONV: conv, ATTN: attn}
+        ns.size = {CONV: (cb.next + 4095) // 4096 * 4096, ATTN: (ab.next + 4095) // 4096 * 4096}
+        return ns
+
+    def _off(self, li, it=None) -> Affine:
+        """The block address of layer li (static), or of element li of its run's unit at
+        iteration `it` (a loop variable)."""
+        base, us, i, o, _ = self.loc[li]
+        return Affine(base + o) + Affine.of(i if it is None else it) * us
+
+    def _idx(self, li, it=None) -> Affine:
+        """Layer li's index (static), or the index of element li of its run's unit at
+        iteration `it`."""
+        base, us, i, o, n = self.loc[li]
+        return Affine(li) if it is None else Affine(li - i * n) + Affine.of(it) * n
+
     # ---- contents
     def build(self, W: dict) -> list[np.ndarray]:
         """DRAM images (one per slice) with every weight quantized in place, KV cache and
@@ -494,8 +554,6 @@ class Image(EmbedHost):
         def put(s, addr, a):
             v = np.ascontiguousarray(a).view(np.uint8).reshape(-1)
             imgs[s][addr:addr + v.size] = v
-
-        mf = self.mf
 
         def put_q(addr_pair, parts, fmt):
             for s, p in enumerate(parts):
@@ -512,9 +570,10 @@ class Image(EmbedHost):
         for s in range(S):
             put(s, self.io["gf"], f32(W["model.embedding_norm.weight"]))
         for i, kind in enumerate(spec.kinds):
-            p, base = f"model.layers.{i}.", self.layer0 + i * self.LS
+            p, base, g = f"model.layers.{i}.", self._off(i).const, self.layouts[self.lf[i]]
+            mf = g.mf
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
-                      (base + v if isinstance(v, int) else v)) for k, v in self.lofs[kind].items()}
+                      (base + v if isinstance(v, int) else v)) for k, v in g.lofs[kind].items()}
             for s in range(S):
                 put(s, Lo["g_in"], f32(W[p + "operator_norm.weight"]))
                 put(s, Lo["g_post"], f32(W[p + "ffn_norm.weight"]))
@@ -545,13 +604,13 @@ class Image(EmbedHost):
                 put(0, Lo["ebias"], f32(W[f + "expert_bias"]))
                 put(0, Lo["gbase"], f32([(i - mo.first) * mo.E]))
                 continue
-            mb, mofs = base, self.lofs[kind]
+            mb, mofs = base, g.lofs[kind]
             if spec.moe is not None:
                 mb, mofs = self.dense0 + i * self.DS, self.mlp_ofs
             for name, hf in (("wg", "w1"), ("wu", "w3")):
                 put_q(tuple(mb + x for x in mofs[name]),
                       rows(W[p + f"feed_forward.{hf}.weight"], self.f_loc), mf[name])
-            C_ = self.dchunk
+            C_ = g.dchunk
             for j, pair in enumerate(mofs["wd"]):
                 put_q((mb + pair[0], mb + pair[1]),
                       [r[:, j * C_:(j + 1) * C_] for r in rows(W[p + "feed_forward.w2.weight"], n)],
@@ -611,20 +670,23 @@ class Image(EmbedHost):
         spec, cfg = self.spec, self.cfg
         D, d, H, K, n = cfg.D, spec.head_dim, spec.hidden, spec.conv_k, self.h_loc
 
-        def layer(li, kind):
-            """Descriptors of layer `li` (an int or a hardware-loop expression) of `kind` (for
-            a MoE model: (kind, is a MoE layer), Spec.lkinds)."""
+        def layer(li, it=None):
+            """Descriptors of layer `li` (static), or of element li of its run's unit at
+            iteration `it` (a hardware-loop variable). Its kind (for a MoE model: kind, is a MoE
+            layer; Spec.lkinds) and formats group from self.keys."""
+            kind, g = self.keys[li]
             moe = False
             if isinstance(kind, tuple):
                 kind, moe = kind
-            off = Affine.of(self.layer0) + Affine.of(li) * self.LS
-            lofs = self.lofs[kind]
+            g = self.layouts[g]
+            off = self._off(li, it)
+            lofs, mf = g.lofs[kind], g.mf
             ns = SimpleNamespace(g_in=Tensor(off + lofs["g_in"], (H,), (1,)),
                                  g_post=Tensor(off + lofs["g_post"], (H,), (1,)), moe=moe,
-                                 mlp_loop=self.mlp_loop)
+                                 mlp_loop=self.mlp_loop, kind=kind)
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
-                fm = self.mf[name]
+                fm = mf[name]
                 setattr(ns, name, QTensor(off + da, off + sa, (r, k), Q.row_bytes(k, fm, D),
                                           4 * (k // D), D, wf=Q.mxu_wf(fm)))
             if moe:
@@ -637,15 +699,15 @@ class Image(EmbedHost):
                 mofs, moff = lofs, off
                 if spec.moe is not None:            # the dense layers' MLP region
                     mofs = self.mlp_ofs
-                    moff = Affine.of(self.dense0) + Affine.of(li) * self.DS
+                    moff = Affine.of(self.dense0) + self._idx(li, it) * self.DS
                     for name in ("wg", "wu"):
                         da, sa = mofs[name]
-                        fm = self.mf[name]
+                        fm = mf[name]
                         setattr(ns, name, QTensor(moff + da, moff + sa, (self.f_loc, H),
                                                   Q.row_bytes(H, fm, D), 4 * (H // D), D,
                                                   wf=Q.mxu_wf(fm)))
-                C = self.dchunk
-                fm = self.mf["wd"]
+                C = g.dchunk
+                fm = mf["wd"]
                 wf = Q.mxu_wf(fm)
                 rc = Q.row_bytes(C, fm, D)
                 parts = tuple(QTensor(moff + da, moff + sa, (n, C), rc, 4 * (C // D), D, wf=wf)
@@ -732,9 +794,9 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     spec = m.spec
     x, c, s_ = _inputs(m, pos, tok)
 
-    def layer(li, kind):
-        lw = m.layer(li, kind)
-        if (kind[0] if isinstance(kind, tuple) else kind) == CONV:
+    def layer(li, it):
+        lw = m.layer(li, it)
+        if lw.kind == CONV:
             x.set(_conv(x, lw, pos, spec))
         else:
             x.set(_attention(x, lw, c, s_, pos, spec, block))
@@ -791,9 +853,9 @@ def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=No
     rows = [(0, p0 + r) for r in range(R)]
     x, c, s_ = _inputs_rows(m, rows, tokens)
 
-    def layer(li, kind):
-        lw = m.layer(li, kind)
-        if kind == CONV:
+    def layer(li, it):
+        lw = m.layer(li, it)
+        if lw.kind == CONV:
             x.set(_conv_rows(x, lw, p0, spec))
         else:
             x.set(_attention_rows(x, lw, c, s_, rows, spec, block))
@@ -804,14 +866,14 @@ def lfm2_rows(m, p0: int, R: int, logit_rows, block: int = ATTN_BLOCK, tokens=No
 
 
 def run_layers(runs, layer) -> None:
-    """Emit the layers of a plan (runs of `plan`) as layer(index, kind): a run with repeats is
-    one hardware loop over its unit (the index is then a loop expression), the others are
-    unrolled."""
+    """Emit the layers of a plan (runs of `plan`) as layer(index, it): a run with repeats is
+    one hardware loop over its unit (the index is the element's layer in the first iteration,
+    `it` the loop variable), the others are unrolled (`it` None)."""
     for first, unit, reps in runs:
         if reps == 1:
-            for e, kind in enumerate(unit):
-                layer(first + e, kind)
+            for e in range(len(unit)):
+                layer(first + e, None)
             continue
         for i in ol.range(reps):
-            for e, kind in enumerate(unit):
-                layer(first + i * len(unit) + e, kind)
+            for e in range(len(unit)):
+                layer(first + e, i)
