@@ -261,14 +261,15 @@ def main(argv=None) -> int:
                 if not np.array_equal(got, src):
                     fail = f"bounced {n} B: read back differs"
                     break
-                out["bounced"].append({"bytes": n, "gbs": k * n / dt, "calls": k,
+                out["bounced"].append({"bytes": n, "gbs": k * n / dt / 1e9, "calls": k,
                                        "placed": B._write_ok(B._addr(src), B.BASE[0] + c0)})
                 dst = B.placed(n, B.BASE[0] + c0)
                 k, t0 = 0, time.perf_counter()
                 while k < 3 or time.perf_counter() - t0 < a.secs:
                     t.mem_read(0, c0, n, dst)
                     k += 1
-                out["c2h"].append({"bytes": n, "gbs": k * n / (time.perf_counter() - t0), "calls": k})
+                out["c2h"].append({"bytes": n, "gbs": k * n / (time.perf_counter() - t0) / 1e9,
+                                   "calls": k})
                 print(f"{n:>9} B  bounced h2c {out['bounced'][-1]['gbs']:5.2f} GB/s  "
                       f"c2h {out['c2h'][-1]['gbs']:5.2f} GB/s", flush=True)
         out["ecc_after"] = ecc_counts(t)
