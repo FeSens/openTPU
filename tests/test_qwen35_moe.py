@@ -290,6 +290,43 @@ def test_layer_major_prefill_is_bit_exact(tiny, wformat, R, b, real, embed_runs,
         t = int(np.argmax(ga))
 
 
+
+def test_layer_major_runs_compile_in_the_worker_processes(tiny):
+    """Engine._precompile_layers: with the process pipeline (a backend running assembled words,
+    as the board does) prefill_layers' programs all come from the worker processes
+    (layer_programs in the worker's image, assembled), queued in the order they run; here the
+    ISA simulator runs them (the words decoded), and the logits and the decode steps after
+    equal token by token's bit for bit."""
+    from opentpu import isa as I
+    from opentpu.llm.qwen3 import IsaBackend
+
+    class Words(IsaBackend):                    # the ISA simulator taking the board's words
+        runs_words = True
+
+        def run(self, programs, args=None):
+            if isinstance(programs, np.ndarray):
+                programs = [[I.Instr.decode(programs[i:i + 8])
+                             for i in range(0, len(programs), 8)]]
+            return super().run(programs, args)
+
+    spec, W = _untied(tiny)
+    cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=2 * K)
+    a = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K, layer_major=2,
+               backend=lambda c, imgs: Words(c, imgs, adopt=True))
+    ref = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True, experts=2 * K)
+    try:
+        assert a._procs and a._ready.result(timeout=120)
+        toks = [int(t) for t in np.random.default_rng(5).integers(0, 1000, 21)]
+        la, lb = a.prefill(toks), ref.prefill(toks)
+        assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+        assert a._layer_runs and not a._layer_next
+        assert all(progs is None and isinstance(w, np.ndarray)    # (the worker's)
+                   for progs, _, w in a._layer_runs.values())
+        for t in (5, 6):
+            assert np.array_equal(a.step(t).view(np.uint32), ref.step(t).view(np.uint32))
+    finally:
+        a._pool.shutdown()
+
 def _hinted(spec):
     return replace(spec, moe=replace(spec.moe, hint=True))
 
