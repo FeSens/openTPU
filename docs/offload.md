@@ -3099,3 +3099,128 @@ Open items:
 
 The predictor stays opt-in (--layer-ahead hint, --ahead-part). Its card check repeats after
 items 1 and 2.
+
+### 13.11 Design: expert-major MoE in layer-major prefill
+
+Today a layer-major run of R = 2 rows routes its rows and runs the union of their experts on both
+rows (moe_ffn_rows). Two rows rarely share many experts, so a layer makes far more expert passes
+than it has experts. On pa's base traces (ld-memch) the 35B makes 845 passes a layer for 140
+distinct experts, and the 26B 752 for 75. A pass on two rows (PAIR) costs what a pass on one does,
+and c(M), one expert's FFN on M rows (co-sim, RTL + LiteDRAM), grows by pairs of rows:
+
+| M | 1 | 2 | 3 | 4 | 6 | 8 |
+|:--|--:|--:|--:|--:|--:|--:|
+| 35B, ms | 0.101 | 0.100 | 0.192 | 0.194 | 0.370 | 0.372 |
+| 26B, ms | 0.210 | 0.210 | 0.390 | 0.393 | 0.763 | |
+
+Expert-major splits each layer of a chunk into two parts.
+
+1. Mixer runs (R rows, as today): the previous layer's combine for their rows, the mixer, then
+   the MoE prologue. The prologue is the router and the k best with their weights (moe_ffn_rows'
+   loop), plus the shared expert (Qwen3.5) or the dense MLP beside (Gemma 4). Its outputs are
+   stored per row to a prefill scratch (below): the expert input (fp32, re-quantized when loaded:
+   per row, so bit for bit), the ids and weights, and the shared or dense output. The run ends by
+   posting its R x k ids as a need line (the protocol below).
+2. One expert run: the bucketing, then each pass, which is two entries of one expert:
+   - wait for the expert's directory entry;
+   - load the two rows' inputs, quantize, swiglu_down at the slot;
+   - store each output row at its (row, rank) place (an odd tail's second output goes to a sink).
+
+The combine, in the next layer's runs, sums each row's k outputs in its router's order, then
+adds the shared output (Qwen3.5: x + (sum + shared)), or does Gemma 4's
+norm(dense) + norm(acc) and _add_norm, in moe_ffn_rows' order. So a row's result is today's,
+bit for bit. The last layer combines only the head's row, in the head run. Token steps (rows
+before conv_k - 1), decode and its programs do not change.
+
+The kernels, measured by ld-memch (ISA against numpy, then RTL co-sim at 133.33 MHz; omarchy
+~/otpu-build/pf/kcost.py):
+- Bucketing: a loop over the N = rows x k entries (pointer register, ADDI). Per entry it RLDs
+  the id, toggles the expert's parity, and either opens a pass (FILL e, A, open[e]) or closes
+  one (FILL B), with LOOPs counted by the parity for the branches. That is 10.2 instructions
+  and 54.7 cycles an entry: 0.43 ms a layer on the 35B (N = 1040), 0.41 on the 26B, and the
+  pass counts match numpy (587 / 529).
+  - Its table is N / 2 + E rows of 4 words, so 512 rows fit.
+  - A segments variant (an E x rows table, 0.32 / 0.26 ms) does not fit TMEM at 512 rows on the
+    35B, so it is not used.
+  - Raw integer words through the VPU are denormals and FILL / COPY flush them, so registers
+    are written as 2^23 + R and corrected (ld-memch).
+- A pass costs c(2) + 4.3-4.8 us: 7 RLDs, 3 LDs and 2 STs. The directory word read from DRAM
+  overlaps the previous pass's stream. That is ~2.5 ms a layer.
+
+The model (emsim.py, scratchpad; the router traces' windows, 6 x 131 rows on the 35B and 6 x 124
+on the 26B):
+- Calibration: the base's per-miss link time is fit so its card waits match pfhint2's warm base
+  (35B 2.68 against 2.72 s, 26B 1.83 against 1.84).
+- Inputs: the card's per-run times, c(M) and the kernel costs above; contention of 0.17 s a GB
+  on every byte streamed during compute; halt-aware holds.
+- Passes a layer: 35B 840 -> 564, 26B 767 -> 517.
+
+| variant | 35B | 26B |
+|:--|--:|--:|
+| needs streamed during the mixer runs, an expert 0.79 / 1.29 ms (v2's one-call parts) | **-1.9 s** (-1.87 to -2.06) | **-2.0 s** (-1.80 to -2.05) |
+| the same, an expert 0.95 / 1.10 ms (35B) | -1.7 / -1.1 s | |
+| the same on today's part path (35B 1.55 ms) | +1.1 s | -1.9 s |
+| demand only (the expert run's misses served one after another) | +0.3 s | -1.1 s |
+
+On the 35B, the streamed variant removes about 2.6 s of waits and 1.1 s of expert passes, and
+adds 1.56 s of contention. Contention is the model's largest uncertainty, about +-0.5 s. The 35B's
+mixer phase (~150 ms a DeltaNet layer, ~105 ms an attention layer) carries its 138 experts only
+at about 0.8 ms each. So B on the 35B comes after offload's v2 parts and a card re-measure of
+their cost.
+
+The server (agreed with offload, 2026-10-02; host only, with begin_prefill(expert_major=True)):
+- Need lines: a mixer run posts its R x k ids for its own layer, offset by need_off =
+  2 x layers x E, after the fence, as a hint line. Ids from 2G up are needs, G to 2G hints, and
+  below G requests (G = layers x E).
+  - Sixteen ids fill the first line (R = 2, k = 8); up to 32 go through row2, as today.
+  - Poll writes served as for a hint: no answer, no use counted.
+- The need queue is the server's own, apart from ahead_layer's.
+  - Poll appends the ids in no slot (on their way included), not pending and not queued, in
+    arrival order.
+  - Needs stream on idle parts (v2: one call, read ahead, halt-aware), ahead of any ahead_layer
+    queue.
+  - A need is never dropped or withdrawn, and the queue is never replaced (begin_prefill,
+    end_prefill, ahead_layer and _drop_ahead leave it alone).
+  - end_prefill drains it first (settle), so nothing pending crosses into decode.
+- Victims: while expert-major is on, every slot taken during layer j's runs (a need, an ahead
+  queue's expert, a demand miss) has its victim outside layers {j - 1, j, j + 1}. A need's slot
+  is never reused before the expert run has read it. This is the one way the card could read a
+  stale entry.
+- The card waits on the entry:
+  - Each expert's data goes first, its tag in the last beat of its last part, then its directory
+    entry, in the same poll and flushed before the poll returns (unchanged by 12.8's fix).
+  - The expert run WAITWs on the entry's present word. An expert that lands between its read and
+    the wait satisfies the wait, so 12.8's race does not arise.
+  - _clear only clears victims, never a needed expert, so the wait never holds on a stale entry.
+  - A WAITW timeout stops the prefill with a clear error. It never runs on with a missing expert.
+- Tags: with no request there is no _used, so armed keeps the expert run's slots. That is
+  harmless: _reuse zeroes a slot's tag before it takes another expert. The expert run still
+  zeroes each tag after use, as slot_of does, so a later demand miss in that slot cannot see a
+  stale tag.
+- Requests and hints keep their paths (decode, token steps, other prefill).
+
+The scratch (the lead's constraint: not one decode slot), per row (k + 2) x H fp32: the k outputs,
+the expert input and the shared or dense output, plus the ids and weights and a sink row.
+- 35B: 80 KB a row, 41 MB at 512 rows; 26B: 113 KB a row, 58 MB.
+- The server owns it. begin_prefill(scratch=bytes) takes the last ceil(bytes / pitch) slots of
+  one layer's pooled region off the free lists (contiguous) for the prefill.
+  - Experts in them are evicted first: their entries are cleared and flushed before the base
+    address is handed out.
+  - end_prefill hands them back empty, with their tag beats zeroed (or armed, so _reuse zeroes
+    them). Scratch data in a tag beat would otherwise read as a landed expert.
+- At 512 rows that is 25 of the 35B's 1680 slots and 17 of the 26B's 540. It is sized to the
+  chunk's rows: 7 and 5 at a 133- / 124-row prompt.
+
+The changes:
+- moe.py: the prologue, the expert run (bucketing, passes) and the combine.
+- qwen35 / gemma4: layer runs in an expert-major variant, and an expert-run program per layer.
+- Engine.prefill_layers: per chunk and layer, the mixer runs, then the expert run; begin_prefill's
+  scratch.
+- ExpertServer (offload): need lines, the need queue, the scratch.
+
+Tests: the ISA, bit for bit, against token by token (tiny Qwen3.5 and Gemma 4, two chunks, odd
+counts, R = 2); the bucketing against numpy; the server's need path (offload); then a card
+session, with a warm-up run first and ABBA order, against the predicted column.
+
+The order: offload's v2 parts and the v2 re-measure, which confirms an expert's part cost on the
+card. Then this code, once the lead approves this note.
