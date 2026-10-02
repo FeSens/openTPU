@@ -2719,3 +2719,67 @@ own `ahead_layer`, with the link's idle time given before each run (polls until 
 plain simulator polls only while a run waits). It checks the call schedule over two chunks, the
 experts landed, fewer misses than without, and logits and decode bit-exact with token by
 token's.
+
+### 13.9 Design: a card-side predictor for the layer ahead
+
+13.8 bounds what the layer ahead can win with an exact set. The card can come close to that
+set itself, with no model math on the host. Layer j's runs end with layer j + 1's hint: layer
+j + 1's router on the run's output rows (moe_hint's route: rmsnorm by layer j + 1's g_post,
+quantized, the router, the k best by the model's rule). The run posts its R x k ids as a hint
+line, and the server appends the ones not landed or queued to layer j + 1's ahead queue, in
+arrival order. Layer j + 1's input is layer j's output, so this is the decode hint's
+approximation, the router on the layer's input before its mixer.
+
+Recall, offline. The router traces' `L_pre` is exactly this prediction, through the norm that
+feeds the router. The predicted union of a prompt's rows is compared with its routes' union
+(`hintrecall.py`, scratchpad; 2048-token traces of four texts cut into windows):
+
+| | rows | top-8 per row: recall / precision | top-16: recall / precision |
+|:--|--:|:--|:--|
+| 35B (four texts) | 134 | 0.90-0.92 / 0.87-0.88 | 0.99 / 0.67-0.71 |
+| 35B | 32 | 0.85-0.88 / 0.81-0.84 | 0.97-0.98 / 0.56-0.58 |
+| 26B (two texts) | 134 | 0.96 / 0.86-0.88 | 0.99 / 0.66-0.70 |
+| 26B | 32 | 0.93 / 0.84-0.85 | 0.99 / 0.59-0.61 |
+
+The refit model of 13.8 (contention 0.17 s a GB on every streamed byte, the measured part and
+poll costs, halts seen late) runs on the traces' windows (`lahsim3.py`). Each run's hint joins
+the queue at the run's end. The numbers are the layer runs' seconds at R = 2, pooled, with
+1 MiB parts:
+
+| | rows | no ahead | profile (512 KiB) | predictor, top-8 | oracle |
+|:--|--:|--:|--:|--:|--:|
+| 35B (wiki) | 134 | 12.64 | 12.68 | **11.08 (-1.56)** | 10.65 (-1.99) |
+| 35B (prose) | 134 | 12.25 | | 10.87 (-1.38) | 10.44 (-1.81) |
+| 35B (wiki) | 66 | 7.33 | | 6.57 (-0.76) | 6.24 (-1.09) |
+| 35B (wiki) | 34 | 4.42 | | 4.10 (-0.33) | 3.91 (-0.52) |
+| 26B (wiki) | 125 | 16.49 | 16.02 | 15.42 (-1.07) | 15.20 (-1.29) |
+| 26B (wiki) | 65 | 9.57 | | 8.61 (-0.96) | 8.36 (-1.21) |
+
+Top-16 sends more bytes than its extra recall saves (35B 134 rows: -1.19 s). The model is
+within 0.2 s of the card's 35B ahead runs, but about 1.3 s optimistic on the 26B's (13.8). So
+the 26B's gain is more like 0 to -1 s.
+
+What it costs the card:
+- A run adds layer j + 1's router on its R rows: the router's E x H int8 weights (0.5 MB on the
+  35B, about 0.36 MB on the 26B) at about 15 GB/s, the norm and quantization, and R x k
+  knock-out argmaxes. That is about 50 us a run on the 35B (0.13 s over a 134-token prompt's
+  2600 runs) and about 35 us on the 26B (0.07 s).
+- The hint post is one line, its count and seq. The run's next request waits on the fence (WAITW
+  served >= seq) about 2 ms later, long after the host has queued the hint.
+- The last MoE layer's runs post nothing.
+
+Net: about -1.4 s on the 35B (13.7 to about 12.3 s, 10%) and 0 to -1 s on the 26B at
+124-134 tokens; less on short prompts.
+
+The split follows 13.8's.
+- Card / Engine (gemma4): compile_layer_run(li) ends with the hint for li + 1 (Qwen3.5:
+  moe_hint's route on the output rows; Gemma 4: moe_ffn's router path on them, the router's
+  scale folded as in moe_ffn), R x k ids in one line, hint_off as today. There is an ISA test
+  that hints change no logit, and moe_card's ahead stats count the hints.
+- Server (offload): with the ahead on, a hint for the queued layer is appended to its queue
+  instead of taking per-layer slots. `ahead_layer` still starts each layer's queue; it may be
+  seeded with the profile's top experts or left empty. Parts of 1 MiB come through
+  begin_prefill(part=...).
+
+Card check: the base and the predictor for the 35B and the 26B, R = 2, pooled, with
+--prefill-trace, and the zero-miss runs' contention measured again.
