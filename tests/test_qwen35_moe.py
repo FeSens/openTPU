@@ -528,14 +528,15 @@ def test_hinted_experts_on_their_way_wait_on_their_tags_beat_by_beat(tiny):
     assert a.generate_card(t0, 6, stop_ids=[]) == b.generate_card(t0, 6, stop_ids=[])
 
 
-def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path):
+@pytest.mark.parametrize("caps", [(0, 0), (1, 1)])
+def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_path, caps):
     """Hints beside a card that computes while the host works (tests/test_lfm2_moe.py's
     _LiveCard, CHASH's map, a split-format pool), with the embedding table on the host: one
     BoardDram for the experts and the rows. The host sends the hinted experts in parts (64 KiB
     here) while the card runs its mixers, the rest of one the route names at once. Resident
     steps and the card's generate loop give the ISA simulator's logits and tokens with the
     table on the card and no hints bit for bit, with hinted experts landed before the route
-    asked."""
+    asked; uncapped, and with each hint's best expert only (hint_n, hint_top: 12.7)."""
     from test_lfm2_moe import _LiveCard
     from opentpu.host.board import BoardBackend
     from opentpu.host.offload import RUN, BoardDram
@@ -553,6 +554,7 @@ def test_the_live_card_takes_hinted_experts_on_the_links_idle_time(tiny, tmp_pat
     assert isinstance(brd.server.mem, BoardDram) and brd.row_server.mem is brd.server.mem
     assert brd.server.L.slot_bytes > 16 * RUN
     brd.server.part = 16 * RUN
+    brd.server.hint_n, brd.server.hint_top = caps
     toks = [int(t) for t in np.random.default_rng(6).integers(0, 1000, 6)]
     for t in toks:
         a, b = isa.step(t), brd.step(t)
@@ -597,13 +599,17 @@ def test_moe_card_streams_as_the_resident_run(tiny, tmp_path, monkeypatch):
                                           "--out", str(out), *opts])
         mc.main()
         r = json.loads(out.read_text())
-        return r["tokens"], r["prefill_logits_sha"], r["misses"]
+        return r["tokens"], r["prefill_logits_sha"], r["misses"], r
     want = run("resident", "--experts", "0")
     got = run("split", "--experts", "2", "--pool", str(tmp_path / "pool.bin"),
               "--hint-trace", str(tmp_path / "trace.json"))
     old = run("legacy", "--experts", "2", "--legacy-serve")
+    capped = run("capped", "--experts", "3", "--hints", "on", "--hint-drop", "--hint-n", "1",
+                 "--hint-top", "1")                 # (docs/offload.md 12.7)
     assert want[2] == 0 and got[2] > 0 and old[2] > 0
-    assert got[:2] == old[:2] == want[:2]
+    assert got[:2] == old[:2] == want[:2] == capped[:2]
+    h = capped[3]["hints"]
+    assert (h["n"], h["top"], h["drop"]) == (1, 1, True) and h["served"] > 0
     assert json.loads((tmp_path / "trace.json").read_text())       # (the decode's timeline)
 
 

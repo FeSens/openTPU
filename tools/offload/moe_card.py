@@ -122,7 +122,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          host_loop: bool = False, embed: str | None = None, trace: str | None = None,
          cfg_file: str | None = None, on_card: bool = False, policy: str = "lfu",
          embed_host: bool | None = None, hints: bool | None = None,
-         hint_part: int | None = None, hint_drop: bool = False,
+         hint_part: int | None = None, hint_drop: bool = False, hint_n: int = 0,
+         hint_top: int = 0,
          hint_trace: str | None = None, wformat: str = "fp4", head_format: str = "int8",
          formats: str | None = None, layer_major: int = 0, pooled: bool = True,
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
@@ -199,6 +200,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if hint_part:                               # the hints' handling (ExpertServer)
         srv.part = hint_part
     srv.drop = hint_drop
+    srv.hint_n, srv.hint_top = hint_n, hint_top
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
@@ -396,7 +398,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 hint=spec.moe.hint,
                 hints=dict(served=srv.hints, prefetched=srv.prefetched, promoted=srv.promoted,
                            dropped=srv.dropped, withdrawn=srv.withdrawn, part=srv.part,
-                           drop=srv.drop) if spec.moe.hint else None,
+                           drop=srv.drop, n=srv.hint_n, top=srv.hint_top)
+                if spec.moe.hint else None,
                 image_mib=round(eng.image.nbytes / 2**20), slot_mb=round(L.slot_bytes / 1e6, 2),
                 requests=len(srv.history), hits=srv.hits, misses=srv.misses,
                 misses_per_token_decode=round(float(dec.mean()), 2) if len(dec) else None,
@@ -473,6 +476,11 @@ def main():
                     help="KiB of a hinted expert per idle poll (default: ExpertServer's 512)")
     ap.add_argument("--hint-drop", action="store_true",
                     help="a request withdraws its layer's hinted experts it does not name")
+    ap.add_argument("--hint-n", type=int, default=0,
+                    help="a hint's experts sent, at most (0: every one not in a slot; "
+                         "docs/offload.md 12.7)")
+    ap.add_argument("--hint-top", type=int, default=0,
+                    help="of a hint's first ids only (its router's best first; 0: all k)")
     ap.add_argument("--hint-trace", help="the decode's hint and request timeline as JSON")
     ap.add_argument("--prefill-trace",
                     help="the prompt's timeline as JSON: each run (its layer run, start, done, "
@@ -530,7 +538,7 @@ def main():
              a.cfg, a.card, a.policy,
              None if a.embed_table is None else a.embed_table == "host",
              None if a.hints is None else a.hints == "on", a.hint_part << 10, a.hint_drop,
-             a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
+             a.hint_n, a.hint_top, a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
              not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
              a.layer_ahead, a.ahead_part << 10 if a.ahead_part else None)
