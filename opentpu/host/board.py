@@ -1144,6 +1144,14 @@ class BoardBackend:
         self.board.start(trace=self.trace)
         self._running, self._stream = programs, stream
 
+    def time_left(self) -> float | None:
+        """The started run's expected seconds left: its expected time (_expect, the last run of
+        its program's length) from its start; None when there is none (docs/offload.md 13.10:
+        the expert server holds idle parts back near a run's end)."""
+        if self._running is None or not self._expect:
+            return None
+        return self.board._t_run + self._expect - time.perf_counter()
+
     def wait(self, feed=None) -> dict:
         """Wait for the started program; returns its counters (run's second half). After a
         start(stream=...), feed(offset, words) gets every piece of the logits (byte offset in

@@ -81,6 +81,10 @@ RUN = 4096             # the split pool format's block: 32 chunks, its two chann
 TAG = 128              # a slot's tag chunk (one beat on each channel; the tag word its first)
 SPLIT = "split4k"      # the split format's name in a pool file's <file>.format
 IOV_MAX = 1024         # buffers per os.preadv (Linux's UIO_MAXIOV)
+# halt_aware idle parts (docs/offload.md 13.10): a part's time before any is measured (a call
+# pair's 122 us and the pairs' 3.15 GB/s, session 16, and the poll), and how far past its
+# expected end a run gets idle parts again
+PART_S0, PART_GBS, HOLD_LATE = 0.2e-3, 3.15e9, 1e-3
 
 
 def _parity(x: np.ndarray) -> np.ndarray:
@@ -514,10 +518,15 @@ class ExpertServer:
         # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
         # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
         self.hint_n = self.hint_top = 0
-        # idle parts (docs/offload.md 13.10): each read by the poll before, beside its DMA, and
-        # sent as one DMA call per channel (a memory with stage: BoardDram); False: as before
-        self.read_ahead = True
+        # idle parts (docs/offload.md 13.10), opt-in until the card's A/B: read_ahead, each read
+        # by the poll before, beside its DMA, and sent as one DMA call per channel (a memory
+        # with stage: BoardDram); halt_aware, none started when the running program's expected
+        # end (the memory's time_left) is nearer than an idle part takes (part_s: the measured
+        # parts' average)
+        self.read_ahead = self.halt_aware = False
         self._staged = None                 # ((g, slot, from, to), the memory's staged part)
+        self.part_s: float | None = None
+        self.holds = 0                      # polls that held an idle part back (halt_aware)
         self.history: list | None = None    # a list: each request's ids are appended
         # a list: (perf_counter when seen, when done, "h" hint / "d" request / "p" a hint's
         # part, its layer or expert, misses or the expert's bytes sent): the host's timeline of
@@ -599,7 +608,7 @@ class ExpertServer:
                                                 np.float32))
         t0 = time.perf_counter()
         if seq == self.seq:
-            if not self.pending and not self._next_ahead():
+            if not self.pending and not self._next_ahead() or self._hold():
                 return 0
             g = next(iter(self.pending))
             self.step()
@@ -607,6 +616,8 @@ class ExpertServer:
             self._flush()
             self._touched()
             self.last = None
+            dt = time.perf_counter() - t0
+            self.part_s = dt if self.part_s is None else 0.8 * self.part_s + 0.2 * dt
             if self.events is not None:
                 self.events.append((t0, time.perf_counter(), "p", g,
                                     self.pending.get(g, self.L.slot_bytes)))
@@ -861,6 +872,21 @@ class ExpertServer:
         h = stage(slot + a, self._part_of(g, a, b), t)
         if h is not None:
             self._staged = ((g, slot, a, b), h)
+
+    def _hold(self) -> bool:
+        """halt_aware (docs/offload.md 13.10): no idle part now if the running program is
+        expected to end before one would be done (its halt would be seen after the part); a
+        run that has overrun its expected end by HOLD_LATE gets them again (its expectation was
+        wrong). Requests are served as always."""
+        tl = getattr(self.mem, "time_left", None) if self.halt_aware else None
+        left = tl() if tl is not None else None
+        if left is None:
+            return False
+        need = self.part_s if self.part_s is not None else PART_S0 + self.part / PART_GBS
+        if -HOLD_LATE < left < need:
+            self.holds += 1
+            return True
+        return False
 
     def _unstage(self) -> None:
         """A staged part dropped (the server changes its slots or serves a request first)."""
@@ -1303,9 +1329,12 @@ class BoardDram:
         self._thread: threading.Thread | None = None
         self.dma_s, self.dma_bytes = 0.0, 0     # the worker's slot DMA: seconds and bytes
         self.direct = 0                         # experts read from the file into their runs
+        self.staged = 0                         # of them, idle parts read ahead (stage)
         self.wait_s = 0.0                       # the server's waits for a free staging pair
         self.pieces, self._lead = pieces, True  # _lead: no DMA in flight since the last flush
         self._held: set = set()                 # staging pairs holding a staged part (stage)
+        # the running program's expected seconds left (BoardBackend.time_left), or None
+        self.time_left = getattr(backend, "time_left", None)
         if lead is not None and not 0 < lead < 1:
             raise ValueError(f"lead {lead}: the first part's share of the expert, in (0, 1)")
         self.lead = lead
@@ -1524,6 +1553,7 @@ class BoardDram:
             if then is not None:
                 then()
             self.direct += 1
+            self.staged += 1
             return
         if tag is not None and (tag[0] != addr + n or n % self.blk):
             self.write_slot(addr, data, None, then, cut)

@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 
 PROMPT = "What is the capital of France? Answer in one sentence."
+IDLE_PARTS = ("v1", "ra", "halt", "v2")      # --idle-parts (docs/offload.md 13.10)
 
 
 def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) -> dict:
@@ -129,7 +130,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
          legacy_serve: bool = False, embed_runs: bool = False,
          poll_idle: str | None = None, prefill_trace: str | None = None,
-         layer_ahead: str | None = None, read_ahead: bool = True) -> dict:
+         layer_ahead: str | None = None, idle_parts: str = "v1") -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -199,7 +200,9 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         srv.part = hint_part
     srv.drop = hint_drop
     srv.hint_n, srv.hint_top = hint_n, hint_top
-    srv.read_ahead = read_ahead                 # idle parts: one call, read ahead (13.10)
+    if idle_parts not in IDLE_PARTS:            # idle parts (docs/offload.md 13.10): read
+        raise ValueError(f"idle parts {idle_parts!r}")  # ahead, one call; halt-aware
+    srv.read_ahead, srv.halt_aware = idle_parts in ("ra", "v2"), idle_parts in ("halt", "v2")
     srv.pool = timed("pool", pool_of)
     mem.write, mem.read = timed("write", mem.write), timed("read", mem.read)
     if hasattr(mem, "write_slot"):              # BoardDram: staging (the main thread), and
@@ -412,7 +415,10 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 embed_runs=embed_runs if layer_major else None,
                 layer_ahead=layer_ahead if layer_major else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
-                legacy_serve=legacy_serve, poll_idle=poll_idle, read_ahead=srv.read_ahead,
+                legacy_serve=legacy_serve, poll_idle=poll_idle,
+                idle_parts=dict(mode=idle_parts, holds=srv.holds,
+                                part_ms=srv.part_s and round(srv.part_s * 1e3, 3),
+                                staged=getattr(srv.mem, "staged", None)),
                 pacer=dict(sleeps=pacer.sleeps, slept_s=round(pacer.slept, 3),
                            kinds=len(pacer.gaps)) if pacer is not None else None,
                 prefill_requests=pre or None, prefill_misses=sum(per_req[:pre]) if pre else None,
@@ -493,9 +499,11 @@ def main():
                          "default 0: token by token)")
     ap.add_argument("--per-layer-slots", action="store_true",
                     help="--layer-major with each layer's own slots (default: pooled)")
-    ap.add_argument("--no-read-ahead", action="store_true",
-                    help="idle parts as before docs/offload.md 13.10: cut in two with nothing in "
-                         "flight, each read after the last one's DMA")
+    ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="v1",
+                    help="the hinted / ahead experts' parts on idle polls (docs/offload.md "
+                         "13.10): v1 as before (cut in two, each read after the last one's "
+                         "DMA); ra read ahead, one call each; halt none started near a run's "
+                         "expected end; v2 both")
     ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
                     help="--layer-major with pooled slots: the next MoE layer's experts sent "
                          "while a layer runs (docs/offload.md 13.7), each layer's in index "
@@ -541,7 +549,7 @@ def main():
              a.hint_n, a.hint_top, a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
              not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
-             a.layer_ahead, not a.no_read_ahead)
+             a.layer_ahead, a.idle_parts)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

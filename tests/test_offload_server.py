@@ -407,15 +407,17 @@ def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
         for b in (ba, bb):
             b.write(lay.row, np.array(ids + [0] * (LINE // 4 - len(ids)), np.float32))
             b.write(lay.mbox, np.float32(seq).tobytes())
-        assert poll() >= 0
+        return poll()
     r = 1 if ahead else 2                           # an idle part's DMA calls (or a lead cut)
     post([G + 2, G + 3])                            # hint: 2 and 3 take slots, 4 parts to send
     assert staged == ([True] if ahead else [])      # 2's first part read beside served
     assert poll() == r                              # ... sent, and 2's second part read
     assert poll() == r and fast.pending == {3: 0}   # 2's second (with its tag): staged
     assert len(m._held) == ahead                    # 3's first part staged
-    post([3, 1])                                    # a request first: 3's staged part dropped
-    assert not m._held and fast.promoted == 1 and m._free.qsize() == m.depth
+    assert post([3, 1]) == 3                        # a request first: 3's staged part dropped;
+    assert not m._held and fast.promoted == 1       # its misses as before: the first (3's rest)
+    assert m._free.qsize() == m.depth               # with the lead cut, the next (1) one call
+    assert post([4, 5]) == 3
     for srv in (fast, plain):                       # pooled: 20 a free slot, 21 a victim
         srv.begin_prefill(ahead=True)               # of layer 0 (outside 1 and 2)
         srv.ahead_layer(2, [20, 21])
@@ -427,6 +429,40 @@ def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
     assert fast.bytes == plain.bytes and fast.misses == plain.misses
     assert sum(staged) == (6 if ahead else 0)       # each idle part but 20's first (3's
                                                     # first dropped)
+
+
+def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
+    """halt_aware (docs/offload.md 13.10): no idle part starts while the running program's
+    expected end (the memory's time_left) is nearer than a part takes (part_s, or PART_S0 +
+    part / PART_GBS before any is measured), so its halt is not seen after a part; a request
+    is served at once all the same, and a run past its expected end by HOLD_LATE (a wrong
+    expectation) or with none gets parts again. Off: no hold."""
+    from opentpu.host.offload import HOLD_LATE, PART_GBS, PART_S0
+    lay, mem, srv, G = _hint_setup()
+    left = [None]
+    mem.time_left = lambda: left[0]
+    srv.halt_aware = True
+    _post(mem, lay, 1, [G + 3, G + 4])              # 3 and 4 hinted: 6 parts to send
+    assert srv.poll() == 1 and len(srv.pending) == 2
+    need = PART_S0 + srv.part / PART_GBS
+    left[0] = need / 2                              # the run ends before a part would
+    assert srv.poll() == 0 and srv.poll() == 0 and srv.holds == 2
+    assert dict(srv.pending) == {3: 0, 4: 0}
+    _post(mem, lay, 2, [E + 0, E + 1])              # a request (layer 1): served at once
+    assert srv.poll() == 1 and _served(mem, lay) == 2.0 and srv.holds == 2
+    left[0] = 2 * need                              # time for a part: sent, and timed
+    assert srv.poll() == 1 and srv.pending[3] == srv.part and srv.part_s is not None
+    srv.part_s = 1.0                                # (measured parts of a second)
+    left[0] = 0.5
+    assert srv.poll() == 0 and srv.holds == 3
+    left[0] = -2 * HOLD_LATE                        # overran its expectation: parts again
+    assert srv.poll() == 1
+    left[0], srv.halt_aware = 0.5, False            # off: no hold
+    assert srv.poll() == 1 and srv.holds == 3
+    left[0], srv.halt_aware = None, True            # no expectation: no hold
+    while srv.pending:
+        assert srv.poll() == 1
+    assert _landed(mem, lay, srv, 3) and _landed(mem, lay, srv, 4)
 
 
 def test_board_dram_raises_a_dma_error_at_flush():
