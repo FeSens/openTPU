@@ -26,6 +26,9 @@
 #   overrides the bitstream's bit. A bitstream with WAITW (CAPS bit31; WAITW=0 / 1 overrides it)
 #   runs tools/qual/waitw.py after the warm diag: 200 rounds of the host writing data, then a
 #   flag, while the card waits on the flag and then reads the data, and a WAITW timeout.
+#   Before the final selftest, tools/qual/turnaround.py: TURN seconds (default 30) of fp4 weight
+#   reads beside 64 KiB stores and loads (the DRAM's read / write turnarounds; fastmux's rtw 3),
+#   the data against the ISA simulator, and both channels' ECC counters, which must be 0 then.
 # full (~45 min): also a cold diag with the full march C- (2 x 2.6 min), decode_profile for all
 #   six, rw_bench, a 5 min soak and the full march in the warm diag.
 # Every phase prints its duration; the table is at the end and in $OUT/phases.tsv.
@@ -224,6 +227,10 @@ wait                            # the references' job (refs.py card waited for w
 rc=$(sed -n 's/^refs exit //p' "$OUT/refs.log" | tail -1)
 { [ "${rc:-?}" = 0 ] && ! grep -qE "$EXC" "$OUT/refs.log"; } || fail "refs compute: exit ${rc:-?} ($OUT/refs.log)"
 fi
+
+phase "DRAM turnarounds + ECC (${TURN:-30} s)"
+run turnaround timeout 900 $P tools/qual/turnaround.py --seconds "${TURN:-30}" \
+  | grep -E "\[(PASS|FAIL)\]" | tee -a "$OUT/checks.txt"
 
 phase "final selftest"
 if [ "$REST" != "$BIT" ] && [ "${LOAD:-1}" != 0 ]; then load "$REST" || exit 1; fi

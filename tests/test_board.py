@@ -167,6 +167,20 @@ def test_program_on_channel_board_model(have_verilator):
     assert st["a_writes"] > 500 and st["b_writes"] > 20
 
 
+def test_dram_turnarounds_on_channel_board_model(have_verilator):
+    """tools/qual/turnaround.py (the qual's read / write turnaround check) on the build's channels:
+    two runs of its program, then the stored tiles and the MMs' results equal the ISA
+    simulator's (the board model has no ECC counters)."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "qual"))
+    from turnaround import turnarounds
+    b = Board(SimTransport(ch_bytes=4 << 20, stall=30, seed=3, native="ld"))
+    rows = dict(turnarounds(b, mb=0.25, runs=2))
+    assert rows["data"][0], rows["data"][1]
+    assert rows["ECC"] == (True, "no ECC on the board model")
+
+
 def test_partial_dram_writes_on_board_model(have_verilator):
     """QST byte writes and short word-masked stores (read-modify-writes in the board's memory
     controllers, which have no DDR3 data-mask pins)."""

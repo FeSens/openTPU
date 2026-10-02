@@ -1764,13 +1764,14 @@ bytes per token are B's):
   36.92 -> 37.47 tokens/s, LFM2 97.53 -> 98.84, Qwen3.5 26.76 -> 27.35. The on-card decode loop
   gives Qwen3 37.37 -> 37.89 and LFM2 97.65 -> 98.89.
 
-### The chooser and the turnarounds (2026-10-01): parked
+### The chooser and the turnarounds (2026-10-01; in the core 2026-10-02, with the next build)
 
 The two multiplexer items left after memeff, with a third of the same kind, as options of
 `tools/litedram/fastmux.py`: a copy of LiteDRAM's multiplexer that `gen_core.py` and `gen_ldc.py`
-build through. `ctl_settings.py`'s `MULTIPLEXER` leaves all three off, and then the core and the
-co-simulated controller are LiteDRAM's, byte for byte (`check_core.sh` matches;
-`gen_ldc.py` writes the committed `otpu_ldc_ch.v`).
+build through. `ctl_settings.py`'s `MULTIPLEXER` is `FASTMUX`, all three on, since 2026-10-02
+(the committed core and `otpu_ldc_ch.v`; their first build is the next full build). With all
+three off the core and the co-simulated controller are LiteDRAM's, byte for byte: `gen_ldc.py
+--rtw none --no-same-cycle --no-direct-wtr` writes the model main had before.
 - **`same_cycle`: the choosers grant in the cycle a request is valid.** LiteDRAM's
   `_CommandChooser` keeps its round-robin grant in a register and moves it only when the granted
   request is taken or is not valid. So a grant on a bank with nothing to issue in the current state
@@ -1837,11 +1838,55 @@ token against main ff186b1, memeff):
   a third to a half of that. The rest is DDR3's and the PHY's own spacing and banks still waiting on their timers.
 - **One port, sequential** (the BIST's pattern): `same_cycle` takes reads from 90.4% to 91.7% of
   peak, writes from 89.9% to 91.2% (91.5% with all three). That is the BIST's figure, not decode.
-- **Parked:** under the ~1% a build and a card session would have to pay for. To take it: set
-  `MULTIPLEXER` (`rtw=3, same_cycle=True, direct_wtr=True`), regenerate the core and the model
-  (`check_core.sh --update`, `gen_ldc.py`), and replace the BIST test's figures. Before a build it
-  needs the out-of-context timing check of the chooser's priority encoder (sys at 133.33 MHz).
-  On the card it needs a read-to-write check: the ECC counters after mixed traffic at `rtw 3`.
+- **No build of its own** (under the ~1% a build and a card session would have to pay for): it
+  rides with the next full build, whatever brings it.
+
+**The choosers' timing, out of context** (2026-10-02, omarchy: the generated core alone, both
+channels, sys at 7.5 ns and the board's clock constraints, OBUFs on the PHY's single-ended outputs
+as the board top's synthesis puts them; Explore):
+- **The worst path through the multiplexer's cells** (`*choose*`, `*multiplexer*`,
+  `*steerer*`) is +1.177 ns at 9 levels in LiteDRAM's core (the refresher's ZQCS timer into
+  the bank machines), and +0.577 ns at 13 levels with `FASTMUX`. That path is the combinational
+  grant: bank 10's row compare (CARRY4) -> `choose_cmd`'s priority encoder -> the command's
+  accept and tFAW -> bank 12's `trascon` reset. 1.31 ns of it is logic and 5.18 ns is route.
+- **Calibration:** the same filter on the production build's routed checkpoint (g2fix
+  0885d436) gives +1.004 ns, 0.17 ns tighter than out of context. So `FASTMUX` should keep
+  about +0.4 ns in a full build.
+- **The core's other paths:** the sys domain's WNS out of context (-1.30 ns LiteDRAM's,
+  -1.06 `FASTMUX`) is on paths only the out-of-context placement has (a CSR counter into the
+  CPU's LUTRAM FIFOs, 92% route). In the full build that domain is +0.009 ns, on the
+  `crg_rst1` fanout. `FASTMUX` takes 1,021 fewer LUTs: the registered grant goes.
+
+**The fallback, `FASTMUX_SAFE`** (`rtw 3`, `direct_wtr`, no `same_cycle`): no new
+combinational path, -0.42 / -0.17 / -0.52% decode on the 4-bit models (above). If a build
+misses sys's timing on the `choose_cmd` / `choose_req` paths:
+1. Set `MULTIPLEXER = FASTMUX_SAFE` in `ctl_settings.py`.
+2. Run `check_core.sh --update` and `gen_ldc.py sim/verilator/otpu_ldc_ch.v`.
+3. Rebuild. `test_rtl.py`'s BIST figures follow `MULTIPLEXER`.
+
+**The BIST's figures in the model** (`test_ldc_sequential_is_the_card_bist`, one port,
+sequential, % of peak):
+
+| | read | write |
+|---|---|---|
+| LiteDRAM's multiplexer | 90.4 (card 90.4) | 89.9 (card 89.8) |
+| `FASTMUX` | 91.65 | 91.49 |
+| `FASTMUX_SAFE` | 90.38 | 90.17 |
+
+The first fastmux build's qual compares the card's BIST with these.
+
+**On the card,** `tools/qual/qual.sh` runs `tools/qual/turnaround.py` before its final selftest,
+in every qual:
+- **The traffic:** 30 s (TURN) of fp4 weight reads (port A) beside 64 KiB stores and loads of
+  the tile stored just before (port B), so reads and writes take turns in both channels all the
+  time.
+- **The data:** the stored tiles and the MMs' results must equal the ISA simulator's.
+- **The ECC counters:** both channels' sec / ded counts must be 0. A turnaround that comes too
+  early corrupts a burst on the bus, and every beat carries its ECC byte, so the channel's
+  decoder sees it. The loads of what was just stored put any write it corrupted through the
+  decoder in the same run.
+- **Checked so far:** on the board model (`test_board.py`). Its first card run is the next
+  qual.
 
 ### What is left after memeff (2026-10-02)
 
@@ -1890,6 +1935,151 @@ its last (channel 1 within 0.1 points):
   above). The rows' and the crossbar's are under 1.5% together.
 - **So the controller is within about 6% of its data rate on decode,** and no single fix is worth
   more than about 1%. `fastmux` is the one to take, with a build that happens anyway.
+
+### The core's own gaps (2026-10-02)
+
+The idle time above is the core's. `tools/decode_gaps.py` runs the same whole-model token
+traced (`+trace`), on main d1cb669's RTL at 133.33 MHz:
+- **Blame:** each gap between two MMs (the MXU not streaming) goes to the instruction the next
+  MM waited for.
+- **Bounds:** the token again with a group of instructions replaced by NOPs (`--drop`,
+  `--drop-match`). The data come out wrong; the cycles are the bound for making that work free
+  or hidden.
+- **Micro-architecture variants:** the RTL with a timing-only knob changed (`--uarch`, over
+  `rtlsim.BOARD_UARCH`).
+
+Cycles per token against main (4-bit layers unless noted):
+
+| | Qwen3 | LFM2 | Qwen3.5 |
+|---|---|---|---|
+| main | 3,844,073 | 1,398,439 | 4,841,349 |
+| EXP2SUB free (a bound) | -3.59% | -3.00% | -0.07% |
+| every VPU and QACT instruction of attention free (a bound) | -3.17% | | |
+| attention's QACTs free | -0.48% | | |
+| q / k norms and RoPE free | -0.17% | | |
+| the norms before the weight MMs free | +0.04% | | |
+| the QACTs before the weight MMs free | +0.05% | | |
+| the DeltaNet output's QACT free (a bound) | | | -0.39% |
+| MXU prefetch FIFO 2048 chunks (1024) | 0.00% | | |
+| dispatch window 32 (16) | -0.72% | -0.57% | +0.03% |
+| TMEM: 2 writes per bank and cycle (1) | -3.53% | | |
+| **TMEM arbiter: the VPU ahead of the MXU drain** | **-2.97%** | **-2.41%** | **-0.41%** |
+| the same, Qwen3 8-bit (main 5,617,507) | -2.01% | | |
+| dispatch window 32 on top of VPU-first (against VPU-first) | -0.08% | -0.08% | |
+| the next head's score MMs ahead of the PV MM (program order; ISA results unchanged) | -0.03% | +0.09% | |
+
+- **The idle time is attention's softmax.** Making EXP2SUB free takes away about as much as the
+  controller's idle (Qwen3: 137.8k cycles against 136.6k). A head's PV MM waits for its
+  probabilities: EXP2SUB on 2 x 256 scores, then QACT. The MXU runs its MMs in order, so the
+  next head's MMs wait behind that PV MM.
+- **EXP2SUB ran at about half its rate.** It averaged 501 cycles per 2 x 256 op, where its
+  three composite passes take about 270. The rest was the VPU frozen by the TMEM arbiter:
+  395k frozen VPU cycles per Qwen3 token.
+  - The VPU writes all its lanes' banks at once and was last in the priority order.
+  - So an MXU drain write in any one bank cost it the whole cycle.
+- **The fix is the arbiter's order:** DMA, COLL, VPU, MXU drain, QUANT. The drain holds instead,
+  which costs it little.
+  - It takes 83% of the EXP2SUB bound on Qwen3 and 80% on LFM2, and Qwen3.5 gains 0.4%.
+  - Two write ports per bank take a little more, but every replicated TMEM copy would need a
+    second write port (twice the copies, or a live-value table): not taken.
+- **Not worth taking:**
+  - The norm -> QACT -> MM chains cost nothing: the 1024-chunk MXU FIFO (128 KiB) streams the
+    next MM's weights through them, and 2048 chunks change nothing.
+  - Moving the next head's score MMs ahead of the PV MM changes nothing either: the VPU, not
+    the MXU's order, was the slow part.
+  - A 32-entry window is worth 0.6-0.7% alone but only 0.08% on top of VPU-first (the gaps it
+    filled were the softmax's), and it costs the window's hazard logic at 133.33 MHz.
+
+### The fused build: fastmux and VPU-first (2026-10-02)
+
+One build at 133.33 MHz carries both: fastmux 5a088e5 (the core with `FASTMUX`, "The chooser and
+the turnarounds" above) and vpu-first ed66aba (the arbiter's order, "The core's own gaps"), on
+main. It was built from fused-fmvf 542fc43 (main a60df35 merged; BUILD_ID 542fc43a). The 32-entry
+window stays out: on top of VPU-first it is worth 0.08%, not the 1% that would pay for its hazard
+logic.
+
+**The slice out of context** (`otpu_slice` alone at the board's generics: MCOLS 4, LANES 8,
+WIN 16, RPB 64, WPB 1; 7.5 ns; the build's synthesis and implementation directives; omarchy).
+Synthesis spreads the arbiter's LUTs into the units and the grant ports leave the hierarchy, so
+the arbiter's paths are found by their ends: a unit's write request into another unit's grant.
+
+| | main | VPU-first |
+|---|---|---|
+| WNS (neither is the arbiter: route-only paths) | +0.052 ns (MXU weight register -> DSP, 0 levels) | +0.081 ns (ACT RAM write index fanout, 1 level) |
+| the VPU's write request (hen / hrot) -> worst | +1.077 ns (-> TMEM write address, 8 levels) | +0.669 ns (-> the MXU's grant enables, 9 levels) |
+| DMA -> the MXU's grant enables | +0.506 ns (9 levels) | +0.861 ns (8 levels) |
+| the MXU -> the VPU's grant (WBUF enable) | +1.175 ns (9 levels) | (no path: the MXU is after the VPU) |
+| a unit -> the TMEM write ports (the grants gate them), worst | +0.182 ns | +0.478 ns |
+| Slice LUTs | 105,500 | 104,281 |
+
+- **The new path is the VPU's request into the MXU's grant:** +0.669 ns. It runs the VPU's
+  bank flip-flops through the bank masks and the priority chain into the drain's clock enables:
+  6.59 ns, 86% of it route.
+- **Nothing near the arbiter got worse.** Every cross-unit path in the table has at least
+  +0.48 ns in VPU-first, against +0.18 ns at worst in main. Placement moves these by a few
+  tenths from run to run, and the whole design runs about 0.2 ns tighter than out of context,
+  so the margin holds.
+
+**The predictions** (whole-token co-simulation, the qualification's operating point: pos 544,
+int8 head, 133.33 MHz, DDR3-1066). The card's column is production pa e4db91c9's qualification
+(`qual.sh`'s prefill + decode counters), and the expected column is that times the co-simulated
+change:
+
+| | main, cycles | fused, cycles | change | the card now, Mcycles | expected | device tok/s |
+|---|---|---|---|---|---|---|
+| Qwen3 4-bit | 3,844,073 | 3,696,899 | -3.83% | 3.878 | 3.730 | 34.38 -> 35.75 |
+| LFM2 4-bit | 1,398,439 | 1,355,035 | -3.10% | 1.413 | 1.369 | 94.36 -> 97.38 |
+| Qwen3.5 4-bit | 4,841,349 | 4,765,281 | -1.57% | 4.895 | 4.818 | 27.24 -> 27.67 |
+| Qwen3 8-bit | 5,617,507 | 5,471,471 | -2.60% | 5.650 | 5.503 | 23.60 -> 24.23 |
+| LFM2 8-bit | 2,055,625 | 2,012,426 | -2.10% | 2.069 | 2.026 | 64.44 -> 65.83 |
+| Qwen3.5 8-bit | 6,830,385 | 6,764,651 | -0.96% | 6.884 | 6.818 | 19.37 -> 19.56 |
+
+- Together the two do a little better than their sum. On the 4-bit models, fastmux alone gives
+  -0.74 / -0.35 / -0.86% and VPU-first alone -2.97 / -2.41 / -0.41%, which sum to
+  -3.71 / -2.76 / -1.27%.
+- memeff's build met its predictions within 0.1 points. Read more than 0.3 points short as a
+  miss to explain.
+
+**Qualification:** the usual `qual.sh`, which now carries `turnaround.py` (data against the ISA
+simulator, and the ECC counters for fastmux's rtw 3). The decode table compares the six counters
+with the expected column.
+
+**The build** (omarchy, 2026-10-02 09:19-10:27, full effort; speculative while the models' RTL gate
+ran, 64 / 64 passed):
+- WNS +0.026 ns, WHS +0.014 ns. The core clock has +0.054 ns (pa +0.055), LiteDRAM's sys clock
+  +0.257 ns (pa +0.116), and userclk1 +0.048 ns: the reroute ran on 7 paths and was kept.
+- Slice LUTs 174,268 (pa 175,425), slices 76.3%; BRAM and DSPs as pa.
+- otpu.bit sha256 3c91fa6a46ff8296c12420749c27285911fdff2c43aa2f2a000f11ae8c65a93a.
+
+**On the card** (opentpu, 09:40-10:15, one otpu-lock; production pa restored after): `qual.sh fast`
+gave 0 FAIL lines and 44 PASS. The decode counters land on the predictions:
+
+| | pa, Mcycles | expected | measured | change, predicted | change, measured |
+|---|---|---|---|---|---|
+| Qwen3 4-bit | 3.878 | 3.730 | 3.730 | -3.83% | -3.82% |
+| LFM2 4-bit | 1.413 | 1.369 | 1.369 | -3.10% | -3.11% |
+| Qwen3.5 4-bit | 4.895 | 4.818 | 4.817 | -1.57% | -1.59% |
+| Qwen3 8-bit | 5.650 | 5.503 | 5.506 | -2.60% | -2.55% |
+| LFM2 8-bit | 2.069 | 2.026 | 2.025 | -2.10% | -2.13% |
+| Qwen3.5 8-bit | 6.884 | 6.818 | 6.818 | -0.96% | -0.96% |
+
+- **Every row is within 0.05 points of its prediction.** Bandwidth while decoding rises from
+  90-94% of the 17.1 GB/s peak to 93-95%.
+- **The streamed decode** (`decode_profile`, device tokens/s), pa to fused: Qwen3 4-bit
+  37.48 -> 38.35, LFM2 98.86 -> 100.08, Qwen3.5 27.35 -> 27.80. The on-card decode loop gives
+  Qwen3 37.89 -> 38.76, LFM2 98.89 -> 99.38 and Qwen3.5 27.71 -> 28.16.
+- **Every model run is token-exact** against the ISA simulator: all six per position, resident,
+  and on the card's decode loop.
+- **The turnarounds:** 1765 runs and 181.3 GB in 30 s, every result equal to the ISA simulator's.
+  The ECC counters are 0 / 0 on both channels.
+- **The BIST** (2 GiB, 2 passes, both channels, 0 errors): reads 91.6% and writes 91.4% of peak,
+  which is `FASTMUX`'s simulated 91.65 / 91.49. Production's stock multiplexer gives 90.4 / 89.8.
+  The scrubs after it read ECC 0 / 0.
+- **The rest also passes:**
+  - WAITW's tag rounds: 2000 rounds of 1-4 MiB.
+  - The H2C stress: acc_overlap 300 s, xmon overlap 300 s and serial 60 s, flags 0.
+  - dma_bench: H2C 2.31-2.32 GB/s.
+  - The selftests.
 
 ### The core clock at DDR3-1066: the co-simulated grid
 

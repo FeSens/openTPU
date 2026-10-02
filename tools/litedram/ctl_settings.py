@@ -15,5 +15,16 @@ as the card does (docs/litedram.md section 11, "What is left in the controller")
 """
 CONTROLLER = dict(refresh_postponing=2, read_time=256, write_time=128)
 
-# fastmux.py's options for LiteDRAM's multiplexer (None / False: LiteDRAM's own)
-MULTIPLEXER = dict(rtw=None, same_cycle=False, direct_wtr=False)
+# fastmux.py's options for LiteDRAM's multiplexer (docs/litedram.md section 11, "The chooser and
+# the turnarounds"; all None / False: LiteDRAM's own):
+# - FASTMUX, the core's: the read-to-write turnaround 3 cycles (rtw), the write-to-read one held
+#   in READ (direct_wtr), and the choosers' grant in the cycle a request is valid (same_cycle).
+#   Decode -0.74 / -0.35 / -0.86% cycles (Qwen3 / LFM2 / Qwen3.5, 4-bit). The grant is a priority
+#   encoder in sys's paths: +0.58 ns out of context at 133.33 MHz, about +0.4 in a full build.
+# - FASTMUX_SAFE, the fallback if a build misses sys's timing on the choosers (choose_cmd /
+#   choose_req paths): the turnarounds only, no new combinational path; -0.42 / -0.17 / -0.52%.
+#   To switch: MULTIPLEXER = FASTMUX_SAFE, then check_core.sh --update and gen_ldc.py (the core
+#   and its model together; test_rtl's BIST figures follow MULTIPLEXER).
+FASTMUX = dict(rtw=3, same_cycle=True, direct_wtr=True)
+FASTMUX_SAFE = dict(rtw=3, same_cycle=False, direct_wtr=True)
+MULTIPLEXER = FASTMUX
