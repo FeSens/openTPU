@@ -1151,7 +1151,7 @@ class BoardBackend:
         """(the started run's start, perf_counter; its time with no waits: the shortest of the
         last RUN_CLOCK_N runs of its program's length, seen wall time per device second as
         _next_expect's ratio), or None with no run started or none of its length before
-        (docs/offload.md 13.10: the expert server adds the run's own waits on it and holds idle
+        (docs/offload.md 13.12: the expert server adds the run's own waits on it and holds idle
         parts back near its end)."""
         ts = self._t0s.get(self._key)
         if self._running is None or not ts:

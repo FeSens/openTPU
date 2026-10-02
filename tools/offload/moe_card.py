@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 
 PROMPT = "What is the capital of France? Answer in one sentence."
-IDLE_PARTS = ("v1", "ra", "halt", "v2")      # --idle-parts (docs/offload.md 13.10)
+IDLE_PARTS = ("v1", "ra", "halt", "v2")      # --idle-parts (docs/offload.md 13.12)
 
 
 def hf_greedy(model: str, n: int, max_memory: str | None, prompt: str = PROMPT) -> dict:
@@ -130,7 +130,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
          release_weights: bool = True, willneed: bool = True, pool_map: bool = True,
          legacy_serve: bool = False, embed_runs: bool = False,
          poll_idle: str | None = None, prefill_trace: str | None = None,
-         layer_ahead: str | None = None, idle_parts: str = "v1") -> dict:
+         layer_ahead: str | None = None, ahead_part: int | None = None,
+         idle_parts: str = "v1") -> dict:
     import hashlib
     import pickle
     from dataclasses import replace
@@ -172,6 +173,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     if eng.layer_ahead and not (pooled and hasattr(srv, "ahead_layer")):
         raise SystemExit("--layer-ahead needs pooled slots and a server that streams ahead "
                          "(ExpertServer.ahead_layer)")
+    if ahead_part:                              # (--layer-ahead hint's idle-poll part)
+        eng.ahead_part = ahead_part
     srv.policy = policy                         # the slots' replacement (ExpertServer)
     srv.history, per_req = [], []               # each request's ids and misses
     serve, pool_of, mem = srv.serve, srv.pool, srv.mem
@@ -200,7 +203,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
         srv.part = hint_part
     srv.drop = hint_drop
     srv.hint_n, srv.hint_top = hint_n, hint_top
-    if idle_parts not in IDLE_PARTS:            # idle parts (docs/offload.md 13.10): read
+    if idle_parts not in IDLE_PARTS:            # idle parts (docs/offload.md 13.12): read
         raise ValueError(f"idle parts {idle_parts!r}")  # ahead, one call; halt-aware
     srv.read_ahead, srv.halt_aware = idle_parts in ("ra", "v2"), idle_parts in ("halt", "v2")
     srv.pool = timed("pool", pool_of)
@@ -414,6 +417,7 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
                 pooled=pooled if layer_major else None,
                 embed_runs=embed_runs if layer_major else None,
                 layer_ahead=layer_ahead if layer_major else None,
+                ahead_part=eng.ahead_part if eng.layer_hint else None,
                 release_weights=release_weights, willneed=willneed, pool_map=pool_map,
                 legacy_serve=legacy_serve, poll_idle=poll_idle,
                 idle_parts=dict(mode=idle_parts, holds=srv.holds,
@@ -501,7 +505,7 @@ def main():
                     help="--layer-major with each layer's own slots (default: pooled)")
     ap.add_argument("--idle-parts", choices=IDLE_PARTS, default="v1",
                     help="the hinted / ahead experts' parts on idle polls (docs/offload.md "
-                         "13.10): v1 as before (cut in two, each read after the last one's "
+                         "13.12): v1 as before (cut in two, each read after the last one's "
                          "DMA); ra read ahead, one call each; halt none started near a run's "
                          "expected end; v2 both")
     ap.add_argument("--layer-ahead", metavar="index|hint|TRACES",
@@ -510,6 +514,9 @@ def main():
                          "order, the card's hints (each layer run's router of the next layer on "
                          "its output rows, 13.9) or by their use in router traces "
                          "(comma-separated .npz)")
+    ap.add_argument("--ahead-part", type=int, metavar="KiB",
+                    help="--layer-ahead hint: the KiB an idle poll sends of a queued expert "
+                         "(default qwen3.AHEAD_PART, 1024; at least a slot: one part an expert)")
     ap.add_argument("--embed-runs", action="store_true",
                     help="--layer-major with the embed runs and compile-time-position runs "
                          "for an embedding table on the host (Engine embed_runs; needs a "
@@ -549,7 +556,7 @@ def main():
              a.hint_n, a.hint_top, a.hint_trace, a.wformat, a.head_format, a.formats, a.layer_major,
              not a.per_layer_slots, not a.keep_weights, not a.no_willneed,
              not a.no_pool_map, a.legacy_serve, a.embed_runs, a.poll_idle, a.prefill_trace,
-             a.layer_ahead, a.idle_parts)
+             a.layer_ahead, a.ahead_part << 10 if a.ahead_part else None, a.idle_parts)
     print(json.dumps(r))
     if a.out:
         Path(a.out).write_text(json.dumps(r, indent=1))

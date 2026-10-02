@@ -355,7 +355,7 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
 
 @pytest.mark.parametrize("ahead", [True, False])
 def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
-    """read_ahead (docs/offload.md 13.10): on BoardDram (CHASH, a split pool file) an idle
+    """read_ahead (docs/offload.md 13.12): on BoardDram (CHASH, a split pool file) an idle
     poll's part was read by the poll before (stage, beside that poll's DMA: a part's, or the
     hint's served) and goes as one DMA call per channel; one not read ahead (the first after
     ahead_layer) keeps the lead cut. A request first drops the staged part (its pair free
@@ -432,7 +432,7 @@ def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
 
 
 def test_halt_aware_idle_parts_wait_near_a_runs_expected_end():
-    """halt_aware (docs/offload.md 13.10): no idle part starts while the running program's
+    """halt_aware (docs/offload.md 13.12): no idle part starts while the running program's
     expected end is nearer than a part takes (part_s, or PART_S0 + part / PART_GBS before any
     is measured), so its halt is not seen after a part. The end: the memory's run_clock (the
     run's start and its time with no waits) plus the run's own waits (each request with misses,

@@ -81,7 +81,7 @@ RUN = 4096             # the split pool format's block: 32 chunks, its two chann
 TAG = 128              # a slot's tag chunk (one beat on each channel; the tag word its first)
 SPLIT = "split4k"      # the split format's name in a pool file's <file>.format
 IOV_MAX = 1024         # buffers per os.preadv (Linux's UIO_MAXIOV)
-# halt_aware idle parts (docs/offload.md 13.10): a part's time before any is measured (a call
+# halt_aware idle parts (docs/offload.md 13.12): a part's time before any is measured (a call
 # pair's 122 us and the pairs' 3.15 GB/s, session 16, and the poll), and how far past its
 # expected end a run gets idle parts again
 PART_S0, PART_GBS, HOLD_LATE = 0.2e-3, 3.15e9, 1e-3
@@ -518,7 +518,7 @@ class ExpertServer:
         # a hint's caps (docs/offload.md 12.7): of its first hint_top ids (its router's best
         # first; 0: all), the first hint_n not in a slot get one (0: every one not in a slot)
         self.hint_n = self.hint_top = 0
-        # idle parts (docs/offload.md 13.10), opt-in until the card's A/B: read_ahead, each read
+        # idle parts (docs/offload.md 13.12), opt-in until the card's A/B: read_ahead, each read
         # by the poll before, beside its DMA, and sent as one DMA call per channel (a memory
         # with stage: BoardDram); halt_aware, none started when the running program's expected
         # end is nearer than an idle part takes (part_s: the measured parts' average). The end:
@@ -884,7 +884,7 @@ class ExpertServer:
             data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))[a:b]
 
     def _stage_next(self) -> None:
-        """Read-ahead (docs/offload.md 13.10): the part the next idle poll would send, read into
+        """Read-ahead (docs/offload.md 13.12): the part the next idle poll would send, read into
         a staging pair now (the memory's stage), while this poll's DMA runs (a part's, or a
         request's experts and served); the next queued expert of ahead_layer takes its slot for
         it now, as it would then. A request first drops it (_unstage): the read is lost, not
@@ -917,7 +917,7 @@ class ExpertServer:
             self._waits += s
 
     def _hold(self) -> bool:
-        """halt_aware (docs/offload.md 13.10): no idle part now if the running program is
+        """halt_aware (docs/offload.md 13.12): no idle part now if the running program is
         expected to end before one would be done (its halt would be seen after the part): its
         start, its time with no waits and its own waits so far. A run past that end by
         HOLD_LATE gets parts again (the estimate was short), as does one with no estimate.
@@ -1339,7 +1339,7 @@ class BoardDram:
       (a request's first miss) in `pieces` parts, the first `lead` of it (None: equal parts),
       each DMAed as soon as it is read: the link starts after a fifth of the expert is read,
       not half (docs/offload.md 10.8); an idle part read ahead (stage, beside the DMA before
-      it) goes whole (docs/offload.md 13.10);
+      it) goes whole (docs/offload.md 13.12);
     - the host's own words (served and the directory: the card only reads them) are kept in a
       shadow and written with no read first: a write within one 64-byte beat (an entry,
       served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
@@ -1555,7 +1555,7 @@ class BoardDram:
         return i, nb, e, order, read
 
     def stage(self, addr: int, data, tag=None):
-        """Read-ahead (ExpertServer's next idle part, docs/offload.md 13.10): data's bytes read
+        """Read-ahead (ExpertServer's next idle part, docs/offload.md 13.12): data's bytes read
         into a free staging pair now, while the DMA ahead of it runs, for write_slot(addr, data,
         tag, staged=it) to queue as one DMA call per channel later; None where write_slot
         would not read it in place. The pair stays the server's until then, or unstage."""
