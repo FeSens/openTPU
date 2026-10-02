@@ -89,6 +89,9 @@ STREAM_PROBE = 0.5e-3           # probe interval when no completion time is know
 TAIL_SETTLE = 5e-3              # after HALTED: how long the last stores may take to land
 WR_SETTLE = 2e-3                # after HALTED: the longest wait for WR_IDLE
 HOST_IDLE = 50e-6               # BoardBackend.host: the sleep between polls it had nothing for
+                                # (a transport's host_idle instead: XdmaTransport's 0)
+HOST_TAKE = 1e-3                # run_generate with a host hook: out[] read at most this often (its
+                                # two DMA calls would double the hook's poll period)
 
 
 # ------------------------------------------------------------------------------ address map
@@ -217,6 +220,10 @@ class XdmaTransport:
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
     streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
     run_h2c = RUN_H2C           # Board.write's bytes per call and channel during a run
+    # BoardBackend.host's sleep between polls that found nothing: none, the hook's read of the
+    # card (a DMA call, ~30 us) paces the loop, so the card's request is seen ~45 us after its
+    # post, not ~100 (HOST_IDLE's 50 us slept ~110 on the card's host; docs/offload.md 10.8)
+    host_idle = 0.0
     _dma = _DmaLock("", flock=False)    # a transport built bare (tests): its threads only
 
     def __init__(self, dev: str = "/dev/xdma0", dma: bool = True):
@@ -1161,9 +1168,10 @@ class BoardBackend:
         t = self.board.t
         if getattr(t, "batched", False):
             return
+        idle = getattr(t, "host_idle", HOST_IDLE)
         while not t.reg_read(R_STATUS) & ST_HALTED:
-            if not self.host():
-                time.sleep(HOST_IDLE)
+            if not self.host() and idle:
+                time.sleep(idle)
         self._seen = time.perf_counter()
 
     def _next_expect(self, dev: float) -> float:
@@ -1348,11 +1356,13 @@ class BoardBackend:
 
         # the board model replays its register script in one simulation per flush: no reads
         # while the program runs, the tokens are read after it halts
-        host = self.host
+        host, t_take, idle = self.host, 0.0, getattr(t, "host_idle", HOST_IDLE)
         while k < n and not getattr(t, "batched", False):
             served = host() if host is not None else 0
-            if take():
-                continue
+            if host is None or time.perf_counter() - t_take >= HOST_TAKE:
+                t_take = time.perf_counter()
+                if take():
+                    continue
             if t.reg_read(R_STATUS) & ST_HALTED:
                 break
             if stop is not None and not asked and state is not None and stop():
@@ -1360,10 +1370,13 @@ class BoardBackend:
                 asked = True
             if served:
                 continue
-            # wake up a little before the next token is due, then every 50 us (with a host
-            # hook every HOST_IDLE: the card's MoE layers wait for it)
+            if host is not None:            # the card's MoE layers wait for the hook
+                if idle:
+                    time.sleep(idle)
+                continue
+            # wake up a little before the next token is due, then every 50 us
             due = t_tok + gap - time.perf_counter()
-            time.sleep(HOST_IDLE if host is not None else min(max(due * 0.5, 5e-5), 1e-3))
+            time.sleep(min(max(due * 0.5, 5e-5), 1e-3))
         st = b.wait(expect=0.0)
         self._running = None
         while k < n and take():                            # the last tokens, after HALTED
