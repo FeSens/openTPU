@@ -1237,10 +1237,13 @@ every run:
   at its peak, the image build). The page cache held the checkpoints a session before had
   mmapped (Qwen3.5 0.8B / 2B / 4B, 13.6 GB) and the run's own (4.74 GB of RssFile): with MGLRU
   (opentpu: on) once-mapped pages outlive the pool's read() pages. `fincore` shows them.
-- So moe_card releases the checkpoint and queues a request's disk reads by default
-  (`--keep-weights`, `--no-willneed` for the old way), and card_moe.sh drops every other file of
-  100 MB or more under ~/openTPU/models and the session directory before each run (`DROPOTHER`,
-  "" for none; DONTNEED only, the next session's loads read them from the SSD).
+- So the Engine releases the checkpoint itself once the image is written when its experts
+  stream from a pool file (`Engine(release_weights=True)`, the default; a LazyWeights read
+  after reopens its file), moe_card queues a request's disk reads by default (`--keep-weights`,
+  `--no-willneed` for the old way), and card_moe.sh drops every other file of 100 MB or more
+  under ~/openTPU/models and the session directory before each run (`DROPOTHER`, "" for none;
+  DONTNEED only, the next session's loads read them from the SSD; a link out of ~/openTPU and
+  ~/otpu-build is skipped and logged, never opened).
 - The card's side did not change: MXU_BUSY 2.13e9 cycles in every run, RUNNING - DMA_BUSY 1.76e9;
   only WAITW's share moved. Each request's window (`--hint-trace`): 0.6 ms + 1.57 ms a miss with
   the pool cached (rw), 1.57 + 2.85 with the disk (t, its 99th percentile 108 ms).
