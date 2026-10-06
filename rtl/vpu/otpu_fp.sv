@@ -155,6 +155,10 @@ package otpu_fp;
   // Rounding carries out (mr[24]) only when mm was all ones: mr == 2^24, so mr[22:0] == 0 with
   // or without a >> 1. The exponent bump c is checked against e0 (the exponent before rounding),
   // so the overflow/underflow flags don't wait on the carry chain.
+  // e0 == 0 (a product in [2^-127, 2^-126)): IEEE rounds it on the subnormal grid (2^-149, one
+  // bit coarser than mm's 2^-150), then the flush keeps only a result of 2^-126. That is every
+  // product >= 2^-126 - 2^-150 (the tie goes to 2^-126, the even one), i.e. mm all ones whatever
+  // g and st say; rounding at 24 bits would need g too (0x3F000000 * 0x00FFFFFF is 2^-126).
   function automatic f32_t fp_mul_s2(input fmul_mid_t m);
     logic g, st, c;
     logic signed [10:0] e0;
@@ -170,7 +174,8 @@ package otpu_fp;
     mr = {1'b0, mm} + ((g && (st || mm[0])) ? 25'd1 : 25'd0);
     c = mr[24];
     if (e0 >= 11'sd255 || (e0 == 11'sd254 && c)) return {m.s, 8'hFF, 23'd0};
-    if (e0 < 11'sd0 || (e0 == 11'sd0 && !c)) return {m.s, 31'd0};
+    if (e0 < 11'sd0) return {m.s, 31'd0};
+    if (e0 == 11'sd0) return (&mm) ? {m.s, 8'd1, 23'd0} : {m.s, 31'd0};
     return {m.s, 8'(e0) + 8'(c), mr[22:0]};
   endfunction
 
@@ -373,7 +378,7 @@ package otpu_fp;
     return i2f_s2(i2f_s1(x));
   endfunction
 
-  // Round half to even, saturate to [-127, 127]; in two stages: shift | round + saturate.
+  // Round half to even, saturate to [-127, 127], NaN -> 0; in two stages: shift | round + saturate.
   typedef struct packed {
     logic        zero, sat, s;
     logic [31:0] ip;
@@ -389,7 +394,7 @@ package otpu_fp;
     e = int'(x[30:23]);
     q = '0;
     q.s = x[31];
-    q.zero = (e < 126);
+    q.zero = (e < 126) || is_nan(x);
     q.sat = (e >= 134);
     m = {1'b1, x[22:0]};
     sh = (q.zero || q.sat) ? 17 : 150 - e;       // 17..24
@@ -436,6 +441,7 @@ package otpu_fp;
     int i;
     logic [31:0] r;
     x = ftz(x_in);
+    if (is_nan(x)) return F_INF;          // as the chains: their op 0 (x*1 + -0) makes it +NaN
     if (fp_gt(F_M126, x)) return F_ZERO;
     if (!fp_gt(F_128, x)) return F_INF;
     i = ffloor(x);
@@ -452,24 +458,50 @@ package otpu_fp;
     return r;
   endfunction
 
+  // The composites' range scaling (docs/isa.md): the Newton steps are exact under x -> x * 2^2k,
+  // y -> y * 2^-k (or 2^-2k for recip) while nothing flushes, so out-of-range inputs run scaled
+  // and the result's exponent field is adjusted back. RCP_SC: |x| in [2^123, 2^126) runs on
+  // |x|/16 (unscaled, the seed flushes above 0x7E7311C3); RSQ_LO / RSQ_HI: exponent field <= 2
+  // runs on 16x (h = x/2 flushes at field 1), field 250..254 on x/16 (y*y flushes at >= 252).
+  function automatic logic rcp_sc(input f32_t ax);       // ax = |x|, flushed, below 2^126
+    return ax[30:23] >= 8'd250;
+  endfunction
+  function automatic logic rsq_lo(input f32_t x);
+    return x[30:23] <= 8'd2;
+  endfunction
+  function automatic logic rsq_hi(input f32_t x);
+    return x[30:23] >= 8'd250 && x[30:23] != 8'hFF;
+  endfunction
+
   function automatic f32_t fp_recip(input f32_t x_in);
     f32_t x, ax, y;
+    logic sc;
     x = ftz(x_in);
     ax = {1'b0, x[30:0]};
     if (ax == 0) return F_ZERO;
     if (ax >= 32'h7E80_0000) return {x[31], 31'b0};      // |x| >= 2^126 (incl. inf): flushes
+    sc = rcp_sc(ax);
+    if (sc) ax = ax - 32'h0200_0000;                      // |x| / 16
     y = ftz(RECIP_MAGIC - ax);
     for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_TWO, fp_mul(ax, y)));
+    if (sc) y = y - 32'h0200_0000;                        // y / 16: y >= 2^-122, stays normal
     return x[31] ? fneg(y) : y;
   endfunction
 
   function automatic f32_t fp_rsqrt(input f32_t x_in);
     f32_t x, y, h;
+    logic lo, hi;
     x = ftz(x_in);
     if (x[31] || x[30:0] == 0 || x == 32'h7F80_0000) return F_ZERO;
+    lo = rsq_lo(x);
+    hi = rsq_hi(x);
+    if (lo) x = x + 32'h0200_0000;                        // 16x
+    if (hi) x = x - 32'h0200_0000;                        // x / 16
     y = RSQRT_MAGIC - (x >> 1);
     h = fp_mul(F_HALF, x);
     for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_1P5, fp_mul(h, fp_mul(y, y))));
+    if (lo) y = y + 32'h0100_0000;                        // * 4
+    if (hi) y = y - 32'h0100_0000;                        // / 4
     return y;
   endfunction
 

@@ -55,8 +55,15 @@ eight in all) needs them from bucket 6 on.
 ## Arithmetic (fp32)
 
 IEEE-754 binary32, round to nearest even, **flush to zero**: denormal inputs are treated as
-signed zero and denormal results are replaced by signed zero. No NaN inputs are expected;
-any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`, may set its sign). Composite functions are defined as fixed sequences of
+signed zero and denormal results are replaced by signed zero. A result is denormal if IEEE
+rounding (to the subnormal grid) gives a denormal: a product rounding up to `2^-126` is kept
+(`0.5 * 0x00FFFFFF = 2^-126`; the multiplier must not round at 24 bits first). No NaN inputs are expected;
+any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`, may set its sign).
+NaN operands are defined all the same (the hardware's behaviour, which opentpu/fp32.py models): `add`
+and `mul` give the canonical NaN; flushing, max / min, abs, COPY and FILL keep a NaN's bits; the
+compares order raw sign-magnitude bits (a NaN with the sign set is below `-inf`); `exp2(NaN) = +inf`,
+`recip(NaN)` is a zero with its sign, `rsqrt` of a NaN with the sign set is `+0` (others: NaN),
+`log2(NaN)` the canonical NaN, `q8(NaN) = 0`. Composite functions are defined as fixed sequences of
 `add`/`mul` so that every implementation is bit exact:
 
 - `i2f(i)`: int32 to fp32, RNE.
@@ -64,12 +71,18 @@ any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`
   `f = x - i2f(i)`, `p = C0 + f*(C1 + f*(C2 + ... + f*C7))` (Horner, fp32, Taylor coefficients
   `ln2^k/k!` rounded to fp32), result = `p` with `i` added to its exponent field.
 - `recip(x)`: `x == 0` returns `+0`; `|x| >= 2^126` (including infinity) returns a zero with
-  the sign of `x` (the result would be subnormal and flush). Otherwise on `|x|`:
-  `y = bits(0x7EF311C3 - bits(|x|))`, three times `y = y * (2 - |x|*y)`; the sign of `x` is
-  applied at the end. This keeps `silu(x) = x * recip(1 + exp2(-x*log2e))` exact at `-0` for
+  the sign of `x` (the result would be subnormal and flush). Otherwise on `a = |x|`:
+  `y = bits(0x7EF311C3 - bits(a))`, three times `y = y * (2 - a*y)`; the sign of `x` is
+  applied at the end. If `|x| >= 2^123` (exponent field >= 250), `a = |x|/16` (the field minus
+  4) and the result is `y/16` (y's field minus 4; y >= 2^-122 there, so it stays normal):
+  unscaled, the seed flushes for `|x| > 0x7E7311C3`. This keeps `silu(x) = x * recip(1 + exp2(-x*log2e))` exact at `-0` for
   very negative `x`, where `exp2` overflows to infinity.
-- `rsqrt(x)`: `x <= 0` and `x = +inf` return `+0`. `y = bits(0x5F3759DF - (bits(x) >> 1))`, `h = 0.5*x`,
-  three times `y = y * (1.5 - h*(y*y))`.
+- `rsqrt(x)`: `x <= 0` (any sign bit set) and `x = +inf` return `+0`. With `x'` = `16x` if x's
+  exponent field is <= 2, `x/16` if it is 250..254, else `x` (a change of the field by 4):
+  `y = bits(0x5F3759DF - (bits(x') >> 1))`, `h = 0.5*x'`, three times `y = y * (1.5 - h*(y*y))`;
+  the result is `4y`, `y/4` or `y` (y's field plus 2, minus 2, unchanged). Unscaled, `h`
+  flushes at field 1 and `y*y` at fields >= 252 (NaN or errors up to 4x). The steps are exact
+  under the scaling, so every other input gives the unscaled bits.
 - `log2(x)`: `x = +-0` returns `-inf`, `x < 0` (and NaN) the canonical NaN, `x = +inf` `+inf`.
   Otherwise, with `f` the 23 fraction bits of `x` and `ex` its exponent field: `ge = f >= 0x3504F3`
   (the mantissa is at least sqrt(2)), `e = ex - 127 + ge`, `m = bits((ge ? 126 : 127) << 23 | f)`
@@ -87,9 +100,12 @@ any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`
   `p[q] = +0 + x[q] + x[q+P] + x[q+2P] + ...` (left to right, each `+` an fp32 add), then a
   folding tree over the partials: `n = P/2, P/4, ..., 1: p[i] = p[i] + p[i+n]` for `i < n`.
   (For MM that is `(p0 + p2) + (p1 + p3)`.)
-  MM uses P = 4 over the K blocks; RSUM, RSSQ and RDOT use P = 64 over the columns. Missing terms
-  are +0 (a partial is never -0, so they do not change it).
-- `q8(x)`: round half to even to an integer, saturate to `[-127, 127]`.
+  MM uses P = 4 over the K blocks; RSUM, RSSQ and RDOT use P = 64 over the columns. RSUM, RSSQ
+  and RDOT pad a row with +0 terms to a multiple of 64 columns (each added: a -0 partial, from a
+  sum that flushed, becomes +0). MM has no pad terms: a partial is the chain of its own blocks
+  only (one with no block is the +0 it starts from).
+- `q8(x)`: round half to even to an integer, saturate to `[-127, 127]`; NaN gives 0 (a zero
+  times an infinite `inv`, below).
 
 Quantization of a group `x[0..n)` (a block of `D`, or a whole row in row mode):
 `amax = max |x|`; if `amax == 0`: `s = 0`, `inv = 0`; else `s = amax * f32(1/127)`,

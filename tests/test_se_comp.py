@@ -62,16 +62,9 @@ def _operands(rng, f, n):
 
 
 def reference(f, x, y):
-    """fp32.py's function. NaN inputs (docs/isa.md: none are expected) follow the RTL's
-    definitions (otpu_fp fp_recip / fp_rsqrt, the VPU's chains), which fp32.py does not model:
-    recip(+-NaN) is a zero with its sign (|x| >= 2^126), rsqrt(-NaN) is +0 (x < 0)."""
-    r = _reference(f, x, y)
-    nan = np.isnan(x)
-    if f == V_RECIP:
-        r = np.where(nan, F.from_bits(F.bits(x) & np.uint32(0x80000000)), r)
-    elif f == V_RSQRT:
-        r = np.where(nan & (F.bits(x) >> np.uint32(31) == 1), F.f32(0.0), r)
-    return F.f32(r)
+    """fp32.py's function (NaN inputs too: fp32.py follows the RTL's definitions, e.g.
+    recip(+-NaN) is a zero with its sign, rsqrt(-NaN) is +0, exp2(NaN) is +inf)."""
+    return F.f32(_reference(f, x, y))
 
 
 def _reference(f, x, y):
