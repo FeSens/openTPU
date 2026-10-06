@@ -76,8 +76,8 @@ def _vectors(n=20000):
         add(op, w, w, F.bits(fn(w)))
     # products at the flush boundary: a power of two times an all-ones mantissa lands on
     # 2^-126 - 2^-150 (or near it); IEEE rounds that up to 2^-126 on the subnormal grid
-    e1 = rng.integers(1, 254, n // 4).astype(np.int64)
-    e2 = np.clip(253 - e1 + rng.integers(0, 3, n // 4), 1, 254)
+    e1 = rng.integers(1, 127, n // 4).astype(np.int64)   # e1 + e2 = 127: 2^-126 (1 - 2^-24)
+    e2 = np.clip(127 - e1 + rng.integers(-1, 2, n // 4), 1, 254)
     s1, s2 = (rng.integers(0, 2, n // 4).astype(np.int64) << 31 for _ in range(2))
     m2 = np.where(rng.random(n // 4) < 0.7, 0x7FFFFF, rng.integers(0x7FFFF0, 0x800000, n // 4))
     pa = F.from_bits((s1 | (e1 << 23)).astype(np.uint32))

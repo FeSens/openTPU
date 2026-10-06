@@ -50,16 +50,17 @@ def _corner_words(rng, n):
 
 
 def mul_add(cfg):
-    """MUL / ADD / SUB with results at the flush boundary: products a * b around +-2^-126
-    (rounding up to it, down from it, exactly on it) and sums of normals that land below it."""
+    """MUL / ADD / SUB with results at the flush boundary: products of a power of two and an
+    all-ones mantissa, on 2^-126 - 2^-150 or near it (IEEE rounds the tie up to 2^-126 on the
+    subnormal grid), and sums of normals that land below 2^-126."""
     rng = np.random.default_rng(5)
     n = 2048
-    a = F.f32(rng.uniform(1.0, 2.0, n))
-    p = F.f32(2.0 ** -126 * rng.uniform(0.98, 1.02, n))
-    b = (p / a).astype(np.float32)
-    b = F.from_bits(F.bits(b) + rng.integers(-2, 3, n).astype(np.uint32)).copy()
-    sg = rng.integers(0, 2, n).astype(np.uint32) << 31
-    b = F.from_bits(F.bits(b) ^ sg).copy()
+    e1 = rng.integers(1, 127, n).astype(np.int64)        # e1 + e2 = 127: 2^-126 (1 - 2^-24)
+    e2 = np.clip(127 - e1 + rng.integers(-1, 2, n), 1, 254)
+    s1, s2 = (rng.integers(0, 2, n).astype(np.int64) << 31 for _ in range(2))
+    m2 = np.where(rng.random(n) < 0.7, 0x7FFFFF, rng.integers(0x7FFFF0, 0x800000, n))
+    a = F.from_bits((s1 | (e1 << 23)).astype(np.uint32)).copy()
+    b = F.from_bits((s2 | (e2 << 23) | m2).astype(np.uint32)).copy()
     c = F.from_bits(np.uint32(0x00800000) + rng.integers(0, 64, n).astype(np.uint32)).copy()
     d = F.from_bits((np.uint32(0x00800000) + rng.integers(0, 64, n).astype(np.uint32))
                     | np.uint32(0x80000000)).copy()
