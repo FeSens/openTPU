@@ -10,8 +10,8 @@ switched one at a time and per-kind weight formats (docs/gemma4.md, "Long contex
         the next-token NLL of the soft-capped logits over ids0: perplexity, and the argmax per
         position into OUT.npz (nll, top1)
     python tools/gemma4_quant_eval.py check TINY_DIR
-        the batched emulation against emulated_logits (40 tokens, window 16; equal up to
-        rounding ties of exactly .5, which the two summation orders break differently)
+        the batched emulation against emulated_logits (40 tokens, window 16; equal to float64
+        rounding: _fake_q rounds a tie of exactly .5 half to even whatever the summation order)
 
 WF / HEAD: int8, fp4, int4 or none (float weights). The whole sequence runs at once: 900 tokens of
 E2B take about 1 min in float, 10 min with fp4 layers (the 4-bit quantization's search).
@@ -34,7 +34,7 @@ from opentpu import qcache as QC
 from opentpu import quant as Q
 from opentpu.kernels import gather as GA
 from opentpu.llm import gemma4 as G
-from opentpu.llm.qwen3 import _fake_q, _fake_w
+from opentpu.llm.qwen3 import _fake_q, _fake_w, _v_parts
 
 THREADS = 4     # experts quantized at once (numpy's 4-bit search releases the GIL: 2.8x on 4)
 
@@ -151,11 +151,13 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
             k = (h @ wq(a + "k_proj.weight").T).reshape(T, n_kv, d)
             v = k if spec.kv_same(i) else (h @ wq(a + "v_proj.weight").T).reshape(T, n_kv, d)
             K[i] = fk(G._rot(G._norm(k, W[a + "k_norm.weight"], eps), c, s_, d // 2))
-            V[i] = fk(G._norm(v, None, eps), d)
-        Kh, Vh = K[spec.kv_src[i]], V[spec.kv_src[i]]
+            v = G._norm(v, None, eps)       # int8 values, per-token scales (folded into P)
+            V[i] = _v_parts(v) if "kv" in quant else (ident(v), np.ones((T, n_kv)))
+        Kh, (Vq, Vs) = K[spec.kv_src[i]], V[spec.kv_src[i]]
         o = np.zeros((T, n_q, d))
         for hq in range(n_q):
             sc = q[:, hq] @ Kh[:, hq // Gq].T                       # [T, T]
+            vs = Vs[:, hq // Gq]
             if kind == G.SLIDE:                                      # P's blocks from the window start
                 Wn = -(-spec.window // D) * D
                 idx = np.maximum(0, ii[:, 0] + 1 - spec.window)[:, None] + np.arange(Wn)[None, :]
@@ -164,15 +166,15 @@ def emulate(spec, W, tokens, D=128, wformat="int8", hf=None, ple_format="int8", 
                 sb = np.where(ok, np.take_along_axis(scp, idx, 1), -np.inf)
                 pp = np.exp(sb - sb.max(1, keepdims=True))
                 pf = np.zeros((T, T + Wn))
-                np.put_along_axis(pf, idx, fp(pp), 1)
+                np.put_along_axis(pf, idx, fp(pp * np.pad(vs, (0, Wn))[idx]), 1)
                 pf = pf[:, :T]
             else:
                 Tp = -(-T // D) * D
                 sb = np.full((T, Tp), -np.inf)
                 sb[:, :T] = np.where(np.arange(T)[None, :] <= ii, sc, -np.inf)
                 pp = np.exp(sb - sb.max(1, keepdims=True))
-                pf = fp(pp)[:, :T]
-            o[:, hq] = (pf @ Vh[:, hq // Gq]) / pp.sum(1, keepdims=True)
+                pf = fp(pp * np.pad(vs, (0, Tp - T)))[:, :T]
+            o[:, hq] = (pf @ Vq[:, hq // Gq]) / pp.sum(1, keepdims=True)
         att = fq(o.reshape(T, -1)) @ wq(a + "o_proj.weight").T
         x = x + G._norm(att, W[p + "post_attention_layernorm.weight"], eps)
         h = fq(G._norm(x, W[p + "pre_feedforward_layernorm.weight"], eps))

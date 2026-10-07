@@ -81,8 +81,8 @@ from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords
                     _amask, _attention, _attention_rows, _Bump,
                     _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
                     _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
-                    _qdesc, _tdesc, _tok_arg, _tokens_arg, compile_decode, rope_tables,
-                    EmbedHost, fill_logits, step_descriptors)
+                    _pv, _qdesc, _tdesc, _tok_arg, _tokens_arg, _v_parts, compile_decode,
+                    rope_tables, EmbedHost, fill_logits, step_descriptors)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
@@ -392,7 +392,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                     head_format: str | None = None, routes: list | None = None,
                     formats: str | None = None) -> np.ndarray:
     """float64 decode with openTPU's quantization points and none of its rounding (as
-    qwen3.emulated_logits): int8 weights and matmul inputs per D-block, int8 K and V, int8 P.
+    qwen3.emulated_logits): int8 weights and matmul inputs per D-block, int8 K and V, int8 P
+    with V's scales folded in.
     The DeltaNet state, convolution and gates are exact (they are fp32 on the device).
     Qwen3.5-MoE: the router (with the shared expert's gate as its last row) in int8; `routes`
     gets (token, layer, ids, the k-th and (k+1)-th logits' gap) per MoE layer."""
@@ -457,16 +458,14 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                 q = _rot(_norm(q, g1(a + "q_norm.weight"), eps), c, s, spec.rope_dim)
                 k = _rot(_norm(k, g1(a + "k_norm.weight"), eps), c, s, spec.rope_dim)
                 Kc[i].append(_fake_q(k, D))
-                Vc[i].append(_fake_q(v, d))
-                Kh, Vh = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
+                Vc[i].append(_v_parts(v))
+                Kh = np.stack(Kc[i], 1)
+                Vq, Vs = (np.stack(z, 1) for z in zip(*Vc[i]))
                 o = np.zeros((spec.n_q, d))
                 for hq in range(spec.n_q):
                     sc = Kh[hq // G] @ _fake_q(q[hq] / math.sqrt(d), D)
                     pp = np.exp(sc - sc.max())
-                    T = len(pp)
-                    ppad = np.zeros(-(-T // D) * D)
-                    ppad[:T] = pp
-                    o[hq] = (_fake_q(ppad, D)[:T] @ Vh[hq // G]) / pp.sum()
+                    o[hq] = _pv(pp, Vq[hq // G], Vs[hq // G], D) / pp.sum()
                 o = o / (1 + np.exp(-gate))
                 x = x + w(a + "o_proj.weight") @ _fake_q(o.reshape(-1), D)
             h = _fake_q(_norm(x, g1(p + "post_attention_layernorm.weight"), eps), D)

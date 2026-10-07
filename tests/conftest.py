@@ -134,13 +134,15 @@ class IsaCard(FakeTransport):
     channel memories (with args, CAPS bit25: and ARG0..7). What the run writes shows at once,
     except [late_addr, +late_n) (the logits): piece i of `piece` bytes shows at run_s * (0.4 +
     0.5 * i / pieces), its first half of beats a little before the rest (the beats of one
-    store land out of order). With fill_at (a fraction of the run, or a function of the run
-    number giving it) a program that fills its logits itself (qwen3.fill_logits) shows the
-    region as it was before the run, and ICOUNT 0, until then; FILL_SENTINEL and the whole
-    PROG_N after. With anchor (a function of the run number: True for the runs it holds) such a
-    run's timeline (the fill, the pieces, HALTED) starts at the host's first look instead of at
-    RUN: its first ICOUNT read or memory read (a card as late as the host, however late that
-    is; a host that never looks gets the run after a second)."""
+    store land out of order); a piece ending inside a 128-byte beat pair carries the bytes after
+    it as the run left them (a region of one row of 4 * vocab bytes: the next row's). With
+    fill_at (a fraction of the run, or a function of the run number giving it) a program that
+    fills its logits itself (qwen3.fill_logits) shows the region as it was before the run, and
+    ICOUNT 0, until then; FILL_SENTINEL and the whole PROG_N after. With anchor (a function of
+    the run number: True for the runs it holds) such a run's timeline (the fill, the pieces,
+    HALTED) starts at the host's first look instead of at RUN: its first ICOUNT read or memory
+    read (a card as late as the host, however late that is; a host that never looks gets the
+    run after a second)."""
     streams = True
 
     def __init__(self, cfg, late, piece, run_s=0.06, fill_at=None, anchor=None, **kw):
@@ -211,8 +213,8 @@ class IsaCard(FakeTransport):
         for i, o in enumerate(range(0, ln, self.piece)):
             k = min(self.piece, ln - o)
             t = t0 + self.run_s * (0.4 + 0.5 * i / npieces)
-            buf = np.zeros(-(-k // 128) * 128, np.uint8)
-            buf[:k] = new_late[o:o + k]
+            buf = new[la + o:la + o + -(-k // 128) * 128].copy()    # whole beats, padded with
+            buf[:k] = new_late[o:o + k]                     # what the run left after the piece
             for j, (c, off, part) in enumerate(split(la + o, buf)):
                 # channel 0's beats a little before channel 1's
                 ev.append((t + 0.002 * j, c, off, part[:len(part)]))

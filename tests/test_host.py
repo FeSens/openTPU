@@ -548,6 +548,27 @@ def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
     eng.backend.close()
 
 
+def test_a_late_region_inside_a_beat_keeps_the_bytes_after_it(no_cfg_env):
+    """conftest's IsaCard shows its late region in whole 128-byte beat pairs; one row of
+    logits (4 * vocab bytes, vocab 1000: not a multiple of 128) ends inside one, and the bytes
+    after it there are the next row's, which the run wrote at once. A 10-token prefill (runs
+    of 8 and 2 rows: the logits are row 1's) on the fake card gives the ISA simulator's
+    logits; a piece padded with zeros cleared row 1's first 24."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    spec, W = _big_vocab_qwen(1000)
+    cfg = sim_config(spec, 256)
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    card = IsaCard(cfg, None, 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8))
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert card.late[1] % 128 and eng.image.rows == 8
+    toks = list(range(3, 13))
+    assert np.array_equal(ref.prefill(toks).view(np.uint32), eng.prefill(toks).view(np.uint32))
+    eng.backend.close()
+
+
 @pytest.mark.parametrize("resident", [False, True])
 def test_a_filling_step_program_is_the_plain_one_with_the_fill_first(no_cfg_env, resident):
     """qwen3.fill_logits (a streamed step's program on a card that fills): the address
