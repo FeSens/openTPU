@@ -6,25 +6,30 @@ CPU with openTPU's quantization, and (--against) next to a second device.
                               [--head-format int8|int4|fp4] [--formats SPEC]
                               [--backend isa|rtl|board] [--against isa|rtl|board|RUN.npz]
                               [--cfg board|design|CFG.pkl] [--resident] [--tokens 16] [--chat]
-                              [--weights-only] [--no-fp32] [--min-top1 0.95] [--max-kl 0.01]
+                              [--weights-only] [--no-fp32] [--min-top1 F] [--max-kl NATS]
                               [--save RUN.npz] [--json OUT.json] [prompt ...]
 
 The golden ("W+A"): the Hugging Face model with every matmul weight the device streams replaced
 by the values the device multiplies (the model image's quantize_mxu in the format the image
 gives that weight: --wformat, --head-format, --formats or OTPU_FORMATS; dequantized as the MXU
-reads it), the embedding rows the device's (qwen3.Embedding), and the activations quantized
-where the device quantizes them, with its quantizer (fp32.quantize: int8 per 128-block, the
-scale amax * (1/127) and the reciprocal-based rounding of QACT): every nn.Linear's input, and
-in attention the scaled query and K per head and 128-block, V per head, the softmax numerators
-P per 128 keys (the points of qwen3.emulated_logits). --weights-only quantizes the weights
-only ("W"). The fp32 golden (the checkpoint as it is, Hugging Face's eager attention) is shown
-for context unless --no-fp32.
+reads it), the embedding rows the device's, and the activations rounded where the device
+rounds them, by its quantizer (fp32.quantize: int8 per 128-block, scale amax * (1/127),
+rounding by 127 * recip(amax)): every nn.Linear's input, and in attention as _attend_heads
+does, q * log2(e) / sqrt(d) and K per head and 128-block, V per head and token, and P V as V's
+int8 values against the numerators 2^(s - max) times V's per-token scales, rounded per 128
+keys. --weights-only quantizes the weights only ("W"); the fp32 golden (the checkpoint, Hugging
+Face's eager attention) is there for context unless --no-fp32.
 
 For each prompt: the device's greedy continuation and each golden's (text, ids, the first
-token that differs); then, teacher forced on the device's own sequence (each step compares the
+token that differs); then, teacher forced on the device's own tokens (every step compares the
 logits of the same context): top-1 agreement, KL(golden || device) mean and max, the largest
-|logit difference| and the lowest cosine; then the same over all prompts. The run passes when
-the first golden's top-1 agreement is at least --min-top1 and its mean KL at most --max-kl.
+|logit difference| and the lowest cosine. Over all prompts also the golden against fp32 (the
+quantization's own error) and against itself with its embedding rows moved by about an fp32
+ulp: the floor. The golden cannot round exactly as the device does (its fp32 sums, norms and
+exponentials differ in the last bits), and once an int8 value rounds the other way the
+difference spreads through the later layers; a healthy device sits near that floor. The run
+passes when the device's top-1 agreement with the first golden is at least --min-top1 and its
+mean KL at most --max-kl.
 
 --against runs a second device on the same prompts, or reads a run saved with --save: the
 tokens must be the same and the logits bit-exact (the card and the simulators run the same
@@ -32,13 +37,14 @@ programs on the same arithmetic), else the run fails; it reports the largest dif
 ulps and the first step that differs. A saved run lets the ISA side run on a build host
 (--cfg the card's configuration, tools/qual/refs.py cfg) and keeps the card session short.
 
-Devices: isa, the ISA simulator in --cfg's configuration (default isasim.board_config: the
-card's design, OTPU_MCOLS etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
-(opentpu.llm.rtl_backend: minutes per token on a real model, so a prompt or two and a few
-tokens of LFM2.5-230M); board, the card through the host driver as otpu-chat --backend board
-(run it under otpu-lock on the card host; a simulator then takes the card's configuration from
-its registers). The device runs first and is freed before Hugging Face loads (Qwen3.5-0.8B's
-ISA run peaks near 9 GB). Exit status 0: PASS, 1: FAIL.
+Devices: isa, the ISA simulator in --cfg's configuration (default isasim.board_config, with
+OTPU_MCOLS etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
+(opentpu.llm.rtl_backend: minutes per token on a real model, so a prompt and a few tokens of
+LFM2.5-230M); board, the card through the host driver as otpu-chat --backend board (run it
+under otpu-lock on the card host; a simulator then takes the card's configuration from its
+registers). The device runs first and is freed before Hugging Face loads (Qwen3.5-0.8B's ISA
+run peaks near 9 GB). Gemma 4 and the MoE models are not supported (unsupported()). Exit
+status 0: PASS, 1: FAIL.
 """
 from __future__ import annotations
 
@@ -133,6 +139,18 @@ def embed_rows(table, spec, D: int = 128) -> np.ndarray:
     return out
 
 
+def unsupported(spec) -> str | None:
+    """Why the golden cannot stand for this model's device, or None. Gemma 4's device gathers
+    its embedding rows from the LM head in the head's format and its PLE rows from records of
+    their own, which the golden does not model (and E2B is about 20 GB in fp32, beside the ISA
+    run's 9); a MoE's routers are int8 in every format and its experts stream."""
+    if type(spec).__module__.endswith(".gemma4"):
+        return "Gemma 4 is not supported: its embedding and PLE rows are the device's own gathers"
+    if getattr(spec, "moe", None) is not None:
+        return "MoE models are not supported (the routers' formats, the experts' streaming)"
+    return None
+
+
 class Golden:
     """The CPU golden: a Hugging Face causal LM (fp32, CPU) whose matmuls see what the device's
     see. set("quant"): the device's weight values, embedding rows and activation quantization;
@@ -148,8 +166,9 @@ class Golden:
         from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS, AttentionMaskInterface
 
         from opentpu.llm import formats as FM
-        if getattr(spec, "moe", None) is not None:
-            raise ValueError("MoE models: the golden does not model the routers' formats")
+        why = unsupported(spec)
+        if why:
+            raise ValueError(why)
         self.model, self.spec, self.D, self.act = model.eval(), spec, D, False
         port = importlib.import_module(type(spec).__module__)
         wf, formats = FM.named(spec, wformat, None)
@@ -475,7 +494,7 @@ def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limit
             k = g["first_diff"]
             same = f"same {len(r['tokens'])} tokens" if k is None else \
                 f"first difference at token {k + 1}: {dec(g['tokens'][k:k + 1])!r} vs the " \
-                f"device's {dec(r['tokens'][k:k + 1])!r}; {dec(g['tokens'])!r}"
+                f"device's {dec(r['tokens'][k:k + 1])!r}; {dec(g['tokens'])!r}  {g['tokens']}"
             print(f"   {'golden ' + GOLDENS[m]:{w - 3}s}: {same}")
             e["goldens"][m] = g
         print(f"   {'teacher forced':{w}s}{HEAD}")
@@ -506,9 +525,11 @@ def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limit
         res["pairs"][key] = s
     first = res["goldens"][modes[0]]
     ok = first["top1"] >= limits[0] and first["kl_mean"] <= limits[1]
+    fl = res["pairs"].get("floor", {}).get("kl_mean")
+    vs = f"; {first['kl_mean'] / fl:.2f}x the floor's" if fl else ""
     lines = [f"device vs golden {g0}: top-1 {100 * first['top1']:.1f}% (at least "
-             f"{100 * limits[0]:g}%), KL mean {first['kl_mean']:.2e} (at most {limits[1]:g}): "
-             f"{'ok' if ok else 'FAIL'}"]
+             f"{100 * limits[0]:g}%), KL mean {first['kl_mean']:.2e} (at most {limits[1]:g}"
+             f"{vs}): {'ok' if ok else 'FAIL'}"]
     if agree:
         res["against"] = {"device": other, **agree}
         a = agree
@@ -565,6 +586,8 @@ def _main(argv=None) -> int:
 
     path = model_dir(a.model)
     spec = load_spec(path)
+    if unsupported(spec):                       # (before the device's run)
+        raise SystemExit(f"{path.name}: {unsupported(spec)}")
     tok = transformers.AutoTokenizer.from_pretrained(path)
 
     def encode(p):
