@@ -268,6 +268,12 @@ status is 0 for PASS and 1 for FAIL, and `--json` writes every step for scripts.
 `--weights-only` drops the activation rounding from the golden (then only the top-1 bound
 holds), and `--no-fp32` skips the fp32 rows.
 
+On the card (build 84989047, 2026-10-07: `--no-golden --save` under the lock, `--against` on a
+build host), all six runs of Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B, in int8 and in 4-bit
+with an int8 head, gave the ISA simulator's tokens and bit-identical logits on every prompt
+(0 ulp over 93 to 128 steps a run). The card's mean KL from the quantized golden was 0.95 to
+1.25 times the floor, with 95.3% to 99.2% top-1 agreement.
+
 ## Where to start reading
 
 1. [docs/isa.md](docs/isa.md): the instruction set. Everything else is built on it.
