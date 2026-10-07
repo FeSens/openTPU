@@ -1,8 +1,10 @@
 """Build and run the SystemVerilog RTL with Verilator."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -25,32 +27,74 @@ RTL_SOURCES = [
 ]
 
 
-def build(top: str, sources: list[Path], params: dict | None = None) -> Path:
-    """Compile `top` with Verilator (--binary); cached on source contents and parameters."""
-    params = params or {}
+# Verilator's flags (in the build cache's key, with its version and the sources' names)
+VFLAGS = ["--binary", "-j", "0", "-Wno-fatal", "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC",
+          "-Wno-UNUSEDSIGNAL", "-Wno-UNUSEDPARAM", "-O3", "--x-assign", "0", "--x-initial", "0"]
+_VERSION: str | None = None
+
+
+def verilator_version() -> str:
+    """`verilator --version` (once per process); "" without Verilator."""
+    global _VERSION
+    if _VERSION is None:
+        try:
+            _VERSION = subprocess.run(["verilator", "--version"], capture_output=True,
+                                      text=True).stdout.strip()
+        except FileNotFoundError:
+            _VERSION = ""
+    return _VERSION
+
+
+def build_dir(top: str, sources: list[Path], params: dict | None = None) -> Path:
+    """The build's directory: keyed on the sources' names (in the tree: OTPU_REMOTE_BUILD shares
+    build/ between trees) and contents, the parameters, VFLAGS and Verilator's version."""
     h = hashlib.sha1()
     for s in sources:
-        h.update(Path(s).read_bytes())
-    h.update(repr(sorted(params.items())).encode())
-    out = BUILD / f"{top}_{h.hexdigest()[:12]}"
+        s = Path(s).resolve()
+        name = s.relative_to(ROOT).as_posix() if s.is_relative_to(ROOT) else str(s)
+        h.update(name.encode() + b"\0" + s.read_bytes() + b"\0")
+    h.update(repr(sorted((params or {}).items())).encode())
+    h.update(repr(VFLAGS).encode() + b"\0" + verilator_version().encode())
+    return BUILD / f"{top}_{h.hexdigest()[:12]}"
+
+
+def build(top: str, sources: list[Path], params: dict | None = None) -> Path:
+    """Compile `top` with Verilator (--binary); cached (build_dir). The build runs in a
+    temporary directory, renamed into place once linked, under a lock per build: a concurrent
+    build of the same waits for it instead of running a half-linked executable, and a build
+    killed or failed leaves no executable for the next to take."""
+    params = params or {}
+    out = build_dir(top, sources, params)
     exe = out / f"V{top}"
     if exe.exists():
         return exe
-    out.mkdir(parents=True, exist_ok=True)
-    cmd = ["verilator", "--binary", "-j", "0", "--top-module", top, "-Wno-fatal",
-           "-Wno-WIDTHEXPAND", "-Wno-WIDTHTRUNC", "-Wno-UNUSEDSIGNAL", "-Wno-UNUSEDPARAM",
-           "-O3", "--x-assign", "0", "--x-initial", "0", "-Mdir", str(out)]
-    cmd += [f"-G{k}={v}" for k, v in params.items()]
-    cmd += [str(s) for s in sources]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0 and "linker command failed" in r.stdout + r.stderr:
-        # the parallel make occasionally archives a stale object: rebuild the archive once
-        for f in out.glob("*__ALL.a"):
-            f.unlink()
-        r = subprocess.run(["make", "-C", str(out), "-f", f"V{top}.mk", "-j", "8"],
-                           capture_output=True, text=True)
-    if r.returncode != 0 or not exe.exists():
-        raise RuntimeError(f"verilator failed:\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
+    BUILD.mkdir(parents=True, exist_ok=True)
+    with open(BUILD / f".{out.name}.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if exe.exists():                        # built while this one waited
+            return exe
+        for d in BUILD.glob(f".{out.name}.*"):  # a killed build's (none runs: the lock)
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+        tmp = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=BUILD))
+        try:
+            cmd = ["verilator", *VFLAGS, "--top-module", top, "-Mdir", str(tmp)]
+            cmd += [f"-G{k}={v}" for k, v in params.items()]
+            cmd += [str(s) for s in sources]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0 and "linker command failed" in r.stdout + r.stderr:
+                # the parallel make occasionally archives a stale object: rebuild the archive once
+                for f in tmp.glob("*__ALL.a"):
+                    f.unlink()
+                r = subprocess.run(["make", "-C", str(tmp), "-f", f"V{top}.mk", "-j", "8"],
+                                   capture_output=True, text=True)
+            if r.returncode != 0 or not (tmp / f"V{top}").exists():
+                raise RuntimeError(f"verilator failed:\n{r.stdout[-4000:]}\n{r.stderr[-4000:]}")
+            if out.exists():                    # an unfinished build's (no executable)
+                shutil.rmtree(out)
+            tmp.rename(out)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
     return exe
 
 
@@ -204,7 +248,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
         plusargs: list | None = None, args=None, ldc: int | None = None,
-        pokes: dict | None = None, again: list | None = None, reload: bool = False):
+        pokes: dict | None = None, again: list | None = None, reload: bool = False,
+        error_ok: bool = False):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
     run's arguments (R8..R15 at the start, as isasim.Machine). ldc: MEMORY's LDC for this run
     (the core at MEMORY's LDC_MHZ unless `plusargs` set +ldc_ratio: ldc_plusargs). pokes:
@@ -214,7 +259,9 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     (the memory path is not reset between them; tb_top +runs), each {"args": its arguments
     (default: the run before's), "pokes": {slice: [(DRAM byte address, uint32 word)]}, the
     host's writes before it (the native memory model only)}; reload: the programs loaded again
-    before each (boot only). The result is the state after the last run."""
+    before each (boot only). error_ok: a run that stops with an error (an illegal instruction,
+    a WAITW timeout) returns its state too, stats["error"] set. The result is the state after
+    the last run."""
     from . import isa as I
     run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
@@ -286,7 +333,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     if not m:
         raise RuntimeError(f"RTL simulation failed:\n{out[-3000:]}")
     cycles, halted, err = (int(x) for x in m.groups())
-    if not halted or err:
+    if not halted or (err and not error_ok):
         raise RuntimeError(f"RTL did not halt cleanly (halted={halted} error={err}):\n{out[-2000:]}")
     icounts = [int(x) for x in re.findall(r"SLICE \d+ icount=(\d+)", out)]
     drams = [np.fromfile(tmp / f"dram_out_{s}.bin", dtype=np.uint8) for s in range(cfg.S)]
@@ -300,6 +347,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
             drams[s][at:at + 4 * len(progs[s])] = 0
     tmems = [_read_hex(tmp / f"tmem_{s}.hex", cfg.TMEM_WORDS) for s in range(cfg.S)]
     stats = {"cycles": cycles, "instructions": icounts}
+    if error_ok:
+        stats["error"] = bool(err)
     if axi:
         # per channel: the model's reads, writes, row opens and partial writes, and the adapter's
         # counters; reads and writes as (commands, beats) (a native command is one beat), ar_a:

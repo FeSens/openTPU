@@ -36,7 +36,9 @@
 // to its last read beat or write counted. Controller models: +axi_stall, +axi_lat, +ldn_busy.
 // The bridges' error bits (n_err) must stay clear; with +ldn_dual=N (both channel models return
 // a beat on both ports once, a broken controller; run with +verilator+error+limit+N so the
-// bridge's own check does not stop it) both must set, and the run ends there.
+// bridge's own check does not stop it) both must set, and the run ends there. +cdc_skew=P
+// (otpu_mem_ch): in P percent of their samples the write-accept counts' synchronizers take each
+// bit from the count a source cycle apart, at random (the bus skew their constraints allow).
 // Prints "PASS" or the first mismatches.
 package tb_memch_pkg;
   // a shared beat's data: a hash of (channel, direction, beat)
@@ -275,8 +277,30 @@ module tb_memch #(
       end
     end
   end
+  // - XDMA's B never comes before the controller has taken every 64-byte beat of its burst (and
+  //   of the bursts before it): per bridge, the beats of the bursts answered (xclk) never exceed
+  //   the XDMA write beats the controller has taken (uclk, counted here as they are taken), both
+  //   since the bridge's XDMA side last restarted (its hold; its side's reset). With +cdc_skew a
+  //   write-accept count that steps by two is read ahead and fails this.
+  for (genvar c = 0; c < 2; c++) begin : g_bck
+    longint tk = 0, bt = 0;
+    int     err = 0;
+    always @(posedge uclk)
+      if (g_ch[c].u_ch.x_hold) tk = 0;
+      else tk += longint'(g_ch[c].u_ch.opw_x[0]) + longint'(g_ch[c].u_ch.opw_x[1]);
+    always @(posedge xclk)
+      if (g_ch[c].u_ch.x_crst) bt = 0;
+      else if (cbv[c] && cbr[c]) begin
+        bt += longint'(g_ch[c].u_ch.xbq_rd[6:0]) + 1;
+        if (bt > tk) begin
+          if (err < 5)
+            $display("ERROR ch%0d: B for beats up to %0d with %0d taken by the controller", c, bt, tk);
+          err++;
+        end
+      end
+  end
   function automatic bit xchk_bad();
-    int e = cnt_err;
+    int e = cnt_err + g_bck[0].err + g_bck[1].err;
     for (int i = 0; i < 11; i++) e += ro_err[i];
     if (n_aw_i != n_wl_i || n_aw[0] != n_wl[0] || n_aw[1] != n_wl[1] || n_b[0] != n_aw[0] ||
         n_b[1] != n_aw[1] || n_aw_i != n_aw[0] + n_aw[1]) begin

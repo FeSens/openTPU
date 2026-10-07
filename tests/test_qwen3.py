@@ -60,6 +60,33 @@ def test_the_embedding_table_goes_to_the_host_when_it_does_not_fit(tiny):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
 
 
+def test_from_hf_refuses_what_it_would_run_unlike_hf(tmp_path):
+    """Spec.from_hf takes the RoPE theta where transformers writes it (rope_parameters; the top
+    level's rope_theta is null) and refuses what this code would run unlike Hugging Face: a
+    RoPE scaling (Qwen3's YaRN recipe rescales the frequencies and cos / sin at every
+    position), the sliding window, attention biases."""
+    import json
+    base = transformers.Qwen3Config(hidden_size=256, num_hidden_layers=2, num_attention_heads=4,
+                                    num_key_value_heads=2, head_dim=128, intermediate_size=512,
+                                    vocab_size=1000, rope_theta=5e5).to_dict()
+
+    def spec(**kw):
+        (tmp_path / "config.json").write_text(json.dumps(dict(base, **kw)))
+        return Spec.from_hf(tmp_path)
+    assert spec().theta == 5e5
+    assert spec(rope_parameters=None, rope_theta=1e6).theta == 1e6     # an older config
+    yarn = {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}
+    for kw in (dict(rope_parameters=dict(yarn, rope_theta=1e6)),
+               dict(rope_parameters=None, rope_theta=1e6, rope_scaling=yarn),
+               dict(rope_parameters=None, rope_scaling={"type": "linear", "factor": 2.0})):
+        with pytest.raises(ValueError, match="RoPE type"):
+            spec(**kw)
+    with pytest.raises(ValueError, match="sliding"):
+        spec(use_sliding_window=True, sliding_window=4096)
+    with pytest.raises(ValueError, match="bias"):
+        spec(attention_bias=True)
+
+
 def test_tiny_matches_hf(tiny):
     m, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 140)]  # > one KV block
@@ -124,6 +151,34 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
         pa = a.pos
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32)), pa
     assert sorted(a._decodes) == [1, 2]
+
+
+@pytest.mark.parametrize("name, cap, P, end", [("qwen3", 640, 515, True),
+                                               ("qwen3", 384, 257, True),
+                                               ("lfm2", 384, 257, True),
+                                               ("qwen35", 384, 257, False)])
+def test_resident_decode_at_a_partial_last_bucket(guarded, name, cap, P, end):
+    """A KV capacity that is a multiple of D but not of the attention block (256): the last
+    bucket's masked block ends at the cache's end (cap - t0 tokens, attention.Bucket), so
+    resident decode reads nothing past the cache (every KV region is followed by -NaN words
+    here) and gives the per-position programs' logits bit for bit, after a prefill past the
+    last full block and (`end`) up to the cache's last position."""
+    from test_autodecode import _tiny
+    W, spec = _tiny(name)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, cap)]
+    a, b = Engine(spec, W, cap=cap, resident=True), Engine(spec, W, cap=cap)
+    assert a.resident and guarded(a) and guarded(b)
+    same = lambda x, y: np.isfinite(y).all() and np.array_equal(x.view(np.uint32),  # noqa: E731
+                                                                y.view(np.uint32))
+    assert same(a.prefill(toks[:P]), b.prefill(toks[:P]))
+    for t in toks[P:P + 2]:
+        assert same(a.step(t), b.step(t)), a.pos
+    if end:
+        assert same(a.prefill(toks[P + 2:cap - 2]), b.prefill(toks[P + 2:cap - 2]))
+        for t in toks[cap - 2:]:
+            assert same(a.step(t), b.step(t)), a.pos
+        assert a.pos == cap
+    assert sorted(a._decodes) == [-(-cap // 256)]
 
 
 def test_tiny_device_inputs(tiny, monkeypatch):
@@ -271,6 +326,21 @@ def test_tiny_batched_decode_matches_separate_runs(tiny):
         ref = Engine(spec, W, cap=128)
         ref.prefill(prompts[s] + got[s][:-1])
         assert np.array_equal(lg[s], ref.step(t))
+
+
+def test_tiny_batch_goes_on_when_a_sequence_fills_the_cache(tiny):
+    """A sequence that reaches the cap ends (as Engine.generate) and leaves the batch: the
+    others decode on, each equal to its separate run; a finished sequence is fed no more (its
+    position stays after its last token fed). Before, the next step fed every row and the full
+    sequence's raised "KV cache full"."""
+    _, W, spec = tiny
+    rng = np.random.default_rng(5)
+    prompts = [[int(t) for t in rng.integers(0, 1000, n)] for n in (126, 3)]
+    eng = Engine(spec, W, cap=128, batch=2, rows=8)
+    got = eng.generate_batch(prompts, max_new=6, chunk=8)
+    for s, p in enumerate(prompts):
+        assert got[s] == Engine(spec, W, cap=128, rows=8).generate(p, max_new=6)
+    assert [len(g) for g in got] == [3, 6] and eng.poss == [128, 8]
 
 
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")

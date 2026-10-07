@@ -264,9 +264,9 @@ def main(argv=None):
                          4 * min(Q.HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
     khz = (getattr(eng.backend, "info", {}) or {}).get("core_khz") or 100_000
     P.instrument_transport(eng.backend.board.t)
-    sp = C.sampling(spec, argparse.Namespace())
+    sp = C.sampling(spec, argparse.Namespace(), path)
     pick = C.sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
-                     sp["repetition_penalty"])
+                     sp["repetition_penalty"], getattr(spec, "softcap", None))
     step0 = {}
 
     def first():                                        # the first pick: the prefill is done
@@ -302,7 +302,7 @@ def main(argv=None):
             P.add("sample", time.perf_counter() - t0)
             return r
     timed_pick.stream = TimedStream
-    timed_pick.warm = pick.warm
+    timed_pick.warm, timed_pick.softcap = pick.warm, pick.softcap
     lands, comp = [], [0.0]
     if a.card_loop:                 # Chat.on_card: the picks after the first on the card
         timed_pick.greedy, timed_pick.params, timed_pick.rng = pick.greedy, pick.params, pick.rng

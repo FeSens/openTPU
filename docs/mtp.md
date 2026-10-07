@@ -108,8 +108,10 @@ What sets these costs:
 ## 2. The loop on the card (greedy, k = 1)
 
 The generate loop's state block (generate.py `S_*`) gains the draft `d`, the accepted count
-`n` and the recurrent-state slot `b` (section 4). One iteration at position p, with t the token
-at p:
+`n` and the recurrent-state slot `b` (section 4), in words 32..40 (mtp.py `S_DRAFT`..`S_END`):
+a 64-byte beat of their own, apart from the host's stop word's (16..31), which the host writes
+mid-run as that beat alone (docs/host.md, "The stop word"; they were 20..28, in that beat). One
+iteration at position p, with t the token at p:
 
 ```
 verify run, rows (t, d) at positions p, p + 1:

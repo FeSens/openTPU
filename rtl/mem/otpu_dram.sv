@@ -32,6 +32,7 @@ module otpu_dram #(
   output logic              b_rvalid,
   output logic              b_rtag,
   output logic [D*8-1:0]    b_rdata,
+  output logic              rd_idle,    // no read in flight
   input  logic              dump
 );
   localparam int AW = $clog2(WORDS);
@@ -91,6 +92,7 @@ module otpu_dram #(
   assign b_rvalid = bv[LAT-1];
   assign b_rtag   = bt[LAT-1];
   assign b_rdata  = bd[LAT-1];
+  assign rd_idle  = !(|av) && !(|bv);
 
 `ifndef SYNTHESIS
   // Images are raw binary: dram_<SID>.bin holds big-endian words ($fread order) and the dump

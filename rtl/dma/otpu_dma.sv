@@ -32,7 +32,9 @@
 //   WAITW  an LD of one word whose delivery waits for its condition (docs/isa.md): the word is
 //       taken from the chunk as the LD would write it (C1), compared (C2), and written to TMEM
 //       through lane 0 if it holds (C3); else the DMA waits w5 cycles and reads the chunk again.
-//       Past w6 cycles (w6 != 0) it stops with `err` (the slice's error, seen by the host).
+//       Past w6 cycles (w6 != 0; ww_late) it stops with `err` (the slice's error, seen by the
+//       host) between two reads: a read in flight at the timeout still ends the WAITW if its
+//       word holds, so the WAITW either completes (word written) or times out (nothing written).
 // The DRAM port may refuse a request (b_gnt low) and read data may take any time to return (in
 // order). An ST or a DSTEP completes once the DRAM has acknowledged all its writes (wr_idle).
 module otpu_dma
@@ -415,7 +417,7 @@ module otpu_dma
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
     if (!rst && ds_su && sc.op == OP_STREAM &&
-        (!su_ok || su_src % D != 0 ||
+        (!su_ok || su_src % D != 0 || su_dst % D != 0 ||
          (su_dst != su_src && su_dst < su_src + 32'(su_cfg.rows) * su_ns * W * 4 &&
           su_src < su_dst + 32'(su_cfg.rows) * su_ns * W * 4)))
       $fatal(1, "otpu_dma: STREAM's descriptor at %0d is not in the hardware subset", sc.w1[15:0]);
@@ -486,7 +488,7 @@ module otpu_dma
   // ---- WAITW: the word of the chunk delivered (C1: ww_c1, ww_w), the compare (C2: ww_c2,
   // ww_ok), the TMEM write through lane 0 and the end, or the wait (ww_sl, ww_n) and the next
   // read; ww_tc counts the cycles against the timeout
-  logic        is_ww, ww_c1, ww_c2, ww_ok, ww_sl;
+  logic        is_ww, ww_c1, ww_c2, ww_ok, ww_sl, ww_late;
   logic [1:0]  ww_cmp;
   logic [31:0] ww_a, ww_t, ww_ref, ww_mask, ww_iv, ww_to, ww_n, ww_tc, ww_w;
   function automatic logic ww_holds(input logic [31:0] v, input logic [31:0] ref_,
@@ -648,7 +650,7 @@ module otpu_dma
       ds_dsc <= 1'b0; ds_dsd <= 1'b0; ds_su <= 1'b0; ds_wait <= 1'b0;
       ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
       ss_req <= 1'b0;
-      is_ww <= 1'b0; ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0; err <= 1'b0;
+      is_ww <= 1'b0; ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0; ww_late <= 1'b0; err <= 1'b0;
     end else if (start && (cmd.op == OP_DSTEP || cmd.op == OP_STREAM)) begin
       // the reads start at the setup: a DSTEP's next cycle, a STREAM's once its descriptor is in
       sc <= cmd;
@@ -676,7 +678,7 @@ module otpu_dma
       is_ww <= (cmd.op == OP_WAITW);
       ww_a <= a; ww_t <= cmd.w2; ww_ref <= cmd.w3; ww_mask <= cmd.w4; ww_iv <= cmd.w5;
       ww_to <= cmd.w6; ww_cmp <= cmd.flags[1:0]; ww_tc <= '0;
-      ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0;
+      ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0; ww_late <= 1'b0;
       dw <= a;
       de <= a + n;
       sw <= a & ~32'(W - 1);
@@ -809,8 +811,11 @@ module otpu_dma
           ld_fin <= 1'b1;
         end
         if (is_ww) begin
+          // the timeout (ww_late) is taken with no read in flight (ww_sl: the last compare failed);
+          // err stays, and the DMA busy: the slice stops (otpu_slice to_err)
           ww_tc <= ww_tc + 1;
-          if (ww_to != 0 && ww_tc == ww_to) err <= 1'b1;       // stays busy: the slice stops
+          if (ww_to != 0 && ww_tc == ww_to) ww_late <= 1'b1;
+          if (ww_sl && ww_late) err <= 1'b1;
           ww_c1 <= dv_v;
           if (dv_v) ww_w <= lb_q[32 * (ww_a % CW) +: 32];
           ww_c2 <= ww_c1;
@@ -824,7 +829,7 @@ module otpu_dma
               ww_n <= ww_iv;
             end
           end
-          if (ww_sl && !err) begin
+          if (ww_sl && !ww_late) begin
             if (ww_n != 0) ww_n <= ww_n - 1;
             else begin                            // read the word again: the LD of one word
               ww_sl <= 1'b0;

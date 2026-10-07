@@ -49,6 +49,35 @@ def tiny():
     return m, W, Spec(256, KINDS, 4, 2, 64, 512, 1000)
 
 
+def test_from_hf_ffn_as_hf_and_no_rope_scaling(tmp_path):
+    """Spec.from_hf sizes the MLP as Hugging Face's Lfm2MLP (with block_auto_adjust_ff_dim:
+    2/3, the multiplier, rounded up to block_multiple_of) and refuses a RoPE scaling (YaRN,
+    linear: Hugging Face rescales the frequencies)."""
+    import json
+    from transformers.models.lfm2.modeling_lfm2 import Lfm2MLP
+
+    def config(**kw):
+        return transformers.Lfm2Config(
+            hidden_size=256, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2,
+            intermediate_size=1000, vocab_size=1000, layer_types=["conv", "full_attention"],
+            **kw)
+
+    def spec(hc, **kw):
+        (tmp_path / "config.json").write_text(json.dumps(dict(hc.to_dict(), **kw)))
+        return Spec.from_hf(tmp_path)
+    for kw in (dict(block_auto_adjust_ff_dim=False),
+               dict(block_auto_adjust_ff_dim=True, block_ffn_dim_multiplier=1.0),
+               dict(block_auto_adjust_ff_dim=True, block_ffn_dim_multiplier=1.5,
+                    block_multiple_of=256)):
+        hc = config(**kw)
+        assert spec(hc).ffn == Lfm2MLP(hc).w1.out_features, kw
+    yarn = {"rope_type": "yarn", "factor": 4.0, "rope_theta": 1e6}
+    for kw in (dict(rope_parameters=yarn),
+               dict(rope_parameters=None, rope_scaling={"type": "linear", "factor": 2.0})):
+        with pytest.raises(ValueError, match="RoPE type"):
+            spec(config(), **kw)
+
+
 def test_plan_loops_the_repeated_unit():
     real = ("conv", "conv") + ("attn", "conv") * 6
     assert plan(real) == [(0, ("conv",), 1), (1, ("conv", "attn"), 6), (13, ("conv",), 1)]

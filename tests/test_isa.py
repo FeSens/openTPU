@@ -47,6 +47,16 @@ def test_loop_zero_count_skips_body():
     assert run1(prog).tget([0])[0] == 0.0
 
 
+@pytest.mark.parametrize("count", [0, 1])
+def test_nested_bodies_ending_together_are_refused_whatever_the_count(count):
+    """docs/isa.md LOOP: a body must not end on an enclosing body's last instruction. At
+    count 0 the inner LOOP would jump past the outer body's end and skip its back edge."""
+    prog = [I.li(1, count), I.loop(3, 2), I.vop(I.V_ADD, 0, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 1.0),
+            I.loop(1, 0, rcount=1), I.nop(), I.halt()]
+    with pytest.raises(SimError, match="same instruction"):
+        run1(prog)
+
+
 def test_vop_broadcast_modes_and_reductions():
     dram = np.zeros(4096, np.uint8)
     a = f(np.arange(12).reshape(3, 4) - 5)
@@ -102,3 +112,84 @@ def test_gather_two_slices():
     for sl in m.slices:
         got = sl.tget(100 + np.arange(12)).reshape(2, 6)
         assert np.array_equal(got, np.array([[1, 1, 1, 2, 2, 2]] * 2, np.float32))
+
+
+def test_field_widths_raise_value_errors():
+    """A field that does not fit its bits is a ValueError (an assert would let python -O
+    truncate the word)."""
+    for make in (lambda: I.vop(I.V_ADD, 0, 0, 0, 1, 1 << 16, 0, 0, 0),
+                 lambda: I.vop(I.V_ADD, 0, 0, 0, 1, 4, 1 << 16, 0, 0),
+                 lambda: I.mm(0, 0, 0, 0, 1, 32, 1, 1, 0, 4),
+                 lambda: I.qact(0, 256, 0, 1, 32),
+                 lambda: I.qst(0, 0, 0, 1, 0, 32, 32, 1),
+                 lambda: I.gather(0, 0, 1 << 16, 1, 1, 1, 1),
+                 lambda: I.dstep(0, 0, 0, 1 << 16, 64, 0, 1, 0),
+                 lambda: I.Instr(I.NOP, ra=16).encode(),
+                 lambda: I.Instr(I.NOP, flags=256).encode()):
+        with pytest.raises(ValueError):
+            make()
+
+
+def test_qst_data_and_scale_overlap_is_refused():
+    """docs/isa.md QST: the data and scale ranges of one QST must not overlap."""
+    cfg = Config(S=1, D=32)
+    fill = I.vop(I.V_FILL, 0, 0, 0, 1, 32, 0, 0, 0, I.B_SCALAR, 3.0)
+    _, sc = F.quantize(np.full((1, 32), 3.0, np.float32))
+    s = run1([fill, I.qst(0, 256, 512, 1, 1, 32, 32, 1), I.halt()], cfg=cfg)
+    assert (s.dram[256:288] == 127).all() and s.m32[128] == sc.view(np.uint32)[0]
+    # a byte column (es 64, V^T's) with its scale word between two of its bytes
+    s = run1([fill, I.qst(0, 256, 256 + 5 * 64 + 4, 1, 1, 32, 32, 64, row=True), I.halt()],
+             cfg=cfg)
+    assert (s.dram[256:256 + 32 * 64:64] == 127).all()
+    with pytest.raises(SimError, match="overlap"):
+        run1([fill, I.qst(0, 256, 280, 1, 1, 32, 32, 1), I.halt()], cfg=cfg)
+    with pytest.raises(SimError, match="overlap"):      # on one of the column's bytes
+        run1([fill, I.qst(0, 256, 256 + 5 * 64, 1, 1, 32, 32, 64, row=True), I.halt()],
+             cfg=cfg)
+
+
+def test_gather_overlap_and_the_resolved_destination():
+    """GATHER: the slices agree on dst = R[rb] + w2 (not on w2), and a slice's source must not
+    overlap the destination (docs/isa.md)."""
+    cfg = Config(S=2)
+
+    def run(dst, rb_val, src=0):
+        progs = [[I.li(1, rb_val[s]), I.vop(I.V_FILL, 0, 0, 0, 2, 3, 3, 0, 0, I.B_SCALAR,
+                                            float(s + 1)),
+                  I.gather(src, dst[s], 2, 3, 3, 6, 3, rb=1), I.halt()] for s in range(2)]
+        return Machine(cfg, progs, [None, None]).run()
+
+    m = run([100, 90], [0, 10])                          # R1 + w2 = 100 on both
+    for sl in m.slices:
+        assert np.array_equal(sl.tget(100 + np.arange(12)).reshape(2, 6),
+                              np.array([[1, 1, 1, 2, 2, 2]] * 2, np.float32))
+    with pytest.raises(SimError, match="disagree"):
+        run([100, 100], [0, 10])                         # the same w2, different addresses
+    with pytest.raises(SimError, match="overlap"):
+        run([4, 4], [0, 0])                              # [4, 16) over the source [0, 6)
+
+
+def test_gather_slices_must_name_the_same_resolved_dst():
+    # dst is R[rb] + w2: equal immediates through different registers are different addresses
+    # (the collective unit writes every slice's TMEM at slice 0's); equal addresses through
+    # different registers are the same GATHER
+    cfg = Config(S=2)
+    fill = I.vop(I.V_FILL, 0, 0, 0, 1, 4, 4, 0, 0, I.B_SCALAR, 1.0)
+    progs = [[fill, I.gather(0, 100, 1, 4, 4, 4, 4), I.halt()],
+             [I.li(1, 8), fill, I.gather(0, 100, 1, 4, 4, 4, 4, rb=1), I.halt()]]
+    with pytest.raises(SimError, match="disagree"):
+        Machine(cfg, progs, [None, None]).run()
+    progs[1][2] = I.gather(0, 92, 1, 4, 4, 4, 4, rb=1)
+    m = Machine(cfg, progs, [None, None]).run()
+    for sl in m.slices:
+        assert np.array_equal(sl.tget(100 + np.arange(8)), np.ones(8, np.float32))
+
+
+def test_mm_needs_n_and_kb():
+    # N = 0 or KB = 0 is not an MM (docs/isa.md): the RTL's MXU skips it, which wrote nothing
+    # where the simulator wrote +0 (KB = 0) or failed on RMAX's empty rows (N = 0)
+    for n, kb in ((1, 0), (0, 1)):
+        ins = I.Instr(I.MM, flags=I.F_UNIT | I.F_RMAX,
+                      w=I._w(0, 0, 0, n | kb << 16, 32, 1 | 1 << 16))
+        with pytest.raises(SimError, match="MM: N and KB"):
+            run1([ins, I.halt()])

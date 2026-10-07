@@ -12,7 +12,7 @@ import numpy as np
 from opentpu.llm import load_spec
 from opentpu.llm import moe as MO
 from opentpu.llm.lfm2 import ATTN, CONV, _norm
-from opentpu.llm.qwen3 import LazyWeights, _fake_q, _fake_w, rope_tables
+from opentpu.llm.qwen3 import LazyWeights, _fake_q, _fake_w, _pv, _v_parts, rope_tables
 
 model, hf, cardf = sys.argv[1:4]
 spec = load_spec(model)
@@ -69,16 +69,14 @@ for pos, tk in enumerate(tokens):
             q = rot(norm(q, W[a + "q_layernorm.weight"]))
             kk = rot(norm(kk, W[a + "k_layernorm.weight"]))
             Kc[i].append(_fake_q(kk, min(d, D)))
-            Vc[i].append(_fake_q(v, d))
-            Kh, Vh = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
+            Vc[i].append(_v_parts(v))
+            Kh = np.stack(Kc[i], 1)
+            Vq, Vs = (np.stack(z, 1) for z in zip(*Vc[i]))
             o = np.zeros((spec.n_q, d))
             for hq in range(spec.n_q):
                 sc = Kh[hq // G] @ _fake_q(q[hq] / math.sqrt(d), min(d, D))
                 pp = np.exp(sc - sc.max())
-                T = len(pp)
-                ppad = np.zeros(-(-T // D) * D)
-                ppad[:T] = pp
-                o[hq] = (_fake_q(ppad, D)[:T] @ Vh[hq // G]) / pp.sum()
+                o[hq] = _pv(pp, Vq[hq // G], Vs[hq // G], D) / pp.sum()
             x = x + w(a + "out_proj.weight") @ _fake_q(o.reshape(-1), D)
         h = _fake_q(norm(x, W[p + "ffn_norm.weight"]), D)
         if spec.is_moe(i):

@@ -146,7 +146,7 @@ def test_pair_scales_are_8_byte_aligned(ssa, srs):
 
 
 def test_pair_needs_4bit_and_room():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="PAIR needs 4-bit"):
         I.mm(0, 0, 0, 1, 1, 32, 1, 1, 0, 4, pair=True)
     dram = np.zeros(1 << 16, np.uint8)
     with pytest.raises(Exception, match="bounds"):

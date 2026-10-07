@@ -35,7 +35,9 @@ module otpu_seq
   parameter int SID        = 0,
   parameter int S          = 1,
   parameter int D          = 32,
-  parameter int WIN        = 16
+  parameter int WIN        = 16,
+  parameter bit STREAMS    = 1'b1     // the stream engine (otpu_slice HAS_SS); 0: DSTEP and STREAM
+                                      //   are illegal instructions (ERROR), not a wait for SE
 ) (
   input  logic                clk,
   input  logic                rst,
@@ -95,7 +97,7 @@ module otpu_seq
   //   LD:     d[0] = rd0          t0 = wr0 W
   //   ST:     d[0] = wr0 (dw)     t0 = rd0
   //   DSTEP:  d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2
-  //   STREAM: d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2, t4 = rd3
+  //   STREAM: d = wr0, wr2 (dw)   t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2, t4 = rd3
   //   MM:     d = rd0, rd1        t0 = hull(wr0, wr1) W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t0 = rd0, t1 = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t0 = rd0
@@ -169,8 +171,8 @@ module otpu_seq
       OP_ST: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.rd[0];
       end
-      OP_DSTEP, OP_STREAM: begin
-        s.dw = 1'b1; s.d[0] = r32(f.wr[0]);
+      OP_DSTEP, OP_STREAM: begin   // (DSTEP's wr2 is empty)
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); s.d[1] = r32(f.wr[2]);
         t0 = f.wr[1]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2]; t4 = f.rd[3];
       end
       OP_MM: begin
@@ -279,21 +281,27 @@ module otpu_seq
     return (r == 0) ? 32'd0 : R[r];
   endfunction
 
-  // STREAM: src (w2) and dst (w3) += R[ra], vec (w4) += R[rb], x (w5) += R[rc], k (w6) += R[rd]
+  // STREAM: src (w2) and dst (w3) += R[ra], vec (w4) += R[rb], x (w5) += R[rc], k (w6) += R[rd].
+  // The others: w1 += R[ra], w2 += R[rb] and w3 += R[rc] where docs/isa.md writes the field as
+  // R[x] + w; the counts and shapes there are immediates: QACT's w2 (rows, ab, KB) and w3 (srs),
+  // LD's and ST's w3 (n), GATHER's w3 (rows, cols) (the enables decode the opcode beside the
+  // register reads)
   cmd_t dcmd;
   wire  is_str = (op == OP_STREAM);
+  wire  rel2 = (op != OP_QACT);
+  wire  rel3 = !(op == OP_QACT || op == OP_LD || op == OP_ST || op == OP_GATHER);
   always_comb begin
     dcmd.op = op; dcmd.flags = flags;
     dcmd.w1 = iw[1] + (is_str ? 32'd0 : rv(ra));
-    dcmd.w2 = iw[2] + (is_str ? rv(ra) : rv(rb));
-    dcmd.w3 = iw[3] + (is_str ? rv(ra) : rv(rc));
+    dcmd.w2 = iw[2] + (is_str ? rv(ra) : rel2 ? rv(rb) : 32'd0);
+    dcmd.w3 = iw[3] + (is_str ? rv(ra) : rel3 ? rv(rc) : 32'd0);
     dcmd.w4 = iw[4] + (is_str ? rv(rb) : 32'd0);
     dcmd.w5 = iw[5] + (is_str ? rv(rc) : 32'd0);
     dcmd.w6 = iw[6] + (is_str ? rv(rd) : 32'd0);
     dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
   end
   int dunit;
-  always_comb dunit = unit_of(op);
+  always_comb dunit = (!STREAMS && (op == OP_DSTEP || op == OP_STREAM)) ? -1 : unit_of(op);
 
   // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
   // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,
@@ -559,7 +567,7 @@ module otpu_seq
               (q_fp.rd[i].lo[31:8] != 0 || q_fp.rd[i].hi[31:17] != 0))
             $fatal(1, "otpu_seq: ACT read range of pc %0d exceeds 8/17 bits", q_pc);
         end
-        for (int i = 0; i < 2; i++) begin
+        for (int i = 0; i < 3; i++) begin
           if (q_fp.wr[i].v && q_fp.wr[i].sp == SP_DRAM) dwr = 1'b1;
           if (q_fp.wr[i].v && q_fp.wr[i].sp == SP_ACT &&
               (q_fp.wr[i].lo[31:8] != 0 || q_fp.wr[i].hi[31:17] != 0))

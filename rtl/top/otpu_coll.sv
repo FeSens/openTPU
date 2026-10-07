@@ -75,6 +75,18 @@ module otpu_coll
     end
   end
 
+`ifndef SYNTHESIS
+  // every slice names the same collective, and a GATHER the same dst (R[rb] + w2, resolved),
+  // rows, cols, drs and seg (docs/isa.md): the unit takes slice 0's
+  always @(posedge clk)
+    if (!rst && st == C_IDLE && &req)
+      for (int k = 1; k < S; k++)
+        if (cmds[k].op != cmds[0].op ||
+            (cmds[0].op == OP_GATHER && (cmds[k].w2 != cmds[0].w2 || cmds[k].w3 != cmds[0].w3 ||
+                                         cmds[k].w5 != cmds[0].w5 || cmds[k].w6 != cmds[0].w6)))
+          $fatal(1, "otpu_coll: slices 0 and %0d disagree on the collective", k);
+`endif
+
   always_ff @(posedge clk) begin
     if (rst) begin
       st <= C_IDLE;

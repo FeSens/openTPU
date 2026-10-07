@@ -290,8 +290,9 @@ class _Rows:
 
 class Weights(dict):
     """The language model of a Gemma 4 checkpoint, loaded lazily: W[name] reads one tensor as
-    fp32 (HF names of a text-only model, model.language_model.* -> model.*); the PLE table
-    stays in the file (_Rows). Holds nothing but the open file."""
+    fp32 (HF names of a text-only model, model.language_model.* -> model.*; a text-only
+    checkpoint's as they are); the PLE table stays in the file (_Rows). Holds nothing but the
+    open file."""
 
     PLE = "model.embed_tokens_per_layer.weight"
 
@@ -299,12 +300,15 @@ class Weights(dict):
         from safetensors import safe_open
         super().__init__()
         self.model_dir = Path(model_dir)
-        self._files = {}
+        self._files, text = {}, {}
         for p in sorted(Path(model_dir).glob("*.safetensors")):
             f = safe_open(str(p), "pt")
             for k in f.keys():
                 if k.startswith("model.language_model."):
                     self._files[k.replace("model.language_model.", "model.", 1)] = (f, k)
+                elif k.startswith(("model.", "lm_head.")):
+                    text[k] = (f, k)
+        self._files = self._files or text       # (Gemma4ForCausalLM's: model.*, lm_head.*)
         if not self._files:
             raise ValueError(f"{model_dir}: no Gemma 4 language model tensors")
 
@@ -496,14 +500,14 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
     """float64 decode with openTPU's quantization points and none of its rounding (as
     qwen3.emulated_logits): weights in their formats (per layer: layer_formats, as Image),
     int8 matmul inputs per D-block, int8 K (per token and D-block) and V (per token), int8 P
-    (per D tokens), the embedding and PLE rows as the device gathers them (int8 / 4-bit), the
-    exact sliding window; the MoE block as moe_ffn runs it (the int8 router on the quantized
-    unit norm, its scales folded: moe.gemma_router; the experts in expert_format on the norm
-    times pre_feedforward_layernorm_2's gain, quantized: g_exp, gemma_expert), each token's
-    (position, layer, experts, the k-th logit's margin over the next) appended to `routes`;
-    `routing` {(position, layer): experts} replaces the top k where it has an entry (the
-    card's choices: a near-tie routes either way). Before the soft cap."""
-    from .qwen3 import _fake_q, _fake_w
+    (per D tokens, V's scales folded in), the embedding and PLE rows as the device gathers them
+    (int8 / 4-bit), the exact sliding window; the MoE block as moe_ffn runs it (the int8 router
+    on the quantized unit norm, its scales folded: moe.gemma_router; the experts in
+    expert_format on the norm times pre_feedforward_layernorm_2's gain, quantized: g_exp,
+    gemma_expert), each token's (position, layer, experts, the k-th logit's margin over the
+    next) appended to `routes`; `routing` {(position, layer): experts} replaces the top k where
+    it has an entry (the card's choices: a near-tie routes either way). Before the soft cap."""
+    from .qwen3 import _fake_q, _fake_w, _pv, _v_parts
     wformat, formats = FM.named(spec, wformat, formats)
     lf, pf, fh = layer_formats(spec, wformat, formats)
     ef = expert_format(spec, wformat, formats) if spec.experts else None
@@ -552,18 +556,16 @@ def emulated_logits(spec: Spec, W, tokens, D: int = 128, wformat: str = "int8",
                 v = k if spec.kv_same(i) else (w(a + "v_proj.weight", fa) @ h).reshape(nkv, d)
                 k = _rot(_norm(k, W[a + "k_norm.weight"], spec.eps), c, s_, d // 2)
                 K.setdefault(i, []).append(_fake_q(k, D))
-                V.setdefault(i, []).append(_fake_q(_norm(v, None, spec.eps), d))
+                V.setdefault(i, []).append(_v_parts(_norm(v, None, spec.eps)))
             src = spec.kv_src[i]
             lo = max(0, pos + 1 - spec.window) if kind == SLIDE else 0
-            Kh, Vh = np.stack(K[src][lo:], 1), np.stack(V[src][lo:], 1)
+            Kh = np.stack(K[src][lo:], 1)
+            Vq, Vs = (np.stack(z, 1) for z in zip(*V[src][lo:]))
             o = np.zeros((spec.n_q, d))
             for hq in range(spec.n_q):
                 sc = Kh[hq // G] @ _fake_q(q[hq], D)
                 pp = np.exp(sc - sc.max())
-                T = len(pp)
-                ppad = np.zeros(-(-T // D) * D)
-                ppad[:T] = pp
-                o[hq] = (_fake_q(ppad, D)[:T] @ Vh[hq // G]) / pp.sum()
+                o[hq] = _pv(pp, Vq[hq // G], Vs[hq // G], D) / pp.sum()
             att = w(a + "o_proj.weight", fa) @ _fake_q(o.reshape(-1), D)
             x = x + _norm(att, W[p + "post_attention_layernorm.weight"], spec.eps)
             h = _fake_q(_norm(x, W[p + "pre_feedforward_layernorm.weight"], spec.eps), D)
@@ -1469,7 +1471,7 @@ def _row_add(p, block: int, start: bool = False):
     if getattr(p, "amask", None) is None:
         return None
     base, step = p.amask
-    return Additive(Affine(base + (block * step if start else 0)) + p.tpos * step)
+    return Additive(Affine(base + (block * step if start else 0)) + p.tpos * step, block)
 
 
 def _full_seq(m, p, block: int):

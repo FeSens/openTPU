@@ -314,15 +314,24 @@ class DqsPhase:
         v = self.c.r("phase_dqs_steps")
         return v - (1 << 32) if v & (1 << 31) else v
 
-    def move(self, target):
+    def move(self, target, timeout=5.0):
+        """Shift to `target` steps, a step a shift. A phase that does not get there in `timeout`
+        seconds (busy for good, or not following its shifts; a move takes milliseconds) is a
+        TimeoutError, not a loop that goes on in Board() with the card's lock held."""
         if self.wrap:
             target = (target + self.wrap // 2) % self.wrap - self.wrap // 2
+        t0 = time.time()
         while True:
             s = self.steps()
             if s == target:
                 return
-            while self.c.r("phase_dqs_busy"):
-                pass
+            while True:
+                busy = self.c.r("phase_dqs_busy")
+                if time.time() - t0 > timeout:
+                    raise TimeoutError(f"DQS phase at {s} steps after {timeout} s, moving to "
+                                       f"{target}" + (" (busy)" if busy else ""))
+                if not busy:
+                    break
             self.c.w("phase_dqs_shift", 1 if target > s else 0)
 
 

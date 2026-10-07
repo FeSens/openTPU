@@ -344,13 +344,15 @@ def test_halt_is_seen_soon_when_core_khz_is_off(run_dir, skew):
     assert np.median(late[4:]) < 0.4e-3, late
 
 
-@pytest.mark.parametrize("lag", [0.0, 1e-3, 20e-3])
+@pytest.mark.parametrize("lag", [0.0, 1e-3, 20e-3, None])
 def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
-    """The last logits piece lands `lag` after HALTED (its stores still in flight): the tail
-    read after HALTED reads again until it is there (up to TAIL_SETTLE); a piece missing for
-    longer is an error (seen on the card: LFM2 fp4 + int8 head, resident decode, sampled)."""
+    """The last logits piece lands `lag` after HALTED (its stores still in flight, WR_IDLE clear
+    until then): Board.wait waits for WR_IDLE (past TAIL_SETTLE too: it returned after 2 ms
+    without it), and the tail read after HALTED reads again until the words are there (up to
+    TAIL_SETTLE; seen on the card: LFM2 fp4 + int8 head, resident decode, sampled). Words the
+    run leaves unwritten (None: the region's last 64 bytes, WR_IDLE set) are an error."""
     from opentpu import lens as L
-    from opentpu.host.board import TAIL_SETTLE, sim_config
+    from opentpu.host.board import sim_config
     from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
     spec, W = L._tiny_qwen()
     cfg = sim_config(spec, 256)
@@ -359,10 +361,11 @@ def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
     eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
     v = eng.image.v_loc
-    t.logits = (eng.image.io["logits"], 4 * v, 4 * min(HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
-    t.logits_lag = lag
+    t.logits = (eng.image.io["logits"], 4 * v - (64 if lag is None else 0),
+                4 * min(HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
+    t.logits_lag = lag or 0.0
     want = np.arange(v, dtype=np.float32) % 997 * 1e-3
-    if lag > TAIL_SETTLE:
+    if lag is None:
         with pytest.raises(RuntimeError, match="unwritten"):
             eng.step(1)
     else:
@@ -545,6 +548,27 @@ def test_streamed_logits_match_the_isa_simulator(no_cfg_env):
         assert ls["pieces"] == 3 and ls["during"] >= 1 and ls["tail_bytes"] <= 2 * piece, (i, ls, eng.backend._due)
         t = pa(want, ctx)
         assert sink.result() == t
+    eng.backend.close()
+
+
+def test_a_late_region_inside_a_beat_keeps_the_bytes_after_it(no_cfg_env):
+    """conftest's IsaCard shows its late region in whole 128-byte beat pairs; one row of
+    logits (4 * vocab bytes, vocab 1000: not a multiple of 128) ends inside one, and the bytes
+    after it there are the next row's, which the run wrote at once. A 10-token prefill (runs
+    of 8 and 2 rows: the logits are row 1's) on the fake card gives the ISA simulator's
+    logits; a piece padded with zeros cleared row 1's first 24."""
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
+    spec, W = _big_vocab_qwen(1000)
+    cfg = sim_config(spec, 256)
+    ref = Engine(spec, W, cap=256, cfg=cfg)
+    card = IsaCard(cfg, None, 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8))
+    eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, model="tiny"))
+    card.late = (eng.image.io["logits"], 4 * spec.vocab)
+    assert card.late[1] % 128 and eng.image.rows == 8
+    toks = list(range(3, 13))
+    assert np.array_equal(ref.prefill(toks).view(np.uint32), eng.prefill(toks).view(np.uint32))
     eng.backend.close()
 
 
@@ -1296,25 +1320,13 @@ def test_otpu_lens_passthrough(capsys):
     assert "qwen-tiny" in capsys.readouterr().out
 
 
-def _board_model_has_trace() -> bool:
-    import shutil
-    if shutil.which("verilator") is None:
-        return False
-    try:
-        import opentpu.hwtrace  # noqa: F401
-    except ImportError:
-        return False
+def test_otpu_lens_record_on_board_model(tmp_path, capsys, have_verilator):
+    """otpu-lens record --sim: the hardware trace of a kernel on the board model gives a full
+    profile (the RTL side: the trace buffer in tb_board, register map 2, and opentpu.hwtrace;
+    the tree has both, so a board model without them fails instead of skipping)."""
     from opentpu.host.board import SimTransport
     i = Board(SimTransport(ch_bytes=1 << 20), check=False).info()
-    return i["regmap"] >= 2 and bool(i["caps"] and i["caps"]["trace"])
-
-
-def test_otpu_lens_record_on_board_model(tmp_path, capsys):
-    """otpu-lens record --sim: the hardware trace of a kernel on the board model gives a full
-    profile (needs the RTL side: the trace buffer in tb_board and opentpu.hwtrace)."""
-    if not _board_model_has_trace():
-        pytest.skip("board model without the trace buffer (register map 1) or no "
-                    "opentpu.hwtrace / verilator")
+    assert i["regmap"] >= 2 and i["caps"] and i["caps"]["trace"], i
     from opentpu import lens as L
     from opentpu.host import hwlens
     out = tmp_path / "hw.otpuprof"
@@ -1349,6 +1361,42 @@ def test_chat_sampling_defaults_per_model_and_repetition_penalty():
     # top_p = 1 keeps every top-k candidate (and does not overrun them)
     pick = sampler(1.0, 3, 1.0, 0)
     assert {pick(np.array([0.0, 0.0, 0.0, -50.0])) for _ in range(200)} == {0, 1, 2}
+
+
+def test_chat_sampling_defaults_from_generation_config(tmp_path):
+    """The checkpoint's generation_config.json when it samples (Hugging Face's defaults for
+    the keys it leaves out), else the family's, else greedy as Hugging Face's generate: the
+    Llama-likes on Qwen3's Spec (SmolLM3, Phi-4-mini) no longer take Qwen3's; Qwen3 keeps its
+    model card's non-thinking settings over its generation_config.json (the thinking mode's);
+    flags override."""
+    from opentpu.host.chat import SAMPLING, sampling
+    from opentpu.llm import lfm2, qwen3
+    q = qwen3.Spec(256, 2, 4, 2, 128, 512, 1000)
+    llama = replace(q, qk_norm=False)
+    f = lfm2.Spec(256, ("conv", "attn"), 4, 2, 64, 512, 1000)
+    none = types.SimpleNamespace(temperature=None, top_k=None, top_p=None,
+                                 repetition_penalty=None)
+
+    def ckpt(name, **g):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "generation_config.json").write_text(json.dumps(dict(eos_token_id=2, **g)))
+        return d
+    smol = ckpt("smollm3", do_sample=True, temperature=0.6, top_p=0.95)
+    assert sampling(llama, none, smol) == dict(temperature=0.6, top_k=50, top_p=0.95,
+                                               repetition_penalty=1.0)
+    assert sampling(llama, none, ckpt("phi")) == dict(temperature=0.0, top_k=50, top_p=1.0,
+                                                      repetition_penalty=1.0)
+    think = ckpt("qwen3", do_sample=True, temperature=0.6, top_k=20, top_p=0.95)
+    assert sampling(q, none, think) == SAMPLING["qwen3"]
+    assert sampling(f, none, ckpt("lfm2")) == SAMPLING["lfm2"]          # LFM2-2.6B's: none
+    moe = ckpt("lfm2-moe", do_sample=True, temperature=0.2, top_k=80, repetition_penalty=1.05)
+    assert sampling(f, none, moe) == dict(temperature=0.2, top_k=80, top_p=1.0,
+                                          repetition_penalty=1.05)
+    flags = types.SimpleNamespace(temperature=0.9, top_k=None, top_p=None, repetition_penalty=None)
+    assert sampling(llama, flags, smol)["temperature"] == 0.9
+    assert sampling(llama, none) == dict(temperature=0.0, top_k=50, top_p=1.0,
+                                         repetition_penalty=1.0)    # no checkpoint: greedy
 
 
 

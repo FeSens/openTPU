@@ -13,7 +13,9 @@ class Bucket:
     of a block at t0 is +inf when the token is in the sequence and -inf past it: that block's
     scores are min(s, row), so the tokens past the sequence score -inf and weigh exactly +0 --
     the softmax, its sums and P.V come out bit for bit as with the partial block. With `add`
-    (a prompt run's row: Additive) that block's scores are the mask tile plus q.K^T instead."""
+    (a prompt run's row: Additive) that block's scores are the mask tile plus q.K^T instead.
+    The masked block ends at the cache's end: with a capacity that is not a multiple of the
+    block it spans cap - t0 tokens (a multiple of D), so it reads nothing past the cache."""
 
     def __init__(self, blocks: int, z, add: "Additive | None" = None):
         self.blocks, self.z, self.add = blocks, z, add
@@ -24,17 +26,19 @@ class Bucket:
 
 class Additive:
     """A masked block's mask as a tile the scores are added to (docs/prefill.md 9): at `addr`
-    (bytes; run-time: affine in the position) MCOLS rows of the block's n entries and one pad
-    word (the score buffer's row stride), -0 where the token counts and -inf past it. The
-    block's score buffer is loaded with it, then q.K^T is accumulated into it with the row
+    (bytes; run-time: affine in the position) MCOLS rows of the block's `block` entries and
+    one pad word (the score buffer's row stride), -0 where the token counts and -inf past it.
+    The block's score buffer is loaded with it, then q.K^T is accumulated into it with the row
     maxima (MM ACC + RMAX): two instructions where min(s, row) takes four (MM, LD, VOP MIN,
-    VOP RMAX), bit for bit the same (s + -0 = s, s + -inf = -inf = min(s, -inf))."""
+    VOP RMAX), bit for bit the same (s + -0 = s, s + -inf = -inf = min(s, -inf)). A masked
+    block of n < block tokens (Bucket: the cache's end) takes each row's first n entries,
+    loaded row by row."""
 
-    def __init__(self, addr):
-        self.addr = addr
+    def __init__(self, addr, block: int):
+        self.addr, self.block = addr, block
 
     def tile(self, rows: int, n: int) -> Tensor:
-        return Tensor(self.addr, (rows, n), (n + 1, 1))
+        return Tensor(self.addr, (rows, n), (self.block + 1, 1))
 
 
 class Blocks:
@@ -79,7 +83,10 @@ class _Head:
         self.masks = {}                              # Blocks: t0 -> the block's mask row
         if isinstance(seq_len, Bucket):              # full blocks and a masked last one
             nfull = seq_len.blocks - 1
-            self.blocks = [(i * block, block) for i in range(seq_len.blocks)]
+            last = min(block, kv.cap - nfull * block)    # it ends at the cache's end
+            if last <= 0:
+                raise ol.CompileError(f"bucket {seq_len.blocks} starts past the cache ({kv.cap})")
+            self.blocks = [(i * block, block) for i in range(nfull)] + [(nfull * block, last)]
             self.masked = (nfull * block, seq_len)
         elif isinstance(seq_len, Blocks):            # the list, unrolled
             nfull = 0

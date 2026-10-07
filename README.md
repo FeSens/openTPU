@@ -187,6 +187,93 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 | `otpu-lens` | record a run and open it in the profiler |
 | `otpu-selftest`, `otpu-diag` | check that the card works |
 
+## Validating against Hugging Face
+
+`tools/validate.py` checks a device's greedy tokens and logits against a CPU golden: the same
+checkpoint in Hugging Face transformers, fp32 on the CPU, with openTPU's quantization. The
+golden's weights are the values the matrix unit multiplies (the model image's own quantizer,
+in the formats you pick), and its activations are rounded to int8 per 128 values wherever the
+device's quantizer rounds them: every matmul input, and in attention the query, K, V and the
+softmax weights. The device is the ISA simulator, the RTL (Verilator) or the card, and
+`--against` adds a second device that must give the same tokens and bit-identical logits. It
+is measured on Qwen3-0.6B, LFM2.5-230M, Qwen3.5-0.8B and Gemma 4 E2B; the MoE models are not
+supported.
+
+```sh
+python3 tools/validate.py --model qwen3                                    # ISA simulator, int8
+python3 tools/validate.py --model lfm2 --wformat fp4 --head-format int8   # 4-bit layers
+python3 tools/validate.py --model gemma4                                   # E2B: 16 GB (below)
+
+# the RTL against the ISA simulator, bit for bit: slow, so one prompt and a few tokens
+# (this one takes 4 minutes on a 16-core host, the Verilator build included)
+python3 tools/validate.py --model lfm2 --backend rtl --against isa --tokens 3 "The capital of France is"
+
+# the card against the ISA simulator, bit for bit, on the card host
+otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --against isa
+
+# or only the card's run under the lock, and the rest on another host: the ISA simulator then
+# runs in the configuration the card ran in
+otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --no-golden --save card.npz
+python3 tools/validate.py --model qwen3 --against card.npz
+```
+
+Each prompt (eight by default, 16 tokens each) prints the device's continuation and the
+goldens'. Then the device's own tokens are fed to the golden, so that every step compares the
+same context, and the tool prints the top-1 agreement, the mean and largest KL divergence, the
+largest logit difference and the lowest cosine. The summary has four rows:
+
+| Row | What it is |
+|:--|:--|
+| device vs W+A | the device against the quantized golden: the check |
+| device vs fp32 | the device against the plain checkpoint |
+| W+A vs fp32 | what the quantization alone costs |
+| W+A~ vs W+A | the golden against itself with its inputs nudged by one fp32 ulp: the floor |
+
+The golden cannot round exactly as the device does: its sums, norms and exponentials differ in
+the last bits. Once one int8 value rounds the other way, the difference spreads through the
+layers after it. So on a real model the device sits about as far from the quantized golden as
+the golden sits from itself after a one-ulp nudge, and a healthy device is near that floor.
+With 4-bit weights the floor is far below the fp32 rows. Measured on the ISA simulator, with
+the eight default prompts and 16 tokens each:
+
+| Model | Weights | device vs W+A: top-1, KL | floor KL | device vs fp32: top-1, KL | W+A vs fp32 KL |
+|:--|:--|--:|--:|--:|--:|
+| LFM2.5-230M | int8 | 96.2%, 0.0038 | 0.0039 | 96.2%, 0.0055 | 0.0050 |
+| LFM2.5-230M | 4-bit, int8 head | 94.6%, 0.0045 | 0.0041 | 80.6%, 0.152 | 0.157 |
+| Qwen3-0.6B | int8 | 99.2%, 0.0147 | 0.0131 | 92.2%, 0.052 | 0.042 |
+| Qwen3-0.6B | 4-bit, int8 head | 97.7%, 0.0155 | 0.0185 | 85.2%, 0.166 | 0.166 |
+| Qwen3.5-0.8B | int8 | 96.1%, 0.0020 | 0.0017 | 97.7%, 0.0033 | 0.0029 |
+| Qwen3.5-0.8B | 4-bit, int8 head | 96.9%, 0.0020 | 0.0021 | 88.3%, 0.076 | 0.077 |
+| Gemma 4 E2B | int8, 4-bit PLE table | 100.0%, 0.0036 | 0.0035 | 99.2%, 0.015 | 0.017 |
+| Gemma 4 E2B | 4-bit, int8 head and PLE table | 99.2%, 0.0029 | 0.0036 | 96.9%, 0.045 | 0.043 |
+
+KL is the mean KL(golden || device) in nats per token. The device's KL from the quantized
+golden is 0.82 to 1.16 times the floor's, and its distance from fp32 is what the quantization
+alone predicts. A run takes 2 to 14 minutes on a 16-core host (Gemma 4 E2B: 16 and 26, the
+host shared with other jobs) and peaks at 2.5 GB (LFM2) to 16 GB (Gemma 4 E2B).
+
+Gemma 4 runs in its image's formats, which follow the card's fit (E2B's int8 image keeps its
+per-layer-embedding table in 4-bit). The golden takes its embedding rows from the LM head, as
+the device gathers them, its per-layer embeddings from the device's PLE records, and it
+compares the logits after the soft cap. E2B in fp32 is about 20 GB, so Hugging Face loads the
+language model alone, without its 9.4 GB PLE table (the golden reads the rows it needs from the
+checkpoint), and the golden keeps the bf16 checkpoint's weights in bf16, which is exact, and
+widens them a matrix at a time for its fp32 passes. An E2B run peaks at 16 GB: give it a host
+with 22 GB free.
+
+A run passes when the device agrees with the quantized golden on at least 80% of the top-1
+tokens and its mean KL is at most three times the floor's (`--min-top1`, `--kl-ratio`), and,
+with `--against`, when both devices give the same tokens and bit-identical logits. The exit
+status is 0 for PASS and 1 for FAIL, and `--json` writes every step for scripts.
+`--weights-only` drops the activation rounding from the golden (then only the top-1 bound
+holds), and `--no-fp32` skips the fp32 rows.
+
+On the card (build 84989047, 2026-10-07: `--no-golden --save` under the lock, `--against` on a
+build host), all six runs of Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B, in int8 and in 4-bit
+with an int8 head, gave the ISA simulator's tokens and bit-identical logits on every prompt
+(0 ulp over 93 to 128 steps a run). The card's mean KL from the quantized golden was 0.95 to
+1.25 times the floor, with 95.3% to 99.2% top-1 agreement.
+
 ## Where to start reading
 
 1. [docs/isa.md](docs/isa.md): the instruction set. Everything else is built on it.

@@ -41,7 +41,7 @@ from pathlib import Path
 from . import ddrcal
 from . import regs as R
 from . import selfcal
-from .runstate import run_dir
+from .runstate import ensure_run_dir, read_shared, run_dir, write_shared
 
 DATA = Path(__file__).with_name("litedram")
 CALIB = (R.ST_CALIB0, R.ST_CALIB1)
@@ -58,6 +58,22 @@ def csr(t, data: Path = DATA):
     """The controllers' CSRs over the transport's BAR0 window."""
     return ddrcal.WordCsr(ddrcal.csr_map(data / "csr.csv"), t.reg_read, t.reg_write,
                           base=R.R_MEMCAL)
+
+
+def ecc(t, clear: bool = False, data: Path = DATA) -> list | None:
+    """Both channels' ECC counters, [(corrected, uncorrectable)] (LiteDRAM's ecc_sec_errors /
+    ecc_ded_errors: 64-bit words the controllers' reads found in error since the last clear;
+    STATUS ECC_DED is any uncorrectable one), then cleared with clear; None without the CSRs (a
+    bitstream the host does not calibrate, the board model)."""
+    if not getattr(t, "ecc", False) or not hostcal(t):
+        return None
+    c = csr(t, data)
+    out = [(ddrcal.Chan(c, ch).r("ecc_sec_errors"), ddrcal.Chan(c, ch).r("ecc_ded_errors"))
+           for ch in (0, 1)]
+    if clear:
+        for ch in (0, 1):
+            ddrcal.Chan(c, ch).w("ecc_clear", 1)
+    return out
 
 
 def core_cpu(t, data: Path = DATA) -> bool:
@@ -138,16 +154,15 @@ def _path(t) -> Path:
 
 def _save(t, out: dict) -> None:
     try:
-        p = _path(t)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(out, indent=1))
-    except OSError:
+        ensure_run_dir()
+        write_shared(_path(t), json.dumps(out, indent=1))
+    except (OSError, RuntimeError):
         pass                        # the result is also in the log
 
 
 def last(t) -> dict | None:
     try:
-        return json.loads(_path(t).read_text())
+        return json.loads(read_shared(_path(t)))
     except (OSError, ValueError):
         return None
 

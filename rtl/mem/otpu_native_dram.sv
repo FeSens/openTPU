@@ -65,6 +65,11 @@
 //   point whose write has not gone out, and a read waits while its bucket's count is not zero (a
 //   collision only delays it). The fill read then follows those writes in the stream and reads
 //   their data.
+// - A fill read and its beat's write are not atomic: a B write, or the host's, to the beat's
+//   other bytes between them would be lost. The slice keeps B writes out (a QST's scoreboard
+//   footprint covers every word of its beats, otpu_pkg beats(), so an ST, DSTEP or STREAM into
+//   one waits for the QST or the QST for it); the host must not write the beats of a running
+//   QST (docs/isa.md, QST).
 // - A write drops channel c's A run, or the reused beat, when it has gone out on c (command and
 //   data taken; the stream carries nothing else meanwhile) and its beat is in them: the run's
 //   commands before it read the old beat, the ones after it the new. The drop lands at the end
@@ -75,6 +80,10 @@
 //   take a beat fetched before it. So the QSTs that stream while an MM runs, and DSTEP's state
 //   write-back, cost the MXU's scale stream no runs.
 // - wr_idle: every accepted write has gone out and is counted in n_wdone.
+// - rd_idle: every A and B read taken (and an A read in the A register) has returned its data.
+//   This adapter does not reset with the run (the board's RUN), so a run the host stops leaves
+//   its reads to come back after it: the loader and the next run wait for rd_idle (otpu_slice,
+//   otpu_board). An A run's beats not asked for are not in it (the next miss drops them).
 // - The host's writes come through the channels' other master (XDMA), which this adapter does not
 //   see, so they drop neither the reused beat nor the runs. a_flush drops both where the host may
 //   have written since the beats were fetched: between runs (the core's reset), at a program load
@@ -127,6 +136,7 @@ module otpu_native_dram #(
   output logic              b_rtag,
   output logic [D*8-1:0]    b_rdata,
   output logic              wr_idle,
+  output logic              rd_idle,    // no A or B read in flight (taken, its data not yet out)
   // native memory masters, one per channel ([1:0] = channel)
   output logic [1:0]        n_cvalid,
   input  logic [1:0]        n_cready,
@@ -553,6 +563,7 @@ module otpu_native_dram #(
   logic [15:0]   iss_w [2];
   assign wr_idle = (wq_n == 0) && (wacc_q == '0) && (gv == '0) && !(a_v && a_we) &&
                    (iss_w[0] == n_wdone[0]) && (iss_w[1] == n_wdone[1]);
+  assign rd_idle = (bt_n == 0) && (ao_n == 0) && !(a_v && !a_we);
 
   always_ff @(posedge clk) begin
     if (rst) begin

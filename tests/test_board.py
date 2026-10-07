@@ -110,6 +110,9 @@ def test_writes_during_a_run_move_run_h2c_per_call(addr, n, chash):
         def reg_write(self, off, val):
             pass
 
+        def reg_read(self, off):                # (start() checks that the card took RUN)
+            return R.ST_RUN | R.ST_CALIB0 | R.ST_CALIB1 if off == R.R_STATUS else 0
+
     rng = np.random.default_rng(n)
     t = T()
     b = Board(t, check=False)
@@ -240,6 +243,120 @@ def test_pattern_and_address_lines_on_board_model(have_verilator):
             assert ok, msg
         ok, msg = partial_writes(t, c)
         assert ok, msg
+
+
+# ------------------------------------------------------------------------------ stops and resets
+@pytest.mark.parametrize("native", [True, "ld"])
+@pytest.mark.parametrize("after", [600, 1300, 2500])
+def test_run_dropped_then_load_and_run_at_once(have_verilator, native, after):
+    """CTRL = 0 in the middle of a run that streams reads and writes (600 and 1300 cycles in:
+    during its first LD's reads; 2500: later), then at once (without the wait for WR_IDLE,
+    docs/observability.md "Stopping a run") a LOAD of another program and its RUN: the loader
+    takes none of the dropped run's read data still in flight (it starts once the memory
+    adapter's reads are all back), the run starts once its writes are answered, and the second
+    program's results and instruction count are the ISA simulator's. Before, a drop during the
+    reads (600, 1300) left the loader writing their late data into IMEM: the program hung."""
+    import dataclasses
+    from opentpu import isa as I
+    from opentpu.host.checks import PROG_AT, ZERO_AT, demo_image, demo_program
+    from opentpu.isasim import Machine
+    a_out = 0x300000                                    # the dropped run's stores (not compared)
+    prog_a = [I.loop(2, 1 << 20), I.ld(0, 0, 16384), I.st(a_out, 0, 16384), I.halt()]
+    prog_b = [I.ld(ZERO_AT, 0, CFG.TMEM_WORDS)] + demo_program()
+    img = demo_image()
+    ref = np.zeros(CFG.DRAM_BYTES, np.uint8)
+    ref[:len(img)] = img
+    sl = Machine(dataclasses.replace(CFG, DRAM_BYTES=len(ref)), [prog_b], [ref]).run().slices[0]
+    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=50, seed=after, native=native,
+                     plusargs=["+max_cycles=4000000"])
+    b = Board(t, check=False)
+    b.write(0, img)
+    words = [np.asarray(I.assemble(p), np.uint32) for p in (prog_a, prog_b)]
+    at = [PROG_AT, PROG_AT + 0x10000]
+    for a, w in zip(at, words):
+        b.write(a, w.view(np.uint8))
+
+    def load(a, w):
+        t.reg_write(R.R_CTRL, 0)
+        t.reg_write(R.R_PROG_ADDR, a)
+        t.reg_write(R.R_PROG_N, len(w) // 8)
+        t.reg_write(R.R_CTRL, R.CTRL_LOAD)
+        t.poll(R.R_STATUS, R.ST_LOADING, 0)
+    load(at[0], words[0])
+    t.reg_write(R.R_CTRL, R.CTRL_CLEAR)
+    t.reg_write(R.R_CTRL, R.CTRL_RUN)
+    t.wait_cycles(after)
+    load(at[1], words[1])                               # (its CTRL = 0 drops the run)
+    st = b.run(timeout=10.0)
+    assert st["instructions"][0] == sl.icount
+    assert np.array_equal(b.read(0, a_out), sl.dram[:a_out])
+
+
+def test_axil_iso_resets_apart(have_verilator):
+    """otpu_axil_iso (otpu_ctrl.sv: in front of the control registers and the LiteDRAM core's CSR
+    port) under random master and slave resets (sim/verilator/tb_axil_iso.sv): no response the
+    master did not ask for, every access answered (SLVERR after a slave reset), the slave never
+    left with half a write. Without it (BYPASS, the ports as they were) the same traffic fails:
+    a response to an access from before the master's reset reaches the master after it."""
+    import subprocess
+    from opentpu import rtlsim
+    board = rtlsim.RTL / "boards" / "ypcb-00338"
+    for bypass in (0, 1):
+        exe = rtlsim.build("tb_axil_iso", [board / "otpu_ctrl.sv", rtlsim.TB / "tb_axil_iso.sv"],
+                           {"BYPASS": bypass})
+        for seed in (1, 2):
+            r = subprocess.run([str(exe), f"+seed={seed}", "+mrst=300", "+slvrst=60",
+                                "+cycles=400000"], capture_output=True, text=True, timeout=120)
+            if bypass:
+                assert "FAIL" in r.stdout and "did not ask for" in r.stdout, r.stdout[-2000:]
+            else:
+                assert "PASS" in r.stdout, r.stdout[-2000:]
+
+
+def test_uncalibrated_channel_refuses_run_and_load(have_verilator):
+    """A channel not calibrated (STATUS CALIB1 clear, +calib): CTRL takes neither RUN nor LOAD
+    (nothing would answer their memory requests); TEMP is valid all the same (the XADC does not
+    wait for the DDR3)."""
+    t = SimTransport(ch_bytes=1 << 20, plusargs=["+calib=1"])
+    t.reg_write(R.R_PROG_ADDR, 0)
+    t.reg_write(R.R_PROG_N, 4)
+    t.reg_write(R.R_CTRL, R.CTRL_LOAD)
+    t.wait_cycles(20)
+    i = [t.queue_read(R.R_STATUS)]
+    t.reg_write(R.R_CTRL, R.CTRL_RUN)
+    t.wait_cycles(20)
+    i += [t.queue_read(R.R_STATUS), t.queue_read(R.R_ICOUNT), t.queue_read(R.R_TEMP)]
+    t.flush()
+    st0, st1, ic, temp = (t.results[k] for k in i)
+    for st in (st0, st1):
+        assert st & (R.ST_CALIB0 | R.ST_CALIB1) == R.ST_CALIB0
+        assert not st & (R.ST_LOADING | R.ST_RUN)
+    assert ic == 0 and temp & R.TEMP_VALID
+
+
+@pytest.mark.parametrize("ded", [0, 2])
+def test_ecc_ded_in_status(have_verilator, ded):
+    """STATUS ECC_DED: a channel's uncorrectable-ECC count is not zero (+ded, the LiteDRAM core's
+    c<n>_ded); CLEAR does not clear it. otpu-selftest's ecc stage fails on it."""
+    from opentpu.host import selftest
+    t = SimTransport(ch_bytes=1 << 20, plusargs=[f"+ded={ded}"])
+    t.reg_write(R.R_CTRL, R.CTRL_CLEAR)
+    t.reg_write(R.R_CTRL, 0)
+    assert bool(t.reg_read(R.R_STATUS) & R.ST_ECC_DED) == bool(ded)
+    ok, msg = selftest.ecc_check(t)
+    assert ok == (not ded) and msg.startswith("ECC_DED set" if ded else "no uncorrectable word")
+
+
+def test_stream_without_the_stream_engine_is_an_error(have_verilator):
+    """On a bitstream without the stream engine (DSTEP = 0, CAPS bit6 clear) a DSTEP or STREAM
+    stops the run with ERROR, an illegal instruction (the sequencer had sent it to a unit that
+    is not there, and the run hung)."""
+    import dataclasses
+    from opentpu.host.checks import stream_program
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, params={"DSTEP": 0},
+                           plusargs=["+max_cycles=400000"]))
+    with pytest.raises(RuntimeError, match="illegal instruction"):
+        run_demo(b, dataclasses.replace(CFG, DSTEP=True, STREAM=True), stream_program())
 
 
 # ------------------------------------------------------------------------------ Qwen3

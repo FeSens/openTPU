@@ -24,6 +24,26 @@ def test_calibrate_channel_on_the_simulated_phy():
     assert all(fake.WLO[m] <= steps <= fake.WHI[m] for m in range(fake.nm))
 
 
+def test_a_dqs_phase_move_that_does_not_get_there_times_out():
+    """A phase that does not follow its shifts, or stays busy: the move ends with a
+    TimeoutError (it looped for ever, inside Board() with the card's lock held)."""
+    class Stuck:
+        def __init__(self, busy):
+            self.busy = busy
+
+        def r(self, name):
+            return int(self.busy) if name == "phase_dqs_busy" else 0
+
+        def w(self, name, v):
+            pass
+    for busy in (False, True):
+        with pytest.raises(TimeoutError, match="DQS phase at 0 steps"):
+            C.DqsPhase(Stuck(busy), 1e9).move(5, timeout=0.2)
+    fake = C.FakeCsr(DATA)
+    C.DqsPhase(fake, 1e9).move(-7)
+    assert fake.steps == -7
+
+
 def test_channel_1_names_reach_the_second_channel():
     board = C.FakeBoard(DATA)
     res = C.calibrate_channel(C.Chan(board, 1), DATA, stride=4, log=lambda *_: None)

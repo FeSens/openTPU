@@ -1,4 +1,8 @@
+import collections
+import getpass
 import os
+import shutil
+import tempfile
 import time
 
 import numpy as np
@@ -25,6 +29,20 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: long; runs only with --runslow")
+    # a temporary root of this session's own: pytest's default (<tmp>/pytest-of-<user>, the newest
+    # three kept) let gates running side by side on one host remove each other's directories
+    # mid-run (fix-core's omarchy gate: the progcache tests and a wall-clock test failed, and
+    # passed again with a --basetemp of their own); removed at the end, as pytest's own are
+    if config.option.basetemp is None:
+        config.option.basetemp = os.path.join(
+            tempfile.gettempdir(), f"pytest-of-{getpass.getuser()}", f"pid-{os.getpid()}")
+        config._otpu_basetemp = config.option.basetemp
+
+
+def pytest_unconfigure(config):
+    own = getattr(config, "_otpu_basetemp", None)
+    if own:
+        shutil.rmtree(own, ignore_errors=True)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -34,6 +52,25 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "slow" in item.keywords:
             item.add_marker(skip)
+
+
+def skip_reasons(reports) -> list[tuple[int, str]]:
+    """The skipped tests' reasons with their counts, the most frequent first."""
+    n = collections.Counter()
+    for r in reports:
+        why = r.longrepr[2] if isinstance(r.longrepr, tuple) else str(r.longrepr)
+        n[why.removeprefix("Skipped: ")] += 1
+    return sorted(((k, why) for why, k in n.items()), key=lambda x: (-x[0], x[1]))
+
+
+def pytest_terminal_summary(terminalreporter):
+    """A gate's skips by reason (a missing checkpoint, no Verilator, a slow test, ...): its "N
+    skipped" alone does not say which coverage the run did not have."""
+    skipped = terminalreporter.stats.get("skipped", [])
+    if skipped:
+        terminalreporter.write_sep("-", f"{len(skipped)} skipped, by reason")
+        for k, why in skip_reasons(skipped):
+            terminalreporter.write_line(f"{k:5d}  {why}")
 
 
 def rel(a, b):
@@ -67,6 +104,40 @@ def assert_fill_is_transparent(make, toks):
     for sa, sb in zip(a.backend.machine.slices, b.backend.machine.slices):
         assert np.array_equal(sa.dram, sb.dram)
 
+
+GUARD = 1 << 16       # bytes: more than an attention block's tokens of any KV region
+
+
+@pytest.fixture
+def guarded(monkeypatch):
+    """Images built while it is active leave GUARD bytes after every allocation (qwen3._Bump,
+    which every model's image uses); poison_past_cap fills those after the KV regions."""
+    from opentpu.llm import qwen3
+    alloc = qwen3._Bump.alloc
+    monkeypatch.setattr(qwen3._Bump, "alloc", lambda self, n: alloc(self, n + GUARD))
+    return poison_past_cap
+
+
+def poison_past_cap(eng) -> int:
+    """Fill the guards after every KV head's regions (K rows, K scales, V^T, V scales: cap
+    tokens each) of a `guarded` image with 0xFF bytes (fp32 -NaN words, int8 -1): a program
+    that reads past the cache's capacity reads them. Returns the regions poisoned."""
+    from opentpu.compiler import Affine
+    img = eng.image
+    cap, D = img.cap, img.cfg.D
+    bad = np.full(GUARD, 0xFF, np.uint8)
+    n = 0
+    for s in range(img.cfg.S):
+        m = img.descriptors(s)
+        for li in range(img.spec.layers):
+            for kv in getattr(m.layer(li), "kvs", ()):
+                for r in kv.heads.values():
+                    for name, size in (("k", cap * kv.d), ("ks", 4 * cap * (kv.d // D)),
+                                       ("vt", kv.d * cap), ("vs", 4 * cap)):
+                        eng.backend.write(s, Affine.of(r[name]).static() + size, bad)
+                        n += 1
+    return n
+
 @pytest.fixture(scope="session")
 def have_verilator():
     import shutil
@@ -80,13 +151,15 @@ class IsaCard(FakeTransport):
     channel memories (with args, CAPS bit25: and ARG0..7). What the run writes shows at once,
     except [late_addr, +late_n) (the logits): piece i of `piece` bytes shows at run_s * (0.4 +
     0.5 * i / pieces), its first half of beats a little before the rest (the beats of one
-    store land out of order). With fill_at (a fraction of the run, or a function of the run
-    number giving it) a program that fills its logits itself (qwen3.fill_logits) shows the
-    region as it was before the run, and ICOUNT 0, until then; FILL_SENTINEL and the whole
-    PROG_N after. With anchor (a function of the run number: True for the runs it holds) such a
-    run's timeline (the fill, the pieces, HALTED) starts at the host's first look instead of at
-    RUN: its first ICOUNT read or memory read (a card as late as the host, however late that
-    is; a host that never looks gets the run after a second)."""
+    store land out of order); a piece ending inside a 128-byte beat pair carries the bytes after
+    it as the run left them (a region of one row of 4 * vocab bytes: the next row's). With
+    fill_at (a fraction of the run, or a function of the run number giving it) a program that
+    fills its logits itself (qwen3.fill_logits) shows the region as it was before the run, and
+    ICOUNT 0, until then; FILL_SENTINEL and the whole PROG_N after. With anchor (a function of
+    the run number: True for the runs it holds) such a run's timeline (the fill, the pieces,
+    HALTED) starts at the host's first look instead of at RUN: its first ICOUNT read or memory
+    read (a card as late as the host, however late that is; a host that never looks gets the
+    run after a second)."""
     streams = True
 
     def __init__(self, cfg, late, piece, run_s=0.06, fill_at=None, anchor=None, **kw):
@@ -157,8 +230,8 @@ class IsaCard(FakeTransport):
         for i, o in enumerate(range(0, ln, self.piece)):
             k = min(self.piece, ln - o)
             t = t0 + self.run_s * (0.4 + 0.5 * i / npieces)
-            buf = np.zeros(-(-k // 128) * 128, np.uint8)
-            buf[:k] = new_late[o:o + k]
+            buf = new[la + o:la + o + -(-k // 128) * 128].copy()    # whole beats, padded with
+            buf[:k] = new_late[o:o + k]                     # what the run left after the piece
             for j, (c, off, part) in enumerate(split(la + o, buf)):
                 # channel 0's beats a little before channel 1's
                 ev.append((t + 0.002 * j, c, off, part[:len(part)]))

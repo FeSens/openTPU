@@ -81,7 +81,7 @@ package otpu_pkg;
   typedef struct packed {
     logic            all;       // BAR: conflicts with everything
     rng_t [3:0]      rd;
-    rng_t [1:0]      wr;
+    rng_t [2:0]      wr;        // wr[2]: STREAM's destination
   } fp_t;
 
   function automatic int unit_of(input logic [7:0] op);
@@ -95,13 +95,34 @@ package otpu_pkg;
     endcase
   endfunction
 
+  // A range that reaches 2^32 ends at the last byte, 0xFFFFFFFF, instead of wrapping to 0 (which
+  // overlapped nothing: a 4 GiB DRAM's top words, a STREAM's 256 KiB near the top). The lost byte
+  // never decides an overlap: every DRAM range starts at a word (DMA, MXU, WAITW) or covers its
+  // beats' words (QST, beats()), so a range holding the last byte also holds the word 0xFFFFFFFC.
+  // TMEM ranges that reach 2^32 do not fit the scoreboard's 16 bits anyway (otpu_seq: all).
   function automatic rng_t mk(input logic [1:0] sp, input logic [31:0] lo, input logic [31:0] len);
     rng_t r;
+    logic [32:0] hi;
+    hi = {1'b0, lo} + {1'b0, len};
     r.v = (len != 0);
     r.sp = sp;
     r.lo = lo;
-    r.hi = lo + len;
+    r.hi = hi[32] ? '1 : hi[31:0];
     return r;
+  endfunction
+
+  // A QST's DRAM range widened to every word of the 64-byte beats it touches: [lo & ~63,
+  // hi | 63). The board's DRAM adapter writes a QST's partial beat whole after reading it (its
+  // fill read; otpu_native_dram), so another unit's write to the beat's other bytes in between
+  // would be lost: an ST, DSTEP or STREAM into one of these beats now waits for the QST, or the
+  // QST for it. (No carry: the ends only gain bits; an end on a beat boundary also takes the next
+  // beat but its last byte, a false conflict at worst.)
+  function automatic rng_t beats(input rng_t r);
+    rng_t o;
+    o = r;
+    o.lo = {r.lo[31:6], 6'd0};
+    o.hi = r.hi | 32'd63;
+    return o;
   endfunction
 
   function automatic logic ov(input rng_t a, input rng_t b);
@@ -111,10 +132,10 @@ package otpu_pkg;
   // RAW, WAR or WAW between two instructions.
   function automatic logic conflict(input fp_t n, input fp_t e);
     if (n.all || e.all) return 1'b1;
-    for (int i = 0; i < 2; i++) begin
+    for (int i = 0; i < 3; i++) begin
       for (int j = 0; j < 4; j++)
         if (ov(n.wr[i], e.rd[j]) || ov(e.wr[i], n.rd[j])) return 1'b1;
-      for (int j = 0; j < 2; j++)
+      for (int j = 0; j < 3; j++)
         if (ov(n.wr[i], e.wr[j])) return 1'b1;
     end
     return 1'b0;
@@ -129,7 +150,7 @@ package otpu_pkg;
       if (nd.rd[i].sp != SP_DRAM) nd.rd[i].v = 1'b0;
       if (ed.rd[i].sp != SP_DRAM) ed.rd[i].v = 1'b0;
     end
-    for (int i = 0; i < 2; i++) begin
+    for (int i = 0; i < 3; i++) begin
       if (nd.wr[i].sp != SP_DRAM) nd.wr[i].v = 1'b0;
       if (ed.wr[i].sp != SP_DRAM) ed.wr[i].v = 1'b0;
     end
@@ -252,10 +273,12 @@ package otpu_pkg;
       end
       OP_STREAM: begin
         // the shape is in the descriptor, which the sequencer cannot read: the hardware
-        // subset's largest (rows, cols <= 256; docs/stream.md 4.4), read and written in place
-        // (dst = src); o written; read: the descriptor's first 8 words (w1 = desc | ks << 16),
-        // the 4 column slots, x, and the constants K0 = T[k], K1 = T[k + ks]
+        // subset's largest (rows, cols <= 256; docs/stream.md 4.4), src read and written (in
+        // place) and dst written (the same range, or one apart from it); o written; read: the
+        // descriptor's first 8 words (w1 = desc | ks << 16), the 4 column slots, x, and the
+        // constants K0 = T[k], K1 = T[k + ks]
         f.wr[0] = mk(SP_DRAM, c.w2, 32'(4 * 256 * 256));
+        f.wr[2] = mk(SP_DRAM, c.w3, 32'(4 * 256 * 256));
         f.wr[1] = mk(SP_TMEM, c.w7, 32'd256);
         f.rd[0] = mk(SP_TMEM, 32'(c.w1[15:0]), 32'd8);
         f.rd[1] = mk(SP_TMEM, c.w4, 32'(4 * 256));
@@ -298,8 +321,8 @@ package otpu_pkg;
         rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
         if (rows != 0 && kb != 0) begin
           f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + kb * D);
-          f.wr[0] = mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1);
-          f.wr[1] = mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3));
+          f.wr[0] = beats(mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1));
+          f.wr[1] = beats(mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3)));
         end
       end
       OP_VOP: begin
@@ -337,8 +360,9 @@ package otpu_pkg;
       end
       OP_BAR: f.all = 1'b1;
       OP_RLD: f.rd[0] = mk(SP_TMEM, c.w1, 32'd1);
-      // WAITW: all of DRAM as written, so older stores land before its first read and younger
-      // DRAM readers see what the host wrote before the word; the one TMEM word
+      // WAITW: all of DRAM as written (up to the last byte, see mk), so older stores land before
+      // its first read and younger DRAM readers see what the host wrote before the word; the one
+      // TMEM word
       OP_WAITW: begin
         f.wr[0] = mk(SP_DRAM, 32'd0, 32'hFFFF_FFFF);
         f.wr[1] = mk(SP_TMEM, c.w2, 32'd1);

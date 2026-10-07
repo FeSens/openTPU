@@ -63,6 +63,26 @@ def tiny(request):
     return _tiny_model(request.param)
 
 
+def test_from_hf_refuses_a_rope_scaling(tmp_path):
+    """Spec.from_hf refuses a RoPE type other than the default (mRoPE's sections are 1-D RoPE
+    for text): Hugging Face's YaRN rescales the frequencies and cos / sin."""
+    c = transformers.Qwen3_5TextConfig(
+        hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=8,
+        num_key_value_heads=2, head_dim=256, intermediate_size=512, vocab_size=1000,
+        layer_types=["full_attention" if k == "attn" else "linear_attention" for k in KINDS],
+        linear_num_key_heads=8, linear_num_value_heads=8, linear_key_head_dim=128,
+        linear_value_head_dim=128).to_dict()
+    for rope, ok in (({"rope_type": "default", "rope_theta": 1e7, "mrope_interleaved": True,
+                       "mrope_section": [11, 11, 10], "partial_rotary_factor": 0.25}, True),
+                     ({"rope_type": "yarn", "factor": 4.0, "rope_theta": 1e7}, False)):
+        (tmp_path / "config.json").write_text(json.dumps(dict(c, rope_parameters=rope)))
+        if ok:
+            assert Spec.from_hf(tmp_path).theta == 1e7
+        else:
+            with pytest.raises(ValueError, match="RoPE type"):
+                Spec.from_hf(tmp_path)
+
+
 def test_plan_loops_the_repeated_unit():
     assert plan(("linear", "linear", "linear", "attn") * 6) == [
         (0, ("linear", "linear", "linear", "attn"), 6)]

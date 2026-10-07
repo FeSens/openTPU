@@ -39,6 +39,7 @@ import numpy as np
 
 from opentpu.host.runstate import busy_exits
 from . import i2c as I2C
+from . import memcal
 from . import memtest as M
 from . import power as P
 from . import regs as R
@@ -359,9 +360,14 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
 
     def status_errors():
         st = t.reg_read(R.R_STATUS)
+        if st & R.ST_ECC_DED:           # (CLEAR does not clear it: the ECC counters' clear does)
+            counts = memcal.ecc(t)
+            return False, f"STATUS {st:#x}: ECC_DED, an uncorrectable ECC word since the " \
+                "counters' clear" + (f" ({', '.join(f'channel {c}: {d}' for c, (_, d) in enumerate(counts))})"
+                                     if counts else "")
         err = st & (R.ST_ERROR | R.ST_AXI_ERR)
         if not err:
-            return True, f"STATUS {st:#x}: no ERROR / AXI_ERR"
+            return True, f"STATUS {st:#x}: no ERROR / AXI_ERR / ECC_DED"
         t.reg_write(R.R_CTRL, R.CTRL_CLEAR)
         t.reg_write(R.R_CTRL, 0)
         st2 = t.reg_read(R.R_STATUS)

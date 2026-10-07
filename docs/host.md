@@ -477,6 +477,15 @@ and int8 elsewhere; `int8`, `fp4` and `mix` choose explicitly, and `--head-forma
 head's. The tool prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head
 int8`); the interface's header and `/stats` panel show them, and otpu-smi's process line.
 
+The sampling flags (`--temperature`, `--top-k`, `--top-p` from 0 to 1, where 0 keeps only the
+most likely token, `--repetition-penalty`) default to the checkpoint's generation_config.json
+when it samples (SmolLM3-3B: temperature 0.6, top-p 0.95; Gemma 4: 1.0, top-k 64, top-p 0.95;
+LFM2.5-230M: 0.1, top-k 50, penalty 1.05), else to the model family's (LFM2-2.6B takes
+LFM2.5-230M's), else to greedy decoding, as Hugging Face's generate (Phi-4-mini). Qwen3 and
+Qwen3.5 take their model cards' non-thinking settings (0.7, top-k 20, top-p 0.8): their
+generation_config.json holds the thinking mode's. `--greedy` decodes greedily. Gemma's final
+soft cap applies before sampling, on the host as on the card.
+
 The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
 0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the
 embedding row and the token's program (a few tens of KiB), runs, and reads the logits (0.58 MiB
@@ -801,11 +810,61 @@ sleep slice (at most 1 ms apart). Not yet re-measured on the card.
 the memory adapter may still have writes in flight (STATUS WR_IDLE clear), and a host read
 through the XDMA may pass them. On the card (hp-wb aebb0bf0, resident decode, LFM2 fp4 + int8
 head, sampled, streamed) a tail read found words of the last logits piece unwritten.
-`Board.wait` now waits for WR_IDLE after HALTED (at most 2 ms; not on the board model, whose
-register script replays in order), and the streamed tail reads again for up to 5 ms before it
-calls a piece unwritten (the error names the words). `FakeTransport.logits_lag` lands the last
-piece after HALTED, with WR_IDLE clear until then (tests/test_host.py). Not yet re-run on the
-card.
+`Board.wait` now waits for WR_IDLE after HALTED (not on the board model, whose register
+script replays in order), and the streamed tail reads again for up to 5 ms before it calls a
+piece unwritten (the error names the words). `FakeTransport.logits_lag` lands the last piece
+after HALTED, with WR_IDLE clear until then (tests/test_host.py). Not yet re-run on the card.
+The wait reads STATUS back to back for 2 ms, then polls up to 1 s (`QUIET_WAIT`); WR_IDLE not
+set by then is an error (a DRAM write never answered), where it used to return the run's
+counters as a success after the 2 ms.
+
+**Ending a run.** A run cut short by `CTRL = 0` still has DRAM writes on their way: they land
+after it, so the host waits for STATUS WR_IDLE before it writes the DRAM, loads or runs
+(docs/observability.md, "Stopping a run"). Its reads in flight the card drops itself (from
+fix-board on, the loader and the next RUN start once none is in flight); older bitstreams
+released the core with port B reads in flight (up to 128 beats a channel), which a program load
+right after took for instruction rows. `Board.stop(wait)` ends a run the same way everywhere: up
+to `wait` seconds for HALTED (a run that halts by itself leaves a whole token), then `CTRL = 0`,
+and STATUS QUIET (`board.QUIET`: WR_IDLE) polled for up to 1 s; a run cut short gets 1 ms before
+that, for those older bitstreams' reads (`CUT_SETTLE`). It runs:
+- when a locked `Board` opens (`Board.quiesce`, before anything writes the card): a process
+  killed mid-run (SIGKILL, the OOM killer) leaves RUN set and its program storing KV rows,
+  `out[]` and its state into DRAM, over the next holder's freshly written image. A run still
+  going is waited for up to 120 s (`QUIESCE_WAIT`; a long generate run ends by itself), then the
+  open is refused (`CardRunning`); `OTPU_STOP_RUN=1` cuts it short at once. Monitors
+  (`lock=False`) never touch it;
+- when a wait fails: `Board.wait`'s timeout cuts the run short; KeyboardInterrupt, SystemExit,
+  a host hook's error or a streamed-logits error in `BoardBackend.wait` give it 1 s
+  (`STOP_WAIT`) to halt first; `run_generate` writes the stop word first, so the card halts
+  after the token in flight;
+- in `load_program` after a run started and not seen halted, in `Board.close`, and at the
+  interpreter's exit (SystemExit, an uncaught KeyboardInterrupt).
+While a process holds the lock, SIGTERM and SIGHUP raise SystemExit in it (exit status 143 or
+129) instead of ending it at once, so these paths run (`runstate`; a repeat within 2 s is the
+same request, later ones end it at once). SIGKILL leaves the run to the next holder's open.
+
+**A run the card does not take, an ECC error.** CTRL takes neither RUN nor LOAD while a DDR3
+channel is not calibrated (STATUS CALIB0 / CALIB1, fix-board's RTL): `Board.start` reads
+STATUS after its RUN and raises when RUN is still clear, naming the channel, instead of a wait
+that polls HALTED until its timeout. STATUS ECC_DED (bit 9) is sticky until the ECC counters
+are cleared (`Board.scrub`, `memcal.ecc`): set during a run, a word the run read was wrong, and
+`Board.wait` raises; set before it, the run cannot be checked, so the run's stats carry
+`ecc_ded` and the Board says so once on stderr.
+
+**Bounded waits.** Every loop that waits on the card has a deadline: `BoardBackend`'s service
+of the host hook while a MoE run waits on it (600 s, `RUN_TIMEOUT`), the streamed-logits wait
+(600 s), `run_generate` (600 s without a token), `ddrcal.DqsPhase.move` (5 s; it runs inside
+`Board()`). Each raises a TimeoutError naming what it waited for, and the run is stopped.
+
+**The stop word.** `Board.write` writes only the 64-byte beats its bytes fall in: bytes off the
+128-byte chunk grid go beat by beat to their channels (`XdmaTransport.mem_write` merges a
+partial beat with a read of that beat alone). Widened to whole chunks, `run_generate`'s 4-byte
+stop word read the chunk's 32 words twice and wrote them all back, rolling back the next
+token's state (tok, tpos, left: words 0..15) whenever the card stored it in between (a window of
+0.1-0.25 ms per stop against 20-60 ms tokens: an estimated 0.1-0.5% of stops; a token lost or
+shown twice, Qwen3.5's DeltaNet state advanced twice). The state block's beats
+now have one writer each during a run: words 0..15 the card's, 16..31 the host's (the stop word
+and the sampler's), 32..47 the MTP loop's (moved from 20..28: docs/mtp.md).
 
 **Resident decode.** A decode program now takes the position and the token as run arguments
 (docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves
@@ -941,6 +1000,29 @@ command line, and in other waiters', so they match each other and wait forever (
 and writes its pid there. A second runner fails at once with `xdma0 is in use by process <pid>
 (<command>)`. The lock belongs to the open device (Boards on the same transport share it) and
 goes away with the process, however it ends. Monitors (`otpu-smi`) never lock.
+
+**otpu-lock and its command.** `otpu-lock -- CMD` holds the lock in its own process and runs CMD
+with `OTPU_LOCK_HELD=<dev>` and `OTPU_LOCK_PID=<its pid>`. It exits after CMD, never before:
+SIGTERM, SIGHUP and SIGINT sent to it go on to CMD (to CMD's process group, its own unless otpu-lock
+is the terminal's foreground job, so a script's tools get them too; in the foreground the terminal
+signals CMD itself), and it waits for CMD. A signal ignored where it started stays ignored
+(`nohup`). On Linux CMD is sent SIGTERM if otpu-lock dies (SIGKILL: `PR_SET_PDEATHSIG`). A tool
+trusts `OTPU_LOCK_HELD` only when the pid the lock file names (`OTPU_LOCK_PID`'s, when set) is its
+ancestor and holds the lock (else the tool takes the lock itself), and checks before each DRAM write
+and each run that otpu-lock still runs: under a dead one it raises `LockLost` before touching the
+card (a leftover background job, or a script's tool after SIGKILL). Before, killing otpu-lock freed
+the lock while CMD went on "locked", and a second runner drove the card beside it.
+
+**The shared directory.** `/tmp/otpu` is made mode 1777 (shared by users, sticky) and belongs to
+whoever makes it first. Its files are opened without following a symbolic link and must be
+plain files of one link (`runstate.open_shared`), status and cache files are replaced by
+renaming a new file of the writer's over them (`write_shared`), so neither the directory's
+owner nor an entry someone planted makes another user's tool, or a sudo'd one, truncate or
+write a file elsewhere. A symbolic link at `/tmp/otpu` itself is followed only when it is the
+user's or root's. Lock files are mode 0666 whatever the umask; one left unwritable by another
+user is locked read-only (flock works on either), so a second user gets DeviceBusy or waits,
+not PermissionError. A status file another user left cannot be replaced: the runner says so
+once and goes on without one.
 
 **Status file.** The runner publishes `/tmp/otpu/<dev>.json`, replaced atomically after every
 token (`BoardBackend`: at most every 0.25 s, with a timer writing the last tokens) and removed

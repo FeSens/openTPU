@@ -38,6 +38,7 @@ from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, RunVar, T
                         current)
 from . import formats as FM
 from . import generate as G
+from . import rope_parameters
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Additive, Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
@@ -70,8 +71,8 @@ class Spec:
     rotary: int = 0           # RoPE dimensions of a head, the first ones (0: all; Phi-4-mini 96)
     rope_div: tuple = ()      # per-frequency divisors of the angle (LongRoPE's short factors)
     rope_scale: float = 1.0   # factor on cos and sin (LongRoPE's attention factor)
-    ctx: int = 0              # the most positions the RoPE tables hold (LongRoPE: its short
-    #                           factors' range; 0: no limit)
+    ctx: int = 0              # the most positions the model takes (LongRoPE: its short
+    #                           factors' range; Phi-3: its sliding window; 0: no limit)
     embed: str = "f32"        # the embedding rows: fp32, or "int8" (per D block, as the tied
     #                           int8 LM head holds them: the device gathers them from it,
     #                           kernels.gather.gather_row)
@@ -86,6 +87,11 @@ class Spec:
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         c = json.loads((Path(model_dir) / "config.json").read_text())
+        rp = rope_parameters(c, model_dir)          # (Qwen3's YaRN: not supported)
+        if c.get("use_sliding_window"):
+            raise ValueError(f"{model_dir}: sliding-window attention is not supported")
+        if c.get("attention_bias"):
+            raise ValueError(f"{model_dir}: attention biases are not supported")
         eos = c.get("eos_token_id", 151645)
         g = Path(model_dir) / "generation_config.json"
         if g.exists():
@@ -94,7 +100,8 @@ class Spec:
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"],
                     head_dim=c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"],
                     ffn=c["intermediate_size"], vocab=c["vocab_size"], eps=c["rms_norm_eps"],
-                    theta=c.get("rope_theta", 1e6), tied=c.get("tie_word_embeddings", True),
+                    theta=rp.get("rope_theta") or c.get("rope_theta") or 10000.0,
+                    tied=c.get("tie_word_embeddings", True),
                     bos=c.get("bos_token_id", 151643),
                     eos=tuple(eos) if isinstance(eos, list) else (eos,), mix=FM.mix_for(c))
 
@@ -575,12 +582,39 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
 
 
 def _fake_q(x, D: int = 128):
-    """int8 quantize-dequantize per (row, D-block) of the last axis (numerics of QACT/QST)."""
+    """int8 quantize-dequantize per (row, D-block) of the last axis (numerics of QACT/QST). A
+    value within 2^-31 of a rounding tie rounds as the device's quantizer rounds it in fp32
+    (fp32.quantize: x * 127 recip(amax)), not as float64 noise has it: a block whose values
+    have exact ratios has exact ties (a 4-bit row: codes 3 and 6 make 63.5; a flash block's
+    attention output is an integer vector times a scalar, _pv)."""
     sh = x.shape
     xb = x.reshape(*sh[:-1], sh[-1] // D, D)
     a = np.abs(xb).max(-1, keepdims=True)
     s = np.where(a == 0, 1, a / 127)
-    return (np.clip(np.rint(xb / s), -127, 127) * s).reshape(sh)
+    r = xb / s
+    q = np.rint(r)
+    tie = np.abs(r - q) > 0.5 - 2.0 ** -31
+    if tie.any():
+        b = tie.any(-1)
+        q[b] = np.where(tie[b], F.quantize(xb[b].astype(np.float32), axis=-1)[0], q[b])
+    return (np.clip(q, -127, 127) * s).reshape(sh)
+
+
+def _v_parts(v):
+    """V rows [..., d] as the KV cache holds them: int8 values and one scale per row (an all-zero
+    row's scale is 0, as the device's)."""
+    a = np.abs(v).max(-1, keepdims=True)
+    return np.clip(np.rint(v / np.where(a == 0, 1, a / 127)), -127, 127), a[..., 0] / 127
+
+
+def _pv(pp, Vq, vs, D: int = 128):
+    """P.V as the device's flash attention takes it (kernels/attention.py _attend_heads): the
+    softmax numerators pp [T] times V's row scales vs [T] (folded in by QACT CSCALE), int8 per D
+    tokens, against V's int8 values Vq [T, d]."""
+    T = len(pp)
+    ppad = np.zeros(-(-T // D) * D)
+    ppad[:T] = pp * vs
+    return _fake_q(ppad, D)[:T] @ Vq
 
 
 def _fake_w(a, D: int, fmt: str = "int8"):
@@ -613,8 +647,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                     head_format: str | None = None, formats: str | None = None) -> np.ndarray:
     """float64 decode that applies openTPU's quantization points but none of its rounding:
     int8 (or 4-bit: `wformat`, `head_format`, `formats` as in Image) weights, int8 matmul
-    inputs per D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens).
-    Separates quantization error from kernel bugs."""
+    inputs per D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens)
+    with V's per-token scales folded in (_pv). Separates quantization error from kernel bugs."""
     d, G = spec.head_dim, spec.n_q // spec.n_kv
     Wq: dict = {}
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
@@ -655,16 +689,14 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             if i not in spec.nope:
                 q, k = rot(q), rot(k)
             Kc[i].append(_fake_q(k, D))
-            Vc[i].append(_fake_q(v, v.shape[-1]))
-            K, V = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
+            Vc[i].append(_v_parts(v))
+            K = np.stack(Kc[i], 1)
+            Vq, Vs = (np.stack(z, 1) for z in zip(*Vc[i]))
             o = np.zeros((spec.n_q, d))
             for hq in range(spec.n_q):
                 sc = K[hq // G] @ _fake_q(q[hq] / math.sqrt(d), D)
                 pp = np.exp(sc - sc.max())
-                T = len(pp)
-                ppad = np.zeros(-(-T // D) * D)
-                ppad[:T] = pp
-                o[hq] = (_fake_q(ppad, D)[:T] @ V[hq // G]) / pp.sum()
+                o[hq] = _pv(pp, Vq[hq // G], Vs[hq // G], D) / pp.sum()
             x = x + w(p + "self_attn.o_proj.weight") @ _fake_q(o.reshape(-1), D)
             h = _fake_q(norm(x, W[p + "post_attention_layernorm.weight"]), D)
             g = w(p + "mlp.gate_proj.weight") @ h
@@ -732,7 +764,8 @@ class Image(EmbedHost):
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         if spec.ctx and cap > spec.ctx:
-            raise ValueError(f"KV capacity {cap} above the model's RoPE range ({spec.ctx})")
+            raise ValueError(f"KV capacity {cap} above the model's range ({spec.ctx}: RoPE, "
+                             f"a sliding window)")
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
@@ -1097,7 +1130,7 @@ class RunRows(RunPos):
             return Bucket(self.blocks, self.bucket.z - 4 * r)
         base, step = self.amask
         return Bucket(self.blocks, self.bucket.z - 4 * r,
-                      Additive(Affine(base + step * r) + self.tpos * step))
+                      Additive(Affine(base + step * r) + self.tpos * step, self.block))
 
     @staticmethod
     def values(tokens, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
@@ -2027,6 +2060,7 @@ class Engine:
                 self.backend.machine.host = _isa_host(poll)
             elif hasattr(self.backend, "host"):
                 self.backend.host = poll
+                self.backend.servers = servers      # (rebased between runs: BoardBackend.start)
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         # a MoE model's prompt layer by layer, `layer_major` rows a run (prefill_layers; 0:
@@ -2617,7 +2651,8 @@ class Engine:
 
     def generate_batch(self, prompts, max_new: int = 32, chunk: int | None = None) -> list:
         """Greedy generation for several prompts (one sequence each) decoded together; a
-        finished sequence keeps its row (its extra tokens are dropped) until all finish."""
+        finished sequence (EOS, max_new, or its KV cache full) leaves the batch's runs, its
+        last token not fed (as generate)."""
         n = len(prompts)
         nxt = [int(np.argmax(self.prefill(p, seq=s, chunk=chunk)))
                for s, p in enumerate(prompts)]
@@ -2629,9 +2664,14 @@ class Engine:
                     out[s].append(nxt[s])
                     done[s] = (nxt[s] in self.spec.eos or len(out[s]) >= max_new
                                or self.poss[s] >= self.cap)
-            if all(done):
+            live = [s for s in range(n) if not done[s]]
+            if not live:
                 break
-            nxt = [int(np.argmax(r)) for r in self.step_batch(nxt)]
+            lg = self.run_rows([(s, self.poss[s]) for s in live], [nxt[s] for s in live],
+                               list(range(len(live))))
+            for s, r in zip(live, lg):
+                self.poss[s] += 1
+                nxt[s] = int(np.argmax(r))
         return out
 
     # ---- the decode loop on the device (opentpu/llm/generate.py)
@@ -2791,11 +2831,20 @@ class Engine:
         return out
 
     def generate(self, prompt, max_new: int = 32, sampler=None, on_token=None) -> list:
-        """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token."""
+        """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token. The sampler
+        gets the logits Hugging Face's model returns: with the spec's final soft cap (Gemma's
+        final_logit_softcapping), which step() and prefill() leave out (greedy: their argmax,
+        the cap keeps the order); chat.sampler without its softcap samples them."""
+        from .gemma4 import softcap
+        cap = getattr(self.spec, "softcap", None)
+        if sampler is not None and cap and getattr(sampler, "softcap", None):
+            raise ValueError("generate caps the logits it hands the sampler: a sampler with "
+                             "no softcap")
         logits = self.prefill(prompt)
         out = []
         for _ in range(max_new):
-            t = int(np.argmax(logits)) if sampler is None else int(sampler(logits))
+            t = int(np.argmax(logits)) if sampler is None else \
+                int(sampler(softcap(self.spec, logits) if cap else logits))
             out.append(t)
             if on_token:
                 on_token(t)

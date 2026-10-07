@@ -56,7 +56,10 @@ set nwv [n_waivers]
 
 # every query of the XDC must find cells (the top is otpu_mem_ch, so the names are the same)
 set empty {}
-set pats {a_rs1_reg x_rs1_reg a_hs1_reg x_hs1_reg e_s1_reg a_wacc_g_reg[*] a_wacc_s1_reg[*] x_wacc_g_reg[*] x_wacc_s1_reg[*]}
+set pats {a_rs1_reg x_rs1_reg a_hs1_reg x_hs1_reg e_s1_reg}
+foreach p {0 1} {
+  foreach r {a_wacc_g_reg a_wacc_s1_reg x_wacc_g_reg x_wacc_s1_reg} { lappend pats g_port\[$p\].$r\[*\] }
+}
 foreach f {u_aq u_ad u_ar u_xq u_xd u_xr} {
   lappend pats $f/wgray_reg\[*\] $f/wbin_reg\[*\] $f/wgray_r1_reg\[*\] $f/rgray_reg\[*\] $f/rbin_reg\[*\]* $f/rgray_w1_reg\[*\]
 }
@@ -92,8 +95,8 @@ foreach f {u_oq u_of u_tag} {
 set xs_expect {
   clk>uclk  {^(u_aq|u_ad)/(mem_reg|wgray_reg|wbin_reg)$|^u_ar/(rgray_reg|rbin_reg)$|^a_req_reg$}
   xclk>uclk {^(u_xq|u_xd)/(mem_reg|wgray_reg|wbin_reg)$|^u_xr/(rgray_reg|rbin_reg)$|^x_req_reg$}
-  uclk>clk  {^u_ar/(mem_reg|wgray_reg|wbin_reg)$|^(u_aq|u_ad)/(rgray_reg|rbin_reg)$|^(a_hold_reg|a_wacc_g_reg|c_err_reg)$}
-  uclk>xclk {^u_xr/(mem_reg|wgray_reg|wbin_reg)$|^(u_xq|u_xd)/(rgray_reg|rbin_reg)$|^(x_hold_reg|x_wacc_g_reg)$}
+  uclk>clk  {^u_ar/(mem_reg|wgray_reg|wbin_reg)$|^(u_aq|u_ad)/(rgray_reg|rbin_reg)$|^(a_hold_reg|g_port\[[01]\]\.a_wacc_g_reg|c_err_reg)$}
+  uclk>xclk {^u_xr/(mem_reg|wgray_reg|wbin_reg)$|^(u_xq|u_xd)/(rgray_reg|rbin_reg)$|^(x_hold_reg|g_port\[[01]\]\.x_wacc_g_reg)$}
 }
 proc cross_sources {expect} {
   set clks {clk uclk xclk}

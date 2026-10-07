@@ -115,7 +115,9 @@ Quantization of a group `x[0..n)` (a block of `D`, or a whole row in row mode):
 
 Every instruction is 8 x 32-bit words `w0..w7`.
 `w0 = opcode[7:0] | ra[11:8] | rb[15:12] | rc[19:16] | rd[23:20] | flags[31:24]`.
-`R[x]` is the register value. Addresses below are "register + immediate".
+`R[x]` is the register value. Addresses below are "register + immediate": the fields written
+`R[x] + w`. Counts, shapes and strides are immediates, whatever the register fields hold (LD's
+and ST's `n`, QACT's `w2` and `w3`, GATHER's `w3`).
 
 | op | name | semantics |
 |---|---|---|
@@ -150,9 +152,10 @@ is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + acc[j]` -- the flash-a
 correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed weights' format (below;
 0 = int8), bit6 `PAIR` (4-bit weights at full rate, "Column reuse"). The streamed rows are
 D-byte aligned (`sa` and `rs` are multiples of D): the MXU streams whole D-byte DRAM chunks.
-`0 < M <= ACT_ROWS`; RMAX, ASCALE and PAIR need `M <= MCOLS` (PAIR: `2*M <= MCOLS`), and an MM
-with `M > MCOLS` needs its streamed row to fit the MXU's chunk FIFO (`KB` chunks for int8,
-`ceil(KB/2)` for 4-bit; the board: 1024; a replayed row stays in the FIFO until its last group).
+`N >= 1`, `KB >= 1` and `0 < M <= ACT_ROWS`; RMAX, ASCALE and PAIR need `M <= MCOLS` (PAIR:
+`2*M <= MCOLS`), and an MM with `M > MCOLS` needs its streamed row to fit the MXU's chunk FIFO
+(`KB` chunks for int8, `ceil(KB/2)` for 4-bit; the board: 1024; a replayed row stays in the FIFO
+until its last group).
 
 ```
 for n in 0..N-1:
@@ -230,10 +233,13 @@ in the same cycles, the operand layout of `MM PAIR` ("Column reuse").
 (element stride, bytes). Flag bit0 `ROW`.
 Element `c` of row `r` goes to byte `dst + r*drs + c*es`. Scales: per block to
 `sdst + (r*KB + k)*4`; in `ROW` mode one scale per row to `sdst + r*4`. The data and scale ranges of
-one QST must not overlap. Flag bit1 `HALF` (`ROW` mode only): the scale is still the whole row's,
-but only elements `c < KB*D/2` are written (a V^T append of a head half as wide as its padded row,
-LFM2's 64 of 128, then writes its 64 real rows instead of 128 byte-strided ones; a quantizer
-without `HALF` writes the zero padding too, which nothing reads).
+one QST must not overlap. On the board a 64-byte DRAM beat a QST writes only part of is read,
+merged and written whole (`otpu_native_dram`): the scoreboard counts every word of the QST's
+beats as written by it, and the host must not write the other bytes of those beats while it
+runs. Flag bit1 `HALF` (`ROW` mode only): the scale is still the whole row's, but only elements
+`c < KB*D/2` are written (a V^T append of a head half as wide as its padded row, LFM2's 64 of
+128, then writes its 64 real rows instead of 128 byte-strided ones; a quantizer without `HALF`
+writes the zero padding too, which nothing reads).
 
 ### VOP
 
@@ -311,7 +317,8 @@ written; `o` is written last. The scoreboard footprint: DRAM `[dram, dram + 4 ro
 TMEM `[qk, qk + 2 cols)`, `[v, v + rows)` and `{g, g + gs}` read, `[o, o + rows)` written.
 A bitstream without it leaves CAPS bit6 clear; the compiler then emits the VOP sequence
 (`Config.DSTEP = False`, the default of `board_config`; the host takes it from CAPS through
-`device_config`).
+`device_config`). Its slice takes DSTEP and STREAM as illegal instructions: the run stops with
+ERROR (otpu_seq STREAMS; before fix-board the DMA waited for the missing stream engine forever).
 
 On the board DSTEP runs on the stream engine (`docs/stream.md`): the DMA moves the state, and
 the VPU's slot-0 partial loop and tree plus the tail (`rtl/vpu/otpu_se_tail.sv`) compute. It
@@ -345,7 +352,7 @@ KDA, GLA, RetNet, Mamba2, mLSTM, RWKV-7, RMSNorm, attention's reductions) are in
 The board runs the subset `opentpu.isa.stream_hw_cfg` accepts, announced by **CAPS bit26 =
 STREAM** (`regs.CAP_STREAM`; bit26 is taken; the full CAPS list is the register table in
 [observability.md](observability.md)):
-- DRAM state in place, rows ≤ 256, cols 64..256;
+- DRAM state, in place or into a chunk-aligned `dst` apart from `src`, rows ≤ 256, cols 64..256;
 - the state-step modes.
 
 The compiler (`ol.state_step`) falls back to VOPs otherwise. DSTEP is STREAM with
@@ -377,7 +384,7 @@ through whole.
   as a signed number: counters, and positive fp32 values, which order as their bits.
 - `w5`: cycles between reads, the first at once. `w6`: a timeout in cycles (0: none), at which
   the slice stops with an error the host sees.
-- The scoreboard footprint: all of DRAM read, `T[R[rb] + w2]` written. Older stores land before
+- The scoreboard footprint: all of DRAM and `T[R[rb] + w2]` written. Older stores land before
   its first read; younger instructions that read or write DRAM, and those that use the word,
   wait until it completes.
 - Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
@@ -402,10 +409,16 @@ still does not hold is the timeout (SimError).
 
 In the RTL (otpu_dma, CAPS bit31) it is an LD of one word whose TMEM write waits for the
 compare: the chunk is read, the word taken, compared a cycle later and written through lane 0,
-or, if it does not hold, read again after `w5` cycles. At the timeout the slice stops: STATUS
-shows HALTED, ERROR and WAIT_TO (bit8; the first WAITW bitstream, be824d5, shows HALTED and ERROR
-only), until RUN falls. The scoreboard sees all of DRAM as written (older DRAM readers and
-writers complete first, younger ones wait) and the TMEM word.
+or, if it does not hold, read again after `w5` cycles. The timeout is taken between two reads:
+a read in flight when `w6` cycles have passed still completes the WAITW if its word holds, so a
+WAITW either completes (the word written, younger instructions go on) or times out (nothing
+written). At the timeout the slice stops: the sequencer and the units are held in reset (no
+instruction starts or ends after it; TMEM, the DRAM and ICOUNT stay as they were), and STATUS
+shows HALTED (once the units are stopped and WR_IDLE holds), ERROR and WAIT_TO (bit8; the first
+WAITW bitstream, be824d5, shows HALTED and ERROR only), until RUN falls. Bitstreams before
+fix-board showed HALTED at once while the other units went on, and a read in flight at the
+timeout could still complete the WAITW after ERROR rose. The scoreboard sees all of DRAM as
+written (older DRAM readers and writers complete first, younger ones wait) and the TMEM word.
 
 On the card, `tools/qual/waitw.py` (qual.sh, and otpu-diag's `waitw-host` group) checks that
 order (opentpu/host/checks.py `waitw_host`). In each round the host:
@@ -429,7 +442,8 @@ bucket chains to the next bucket's.
 
 ### GATHER
 
-All slices must execute a `GATHER` with the same `dst`, `rows`, `cols`, `drs`, `seg`.
+All slices must execute a `GATHER` with the same `dst` (the address `R[rb]+w2`, through any
+register), `rows`, `cols`, `drs`, `seg`.
 `src = R[ra]+w1`, `dst = R[rb]+w2`, `rows = w3[15:0]`, `cols = w3[31:16]`, `srs = w4`,
 `drs = w5`, `seg = w6` (words). For every slice `s`, every `r < rows`, `c < cols`:
 `T_all[dst + s*seg + r*drs + c] = T_s[src + r*srs + c]` is written into every slice's TMEM.

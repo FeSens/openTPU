@@ -25,6 +25,7 @@ module otpu_litedram (
     output wire          c0_cmd_ready,
     input  wire          c0_cmd_valid,
     input  wire          c0_cmd_we,
+    output reg           c0_ded,
     output wire  [511:0] c0_rdata_data,
     input  wire          c0_rdata_ready,
     output wire          c0_rdata_valid,
@@ -48,6 +49,7 @@ module otpu_litedram (
     output wire          c1_cmd_ready,
     input  wire          c1_cmd_valid,
     input  wire          c1_cmd_we,
+    output reg           c1_ded,
     output wire  [511:0] c1_rdata_data,
     input  wire          c1_rdata_ready,
     output wire          c1_rdata_valid,
@@ -64855,6 +64857,8 @@ always @(posedge idelay_clk) begin
 end
 
 always @(posedge sys_clk_1) begin
+    c0_ded <= (nativeportsecc0_ded_errors_status != 1'd0);
+    c1_ded <= (nativeportsecc1_ded_errors_status != 1'd0);
     case (grant)
         1'd0: begin
             if ((~request[0])) begin
@@ -71320,6 +71324,7 @@ always @(posedge sys_clk_1) begin
         dqsphase0_dqs_steps_wr_stb <= 1'd0;
         dqsphase0_busy <= 1'd0;
         dqsphase0_steps <= 32'd0;
+        c0_ded <= 1'd0;
         nativeportsecc0_enable_storage <= 1'd1;
         nativeportsecc0_enable_wr_stb <= 1'd0;
         nativeportsecc0_sec_errors_status <= 32'd0;
@@ -71763,6 +71768,7 @@ always @(posedge sys_clk_1) begin
         dqsphase1_dqs_steps_wr_stb <= 1'd0;
         dqsphase1_busy <= 1'd0;
         dqsphase1_steps <= 32'd0;
+        c1_ded <= 1'd0;
         nativeportsecc1_enable_storage <= 1'd1;
         nativeportsecc1_enable_wr_stb <= 1'd0;
         nativeportsecc1_sec_errors_status <= 32'd0;

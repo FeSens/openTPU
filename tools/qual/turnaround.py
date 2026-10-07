@@ -11,7 +11,7 @@ turns in both channels all the time. The loads of what was just stored put any w
 turnaround corrupted through the ECC decoder in the same run. Then:
 - the stored tiles and the MMs' results are read back and compared with the ISA simulator's;
 - both channels' ECC counters (sec_errors / ded_errors, corrected and uncorrectable words since
-  the configuration) must be 0.
+  the last scrub: Board.scrub clears them) must be 0.
 
     python3 tools/qual/turnaround.py [--seconds 30] [--mb 32]
 
@@ -142,7 +142,7 @@ def turnarounds(board, seconds: float = 30.0, mb: float = 32.0, runs: int | None
         txt = ", ".join(f"ch{ch} sec {s} ded {d}" for ch, (s, d) in enumerate(e1))
         before = ", ".join(f"ch{ch} {s}/{d}" for ch, (s, d) in enumerate(e0))
         rows.append(("ECC", (all(s == 0 and d == 0 for s, d in e1),
-                             f"{txt} (before: {before}; the counts since the configuration)")))
+                             f"{txt} (before: {before}; the counts since the last scrub, Board.scrub clears them)")))
     return rows
 
 
