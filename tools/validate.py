@@ -2,7 +2,7 @@
 the RTL simulator next to Hugging Face transformers running the same checkpoint in fp32 on the
 CPU with openTPU's quantization, and (--against) next to a second device.
 
-    python3 tools/validate.py [--model qwen3|lfm2|qwen35|DIR] [--wformat int8|int4|fp4|mix]
+    python3 tools/validate.py [--model qwen3|lfm2|qwen35|gemma4|DIR] [--wformat int8|int4|fp4|mix]
                               [--head-format int8|int4|fp4] [--formats SPEC]
                               [--backend isa|rtl|board] [--against isa|rtl|board|RUN.npz]
                               [--cfg board|design|CFG.pkl] [--resident] [--tokens 16] [--chat]
@@ -19,7 +19,13 @@ rounding by 127 * recip(amax)): every nn.Linear's input, and in attention as _at
 does, q * log2(e) / sqrt(d) and K per head and 128-block, V per head and token, and P V as V's
 int8 values against the numerators 2^(s - max) times V's per-token scales, rounded per 128
 keys. --weights-only quantizes the weights only ("W"); the fp32 golden (the checkpoint, Hugging
-Face's eager attention) is there for context unless --no-fp32.
+Face's eager attention) is there for context unless --no-fp32. Gemma 4 (E2B, E4B): the formats
+are the device image's (they follow the card's fit: the PLE table and, for an int8 image that
+does not fit, some layers in 4-bit), the embedding rows the LM head's in the head's format (the
+device gathers them from the head), the per-layer embeddings the device's PLE records, and the
+logits compared after the soft cap (the device's are before it). Hugging Face loads the language
+model alone without its PLE table (E2B's is 9.4 GB in fp32), and the golden keeps a bf16
+checkpoint's weights in bf16 for its fp32 passes (exact), widened a matrix at a time.
 
 For each prompt: the device's greedy continuation and each golden's (text, ids, the first
 token that differs); then, teacher forced on the device's own tokens (every step compares the
@@ -43,11 +49,12 @@ then runs the ISA simulator in the configuration the card ran in, and the golden
 Devices: isa, the ISA simulator in --cfg's configuration (default isasim.board_config, with
 OTPU_MCOLS etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
 (opentpu.llm.rtl_backend: slow, so a prompt and a few tokens of LFM2.5-230M; 3 tokens of
-"The capital of France is" took 4 minutes on omarchy with the build, bit for bit); board, the card through the host driver as otpu-chat --backend board (run it
-under otpu-lock on the card host; a simulator then takes the card's configuration from its
-registers). The device runs first and is freed before Hugging Face loads (Qwen3.5-0.8B's ISA
-run peaks near 9 GB). Gemma 4 and the MoE models are not supported (unsupported()). Exit
-status 0: PASS, 1: FAIL, 3: the card is in use (otpu-chat's).
+"The capital of France is" took 4 minutes on omarchy with the build, bit for bit); board, the
+card through the host driver as otpu-chat --backend board (run it under otpu-lock on the card
+host; a simulator then takes the card's configuration from its registers). The device runs
+first and is freed before Hugging Face loads (Qwen3.5-0.8B's ISA run peaks near 9 GB). The MoE
+models are not supported (unsupported(): Gemma 4 26B-A4B too). Exit status 0: PASS, 1: FAIL, 3:
+the card is in use (otpu-chat's).
 """
 from __future__ import annotations
 
@@ -146,16 +153,50 @@ def embed_rows(table, spec, D: int = 128) -> np.ndarray:
     return out
 
 
+def _gemma4(spec) -> bool:
+    return type(spec).__module__.endswith(".gemma4")
+
+
 def unsupported(spec) -> str | None:
-    """Why the golden cannot stand for this model's device, or None. Gemma 4's device gathers
-    its embedding rows from the LM head in the head's format and its PLE rows from records of
-    their own, which the golden does not model (and E2B is about 20 GB in fp32, beside the ISA
-    run's 9); a MoE's routers are int8 in every format and its experts stream."""
-    if type(spec).__module__.endswith(".gemma4"):
-        return "Gemma 4 is not supported: its embedding and PLE rows are the device's own gathers"
-    if getattr(spec, "moe", None) is not None:
+    """Why the golden cannot stand for this model's device, or None: a MoE's routers are int8
+    in every format and its experts stream (Gemma 4 26B-A4B's too)."""
+    if getattr(spec, "moe", None) is not None or getattr(spec, "experts", 0):
         return "MoE models are not supported (the routers' formats, the experts' streaming)"
     return None
+
+
+def image_formats(img) -> dict:
+    """What the golden takes from the device's model image: the LM head's format and, for
+    Gemma 4, whose formats follow the card's fit (gemma4.Image), each layer's (attention,
+    gate / up, down, its PLE gate and projection), the PLE projection's and the PLE table's."""
+    out = {"head": img.head_format}
+    if hasattr(img, "ple_format"):
+        out.update(layers=[list(f) for f in img.lf], ple_proj=img.pformat,
+                   ple_table=img.ple_format)
+    return out
+
+
+def gemma4_format(img: dict, name: str) -> str | None:
+    """The format of Gemma 4 checkpoint weight `name` in the image `img` (image_formats); None
+    for a weight the device does not multiply."""
+    if name == "lm_head.weight":
+        return img["head"]
+    if name == "model.per_layer_model_projection.weight":
+        return img["ple_proj"]
+    if not name.startswith("model.layers."):
+        return None
+    fa, fg, fd, fp = img["layers"][int(name.split(".")[2])]
+    return (fa if ".self_attn." in name else fd if ".down_proj." in name else
+            fg if ".mlp." in name else fp if ".per_layer_" in name else None)
+
+
+def _compact(p):
+    """A checkpoint weight as the golden keeps it for its fp32 passes: in bf16 when that is
+    exact (a bf16 checkpoint's: half the memory; Golden._pre widens it a matrix at a time),
+    else as it is."""
+    import torch
+    b = p.detach().to(torch.bfloat16)
+    return torch.nn.Parameter(b, False) if torch.equal(b.float(), p.detach().float()) else p
 
 
 class Golden:
@@ -164,10 +205,14 @@ class Golden:
     set("weights"): its weight values and embedding rows only; set("fp32"): the checkpoint.
 
     The weight formats are the model image's: the port's weight_kind and formats.resolver
-    (wformat, head_format, OTPU_FORMATS or spec.formats), as Image and emulated_logits."""
+    (wformat, head_format, OTPU_FORMATS or spec.formats), as Image and emulated_logits; Gemma
+    4's from the device's image (`image`: image_formats). Gemma 4's embedding rows are its LM
+    head's in the head's format (the device gathers them from the head), and its per-layer
+    embeddings the device's PLE records (_per_layer; `ple_rows(ids)`: the checkpoint's rows,
+    default the model's table)."""
 
     def __init__(self, model, spec, wformat: str = "int8", head_format: str | None = None,
-                 D: int = 128):
+                 D: int = 128, image: dict | None = None, ple_rows=None):
         import torch
         from transformers import AttentionInterface
         from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS, AttentionMaskInterface
@@ -176,41 +221,83 @@ class Golden:
         why = unsupported(spec)
         if why:
             raise ValueError(why)
-        self.model, self.spec, self.D, self.act = model.eval(), spec, D, False
-        port = importlib.import_module(type(spec).__module__)
-        wf, formats = FM.named(spec, wformat, None)
-        fmt = FM.resolver(formats, port.KINDS, spec.formats, wf, head_format)
+        self.model, self.spec, self.D, self.act, self.mode = model.eval(), spec, D, False, "fp32"
+        self.gemma, self._image = _gemma4(spec), image
+        if self.gemma:
+            if image is None:
+                raise ValueError("Gemma 4: the formats of the device's image are needed (image)")
+            fmt = lambda n: gemma4_format(image, n)                     # noqa: E731
+        else:
+            port = importlib.import_module(type(spec).__module__)
+            wf, formats = FM.named(spec, wformat, None)
+            res = FM.resolver(formats, port.KINDS, spec.formats, wf, head_format)
+            fmt = lambda n: res(*port.weight_kind(n))                   # noqa: E731
+        emb = model.get_input_embeddings()
+        ck = {id(emb.weight): _compact(emb.weight)}     # (a tied LM head: the same tensor)
         self.formats = {}                   # checkpoint weight -> its format
         self._lin = []                      # (module, the checkpoint's weight, the device's)
+        self._wide = {}                     # module -> its kept weight, during an fp32 call
+        dev = {}
         for n, m in model.named_modules():
             if not isinstance(m, torch.nn.Linear):
                 continue
             name = n.replace("model.language_model.", "model.") + ".weight"
-            f = fmt(*port.weight_kind(name))
-            dw = device_weight(m.weight.detach().numpy(), f, D)
-            self._lin.append((m, m.weight, torch.nn.Parameter(torch.from_numpy(dw), False)))
+            f = fmt(name)
+            if f is None:
+                continue
+            w = m.weight.detach().float().numpy()
+            if name == "model.per_layer_model_projection.weight":   # (the image folds the
+                w = w * np.float32(spec.hidden ** -0.5)              # 1 / sqrt(H) in: set())
+            dev[name] = torch.nn.Parameter(torch.from_numpy(device_weight(w, f, D)), False)
+            w32 = ck[id(m.weight)] if id(m.weight) in ck else _compact(m.weight)
+            self._lin.append((m, w32, dev[name]))
+            m.weight = dev[name]
             self.formats[name] = f
-            m.register_forward_pre_hook(self._quant_input)
-        emb = model.get_input_embeddings()
-        self._emb = (emb, emb.weight, emb.weight)
-        if getattr(spec, "embed", "f32") == "int8":
-            rows = embed_rows(emb.weight.detach().numpy(), spec, D)
-            self._emb = (emb, emb.weight, torch.nn.Parameter(torch.from_numpy(rows), False))
+            m.register_forward_pre_hook(self._pre)
+            m.register_forward_hook(self._post)
+        e = emb.weight
+        if self.gemma:
+            e = dev["lm_head.weight"]
+        elif getattr(spec, "embed", "f32") == "int8":
+            e = torch.nn.Parameter(torch.from_numpy(embed_rows(e.detach().numpy(), spec, D)), False)
+        self._emb = (emb, ck[id(emb.weight)], e)
+        if self._emb[1].dtype != torch.float32:
+            emb.forward = self._embed
         self.noise = False                  # the embedding rows times (1 + 2^-23 N(0, 1))
         emb.register_forward_hook(self._noisy)
+        if self.gemma and spec.ple_dim:
+            self._lm = model.model
+            if ple_rows is None:
+                t = self._lm.embed_tokens_per_layer.weight.detach().float().numpy()
+                ple_rows = lambda ids: t[ids]                           # noqa: E731
+            self._ple_rows = ple_rows
+            self._lm.get_per_layer_inputs = self._per_layer
+            self._lm.embed_tokens_per_layer = None
         # the attention: this golden's function (and the eager mask) under a name of its own
         key = f"otpu_golden_{id(self):x}"
         AttentionInterface.register(key, self._attention)
         AttentionMaskInterface.register(key, ALL_MASK_ATTENTION_FUNCTIONS["eager"])
         model.set_attn_implementation(key)
         self._eager = {}
+        self.set("fp32")
 
     def set(self, mode: str) -> None:
         for m, w32, wd in self._lin:
             m.weight = w32 if mode == "fp32" else wd
         emb, w32, wd = self._emb
         emb.weight = w32 if mode == "fp32" else wd
-        self.act = mode == "quant"
+        self.act, self.mode = mode == "quant", mode
+        if self.gemma and self.spec.ple_dim:    # the device's PLE projection has 1 / sqrt(H)
+            self._lm.per_layer_model_projection_scale = \
+                self.spec.hidden ** -0.5 if mode == "fp32" else 1.0
+
+    def device_logits(self, lg):
+        """A device's logits as the model's distribution: Gemma 4's soft cap applied (the host
+        applies it; the device's logits are before it, Hugging Face's after)."""
+        if not self.gemma:
+            return lg
+        from opentpu.llm import gemma4 as G4
+        return G4.softcap(self.spec, lg)
 
     def _noisy(self, mod, args, out):
         """With `noise`, the embedding rows perturbed by about an fp32 ulp, the same noise in
@@ -222,10 +309,54 @@ class Golden:
         gen = torch.Generator().manual_seed(1)
         return out * (1 + 2.0 ** -23 * torch.randn(out.shape, generator=gen, dtype=out.dtype))
 
-    def _quant_input(self, mod, args):
+    def _embed(self, ids):
+        """The embedding of a table kept in bf16: its rows widened, then scaled in fp32 (as
+        Gemma's scaled embedding of an fp32 table)."""
+        import torch
+        emb = self._emb[0]
+        x = torch.nn.functional.embedding(ids, emb.weight).float()
+        sc = getattr(emb, "embed_scale", None)
+        return x if sc is None else x * sc.float()
+
+    def _pre(self, mod, args):
+        """Before a Linear: a weight kept in bf16 widened for the call (exact), and with the
+        activations quantized its input quantized."""
+        import torch
+        if mod.weight.dtype != torch.float32:
+            self._wide[mod] = mod.weight
+            mod.weight = torch.nn.Parameter(mod.weight.float(), False)
         if self.act:
             return (fake_quant(args[0], self.D),) + tuple(args[1:])
         return None
+
+    def _post(self, mod, args, out):
+        if mod in self._wide:
+            mod.weight = self._wide.pop(mod)
+        return None
+
+    def _per_layer(self, input_ids, inputs_embeds=None):
+        """Gemma 4's get_per_layer_inputs, [B, T, layers, P]: the checkpoint's PLE rows times
+        sqrt(P) (Hugging Face's, in fp32), or the device's: its PLE records (gemma4
+        _ple_records: the layers' columns x sqrt(P / 2), packed in the table's format)
+        dequantized as its gather, times sqrt(2) against Hugging Face's 1 / sqrt(2)."""
+        import torch
+
+        from opentpu.kernels import gather as GA
+        from opentpu.llm import gemma4 as G4
+        spec, D = self.spec, self.D
+        P, L = spec.ple_dim, spec.layers
+        cols = np.concatenate([np.arange(spec.src(i) * P, (spec.src(i) + 1) * P)
+                               for i in range(L)])
+        rows = np.asarray(self._ple_rows(input_ids.reshape(-1).tolist()), np.float32)
+        if self.mode == "fp32":
+            v = rows[:, cols] * np.float32(P ** 0.5)
+        else:
+            f = self._image["ple_table"]
+            S = GA.record_blocks(-(-L * P // D), f)
+            v = GA.dequant_records(G4._ple_records(rows, cols, f, D, S, (P / 2) ** 0.5), f, D,
+                                   S)[:, :L * P] * np.float32(2 ** 0.5)
+        return torch.from_numpy(np.ascontiguousarray(v, np.float32)).reshape(
+            *input_ids.shape, L, P)
 
     def _attention(self, module, q, k, v, mask, scaling=None, dropout=0.0, **kw):
         """softmax(q k^T * scaling + mask) v; with the activations quantized, the device's
@@ -309,9 +440,9 @@ def sim_cfg(spec, cap: int, a, card=None):
 
 
 def run_device(name: str, spec, path: Path, cap: int, prompts, a, card=None, W=None) -> tuple:
-    """(runs, configuration) of device `name` on the prompts; card: the card's (backend
-    factory, configuration) when the card is one of the devices (opened once); W: the
-    weights (default: the checkpoint's at `path`)."""
+    """(runs, configuration, the image's formats: image_formats) of device `name` on the
+    prompts; card: the card's (backend factory, configuration) when the card is one of the
+    devices (opened once); W: the weights (default: the checkpoint's at `path`)."""
     from opentpu.llm.qwen3 import Engine, load_weights
     kw = dict(cap=cap, wformat=a.wformat, head_format=a.head_format, resident=a.resident)
     W = load_weights(path) if W is None else W
@@ -324,8 +455,9 @@ def run_device(name: str, spec, path: Path, cap: int, prompts, a, card=None, W=N
             eng = Engine(spec, W, cfg=cfg, backend=RtlBackend, **kw)
         else:
             eng = Engine(spec, W, cfg=cfg, **kw)
-    cfg = eng.cfg
+    cfg, img = eng.cfg, image_formats(eng.image)
     print(f"device {name}: {cfg}, weights {a.wformat}, head {eng.image.head_format}"
+          f"{', PLE table ' + img['ple_table'] if 'ple_table' in img else ''}"
           f"{', resident decode' if eng.resident else ''}", flush=True)
     try:
         runs = device_runs(eng, prompts, a.tokens, spec.eos)
@@ -335,7 +467,32 @@ def run_device(name: str, spec, path: Path, cap: int, prompts, a, card=None, W=N
             eng.backend.close()
     del eng, W
     gc.collect()
-    return runs, cfg
+    return runs, cfg, img
+
+
+def load_hf(path: Path, spec):
+    """Hugging Face's model of the checkpoint, fp32 on the CPU. Gemma 4: the language model
+    alone (Gemma4ForCausalLM: not the vision and audio towers) without its PLE table (E2B's
+    262144 x 8960 is 9.4 GB in fp32; Golden reads the rows it needs from the checkpoint), its
+    weights copied in one tensor at a time (gemma4.load_weights)."""
+    import torch
+    import transformers
+    if not _gemma4(spec):
+        return transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32)
+    from opentpu.llm import gemma4 as G4
+    c = transformers.AutoConfig.from_pretrained(path)
+    c = getattr(c, "text_config", c)
+    c.vocab_size_per_layer_input, c.tie_word_embeddings = 1, spec.tied
+    m = transformers.Gemma4ForCausalLM(c).float().eval()
+    W = G4.load_weights(path)
+    for k, t in m.state_dict().items():
+        if k == G4.Weights.PLE or (k == "lm_head.weight" and spec.tied):
+            continue
+        if k not in W:
+            raise SystemExit(f"{path.name}: no {k} in the checkpoint")
+        with torch.no_grad():
+            t.copy_(torch.from_numpy(W[k]))
+    return m
 
 
 def open_card(spec, path: Path, cap: int, dev: str):
@@ -465,7 +622,8 @@ def against_golden(golden, prompts, runs, modes, n: int, eos) -> list:
             want = got if k is None else golden.greedy(ids, n, eos,
                                                        start=got[:k] + [int(gl[k].argmax())])
             out[i]["goldens"][mode] = {"tokens": want, "first_diff": first_diff(got, want),
-                                       **divergence(r["logits"][:, :v], gl)}
+                                       **divergence(golden.device_logits(r["logits"][:, :v]),
+                                                    gl)}
         if mode == "fp32" and modes[0] != "fp32":
             for i in range(len(prompts)):
                 out[i]["pairs"]["fp32"] = divergence(keep[i][modes[0]], keep[i]["fp32"])
@@ -627,7 +785,7 @@ def _main(argv=None) -> int:
 
     prompts = [encode(p) for p in a.prompts]
     need = max(len(ids) for ids in prompts) + a.tokens
-    cap = max(256, -(-need // 128) * 128)
+    cap = -(-need // 256) * 256             # (whole attention buckets: Gemma 4 needs them)
     meta = {"model": path.name, "wformat": a.wformat, "head_format": a.head_format,
             "formats": os.environ.get("OTPU_FORMATS"), "tokens": a.tokens,
             "prompts": len(prompts), "resident": a.resident}
@@ -639,10 +797,11 @@ def _main(argv=None) -> int:
         if card is None and a.cfg is None and m.get("backend") == "board":
             from opentpu.isasim import Config         # the simulators in the card's configuration
             card = (None, Config(**m["config"]))
-    runs, cfg = run_device(a.backend, spec, path, cap, prompts, a, card)
+    runs, cfg, img = run_device(a.backend, spec, path, cap, prompts, a, card)
     if a.save:
         save_run(a.save, runs, {**meta, "backend": a.backend, "cfg": repr(cfg),
-                                "arch": arch(cfg), "config": asdict(cfg)}, prompts)
+                                "arch": arch(cfg), "config": asdict(cfg), "image": img},
+                 prompts)
         print(f"saved the {a.backend} run in {a.save}")
     agree = None
     if other is not None:
@@ -650,22 +809,26 @@ def _main(argv=None) -> int:
             print(f"note: {a.against} ran in {m.get('cfg')}, this device in {cfg}: other "
                   f"programs, bit-exact logits not expected")
     elif a.against:
-        other, _ = run_device(a.against, spec, path, cap, prompts, a, card)
+        other, _, _ = run_device(a.against, spec, path, cap, prompts, a, card)
         name = a.against
     if other is not None:
         agree = agreement(runs, other)
     gold, modes, formats = None, [], None
     if not a.no_golden:             # Hugging Face after the devices (freed): fp32 on the CPU
         torch.set_grad_enabled(False)
-        hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32)
-        golden = Golden(hf, spec, a.wformat, a.head_format)
+        hf, rows = load_hf(path, spec), None
+        if _gemma4(spec) and spec.ple_dim:      # the PLE rows from the checkpoint, as needed
+            from opentpu.llm import gemma4 as G4
+            W = G4.load_weights(path)
+            rows = lambda ids: G4._rows(W, G4.Weights.PLE, ids)        # noqa: E731
+        golden = Golden(hf, spec, a.wformat, a.head_format, image=img, ple_rows=rows)
         modes = ["weights" if a.weights_only else "quant"] + ([] if a.no_fp32 else ["fp32"])
         gold = against_golden(golden, prompts, runs, modes, a.tokens, spec.eos)
         formats = golden.formats
     res = report(tok, a.prompts, prompts, runs, gold, modes, a.backend, name, agree,
                  (a.min_top1, a.kl_ratio, a.max_kl))
     if a.json:
-        res.update(meta=meta, cfg=repr(cfg), backend=a.backend, formats=formats)
+        res.update(meta=meta, cfg=repr(cfg), backend=a.backend, formats=formats, image=img)
         Path(a.json).write_text(json.dumps(res, indent=1))
     return 0 if res["pass"] else 1
 
