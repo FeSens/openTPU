@@ -129,12 +129,26 @@ class Spec:
                      formats)
 
 
+def finite(v: np.ndarray, name: str) -> np.ndarray:
+    """v, a tensor converted from a checkpoint, or a ValueError naming it when it holds a NaN or
+    an infinity (a corrupt or mis-converted checkpoint): the quantizers would turn its block
+    into a NaN or infinite scale, and the model image would hold garbage. One float64 sum (no
+    finite fp32 values sum to an infinity there)."""
+    if np.isfinite(np.sum(v, dtype=np.float64)):
+        return v
+    bad = ~np.isfinite(v)
+    at = tuple(int(i) for i in np.unravel_index(int(np.argmax(bad)), v.shape))
+    raise ValueError(f"{name}: {int(bad.sum())} of its {v.size} values are not finite (NaN or "
+                     f"inf; the first at {at}): the checkpoint is corrupt or was converted wrong")
+
+
 class Weights(Mapping):
     """The tensors of a HF safetensors checkpoint, read and converted to fp32 numpy arrays
     when first used (load_weights): a multi-billion-parameter model is never all in memory in
     fp32 (LFM2-2.6B: 10 GB), the image build converts one tensor at a time. Tensors of at most
     CACHE bytes stay cached (norms, conv taps: read per token by the references), and the
-    last larger one (the embedding table a reference indexes per token)."""
+    last larger one (the embedding table a reference indexes per token). A tensor with a NaN or
+    an infinity is refused (finite)."""
 
     CACHE = 16 << 20
 
@@ -185,7 +199,7 @@ class Weights(Mapping):
         import torch
         h, k, rows = self._where[name]
         t = h.get_tensor(k) if rows is None else h.get_slice(k)[rows[0]:rows[1]]
-        v = t.to(torch.float32).numpy()
+        v = finite(t.to(torch.float32).numpy(), name)
         if v.nbytes <= self.CACHE:
             self._small[name] = v
         else:
@@ -220,7 +234,8 @@ class LazyWeights(dict):
     """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
     it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
     MoE; its experts are packed one at a time, opentpu.llm.moe). release() gives the files'
-    pages back once the image is built (a later read reopens its file)."""
+    pages back once the image is built (a later read reopens its file). A tensor with a NaN or
+    an infinity is refused (finite)."""
 
     def __init__(self, model_dir):
         super().__init__()
@@ -242,14 +257,14 @@ class LazyWeights(dict):
     def __getitem__(self, k):
         import torch
         h, name = self._open(k)
-        return h.get_tensor(name).to(torch.float32).numpy()
+        return finite(h.get_tensor(name).to(torch.float32).numpy(), k)
 
     def part(self, k, i):
         """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
         read alone."""
         import torch
         h, name = self._open(k)
-        return h.get_slice(name)[i].to(torch.float32).numpy()
+        return finite(h.get_slice(name)[i].to(torch.float32).numpy(), f"{k}[{i}]")
 
     def release(self) -> None:
         """Close the files (safe_open maps each whole: the pages a read touched stay mapped,

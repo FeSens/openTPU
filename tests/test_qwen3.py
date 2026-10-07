@@ -284,6 +284,47 @@ def test_tiny_reset_reuses_cache(tiny):
     assert all(np.array_equal(x, y) for x, y in zip(a, b))
 
 
+def test_weights_refuse_non_finite_values(tmp_path):
+    """A checkpoint tensor with a NaN or an infinity is refused where the weight classes convert
+    it (load_weights, LazyWeights, gemma4.Weights: whole tensors, one expert, PLE rows), naming
+    it: quantized, it would become a NaN or infinite block scale in the image. Finite tensors
+    and the finite parts of a bad one read as before."""
+    from safetensors.torch import save_file
+
+    from opentpu.llm import gemma4 as G4
+    from opentpu.llm.qwen3 import LazyWeights
+    ok = torch.randn(4, 8)
+    nan, inf = ok.clone(), ok.clone().bfloat16()
+    nan[2, 5] = float("nan")
+    inf[1, 0] = -float("inf")
+    experts = torch.randn(3, 4, 8)
+    experts[1, 3, 7] = float("inf")
+    ple = torch.randn(6, 8).bfloat16()
+    ple[4, 2] = float("nan")
+    save_file({"model.ok.weight": ok, "model.nan.weight": nan, "model.inf.weight": inf,
+               "model.experts": experts, "model.embed_tokens_per_layer.weight": ple},
+              str(tmp_path / "model.safetensors"))
+    for W in (load_weights(tmp_path), LazyWeights(tmp_path), G4.Weights(tmp_path)):
+        assert np.array_equal(W["model.ok.weight"], ok.numpy())
+        with pytest.raises(ValueError, match=r"model\.nan\.weight: 1 of its 32 .*\(2, 5\)"):
+            W["model.nan.weight"]
+        with pytest.raises(ValueError, match=r"model\.inf\.weight: 1 of its 32 .*\(1, 0\)"):
+            W["model.inf.weight"]
+        if hasattr(W, "part"):
+            assert np.array_equal(W.part("model.experts", 2), experts[2].numpy())
+            with pytest.raises(ValueError, match=r"model\.experts\[1\]: .*\(3, 7\)"):
+                W.part("model.experts", 1)
+        else:
+            with pytest.raises(ValueError, match=r"model\.experts: "):
+                W["model.experts"]
+    rows = G4.Weights(tmp_path)[G4.Weights.PLE]
+    assert np.array_equal(rows[[0, 3]], ple[[0, 3]].float().numpy())
+    for key in (4, [0, 4], slice(3, 6)):
+        with pytest.raises(ValueError, match=r"embed_tokens_per_layer\.weight\[.*\(2,\)|"
+                                             r"embed_tokens_per_layer\.weight\[3:6\].*\(1, 2\)"):
+            rows[key]
+
+
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
 def test_qwen3_0_6b_greedy_matches_hf():
     tok = transformers.AutoTokenizer.from_pretrained(REAL)
