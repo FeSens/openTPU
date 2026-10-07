@@ -50,8 +50,13 @@
 // command handshake; the data is then already in the output FIFO), gray-coded across into the
 // core clock. Every command to the same beat issued after that, from either master, reaches the
 // controller behind the write (on the same port), so the write is visible to both masters. An
-// XDMA write burst gets its B the same way, once all of its 64-byte beats are taken. XDMA's 16-byte
-// beats are packed into 64-byte beats per burst (a partial beat at either end is a partial write).
+// XDMA write burst gets its B the same way, once all of its 64-byte beats are taken (and its
+// WLAST is in). XDMA's 16-byte beats are packed into 64-byte beats per burst (a partial beat at
+// either end is a partial write). The counts cross per port and per master: the two ports can
+// each take a write in the same cycle, and a count of both then stepped by two, two bits of its
+// gray code, so a sample caught between them read one beat ahead (from an even count) or one back
+// (from an odd one). Each port's count moves at most one a cycle, one bit; the master's side adds
+// its ports' counts as synchronized, each a value its count had, so the sum never runs ahead.
 //
 // Addresses: n_caddr and bits 30:6 of XDMA's byte address select the 64-byte beat in the channel
 // (2 GiB; XDMA's bit 31, the channel, is dropped by otpu_axi_split2). XDMA's bursts are INCR of
@@ -247,10 +252,23 @@ module otpu_mem_ch #(
     .wready(xr_wr), .wdata(xr_wd), .wslot(xr_slot), .wcommit(xr_cmt), .wused(xr_used), .rclk(xclk),
     .rrst(x_hs2), .rvalid(xr_rv), .rready(xr_rr), .rdata(xr_rd));
 
-  // write beats taken by the controller, per master (gray counters from uclk)
-  logic [CW-1:0] a_wacc, a_wacc_g, x_wacc, x_wacc_g;
-  (* ASYNC_REG = "TRUE" *) logic [CW-1:0] a_wacc_s1, a_wacc_s2;
-  (* ASYNC_REG = "TRUE" *) logic [CW-1:0] x_wacc_s1, x_wacc_s2;
+  // write beats taken by the controller, per master: the ports' counts (gray counters from uclk,
+  // g_port) as synchronized and decoded in the master's clock, summed
+  logic [CW-1:0] x_wacc_c;
+
+`ifndef SYNTHESIS
+  // +cdc_skew=P (tb_memch): a model of the skew set_bus_skew allows between the bits of a gray
+  // count (up to a source period). In P percent of the first stage's samples each bit is the
+  // count's bit a source cycle earlier or now, at random: a count that moved one bit is seen old
+  // or new, one that moved two bits mixed
+  int cdc_skew = 0;
+  initial void'($value$plusargs("cdc_skew=%d", cdc_skew));
+  function automatic logic [CW-1:0] cdc_smp(input logic [CW-1:0] now, input logic [CW-1:0] was);
+    logic [CW-1:0] m;
+    m = (cdc_skew != 0 && int'($urandom % 100) < cdc_skew) ? CW'($urandom) : '0;
+    return (now & ~m) | (was & m);
+  endfunction
+`endif
 
   // ================================================================ accelerator side (clk)
   assign n_cready = !a_crst && aq_wr;
@@ -264,10 +282,10 @@ module otpu_mem_ch #(
     n_rvalid <= ar_rv && !a_crst;
     n_rdata  <= ar_rd;
   end
-  always_ff @(posedge clk) begin
-    if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; end
-    else begin a_wacc_s1 <= a_wacc_g; a_wacc_s2 <= a_wacc_s1; n_wdone <= g2b(a_wacc_s2); end
-  end
+  // the ports' counts as synchronized (g_port), summed: a cycle after their decode
+  always_ff @(posedge clk)
+    if (a_crst) n_wdone <= '0;
+    else n_wdone <= g_port[0].a_wb + g_port[1].a_wb;
 
   // ================================================================ XDMA side (xclk)
   // Read bursts: one command per 64-byte beat touched; the R channel hands out the 16-byte lanes
@@ -368,19 +386,28 @@ module otpu_mem_ch #(
     end
   end
 
-  // B: a burst's response once the controller has taken all its beats
-  logic [CW-1:0] x_wdone, x_wacc_c;
-  always_ff @(posedge xclk) begin
-    if (x_crst) begin x_wacc_s1 <= '0; x_wacc_s2 <= '0; x_wacc_c <= '0; end
-    else begin x_wacc_s1 <= x_wacc_g; x_wacc_s2 <= x_wacc_s1; x_wacc_c <= g2b(x_wacc_s2); end
-  end
-  assign x_bvalid = xbq_rv && ((x_wacc_c - x_wdone) > CW'(xbq_rd[6:0]));
+  // B: a burst's response once its last W beat is in and the controller has taken all its beats.
+  // x_wd: the beats taken (x_wacc_c, the ports' counts as synchronized, summed) past those of the
+  // bursts answered (x_wdone). Each synchronized count is a value its count had, so x_wd is never
+  // negative; compared as signed all the same, so that a count read ahead (which made x_wd -1, and
+  // every burst queued behind it answered at once) gives no B. x_wlb: the bursts whose WLAST was
+  // taken and that have no B yet (W follows AW, so the head burst's WLAST is in when x_wlb != 0)
+  logic [CW-1:0] x_wdone, x_wd;
+  logic [4:0]    x_wlb;
+  always_ff @(posedge xclk)
+    if (x_crst) x_wacc_c <= '0;
+    else x_wacc_c <= g_port[0].x_wb + g_port[1].x_wb;
+  assign x_wd     = x_wacc_c - x_wdone;
+  assign x_bvalid = xbq_rv && x_wlb != 0 && !x_wd[CW-1] && (x_wd[CW-2:0] > (CW - 1)'(xbq_rd[6:0]));
   assign x_bid    = xbq_rd[XIDW+6 -: XIDW];
   assign x_bresp  = 2'b00;
   assign xbq_rr   = x_bvalid && x_bready;
   always_ff @(posedge xclk) begin
-    if (x_crst) x_wdone <= '0;
-    else if (x_bvalid && x_bready) x_wdone <= x_wdone + CW'(xbq_rd[6:0]) + 1'b1;
+    if (x_crst) begin x_wdone <= '0; x_wlb <= '0; end
+    else begin
+      if (x_bvalid && x_bready) x_wdone <= x_wdone + CW'(xbq_rd[6:0]) + 1'b1;
+      x_wlb <= x_wlb + 5'(xwi_rr) - 5'(xbq_rr);
+    end
   end
 
   // ================================================================ controller side (uclk)
@@ -496,6 +523,43 @@ module otpu_mem_ch #(
     assign opc_a[p] = opop[p] && !oc[25];                // a command taken, per master
     assign opc_x[p] = opop[p] && oc[25];
 
+    // the port's write beats taken, per master (n_wdone, B): at most one a cycle, so the gray
+    // code (registered) moves one bit per uclk cycle; synchronized and decoded in the master's
+    // clock (a_wb, x_wb; summed over the ports above). Restarted with the master's hold
+    logic [CW-1:0] a_wacc, a_wacc_g, x_wacc, x_wacc_g, a_wb, x_wb;
+    (* ASYNC_REG = "TRUE" *) logic [CW-1:0] a_wacc_s1, a_wacc_s2;
+    (* ASYNC_REG = "TRUE" *) logic [CW-1:0] x_wacc_s1, x_wacc_s2;
+    always_ff @(posedge uclk) begin
+      if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + CW'(opw_a[p]);
+      if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[p]);
+      a_wacc_g <= b2g(a_wacc);
+      x_wacc_g <= b2g(x_wacc);
+    end
+`ifndef SYNTHESIS
+    logic [CW-1:0] a_wacc_gq, x_wacc_gq;                 // (cdc_smp: the counts a cycle earlier)
+    always_ff @(posedge uclk) begin a_wacc_gq <= a_wacc_g; x_wacc_gq <= x_wacc_g; end
+`endif
+    always_ff @(posedge clk)
+      if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; a_wb <= '0; end
+      else begin
+`ifdef SYNTHESIS
+        a_wacc_s1 <= a_wacc_g;
+`else
+        a_wacc_s1 <= cdc_smp(a_wacc_g, a_wacc_gq);
+`endif
+        a_wacc_s2 <= a_wacc_s1; a_wb <= g2b(a_wacc_s2);
+      end
+    always_ff @(posedge xclk)
+      if (x_crst) begin x_wacc_s1 <= '0; x_wacc_s2 <= '0; x_wb <= '0; end
+      else begin
+`ifdef SYNTHESIS
+        x_wacc_s1 <= x_wacc_g;
+`else
+        x_wacc_s1 <= cdc_smp(x_wacc_g, x_wacc_gq);
+`endif
+        x_wacc_s2 <= x_wacc_s1; x_wb <= g2b(x_wacc_s2);
+      end
+
     assign of_wv[p] = ((go && we && !rmw) || rm_ok) && tp == 1'(p);
     otpu_sfifo #(.W(512), .DEPTH(OD)) u_of (.clk(uclk), .rst(urq), .wvalid(of_wv[p]),
       .wready(of_wr[p]), .wdata(of_wd), .rvalid(c_wdata_valid[p]), .rready(c_wdata_ready[p]),
@@ -545,10 +609,6 @@ module otpu_mem_ch #(
       x_pend <= x_pend + XOW'(x_rgo) - XOW'(xr_cmt);
       if (x_rgo) x_seq <= x_seq + 1'b1;
     end
-    if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + CW'(opw_a[0]) + CW'(opw_a[1]);
-    if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[0]) + CW'(opw_x[1]);
-    a_wacc_g <= b2g(a_wacc);
-    x_wacc_g <= b2g(x_wacc);
   end
 
   // the controller's side of the contract, checked in the build too (STATUS AXI_ERR): read data
@@ -597,6 +657,11 @@ module otpu_mem_ch #(
     if (a_hold_q && !a_hold && a_oc) $error("otpu_mem_ch: accelerator hold over, command pending");
     if (x_hold_q && !x_hold && x_oc) $error("otpu_mem_ch: XDMA hold over, command pending");
   end
+  // the synchronized counts never run ahead: XDMA's beats taken never behind its answered bursts'
+  always_ff @(posedge xclk)
+    if (!x_crst && x_wd[CW-1])
+      $error("otpu_mem_ch: XDMA's beats taken (%0d) behind its answered bursts' (%0d)", x_wacc_c,
+             x_wdone);
 `endif
 endmodule
 
