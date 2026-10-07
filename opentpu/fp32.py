@@ -10,15 +10,15 @@ compares order raw sign-magnitude bits (a NaN with the sign set is below -inf).
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 F32 = np.float32
 MIN_NORMAL = F32(2.0 ** -126)
 
-# 2^f = e^(f ln2) Taylor coefficients, degree 7, rounded to fp32 (Horner from C7 down to C0).
-EXP2_COEFFS = [F32(math.log(2.0) ** k / math.factorial(k)) for k in range(8)]
+# 2^f ~ C0 + f*(C1 + ... + f*C7) on [0, 1]: a minimax fit of the relative error (degree 7) with
+# C0 = 1, rounded to fp32, then searched in fp32 for the smallest error through the Horner steps.
+EXP2_COEFFS = [np.uint32(b).view(np.float32) for b in (
+    0x3F800000, 0x3F317218, 0x3E75FDE9, 0x3D63593E, 0x3C1D8534, 0x3AAFE2F6, 0x3916C07C, 0x37B3C7D6)]
 # log2(1+t) ~ t*(C1 + t*(C2 + ... + t*C9)) on [sqrt(1/2)-1, sqrt(2)-1]: a minimax fit of the
 # relative error (degree 8 in t), rounded to fp32. Horner from C9 down to C1.
 LOG2_COEFFS = [np.uint32(b).view(np.float32) for b in (

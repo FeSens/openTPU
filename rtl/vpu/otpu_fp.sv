@@ -20,15 +20,16 @@ package otpu_fp;
   localparam f32_t F_NAN   = 32'h7FC0_0000;
   localparam f32_t F_INV127 = 32'h3C01_0204;  // f32(1/127)
 
-  // Taylor coefficients ln2^k / k!, k = 0..7, rounded to fp32 (same as opentpu/fp32.py).
+  // 2^f ~ C0 + f*(C1 + ... + f*C7) on [0, 1]: minimax (relative error, degree 7, C0 = 1), fp32
+  // (same as opentpu/fp32.py).
   localparam f32_t EXP2_C0 = 32'h3F80_0000;
   localparam f32_t EXP2_C1 = 32'h3F31_7218;
-  localparam f32_t EXP2_C2 = 32'h3E75_FDF0;
-  localparam f32_t EXP2_C3 = 32'h3D63_5847;
-  localparam f32_t EXP2_C4 = 32'h3C1D_955B;
-  localparam f32_t EXP2_C5 = 32'h3AAE_C3FF;
-  localparam f32_t EXP2_C6 = 32'h3921_8489;
-  localparam f32_t EXP2_C7 = 32'h377F_E5FE;
+  localparam f32_t EXP2_C2 = 32'h3E75_FDE9;
+  localparam f32_t EXP2_C3 = 32'h3D63_593E;
+  localparam f32_t EXP2_C4 = 32'h3C1D_8534;
+  localparam f32_t EXP2_C5 = 32'h3AAF_E2F6;
+  localparam f32_t EXP2_C6 = 32'h3916_C07C;
+  localparam f32_t EXP2_C7 = 32'h37B3_C7D6;
 
   // log2(1+t) ~ t*(C1 + t*(C2 + ... + t*C9)), minimax, fp32 (same as opentpu/fp32.py).
   localparam f32_t LOG2_C1 = 32'h3FB8_AA3B;

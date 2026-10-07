@@ -68,8 +68,16 @@ compares order raw sign-magnitude bits (a NaN with the sign set is below `-inf`)
 
 - `i2f(i)`: int32 to fp32, RNE.
 - `exp2(x)`: if `x < -126` return `+0`; if `x >= 128` return `+inf`. `i = floor(x)`,
-  `f = x - i2f(i)`, `p = C0 + f*(C1 + f*(C2 + ... + f*C7))` (Horner, fp32, Taylor coefficients
-  `ln2^k/k!` rounded to fp32), result = `p` with `i` added to its exponent field.
+  `f = x - i2f(i)`, `p = C7`, then `p = p*f + Ck` for k = 6, 5, ..., 0 (each a rounded `mul`
+  then a rounded `add`), result = `p` with `i` added to its exponent field. `C0..C7` are a
+  minimax fit of `2^f` on [0, 1] (relative error, degree 7) with `C0 = 1`, rounded to fp32 and
+  then searched in fp32 for the smallest error through these steps, as fp32 bits: `3F800000
+  3F317218 3E75FDE9 3D63593E 3C1D8534 3AAFE2F6 3916C07C 37B3C7D6`. The result is within
+  1.26 ulp of the exact value where `f` is exact (`x >= 0` and `x <= -0.5`) and within 1.61 ulp
+  where `x + 1` rounds (`-0.5 < x < 0`), measured over every fp32 `f` in [0, 1] and every fp32
+  `x` in (-0.5, 0); it is exact at every integer and non-decreasing in `x` (`p` is
+  non-decreasing over every fp32 `f` in [0, 1], and `p(1) = 2`): `tests/test_fp.py`. (Taylor
+  coefficients `ln2^k/k!` were up to 13 ulp off near `f = 1`.)
 - `recip(x)`: `x == 0` returns `+0`; `|x| >= 2^126` (including infinity) returns a zero with
   the sign of `x` (the result would be subnormal and flush). Otherwise on `a = |x|`:
   `y = bits(0x7EF311C3 - bits(a))`, three times `y = y * (2 - a*y)`; the sign of `x` is
