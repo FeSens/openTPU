@@ -264,7 +264,7 @@ def main(argv=None):
                          4 * min(Q.HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
     khz = (getattr(eng.backend, "info", {}) or {}).get("core_khz") or 100_000
     P.instrument_transport(eng.backend.board.t)
-    sp = C.sampling(spec, argparse.Namespace())
+    sp = C.sampling(spec, argparse.Namespace(), path)
     pick = C.sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
                      sp["repetition_penalty"], getattr(spec, "softcap", None))
     step0 = {}
