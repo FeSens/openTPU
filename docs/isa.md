@@ -54,10 +54,20 @@ eight in all) needs them from bucket 6 on.
 
 ## Arithmetic (fp32)
 
-IEEE-754 binary32, round to nearest even, **flush to zero**: denormal inputs are treated as
-signed zero and denormal results are replaced by signed zero. A result is denormal if IEEE
+IEEE-754 binary32 values; `add`, `sub` and `mul` round as IEEE 754's roundTiesToEven, with
+**flush to zero**: denormal inputs are treated as signed zero and denormal results are replaced by
+signed zero. A result is denormal if IEEE
 rounding (to the subnormal grid) gives a denormal: a product rounding up to `2^-126` is kept
-(`0.5 * 0x00FFFFFF = 2^-126`; the multiplier must not round at 24 bits first). No NaN inputs are expected;
+(`0.5 * 0x00FFFFFF = 2^-126`; the multiplier must not round at 24 bits first). A zero sum has
+IEEE's sign under roundTiesToEven: an exact cancellation is `+0` (`x - x`, `x + (-x)`,
+`(+0) + (-0)`), `(-0) + (-0) = (-0) - (+0) = -0`, so `x + (-0) = x` for every `x` (the units use
+`v*1 + -0` as the identity); a sum that flushes is a zero with the sign of the exact sum
+(tests/test_fp.py and test_fp_rtl.py check these on the RTL against the host's IEEE adder).
+This is not a conforming IEEE 754 implementation, by design: roundTiesToEven is the only rounding
+direction (no roundTowardZero / Positive / Negative, no rounding-mode register), denormals flush,
+there are no exception flags (an overflow is `+-inf`, an invalid operation the canonical NaN),
+and divide, square root and the other functions are the approximations below, not correctly
+rounded operations. No NaN inputs are expected;
 any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`, may set its sign).
 NaN operands are defined all the same (the hardware's behaviour, which opentpu/fp32.py models): `add`
 and `mul` give the canonical NaN; flushing, max / min, abs, COPY and FILL keep a NaN's bits; the

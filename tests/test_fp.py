@@ -123,7 +123,28 @@ def _vectors(n=20000):
     nx = F.from_bits(nans)
     for op, fn in ((5, F.exp2), (6, F.recip), (7, F.rsqrt), (11, F.fabs), (12, F.log2)):
         add(op, nx, nx, F.bits(fn(nx)))
+    # the sign of a zero sum (IEEE 754 roundTiesToEven: x - x = x + (-x) = +0, (-0) + (-0) = -0)
+    for op, x, y in _zero_sign_cases():
+        add(op, x, y, F.bits((F.add if op == 0 else F.sub)(x, y)))
     return np.concatenate(rows)
+
+
+def _zero_sign_cases():
+    """(op, a, b) with op 0 add, 1 sub, whose exact result is a zero or flushes to one: x - x,
+    -x - -x, x + -x and -x + x at every exponent field with edge mantissas, every pair of signed
+    zeros and subnormals (flushed: signed zeros) under add and sub, differences of normals near
+    2^-126 that are subnormal (flushed to a zero with the difference's sign), and the infinite
+    ones (inf - inf: NaN)."""
+    e = np.arange(1, 255, dtype=np.uint32) << 23
+    x = F.from_bits(np.concatenate([e, e | 1, e | 0x400000, e | 0x7FFFFF])).copy()
+    z = F.from_bits(np.uint32([0, 0x80000000, 1, 0x80000001, 0x7FFFFF, 0x807FFFFF])).copy()
+    za, zb = (v.ravel() for v in np.meshgrid(z, z))
+    m = F.from_bits(np.uint32(0x00800000) + np.arange(8, dtype=np.uint32)).copy()
+    ma, mb = (v.ravel() for v in np.meshgrid(m, m))
+    big = F.f32([np.finfo(np.float32).max, np.inf, -np.inf])
+    return [(1, x, x), (1, -x, -x), (0, x, -x), (0, -x, x), (0, za, zb), (1, za, zb),
+            (1, ma, mb), (1, -ma, -mb), (0, ma, -mb), (0, big, big), (1, big, big),
+            (0, big, -big)]
 
 
 def _full(n):
@@ -135,6 +156,29 @@ def _full(n):
     m = np.where(e == 255, 0, m).astype(np.uint32)
     s = rng.integers(0, 2, n, dtype=np.uint32)
     return F.from_bits((s << 31) | (e << 23) | m).copy()
+
+
+def test_add_sub_zero_signs_follow_ieee():
+    """add / sub against the host's IEEE 754 binary32 adder (roundTiesToEven) with the ISA's flush to
+    zero (denormal operands are signed zeros, a denormal result a zero with its sign): bit for bit
+    on every zero-sign case, and the rules themselves: x - x = x + (-x) = +0, (-0) + (-0) = -0,
+    (-0) - (+0) = -0, (+0) + (-0) = (-0) - (-0) = +0, x + (-0) = x."""
+    def ieee(op, a, b):
+        a, b = F.ftz(a), F.ftz(b)
+        with np.errstate(all="ignore"):
+            r = ((a + b) if op == 0 else (a - b)).astype(np.float32)
+        den = (np.abs(r) < F.MIN_NORMAL) & (r != 0)
+        return F._canon(np.where(den, np.copysign(np.float32(0), r), r).astype(np.float32))
+    for op, a, b in _zero_sign_cases():
+        got = (F.add if op == 0 else F.sub)(a, b)
+        assert np.array_equal(F.bits(got), F.bits(ieee(op, a, b))), (op, a, b)
+    x = F.from_bits(np.arange(1, 255, dtype=np.uint32) << 23 | np.uint32(0x2AAAAA)).copy()
+    for v in (x, -x):
+        assert np.all(F.bits(F.sub(v, v)) == 0) and np.all(F.bits(F.add(v, -v)) == 0)
+        assert np.array_equal(F.bits(F.add(v, F.f32(-0.0))), F.bits(v))
+    pz, nz = F.f32(0.0), F.f32(-0.0)
+    assert F.bits(F.add(nz, nz)) == 0x80000000 and F.bits(F.sub(nz, pz)) == 0x80000000
+    assert F.bits(F.add(pz, nz)) == 0 and F.bits(F.sub(nz, nz)) == 0 and F.bits(F.add(nz, pz)) == 0
 
 
 def test_mul_rounds_on_the_subnormal_grid_before_the_flush():

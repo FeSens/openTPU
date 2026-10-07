@@ -1,13 +1,14 @@
 """The fp32 corners on the RTL against the ISA simulator, through the units that compute them:
 the VPU's composite functions on their scaled ranges and on NaN words (the long lanes' slot
 programs and SE's otpu_se_comp), the quantizer's recip on a huge amax and its 0 * inf on a tiny
-one (QST: the bytes and scales land in DRAM), and an MM whose partial sums flush to -0 (no pad
-terms in the MXU's isum_4). Each runs the same program on both and compares DRAM and TMEM."""
+one (QST: the bytes and scales land in DRAM), an MM whose partial sums flush to -0 (no pad
+terms in the MXU's isum_4), and VOP ADD / SUB / RSUB on the zero-sign cases (x - x = +0). Each runs the same program on both and compares DRAM and TMEM."""
 import numpy as np
 import pytest
 
 from opentpu import Config, fp32 as F, isa as I, rtlsim
 from opentpu.isasim import Machine
+from test_fp import _zero_sign_cases
 
 
 def _both(cfg, prog, dram):
@@ -150,3 +151,39 @@ def test_mm_partials_flushed_to_minus_zero_rtl(have_verilator):
     m = _both(cfg, [I.ld(0, 0, KB * D), I.qact(0, 1, 0, KB, KB * D),
                     I.mm(0x10000, 0x20000, out, 1, KB, KB * D, 1, 1, 0, 4 * KB), I.halt()], dram)
     assert int(m.slices[0].tmem[out].view(np.uint32)) == 0x80000000
+
+
+def test_add_sub_zero_signs_rtl(have_verilator):
+    """VOP ADD / SUB / RSUB on the board's configuration (8 lanes, DSTEP) over test_fp's zero-sign
+    cases: the RTL's TMEM equals the ISA simulator's, and every result equals the host's IEEE 754
+    roundTiesToEven sum with the ISA's flush to zero (NaN aside: inf - inf); A - B with A == B
+    is +0."""
+    cfg = Config(S=1, LANES=8, MCOLS=8, DSTEP=True, DRAM_BYTES=1 << 20)
+    a = np.concatenate([x for op, x, y in _zero_sign_cases()])     # every pair under all three
+    b = np.concatenate([y for op, x, y in _zero_sign_cases()])
+    cols = 64
+    n = len(a)
+    rows = -(-n // cols)
+    N = rows * cols
+    av, bv = (np.concatenate([v, np.zeros(N - n, np.float32)]) for v in (a, b))
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    dram[:4 * N] = av.view(np.uint8)
+    dram[4 * N:8 * N] = bv.view(np.uint8)
+    prog = [I.ld(0, 0, N), I.ld(4 * N, N, N)]
+    funcs = (I.V_ADD, I.V_SUB, I.V_RSUB)
+    for i, func in enumerate(funcs):
+        prog.append(I.vop(func, (2 + i) * N, 0, N, rows, cols, cols, cols, cols))
+    prog.append(I.halt())
+    m = _both(cfg, prog, dram)
+    t = m.slices[0].tmem
+    fa, fb = F.ftz(av), F.ftz(bv)                   # denormal operands are signed zeros
+    with np.errstate(all="ignore"):
+        want = (fa + fb, fa - fb, fb - fa)
+    for i, w in enumerate(want):
+        den = (np.abs(w) < F.MIN_NORMAL) & (w != 0)
+        w = np.where(den, np.copysign(np.float32(0), w), w).astype(np.float32)
+        got = t[(2 + i) * N:(3 + i) * N].astype(np.uint32)
+        ok = ~np.isnan(w)
+        assert np.array_equal(got[ok], F.bits(w)[ok]), funcs[i]
+    eq = (av == bv) & (av != 0) & np.isfinite(av)
+    assert eq.sum() > 1000 and np.all(t[3 * N:4 * N][eq] == 0)            # SUB: A - A = +0
