@@ -194,6 +194,9 @@ def main(argv=None) -> int:
     else:
         from opentpu.host.board import CH_BYTES, Board, XdmaTransport, device_config
         board = Board(XdmaTransport(a.dev), check=False)
+        # the DRAM's ECC check bits once per configuration first (a read of a beat not written
+        # since counts as an uncorrectable error): run on a bitstream just loaded, it read some
+        board.scrub()
         info = board.info()
         cfg = device_config(info, DRAM_BYTES=2 * CH_BYTES)
         bid = info.get("build_id")
