@@ -8,7 +8,8 @@
 //   HOSTCAL: the host calibrates the controllers (CAPS bit27: LiteDRAM, whose calibration the
 //        host runs through its CSRs; opentpu/host/memcal.py).
 //   calib: each channel's calibration flag in its controller's clock (STATUS CALIB0/1; synchronized
-//        in otpu_board).
+//        in otpu_board). ded: each channel's ECC has counted an uncorrectable word (STATUS
+//        ECC_DED; the same).
 //   XREG: register slices on both sides of the split (otpu_dma_split REG; PCIe Gen2: xclk at 250
 //        MHz, the top's PCIE_GEN). 0: none, as at Gen1.
 module otpu_native_sys #(
@@ -28,10 +29,12 @@ module otpu_native_sys #(
   // core clock and reset (synchronous, high), XDMA's clock and reset
   input  logic                  clk,
   input  logic                  rst,
+  input  logic                  ctl_mrst,       // the control master's reset, in clk (otpu_board)
   input  logic                  xclk,
   input  logic                  xrst,
   // board status and pins (otpu_board)
   input  logic [1:0]            calib,
+  input  logic [1:0]            ded,
   input  logic [11:0]           temp,
   output logic [2:0]            led,
   output logic [3:0]            i2c_lo,
@@ -172,7 +175,7 @@ module otpu_native_sys #(
                .LANES(LANES), .ULANES(ULANES),
                .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .DSTEP(DSTEP),
                .HOSTCAL(HOSTCAL)) u_board (
-    .clk, .rst, .calib, .temp, .led, .i2c_lo, .i2c_pin,
+    .clk, .rst, .ctl_mrst, .calib, .ded, .temp, .led, .i2c_lo, .i2c_pin,
     .s_ctl_awaddr, .s_ctl_awvalid, .s_ctl_awready, .s_ctl_wdata, .s_ctl_wstrb, .s_ctl_wvalid,
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,
     .s_ctl_arready, .s_ctl_rdata, .s_ctl_rresp, .s_ctl_rvalid, .s_ctl_rready,

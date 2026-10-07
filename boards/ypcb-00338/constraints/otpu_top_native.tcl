@@ -68,15 +68,35 @@ if {[llength [get_cells -quiet u_ld]]} {
   } else {
     puts "CRITICAL WARNING: \[otpu_top_native.tcl\] LiteDRAM reset chains: [llength $ld_50] sys_clk_50 registers in u_ld"
   }
-  # The calibration flags (the core's cal_ready CSRs, sys) into the accelerator's synchronizer
-  # (STATUS CALIB0/1; 2 flip-flops, ASYNC_REG): one core_clk period, datapath only (otpu_top_ld.xdc
-  # has no false path for them).
-  set cal_s1 [get_cells -quiet -hier -filter {NAME =~ u_sys/u_board/cal_s1_reg*}]
-  if {[llength $cal_s1] && [llength $c_ucl] == 1 && [llength $c_core] == 1} {
-    set_max_delay -datapath_only -from $c_ucl -to $cal_s1 $t_core
-  } else {
-    puts "CRITICAL WARNING: \[otpu_top_native.tcl\] calibration flags: [llength $cal_s1] synchronizer cells"
+  # The calibration flags (the core's cal_ready CSRs, sys) and the uncorrectable-ECC flags (its
+  # c<n>_ded registers, sys) into the accelerator's synchronizers (STATUS CALIB0/1, ECC_DED; 2
+  # flip-flops, ASYNC_REG): one core_clk period, datapath only (otpu_top_ld.xdc has no false path
+  # for them).
+  foreach {what pat} {"calibration flags" u_sys/u_board/cal_s1_reg* "ECC flags" u_sys/u_board/ded_s1_reg*} {
+    set s1 [get_cells -quiet -hier -filter "NAME =~ $pat"]
+    if {[llength $s1] && [llength $c_ucl] == 1 && [llength $c_core] == 1} {
+      set_max_delay -datapath_only -from $c_ucl -to $s1 $t_core
+    } else {
+      puts "CRITICAL WARNING: \[otpu_top_native.tcl\] $what: [llength $s1] synchronizer cells"
+    }
   }
+  # The CSR port's reset (otpu_fpga_top_ld ld_crs1 / ld_crs2): the core's sys reset into the CSR
+  # clock, 2 flip-flops (ASYNC_REG): one CSR-clock period, datapath only
+  set crs1 [get_cells -quiet ld_crs1_reg]
+  if {[llength $crs1] && [llength $c_ucl] == 1 && [llength $c_ctl] == 1} {
+    set_max_delay -datapath_only -from $c_ucl -to $crs1 $t_ctl
+  } else {
+    puts "CRITICAL WARNING: \[otpu_top_native.tcl\] the CSR port's reset: [llength $crs1] synchronizer cells"
+  }
+}
+
+# ---- XDMA's AXI reset (xrst, xdma_aclk) into core_clk (otpu_fpga_top_ld lrs1 / lrs2: the control
+# masters' reset for otpu_axil_iso), 2 flip-flops (ASYNC_REG): one core_clk period, datapath only
+set lrs1 [get_cells -quiet lrs1_reg]
+if {[llength $lrs1] && [llength $c_x] == 1 && [llength $c_core] == 1} {
+  set_max_delay -datapath_only -from $c_x -to $lrs1 $t_core
+} else {
+  puts "CRITICAL WARNING: \[otpu_top_native.tcl\] the control masters' reset: [llength $lrs1] synchronizer cells"
 }
 
 # ---- report_cdc waivers for XDMA's read data. Each channel's XDMA read-data FIFO u_xr

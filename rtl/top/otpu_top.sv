@@ -58,7 +58,7 @@ module otpu_top
     logic [31:0]   a_addr, a_wdata, a_rdata, a_rdata2, b_addr;
     logic [3:0]    a_be;
     logic [D*8-1:0] b_rdata;
-    logic          a_rdy, b_rdy, wr_idle, sw_req, sw_rdy, a_inval;
+    logic          a_rdy, b_rdy, wr_idle, rd_idle, sw_req, sw_rdy, a_inval;
     logic [31:0]   sw_addr, sw_wdata;
     logic [3:0]    sw_be;
 
@@ -70,7 +70,8 @@ module otpu_top
       otpu_dram #(.WORDS(DRAM_WORDS), .D(D), .LAT(DRAM_LAT), .SID(s)) u_dram (
         .clk, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
         .sw_req, .sw_addr, .sw_wdata, .sw_be,
-        .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata, .dump);
+        .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata, .rd_idle,
+        .dump);
     end else begin : g_native
       logic [1:0] cvalid, cready, cwe, wvalid, wready, rvalid;
       logic [1:0][24:0] caddr;
@@ -83,7 +84,7 @@ module otpu_top
         .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
         .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
         .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
-        .b_rdata, .wr_idle,
+        .b_rdata, .wr_idle, .rd_idle,
         .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
         .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
         .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
@@ -117,7 +118,7 @@ module otpu_top
                  .WPB(WPB), .MXU_IMPL(MXU_IMPL), .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES))
     u_slice (
       .clk, .sys_rst, .rst, .rinit, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
-      .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
+      .a_rdy, .b_rdy, .sw_rdy, .wr_idle, .rd_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
       .sw_req, .sw_addr, .sw_wdata, .sw_be,
       .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,

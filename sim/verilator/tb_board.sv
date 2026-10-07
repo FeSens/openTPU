@@ -10,7 +10,9 @@
 // Numbers are hex. At the end the channel memories are dumped (ch0_out.bin, ch1_out.bin).
 // +trace prints the slice's trace lines (as tb_top; the hardware trace records the same events).
 // The I2C pins are four open-drain lines with pull-ups and nothing else on them; +i2c_hold=<hex>
-// holds lines low from the outside (bits 0..3 as I2C_CTRL, bit4 ALERT0).
+// holds lines low from the outside (bits 0..3 as I2C_CTRL, bit4 ALERT0). +calib=<hex>: the
+// channels' calibration flags (default 3: both calibrated); +ded=<hex>: their uncorrectable-ECC
+// flags (default 0; STATUS ECC_DED).
 module tb_board;
   parameter int WORDS      = 1 << 20;     // logical memory words (both channels)
   parameter int D          = 128;
@@ -61,12 +63,17 @@ module tb_board;
   logic [3:0] i2c_lo;
   logic [4:0] i2c_hold = '0;
   initial void'($value$plusargs("i2c_hold=%h", i2c_hold));
+  logic [1:0] calib = 2'b11, ded = 2'b00;
+  initial begin
+    void'($value$plusargs("calib=%h", calib));
+    void'($value$plusargs("ded=%h", ded));
+  end
 
   otpu_board #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS), .TMEM_WORDS(TMEM_WORDS),
                .IMEM_WORDS(IMEM_WORDS), .LANES(LANES), .VPU_CL(VPU_CL), .MXU_IMPL(MXU_IMPL), .ULANES(ULANES), .WIN(WIN), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .TRACE_QD(TRACE_QD),
                .PQ_WIN(PQ_WIN), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL)) dut (
-    .clk, .rst, .calib(2'b11), .temp(TEMP), .led,
+    .clk, .rst, .ctl_mrst(1'b0), .calib, .ded, .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
     .s_ctl_wdata(wdata), .s_ctl_wstrb(4'hF), .s_ctl_wvalid(wvalid), .s_ctl_wready(wready),

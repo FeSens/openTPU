@@ -20,8 +20,8 @@ DDR3 speed as unknown.
 |---|---|---|---|
 | 0x000 | ID | RO | 0x4F545055 ("OTPU") |
 | 0x004 | VERSION | RO | {D[15:0], MCOLS[7:0], LANES[7:0]} |
-| 0x008 | CTRL | RW | bit0 RUN, bit1 LOAD, bit2 CLEAR (per-run counters only) |
-| 0x00C | STATUS | RO | bit0 HALTED, bit1 ERROR, bit2 LOADING, bit3 WR_IDLE, bit4 AXI_ERR (sticky: a DDR3 controller broke its port contract, `otpu_mem_ch` n_err), bit5 CALIB0, bit6 CALIB1, bit7 RUN, bit8 WAIT_TO (with ERROR: a WAITW timed out) |
+| 0x008 | CTRL | RW | bit0 RUN, bit1 LOAD, bit2 CLEAR (per-run counters only). RUN rises and LOAD starts only while both channels are calibrated (CALIB0 and CALIB1; otherwise RUN stays 0). RUN 1 -> 0 stops a run at once (an abort; see below) |
+| 0x00C | STATUS | RO | bit0 HALTED, bit1 ERROR, bit2 LOADING, bit3 WR_IDLE (every write the slice gave the memory taken by the DDR3 controllers), bit4 AXI_ERR (sticky: a DDR3 controller broke its port contract, `otpu_mem_ch` n_err), bit5 CALIB0, bit6 CALIB1, bit7 RUN, bit8 WAIT_TO (with ERROR: a WAITW timed out), bit9 ECC_DED (a channel's ECC counted an uncorrectable 64-bit word since the LiteDRAM ECC counters' last clear, `ecc_clear` / `ecc1_clear`, which `Board.scrub` does; `memcal.ecc` reads the counts. The word read wrong; a partial write merged into its beat wrote it back with good check bits. Bitstreams before fix-board: 0) |
 | 0x010 | PROG_ADDR | RW | program byte address |
 | 0x014 | PROG_N | RW | program length (instructions) |
 | 0x018, 0x01C | CYCLES lo, hi | RO | cycles of the current or last run (cleared by CLEAR) |
@@ -36,7 +36,7 @@ DDR3 speed as unknown.
 | 0x040 | CAPS | RO | bit0 trace buffer present, bit1 temperature present, bit2 I2C pins present, bit3 DDR_MTS present, bit4 the MXU runs 4-bit weights (docs/quant.md), bit5 column reuse: MM PAIR / QACT DUP (docs/isa.md), bit6 DSTEP: the DMA's DeltaNet head step (docs/isa.md), bit7 CHASH: the hashed channel interleave, [15:8] log2(trace depth), [23:16] log2(P/Q window cycles), bit24 ACT_ROWS present, bit25 run arguments ARG0..7 (docs/isa.md), bit26 STREAM: the stream engine runs STREAM's hardware subset (docs/stream.md, docs/isa.md), bit27 reserved for HOSTCAL: LiteDRAM controllers, calibrated by the host through BAR0 0x10000 (branch litedram-int), bit28 / bit29 proposed for the flash controller and the reboot (docs/flash.md, a draft), bit30 reserved for GEN: the decode loop's instructions RLD, VOP ARGMAX, HALT CHAIN (docs/isa.md, docs/autodecode.md; branch autodecode), bit31 WAITW: the DMA waits for a word the host writes (docs/isa.md; branch waitw). CAPS is then full: a new flag needs a second capability register |
 | 0x044 | CORE_KHZ | RO | accelerator clock in kHz (a build parameter; the host turns cycles into time with it) |
 | 0x048 | BUILD_ID | RO | a build parameter: the first 8 hex digits of the git commit |
-| 0x04C | TEMP | RO | bit31 valid, [11:0] the XADC die-temperature code (from the block design's XADC, shared with the MIGs; °C = code × 503.975 / 4096 − 273.15). Valid once channel 0 is calibrated and has reported a non-zero code |
+| 0x04C | TEMP | RO | bit31 valid, [11:0] the XADC die-temperature code (from the block design's XADC; °C = code × 503.975 / 4096 − 273.15). Valid once the XADC has reported a non-zero code (bitstreams before fix-board: also once channel 0 is calibrated, a MIG builds' leftover) |
 | 0x050 | SNAP | W / R | write (any value): latch every free-running counter into its shadow at once; read: number of snapshots taken |
 | 0x054 | DDR_MTS | RO | a build parameter: the DDR3 data rate the MIGs were generated for, in MT/s (800, 1066, 1300, ...; `make bit DDR=`). Valid when CAPS bit3 is set |
 | 0x058 | ACT_ROWS | RO | a build parameter: the ACT RAM rows, the most rows of one MM (`make bit ACT_ROWS=`; docs/isa.md). Valid when CAPS bit24 is set; otherwise MCOLS |
@@ -52,6 +52,27 @@ shows it in the DDR3 row ("DDR3-1066 ch0 ok ch1 ok"), and the config lines of `o
 and `otpu-diag` show it too. The board model (`sim/verilator/tb_board.sv`) reports CORE_KHZ
 100000, BUILD_ID 0x0B0A4D00, TEMP code 0xA1A (45 °C) and no DDR_MTS (parameter 0, CAPS bit3
 clear).
+
+### Stopping a run
+
+CTRL RUN 1 -> 0 before HALTED (a host abort: a timeout, a crashed process's next open) holds
+the slice in reset at once, but the board's DRAM adapter (`otpu_native_dram`) does not reset
+with RUN: the writes the slice gave it still go to the controllers, and its reads still come
+back. The host's sequence:
+
+1. write CTRL = 0;
+2. poll STATUS until WR_IDLE (bit3) is 1: every write of the stopped run is then taken by the
+   DDR3 controllers, and a host DMA write to the same DRAM lands after it (before, it could land
+   first and be overwritten);
+3. then write the DRAM, LOAD, run.
+
+The hardware itself keeps the stopped run's reads out of what follows (fix-board; bitstreams
+before it took them): a LOAD starts reading the program only once no read is in flight (it
+took an old read's data for its first rows), and RUN releases the slice only once no read is
+in flight and every write is taken (the units of the new run took the old reads' data). A
+HALT CHAIN reload that the abort interrupts stops; a LOAD written meanwhile restarts the
+loader. A WAITW timeout stops the slice the same way (sequencer and units held in reset, TMEM
+and the DRAM kept), and HALTED rises once the units are stopped and WR_IDLE holds.
 
 ### Free-running counters
 
@@ -108,7 +129,7 @@ The trace buffer records the slice's trace events -- the lines the simulator pri
 | Offset | Name | Access | Meaning |
 |---|---|---|---|
 | 0x200 | TRACE_CTRL | RW | bit0 ENABLE (record while RUN), bit1 CLEAR (write 1: empty the buffer and zero the counters; reads 0), bit2 STOP_WHEN_FULL (1: keep the first records, 0: keep the last), bit3 BUSY (read only: events taken but not yet in the buffer) |
-| 0x204 | TRACE_COUNT | RO | records written since the last clear (saturates at 2^32 − 1) |
+| 0x204 | TRACE_COUNT | RO | records written since the last clear. Past 2^32 − DEPTH its high bits stay at ones and its low log2(DEPTH) bits keep counting, so TRACE_COUNT mod DEPTH stays the next record's index (bitstreams before fix-board: saturates at 2^32 − 1, and a ring past it gives the wrong oldest record) |
 | 0x208 | TRACE_DROP | RO | events (trace lines) lost because the capture queue was full |
 | 0x20C | TRACE_ADDR | RW | index of the record to read (taken modulo DEPTH) |
 | 0x210 | TRACE_LO | RO | bits [31:0] of the record at TRACE_ADDR |

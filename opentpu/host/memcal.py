@@ -60,6 +60,22 @@ def csr(t, data: Path = DATA):
                           base=R.R_MEMCAL)
 
 
+def ecc(t, clear: bool = False, data: Path = DATA) -> list | None:
+    """Both channels' ECC counters, [(corrected, uncorrectable)] (LiteDRAM's ecc_sec_errors /
+    ecc_ded_errors: 64-bit words the controllers' reads found in error since the last clear;
+    STATUS ECC_DED is any uncorrectable one), then cleared with clear; None without the CSRs (a
+    bitstream the host does not calibrate, the board model)."""
+    if not getattr(t, "ecc", False) or not hostcal(t):
+        return None
+    c = csr(t, data)
+    out = [(ddrcal.Chan(c, ch).r("ecc_sec_errors"), ddrcal.Chan(c, ch).r("ecc_ded_errors"))
+           for ch in (0, 1)]
+    if clear:
+        for ch in (0, 1):
+            ddrcal.Chan(c, ch).w("ecc_clear", 1)
+    return out
+
+
 def core_cpu(t, data: Path = DATA) -> bool:
     """The bitstream's LiteDRAM core calibrates itself (its CPU, opentpu.host.selfcal)."""
     return hostcal(t) and selfcal.present(csr(t, data))

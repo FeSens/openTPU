@@ -36,6 +36,9 @@ The module (every port is a plain Verilog port; the DDR3 pads are the only I/O):
     c0_ready, c1_ready  out  the channel is calibrated: set (cal_ready, cal1_ready) at the end of
                         opentpu.host.ddrcal.calibrate_channel, by the host or, with --selfcal, by
                         the core's own CPU; cleared by rst
+    c0_ded, c1_ded      out  the channel's ECC has counted an uncorrectable word (ecc_ded_errors /
+                        ecc1_ded_errors not zero; a register in sys_clk) since the CSR's last clear
+                        (ecc_clear): the accelerator's STATUS ECC_DED
 
 Per channel, as the test image (tools/litedram/ld_test.py, whose CRG, BIST and DQS phase control
 this reuses): the DQS clock on an MMCM output with fine phase shift, driven by the host
@@ -112,7 +115,7 @@ for _c in (0, 1):
                   Subsignal("wdata_data", Pins(DW)), Subsignal("wdata_we", Pins(DW // 8)),
                   Subsignal("rdata_valid", Pins(1)), Subsignal("rdata_ready", Pins(1)),
                   Subsignal("rdata_data", Pins(DW)))
-                 + ((Subsignal("ready", Pins(1)),) if _u == "" else ())]
+                 + ((Subsignal("ready", Pins(1)), Subsignal("ded", Pins(1))) if _u == "" else ())]
 USER_NAMES = {u[0] for u in USER}
 
 
@@ -182,7 +185,10 @@ class OTPULiteDRAM(PipelinedCSR, SoCCore):
                 ]
                 if u == "":
                     pads = upads
-            setattr(self, "ecc" + sfx, NativePortsECC(users, raws))
+            ecc = NativePortsECC(users, raws)
+            setattr(self, "ecc" + sfx, ecc)
+            # an uncorrectable word counted since the last clear, registered (it crosses clocks)
+            self.sync += pads.ded.eq(ecc.ded_errors.status != 0)
             cal = Cal()
             setattr(self, "cal" + sfx, cal)
             self.comb += pads.ready.eq(cal.ready.storage)
