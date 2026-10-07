@@ -61,7 +61,7 @@
 //                      reset only
 //   0x200 TRACE_CTRL RW  bit0 ENABLE (record while RUN), bit1 CLEAR (write 1), bit2 STOP_WHEN_FULL,
 //                        bit3 BUSY (read only: events not yet in the buffer)
-//   0x204 TRACE_COUNT RO records written since the clear (saturating)
+//   0x204 TRACE_COUNT RO records written since the clear (saturating in its high bits: otpu_trace)
 //   0x208 TRACE_DROP RO  events lost to a full capture queue
 //   0x20C TRACE_ADDR RW  the record to read
 //   0x210 TRACE_LO   RO  its bits [31:0]

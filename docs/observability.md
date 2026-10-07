@@ -129,7 +129,7 @@ The trace buffer records the slice's trace events -- the lines the simulator pri
 | Offset | Name | Access | Meaning |
 |---|---|---|---|
 | 0x200 | TRACE_CTRL | RW | bit0 ENABLE (record while RUN), bit1 CLEAR (write 1: empty the buffer and zero the counters; reads 0), bit2 STOP_WHEN_FULL (1: keep the first records, 0: keep the last), bit3 BUSY (read only: events taken but not yet in the buffer) |
-| 0x204 | TRACE_COUNT | RO | records written since the last clear (saturates at 2^32 − 1) |
+| 0x204 | TRACE_COUNT | RO | records written since the last clear. Past 2^32 − DEPTH its high bits stay at ones and its low log2(DEPTH) bits keep counting, so TRACE_COUNT mod DEPTH stays the next record's index (bitstreams before fix-board: saturates at 2^32 − 1, and a ring past it gives the wrong oldest record) |
 | 0x208 | TRACE_DROP | RO | events (trace lines) lost because the capture queue was full |
 | 0x20C | TRACE_ADDR | RW | index of the record to read (taken modulo DEPTH) |
 | 0x210 | TRACE_LO | RO | bits [31:0] of the record at TRACE_ADDR |

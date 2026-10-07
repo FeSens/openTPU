@@ -323,6 +323,26 @@ def test_trace_ring_and_stop_when_full(have_verilator):
             assert hw == sim[len(sim) - len(hw):]
 
 
+def test_trace_ring_past_2_32_records(have_verilator):
+    """The ring past 2^32 records (+trace_count0: the simulation's clear starts the count 200
+    records short of it): TRACE_COUNT saturates in its high bits only, its low log2(DEPTH) bits
+    are still the next record's slot, so the host reads the ring oldest first and gets the last
+    lines of the trace (a count stuck at 2^32 - 1 put the oldest record anywhere); Board's
+    trace stats say the count saturated."""
+    from opentpu.host.board import Board
+    depth = 128
+    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=30, seed=3,
+                     plusargs=["+trace", "+bucket=64", f"+trace_count0={(1 << 32) - 200:x}"],
+                     params={"TRACE_DEPTH": depth})
+    r = run_traced(t, demo_image(), demo_program(), nrec=depth)
+    assert r["drop"] == 0 and r["count"] >> 7 == (1 << 25) - 1        # the high bits saturated
+    hw = records_to_trace(ring_order(r["raw"], r["count"], depth)).splitlines()
+    assert len(hw) > depth // 10 and hw == r["sim"][len(r["sim"]) - len(hw):]
+    tr = Board(t, check=False)._trace_out(r["count"], 0, depth, False, np.array(r["raw"], np.uint64))
+    assert tr["saturated"] and tr["wrapped"]
+    assert records_to_trace(tr["records"]).splitlines() == hw
+
+
 def test_trace_drops_are_counted(have_verilator):
     """A two-bundle capture queue and a P/Q window every 4 cycles overflow: the lost events are
     counted exactly, and the rest are recorded in order."""
