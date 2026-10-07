@@ -86,6 +86,8 @@ from dataclasses import dataclass
 import numpy as np
 
 LINE = 64              # the mailbox's words, its row and each flag on their own 64-byte lines
+SEQ_REBASE = 1 << 23   # a mailbox's seq goes back to 0 between runs from here (rebase): the card
+                       # posts seq + 1.0 in fp32, exact only up to 2^24
 RUN = 4096             # the split pool format's block: 32 chunks, its two channel runs
 TAG = 128              # a slot's tag chunk (one beat on each channel; the tag word its first)
 SPLIT = "split4k"      # the split format's name in a pool file's <file>.format
@@ -664,6 +666,22 @@ class ExpertServer:
         self.hints = self.prefetched = self.promoted = self.dropped = self.withdrawn = 0
         self.need_lines = self.needs_queued = self.need_hits = self.needs_landed = 0
         self.drained = 0
+
+    def rebase(self) -> bool:
+        """Between runs (BoardBackend.start), once seq has come to SEQ_REBASE: the mailbox's seq
+        and served back to 0, the last request served first (settle). The card posts seq + 1.0
+        in fp32 (moe.py, kernels/mailbox.py), exact up to 2^24 only: there its post repeats
+        the last seq, which the host takes for no request, and every miss after waits out its
+        WAITW (about 22 h of the 35B's decode in one process). The card reads seq and served
+        from DRAM at each post, so its programs stay as they are. True when it rebased."""
+        if self.seq < SEQ_REBASE:
+            return False
+        self.settle()
+        self.mem.write(self.L.mbox, _f32(0.0))
+        self.mem.write(self.L.served, _f32(0.0))
+        self._flush()
+        self.seq = 0
+        return True
 
     def poll(self) -> int:
         """Serve the card's request if it posted one since the last served, else send a part of
@@ -1419,6 +1437,20 @@ class RowServer:
         self.mem.write(self.L.mbox, np.zeros(RowLayout.WORDS // 4, np.float32))
         self.seq = 0
 
+    def rebase(self) -> bool:
+        """ExpertServer.rebase's: between runs, seq and served back to 0 from SEQ_REBASE on (a
+        request still unserved is served first)."""
+        if self.seq < SEQ_REBASE:
+            return False
+        self.poll()
+        self.mem.write(self.L.mbox, _f32(0.0))
+        self.mem.write(self.L.served, _f32(0.0))
+        f = getattr(self.mem, "flush", None)
+        if f is not None:
+            f()
+        self.seq = 0
+        return True
+
     def poll(self) -> int:
         """Serve the card's request if it posted one since the last served; returns 1 if so."""
         seq = int(np.frombuffer(bytes(self.mem.read(self.L.mbox, 4)), np.float32)[0])
@@ -1630,9 +1662,23 @@ class BoardDram:
                 out, at = self.shadow[a - a % h:a - a % h + h].copy(), self.lo + a - a % h
                 self._put(lambda: self._beat(at, out))
                 return
-            a0, a1 = a // self.blk * self.blk, -(-(a + len(b)) // self.blk) * self.blk
-            out, at = self.shadow[a0:a1].copy(), self.lo + a0
-            self._put(lambda: self._blocks(at, out))
+            # the beats the span touches, never more: a beat beside them may be the card's (the
+            # answer's second line before a lines=2 directory, which the card zeroes after use;
+            # widened to its 128-byte block, a directory write put the stale answer back). The
+            # edge beats off the block grid go alone, the blocks between in one call
+            b0, b1 = a // h * h, -(-(a + len(b)) // h) * h
+            a0, a1 = -(-b0 // self.blk) * self.blk, b1 // self.blk * self.blk
+            if a1 <= a0:
+                a0 = a1 = b1
+            for e0, e1 in ((b0, a0), (a0, a1), (a1, b1)):
+                if e0 == e1:
+                    continue
+                out, at = self.shadow[e0:e1].copy(), self.lo + e0
+                if (e0, e1) == (a0, a1):
+                    self._put(lambda at=at, out=out: self._blocks(at, out))
+                else:                                           # (one beat, or two in a row
+                    for k in range(0, e1 - e0, h):              # across a block's edge)
+                        self._put(lambda at=at + k, out=out[k:k + h]: self._beat(at, out))
         elif len(b) == self.blk // 2 and addr % len(b) == 0:   # a whole beat (a slot's tag):
             out = b.copy()                                      # no read, one DMA call
             self._put(lambda: self._beat(addr, out))

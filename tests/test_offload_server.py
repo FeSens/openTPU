@@ -1035,6 +1035,73 @@ def test_two_line_layout_moves_nothing_else():
         Layout.build(4096, E, K, (3,), SLOT, lines=3)
 
 
+def test_a_two_line_directory_write_leaves_the_answer_alone():
+    """lines=2: the directory starts at the odd beat of the block holding the answer's second
+    line, which the card zeroes after its experts. BoardDram writes a directory span's beats
+    only: widened to whole 128-byte blocks from its shadow, a span from entry 0 put the stale
+    answer back, for a later request's miss to take a slot it does not name."""
+    from types import SimpleNamespace
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from opentpu.host.offload import BoardDram
+    for lines in (1, 2):
+        lay = Layout.build(4096, 64, 8, (8, 8), 4096, lines=lines)
+        board = Board(FakeTransport(ch_bytes=1 << 20, devname=None))
+        bd = BoardDram(SimpleNamespace(board=board), lay)
+        bd.write(lay.answer, np.arange(1, lay.max_ids + 1, dtype=np.uint32) * 0x1000)
+        bd.flush()
+        board.write(lay.answer, np.zeros(lay.max_ids, np.uint32))     # the card zeroes it
+        bd.write(lay.entry(0), np.full((24, 2), 7, np.uint32))        # 3 beats of entries
+        bd.flush()
+        assert not board.read(lay.answer, 4 * lay.max_ids).any(), lines
+        assert (board.read(lay.entry(0), 8 * 24).view(np.uint32) == 7).all()
+
+
+def test_seq_goes_back_to_zero_between_runs(tmp_path, monkeypatch):
+    """The card posts seq + 1.0 in fp32, exact up to 2^24 only: there the post repeats the last
+    seq, the host sees no request, and every miss after waits out its WAITW. From SEQ_REBASE
+    on, before each run (BoardBackend.start), the servers set the mailbox's seq and served back
+    to 0, a request left unserved (all hits) served first; the card's next post is 1."""
+    import opentpu.host.offload as O
+    from opentpu.host.board import BoardBackend
+    from opentpu.host.fake import FakeTransport
+    from opentpu.isasim import board_config
+    assert np.float32(2 ** 24) + np.float32(1.0) == np.float32(2 ** 24)
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
+    monkeypatch.setattr(O, "SEQ_REBASE", 4)
+    be = BoardBackend(board_config(DRAM_BYTES=1 << 21), [np.zeros(4096, np.uint8)],
+                      transport=FakeTransport(ch_bytes=1 << 20, devname=None), status=False)
+    lay = Layout.build(1 << 16, E, K, (3, 3), SLOT)
+    mem = O.BackendDram(be)
+    srv = ExpertServer(mem, lay, _pool)
+    srv.load()
+    srv.history = []
+    rl = O.RowLayout(1 << 17, (1 << 17) + 4096, 64)
+    rows = O.RowServer(mem, rl, lambda g: np.full(64, g, np.uint8).tobytes())
+    rows.load()
+    rows.history = []
+    be.servers = [srv, rows]
+
+    def post(mbox, row, ids):               # the card: its fence, the ids, then seq + 1.0
+        seq = np.frombuffer(mem.read(mbox, 4), np.float32)[0]
+        mem.write(row, np.array(ids + [0] * (LINE // 4 - len(ids)), np.float32))
+        mem.write(mbox, (seq + np.float32(1.0)).tobytes())
+    for i in range(5):
+        post(lay.mbox, lay.row, [0, 1])
+        post(rl.mbox, rl.row, [i])
+        if i < 4:                           # (the fifth left for the next run's start)
+            assert srv.poll() == 1 and rows.poll() == 1
+    assert srv.seq == rows.seq == 4
+    be.run(np.zeros(16, np.uint32))
+    assert len(srv.history) == len(rows.history) == 5 and srv.seq == rows.seq == 0
+    for mbox, served in ((lay.mbox, lay.served), (rl.mbox, rl.served)):
+        assert np.frombuffer(mem.read(mbox, 4), np.float32)[0] == 0
+        assert np.frombuffer(mem.read(served, 4), np.float32)[0] == 0
+    post(lay.mbox, lay.row, [2, 3])
+    assert srv.poll() == 1 and _served(mem, lay) == 1.0
+    be.close()
+
+
 def test_a_request_of_more_than_16_ids_reads_its_second_line():
     """A 4-row run's request (moe.moe_ffn_rows: R k ids, repeats included) of 20 ids: 16 on the
     row, 4 on row2; each served once. A one-line layout refuses more than 16."""

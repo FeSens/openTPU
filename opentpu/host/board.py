@@ -1174,6 +1174,9 @@ class BoardBackend:
         # Engine: called over and over while a run is in flight, it serves the card's requests
         # (a MoE layer's WAITWs wait for it, docs/offload.md 5.2); nonzero when it served one
         self.host = None
+        # the host's mailbox servers (the Engine's: ExpertServer, RowServer), rebased before each
+        # run (their seq back to 0 before fp32's 2^24; offload.SEQ_REBASE)
+        self.servers: list = []
         # streamed logits (start(stream=...)): the region holding the sentinel, its marking
         # after a run (on the DMA worker, waited for before anything else writes the card),
         # the pieces' completion times last token
@@ -1279,6 +1282,8 @@ class BoardBackend:
         if args is not None and not self.args:
             raise ConfigMismatch("this bitstream takes no run arguments (CAPS bit25 clear)")
         self._settle()
+        for srv in self.servers:
+            srv.rebase()
         res = self._resident
         if res is None or res[0] is not programs or not getattr(self.board.t, "keeps_state",
                                                                   True):

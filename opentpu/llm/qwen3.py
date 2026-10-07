@@ -2027,6 +2027,7 @@ class Engine:
                 self.backend.machine.host = _isa_host(poll)
             elif hasattr(self.backend, "host"):
                 self.backend.host = poll
+                self.backend.servers = servers      # (rebased between runs: BoardBackend.start)
         self._conv_lo = getattr(spec, "conv_k", 1) - 1    # the first run-time position
         self._decodes: dict = {}            # resident: blocks -> (programs, run_args)
         # a MoE model's prompt layer by layer, `layer_major` rows a run (prefill_layers; 0:
