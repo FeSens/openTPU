@@ -1,9 +1,10 @@
 """The fp32 corners on the card against the ISA simulator (tests/test_fp_rtl.py's programs at the
 board's configuration): multiplies and adds at the flush boundary, the composite functions on
-their scaled ranges and on NaN words (otpu_se_comp on a DSTEP build), the quantizer's recip on
-huge and tiny amax (QST, rows and blocks), an MM whose partial sums flush to -0, and ARGMAX ties
-inside a chunk of lanes. Each program runs on the card and on the ISA simulator from the same
-DRAM image; the DRAM below checks.PROG_AT must be equal, bit for bit.
+their scaled ranges, powers of two, exp2's limits and NaN words (otpu_se_comp on a DSTEP build),
+the quantizer's recip on huge and tiny amax and on every exponent (QST, rows and blocks), an MM
+whose partial sums flush to -0, and ARGMAX ties inside a chunk of lanes. Each program runs on the
+card and on the ISA simulator from the same DRAM image; the DRAM below checks.PROG_AT must be
+equal, bit for bit.
 
     python3 tools/qual/fpcard.py [--dev /dev/xdma0]   the card (run it under otpu-lock)
     python3 tools/qual/fpcard.py --rtl                 the same programs on the RTL (Verilator)
@@ -36,16 +37,28 @@ def _image(*parts) -> np.ndarray:
 
 
 def _corner_words(rng, n):
-    """Words from recip's and rsqrt's scaled ranges (exponent fields 0..5 and 246..255, both
-    signs), NaNs, and normals."""
-    e = rng.choice(list(range(6)) + list(range(246, 255)), n).astype(np.uint32)
+    """n words: rsqrt's scaled ranges (exponent fields 0..5 and 246..255, both signs), random
+    words of every field, every power of two and its neighbours (recip's significand edges,
+    rsqrt's powers of four), exp2 near its range limits and where x + 1 rounds to 1, NaNs."""
+    p = np.arange(1, 255, dtype=np.int64) << 23
+    p = np.concatenate([p, p - 1, p + 1])
+    k = np.float32([-127, -126, -125, -1, 0, 1, 126, 127, 128])
+    t = np.exp2(-np.arange(20, 31))
+    ex = np.concatenate([np.nextafter(k, np.float32(-np.inf)), np.nextafter(k, np.float32(np.inf)),
+                         -t, t]).astype(np.float32)
+    extra = np.concatenate([
+        np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001, 0xFFBFFFFF, 0x7F800000, 0xFF800000,
+                   0x7E800000, 0x7E7311C3, 0x7E7311C4, 0x7E7FFFFF, 0x00800000, 0x00FFFFFF,
+                   0x3F800000]),
+        np.concatenate([p, p | (1 << 31)]).astype(np.uint32), ex.view(np.uint32)])
+    n = n - len(extra)
+    e = np.where(rng.random(n) < 0.5, rng.choice(list(range(6)) + list(range(246, 255)), n),
+                 rng.integers(1, 255, n)).astype(np.uint32)
     m = rng.integers(0, 1 << 23, n, dtype=np.uint32)
     m[rng.random(n) < 0.1] = 0
     m[rng.random(n) < 0.1] = 0x7FFFFF
     s = rng.integers(0, 2, n, dtype=np.uint32)
     w = (s << 31) | (e << 23) | m
-    extra = np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001, 0xFFBFFFFF, 0x7F800000, 0xFF800000,
-                       0x7E800000, 0x7E7311C3, 0x7E7311C4, 0x00800000, 0x00FFFFFF, 0x3F800000])
     return F.from_bits(np.concatenate([w, extra])).copy()
 
 
@@ -82,7 +95,7 @@ def composites(cfg):
     """RECIP / RSQRT / EXP2 / LOG2 / ABS / COPY / EXP2SUB / MAX / MIN on the corner words."""
     rng = np.random.default_rng(19)
     cols = 64
-    x = _corner_words(rng, 6 * cols - 12)
+    x = _corner_words(rng, 40 * cols)
     n = len(x)
     rows = n // cols
     prog = [I.ld(0, 0, n)]
@@ -98,7 +111,7 @@ def composites(cfg):
 
 
 def quantizer(cfg):
-    """QST (row groups and blocks): amax in [2^123, 2^126) (recip on amax / 16), at 2^126
+    """QST (row groups and blocks): amax in [2^123, 2^126) (once recip's scaled range), at 2^126
     (inv = 0), tiny ones (inv = +inf: zeros give 0 * inf, q 0) and an inf element."""
     D, KB = cfg.D, 2
     rng = np.random.default_rng(3)
@@ -116,6 +129,30 @@ def quantizer(cfg):
     prog = [I.ld(0, 0, x.size),
             I.qst(0, OUT, OUT + 0x8000, R, KB, KB * D, KB * D, 1),
             I.qst(0, OUT + 0x10000, OUT + 0x18000, R, KB, KB * D, KB * D, 1, row=True),
+            I.halt()]
+    return prog, _image((0, x))
+
+
+def quantizer_recip(cfg):
+    """QST (blocks and rows): amax at every power of two (recip on the significand 1.0, the
+    result's exponent field 127 - field away), its neighbours, random ones of every field, the
+    largest below 2^126, and across the point where inv = 127 * recip(amax) overflows to +inf
+    (a neighbour and a random one of every few fields: KB * D = 256 words a row at D = 128)."""
+    D, KB = cfg.D, 2
+    rng = np.random.default_rng(4)
+    p = np.arange(1, 253, dtype=np.int64) << 23
+    am = np.concatenate([p, p[::4] + 1, p[::2] | rng.integers(0, 1 << 23, 126),
+                         (5 << 23) + np.arange(8257526, 8257546), [0x7E7FFFFF, 0x7E800000]])
+    am = F.from_bits(am.astype(np.uint32))
+    am = np.resize(am, -(-len(am) // KB) * KB)
+    R = len(am) // KB
+    r = (rng.standard_normal((R * KB, D)) * 0.3).astype(np.float32) * am[:, None]
+    r[rng.random(r.shape) < 0.3] = 0.0
+    r[:, 0] = am
+    x = r.reshape(R, KB * D)
+    prog = [I.ld(0, 0, x.size),
+            I.qst(0, OUT, OUT + 0x10000, R, KB, KB * D, KB * D, 1),
+            I.qst(0, OUT + 0x20000, OUT + 0x30000, R, KB, KB * D, KB * D, 1, row=True),
             I.halt()]
     return prog, _image((0, x))
 
@@ -164,7 +201,7 @@ def argmax_ties(cfg):
     return prog, _image((0, data))
 
 
-CHECKS = [mul_add, composites, quantizer, mm_negzero, argmax_ties]
+CHECKS = [mul_add, composites, quantizer, quantizer_recip, mm_negzero, argmax_ties]
 
 
 def rtl_check(cfg, prog, img) -> tuple[bool, str]:
