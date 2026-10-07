@@ -212,8 +212,8 @@ def test_the_card_path_on_a_fake_card():
     _, W, spec = _tiny("qwen3")
     cfg = sim_config(spec, 256)
     card = IsaCard(cfg, None, 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8))
-    # the logits show late, in pieces (IsaCard; whole 128-byte beats: a piece is padded to them)
-    card.late = (spec.image(cfg, 256, 1, PREFILL_ROWS).io["logits"], 4 * spec.vocab // 128 * 128)
+    # the logits show late, in pieces (IsaCard)
+    card.late = (spec.image(cfg, 256, 1, PREFILL_ROWS).io["logits"], 4 * spec.vocab)
 
     def factory(c, imgs):
         return BoardBackend(c, imgs, transport=card, model="tiny")
