@@ -903,6 +903,29 @@ def test_tmem_random_traffic(have_verilator):
     assert r.returncode == 0 and "PASS" in r.stdout, r.stdout[-2000:] + r.stderr[-2000:]
 
 
+@pytest.mark.parametrize("port", [None, 3])
+def test_tmem_dump_is_the_ram(have_verilator, port):
+    """The TMEM dump that assert_same_state compares is the memory's contents, not the writes
+    asked of it: a write that lands with bit 0 flipped (+tmem_fault: the registered write stage
+    into the block RAMs) shows in the dump, though no instruction reads the word again; in one
+    copy only (port 3's), the dump's check of the copies stops the simulation. Before, the dump
+    was a shadow of the write requests and saw neither."""
+    cfg = Config(S=1)
+    dram = np.random.default_rng(7).integers(0, 256, 1 << 16, dtype=np.uint8)
+    prog = [I.ld(0, 64, 32), I.halt()]          # TMEM 64..95, never read again
+    want = Machine(cfg, [prog], [dram.copy()]).run().slices[0].tmem
+    w = 64 + 5
+    plus = [f"+tmem_fault=0,{w}"] + ([] if port is None else [f"+tmem_fault_port={port}"])
+    if port is None:
+        tmem = rtlsim.run(cfg, [prog], [dram.copy()], plusargs=plus)[1][0]
+        assert list(np.nonzero(tmem != want)[0]) == [w] and tmem[w] == want[w] ^ 1
+    else:
+        with pytest.raises(RuntimeError, match=f"TMEM0: copy {port}'s word {w} is"):
+            rtlsim.run(cfg, [prog], [dram.copy()], plusargs=plus)
+    tmem = rtlsim.run(cfg, [prog], [dram.copy()], plusargs=["+tmem_fault=1,69"])[1][0]
+    assert np.array_equal(tmem, want)           # (another slice's fault)
+
+
 # ------------------------------------------------------------------ 4-bit weights
 @pytest.mark.parametrize("fmt,S,D,pair", [("int4", 2, 32, False), ("fp4", 2, 32, False),
                                           ("fp4", 1, 128, False), ("int4", 1, 128, False),

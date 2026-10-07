@@ -193,6 +193,38 @@ module otpu_tmem #(
     assign pb_a[p] = b_a;
   end
 
+`ifndef SYNTHESIS
+  // ---- the dump (simulation): the memory itself, not the writes asked of it. On `dump` the first
+  // copy's banks (DP) put their words into img, word i = bank i mod LANES's row i / LANES; a cycle
+  // later every other copy is checked against them (a copy that differs stops the simulation)
+  // and img goes to <dir>/tmem_<SID>.hex. +tmem_fault=<SID>,<word>: every write to the word
+  // lands with bit 0 flipped, in every copy, or with +tmem_fault_port=<port> in that port's
+  // (tests: the dump and the check see a fault in the registered write stage, the RAM or one
+  // copy)
+  function automatic int first_copy();
+    for (int p = 0; p < NRP; p++) if (!SH_MASK[p]) return p;
+    return 0;
+  endfunction
+  localparam int DP = first_copy();
+  logic [31:0] img [WORDS];
+  logic        dump_q;
+  int          fault_w, fault_p;
+  initial begin
+    string arg;
+    int sid, w, p;
+    dump_q = 1'b0; fault_w = -1; fault_p = -1;
+    if ($value$plusargs("tmem_fault=%s", arg) && $sscanf(arg, "%d,%d", sid, w) == 2 && sid == SID)
+    begin
+      fault_w = w;
+      if ($value$plusargs("tmem_fault_port=%d", p)) fault_p = p;
+    end
+  end
+  always @(posedge clk) dump_q <= dump;
+  function automatic logic [31:0] fault(input int p, input int b, input logic [IW-1:0] row);
+    return 32'(fault_w >= 0 && fault_w == int'(row) * LANES + b && (fault_p < 0 || fault_p == p));
+  endfunction
+`endif
+
   // ---- the copies: one per read port, except the guests (SH_MASK), which read SH_HOST's copy:
   // it serves the first port that requests, the host, then the guests in port order
   for (genvar p = 0; p < NRP; p++) begin : g_port
@@ -220,7 +252,11 @@ module otpu_tmem #(
       always_ff @(posedge clk) begin
         if (b_en[b]) q[b] <= mem[b_a[b]];
         for (int w = 0; w < WPB; w++)
+`ifdef SYNTHESIS
           if (pw_v[b][w]) mem[pw_a[b][w]] <= pw_d[b][w];
+`else
+          if (pw_v[b][w]) mem[pw_a[b][w]] <= pw_d[b][w] ^ fault(p, b, pw_a[b][w]);
+`endif
       end
       always_ff @(posedge clk)
         if (b_en[b])
@@ -233,6 +269,15 @@ module otpu_tmem #(
 `ifndef SYNTHESIS
       initial for (int i = 0; i < BD; i++) mem[i] = '0;
       initial bh[b] = '0;
+      always @(posedge clk) begin           // the dump: DP's words, then the others against them
+        if (dump && p == DP)
+          for (int r = 0; r < BD; r++) img[r * LANES + b] = mem[r];
+        if (dump_q && p != DP)
+          for (int r = 0; r < BD; r++)
+            if (mem[r] != img[r * LANES + b])
+              $fatal(1, "TMEM%0d: copy %0d's word %0d is %h, copy %0d's %h", SID, p, r * LANES + b,
+                     mem[r], DP, img[r * LANES + b]);
+      end
 `endif
     end
     assign pq[p] = qb;
@@ -329,19 +374,12 @@ module otpu_tmem #(
       for (int l = 0; l < LANES; l++)
         if (w_en[p][l] && w_addr[p][l] >= WORDS) $fatal(1, "TMEM%0d write beyond %0d words", SID, WORDS);
   end
-  // dump: a flat shadow of the memory as the units see it (each write in its own cycle)
-  logic [31:0] shadow [WORDS];
-  initial for (int i = 0; i < WORDS; i++) shadow[i] = '0;
-  always @(posedge clk)
-    for (int b = 0; b < LANES; b++)
-      for (int w = 0; w < WPB; w++)
-        if (bw_v[b][w]) shadow[{bw_a[b][w], BW'(b)}] <= bw_d[b][w];
   string dir;
   initial void'($value$plusargs("dir=%s", dir));
-  always @(posedge clk) if (dump) begin
+  always @(posedge clk) if (dump_q) begin
     int fd;
     fd = $fopen($sformatf("%s/tmem_%0d.hex", dir, SID), "w");
-    for (int i = 0; i < WORDS; i++) $fwrite(fd, "%08x\n", shadow[i]);
+    for (int i = 0; i < WORDS; i++) $fwrite(fd, "%08x\n", img[i]);
     $fclose(fd);
   end
 `endif
