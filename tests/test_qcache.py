@@ -193,7 +193,8 @@ def test_otpu_lock_prebuilds_before_the_lock(tmp_path, monkeypatch):
     (pre, _), (cmd, env) = calls
     assert pre[:3] == ["nice", "-n", "19"] and pre[4:] == ["-m", "opentpu.host.prebuild", "--cfg",
                                                            "c.pkl", "m:fp4:int8"]
-    assert cmd == ["true", "x"] and env["OTPU_LOCK_HELD"] == f"fake9:{os.getpid()}"
+    assert cmd == ["true", "x"] and env["OTPU_LOCK_HELD"] == "fake9"
+    assert env["OTPU_LOCK_PID"] == str(os.getpid())
     calls.clear()
     assert runstate.hold_main(["--dev", "/dev/fake9", "--", "true"]) == 0
     assert [c for c, _ in calls] == [["true"]]

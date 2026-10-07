@@ -288,25 +288,20 @@ def _release_signals() -> None:
 
 
 # ------------------------------------------------------------------------------ the lock
-def _held_by(name: str, value: str) -> int | None:
-    """OTPU_LOCK_HELD's holder ("<device>:<pid>", hold_main's) when it really holds the lock:
-    it is an ancestor of this process (so it runs), the lock file names it, and the flock is
-    held (a shared probe fails; it only runs where the holder is alive and should hold it)."""
-    try:
-        pid = int(value.partition(":")[2])
-    except ValueError:
-        return None
-    if not _is_ancestor(pid):
-        return None
+def _held_by(name: str) -> int | None:
+    """The otpu-lock that OTPU_LOCK_HELD = name says holds the lock, when it does: the lock file
+    names its pid (OTPU_LOCK_PID's, when set; an older otpu-lock sets none), that process is an
+    ancestor of this one (so it runs), and the flock is held (a shared probe fails)."""
     try:
         fd = os.open(run_dir() / f"{name}.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
         return None
     try:
         try:
-            if int(os.pread(fd, 32, 0).split()[0]) != pid:
-                return None
+            pid = int(os.pread(fd, 32, 0).split()[0])
         except (ValueError, IndexError, OSError):
+            return None
+        if os.environ.get("OTPU_LOCK_PID", str(pid)) != str(pid) or not _is_ancestor(pid):
             return None
         try:
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
@@ -322,8 +317,8 @@ class DeviceLock:
     probe it with flock (even LOCK_SH for an instant would make a starting runner fail): they
     read the status file instead.
 
-    Inside `otpu-lock -- CMD` (OTPU_LOCK_HELD = "<device>:<otpu-lock's pid>") the lock is
-    otpu-lock's: `holder` is its pid, checked to hold the lock here and to still run by
+    Inside `otpu-lock -- CMD` (OTPU_LOCK_HELD = <device>, OTPU_LOCK_PID = otpu-lock's pid) the
+    lock is otpu-lock's: `holder` is its pid, checked to hold the lock here and to still run by
     lost() (Board, before it writes the card or starts a run)."""
 
     fd: int | None = None
@@ -338,17 +333,16 @@ class DeviceLock:
         # called by release() before the lock goes (at exit too), weakly: Board's stop of a run
         # in flight (weakref.WeakMethod; a callable that returns None)
         self.cleanup: list = []
-        held = os.environ.get("OTPU_LOCK_HELD", "")
-        if held.partition(":")[0] == name:      # inside `otpu-lock -- CMD`: it holds it
-            pid = _held_by(name, held)
+        if os.environ.get("OTPU_LOCK_HELD") == name:    # inside `otpu-lock -- CMD`: it holds it
+            pid = _held_by(name)
             if pid is not None:
                 self.holder = pid
                 self._sig = _hold_signals()
                 atexit.register(self.release)
                 return
-            print(f"otpu: OTPU_LOCK_HELD={held} does not hold {name} (its otpu-lock is gone, "
-                  "or not this process's ancestor): taking the lock", file=sys.stderr,
-                  flush=True)
+            print(f"otpu: OTPU_LOCK_HELD={name}, but no otpu-lock this process runs under holds "
+                  "it (it has exited, or the lock is another's): taking the lock",
+                  file=sys.stderr, flush=True)
         if wait is None:
             wait = float(os.environ.get("OTPU_LOCK_WAIT", "0") or 0)
         deadline = time.monotonic() + wait
@@ -614,10 +608,11 @@ def hold_main(argv=None) -> int:
     while holding the device lock (for steps that are not openTPU tools but must not overlap a
     run: a JTAG reload, a driver reload, a rescan), or a sequence of runs that must not be
     interleaved with others (a reload, then tests on the new image). openTPU tools inside CMD
-    run under this lock (OTPU_LOCK_HELD = <device>:<pid>). Signals to otpu-lock go on to CMD,
-    and otpu-lock ends after it (_run). --prebuild first quantizes those runs' 4-bit weights
-    into the image cache at nice 19, before waiting for the lock (opentpu.host.prebuild, from
-    the tree on PYTHONPATH), so that CMD's tools do not quantize under it."""
+    run under this lock (OTPU_LOCK_HELD = <device>, OTPU_LOCK_PID = <otpu-lock's pid>). Signals
+    to otpu-lock go on to CMD, and otpu-lock ends after it (_run). --prebuild first quantizes
+    those runs' 4-bit weights into the image cache at nice 19, before waiting for the lock
+    (opentpu.host.prebuild, from the tree on PYTHONPATH), so that CMD's tools do not quantize
+    under it."""
     import argparse
     import subprocess
     ap = argparse.ArgumentParser(prog="otpu-lock", description=hold_main.__doc__.split("\n")[0])
@@ -642,7 +637,7 @@ def hold_main(argv=None) -> int:
     lock = DeviceLock(name, wait=a.wait)
     env = dict(os.environ)
     if lock.fd is not None:         # (inside another otpu-lock: its holder stays named)
-        env["OTPU_LOCK_HELD"] = f"{name}:{os.getpid()}"
+        env.update(OTPU_LOCK_HELD=name, OTPU_LOCK_PID=str(os.getpid()))
     try:           # openTPU tools inside CMD run under this lock instead of waiting for it
         return _run(cmd, env)
     finally:

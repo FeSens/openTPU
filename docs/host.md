@@ -983,17 +983,16 @@ and writes its pid there. A second runner fails at once with `xdma0 is in use by
 goes away with the process, however it ends. Monitors (`otpu-smi`) never lock.
 
 **otpu-lock and its command.** `otpu-lock -- CMD` holds the lock in its own process and runs CMD
-with `OTPU_LOCK_HELD=<dev>:<its pid>`. It exits after CMD, never before: SIGTERM, SIGHUP and
-SIGINT sent to it go on to CMD (to CMD's process group, its own unless otpu-lock is the
-terminal's foreground job, so a script's tools get them too; in the foreground the terminal
+with `OTPU_LOCK_HELD=<dev>` and `OTPU_LOCK_PID=<its pid>`. It exits after CMD, never before:
+SIGTERM, SIGHUP and SIGINT sent to it go on to CMD (to CMD's process group, its own unless otpu-lock
+is the terminal's foreground job, so a script's tools get them too; in the foreground the terminal
 signals CMD itself), and it waits for CMD. A signal ignored where it started stays ignored
 (`nohup`). On Linux CMD is sent SIGTERM if otpu-lock dies (SIGKILL: `PR_SET_PDEATHSIG`). A tool
-trusts `OTPU_LOCK_HELD` only when the pid it names is its ancestor, the lock file names it and
-the lock is held (a name alone is ignored: the tool takes the lock itself), and checks before
-each DRAM write and each run that otpu-lock still runs: under a dead one it raises `LockLost`
-before touching the card (a leftover background job, or a script's tool after SIGKILL). Before,
-killing otpu-lock freed the lock while CMD went on "locked", and a second runner drove the card
-beside it.
+trusts `OTPU_LOCK_HELD` only when the pid the lock file names (`OTPU_LOCK_PID`'s, when set) is its
+ancestor and holds the lock (else the tool takes the lock itself), and checks before each DRAM write
+and each run that otpu-lock still runs: under a dead one it raises `LockLost` before touching the
+card (a leftover background job, or a script's tool after SIGKILL). Before, killing otpu-lock freed
+the lock while CMD went on "locked", and a second runner drove the card beside it.
 
 **The shared directory.** `/tmp/otpu` is made mode 1777 (shared by users, sticky) and belongs to
 whoever makes it first. Its files are opened without following a symbolic link and must be

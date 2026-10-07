@@ -19,7 +19,9 @@ ENV = dict(os.environ, PYTHONPATH=ROOT)
 def run_dir(tmp_path, monkeypatch):
     d = tmp_path / "otpu"
     monkeypatch.setenv("OTPU_RUN_DIR", str(d))
-    monkeypatch.delenv("OTPU_LOCK_HELD", raising=False)
+    for k in ("OTPU_LOCK_HELD", "OTPU_LOCK_PID"):
+        monkeypatch.delenv(k, raising=False)
+        ENV.pop(k, None)
     ENV["OTPU_RUN_DIR"] = str(d)
     return d
 
@@ -50,24 +52,34 @@ def test_killing_otpu_lock_ends_its_command_first():
 
 
 def test_otpu_lock_held_is_checked_not_trusted(run_dir):
-    """OTPU_LOCK_HELD names otpu-lock's pid; a tool trusts it only when that process is its
-    ancestor and holds the lock. A name alone, or a holder that is not an ancestor (another
-    runner's lock), is not the lock: the tool takes it itself (DeviceBusy here)."""
+    """OTPU_LOCK_HELD names the device (as older trees' otpu-lock did, and their tools expect),
+    OTPU_LOCK_PID otpu-lock's pid; a tool trusts them only when the lock file's pid is its
+    ancestor, OTPU_LOCK_PID's when set, and holds the lock. A holder that is not an ancestor
+    (another runner's lock), or another pid than OTPU_LOCK_PID's, is not the lock: the tool
+    takes it itself (DeviceBusy here)."""
+    tool = [sys.executable, "-c", "from opentpu.host.runstate import DeviceLock, DeviceBusy\n"
+            "try:\n print(DeviceLock('fakeV', wait=0).holder)\nexcept DeviceBusy: print('busy')"]
     p = subprocess.Popen([sys.executable, "-c", "import time; from opentpu.host.runstate import "
                           "DeviceLock; lk = DeviceLock('fakeV'); print('locked', flush=True); "
                           "time.sleep(30)"], stdout=subprocess.PIPE, text=True, env=ENV)
     try:
         assert p.stdout.readline().strip() == "locked"
-        for held in ("fakeV", f"fakeV:{p.pid}"):
-            r = subprocess.run([sys.executable, "-c", "from opentpu.host.runstate import "
-                                "DeviceLock, DeviceBusy\ntry:\n DeviceLock('fakeV', wait=0)\n"
-                                "except DeviceBusy: print('busy')"],
-                               capture_output=True, text=True,
-                               env=dict(ENV, OTPU_LOCK_HELD=held))
-            assert r.stdout.strip() == "busy", (held, r.stderr)
+        for pid in (None, str(p.pid)):
+            env = dict(ENV, OTPU_LOCK_HELD="fakeV", **({"OTPU_LOCK_PID": pid} if pid else {}))
+            r = subprocess.run(tool, capture_output=True, text=True, env=env)
+            assert r.stdout.strip() == "busy", (pid, r.stderr)
     finally:
         p.kill()
         p.wait()
+    lk = rs.DeviceLock("fakeV", wait=0)                 # this process, the tool's parent
+    try:
+        for pid, want in ((None, str(os.getpid())), (str(os.getpid()), str(os.getpid())),
+                          ("1", "busy")):
+            env = dict(ENV, OTPU_LOCK_HELD="fakeV", **({"OTPU_LOCK_PID": pid} if pid else {}))
+            r = subprocess.run(tool, capture_output=True, text=True, env=env)
+            assert r.stdout.strip() == want, (pid, r.stderr)
+    finally:
+        lk.release()
 
 
 # ------------------------------------------------------------------------------ run directory

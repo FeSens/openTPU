@@ -27,8 +27,9 @@ ENV = dict(os.environ, PYTHONPATH=ROOT)
 def run_dir(tmp_path, monkeypatch):
     d = tmp_path / "otpu"
     monkeypatch.setenv("OTPU_RUN_DIR", str(d))
-    monkeypatch.delenv("OTPU_LOCK_HELD", raising=False)
-    monkeypatch.delenv("OTPU_STOP_RUN", raising=False)
+    for k in ("OTPU_LOCK_HELD", "OTPU_LOCK_PID", "OTPU_STOP_RUN"):
+        monkeypatch.delenv(k, raising=False)
+        ENV.pop(k, None)
     ENV["OTPU_RUN_DIR"] = str(d)
     return d
 
