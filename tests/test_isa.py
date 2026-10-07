@@ -47,6 +47,16 @@ def test_loop_zero_count_skips_body():
     assert run1(prog).tget([0])[0] == 0.0
 
 
+@pytest.mark.parametrize("count", [0, 1])
+def test_nested_bodies_ending_together_are_refused_whatever_the_count(count):
+    """docs/isa.md LOOP: a body must not end on an enclosing body's last instruction. At
+    count 0 the inner LOOP would jump past the outer body's end and skip its back edge."""
+    prog = [I.li(1, count), I.loop(3, 2), I.vop(I.V_ADD, 0, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 1.0),
+            I.loop(1, 0, rcount=1), I.nop(), I.halt()]
+    with pytest.raises(SimError, match="same instruction"):
+        run1(prog)
+
+
 def test_vop_broadcast_modes_and_reductions():
     dram = np.zeros(4096, np.uint8)
     a = f(np.arange(12).reshape(3, 4) - 5)

@@ -1656,7 +1656,7 @@ class Builder:
                 raise CompileError("a loop with a device-computed count cannot step registers")
             body = self._flatten(it.items)
             body += [I.addi(r, r, c, comment=f"{loop} step") for r, c in it.steps]
-            if not body or self._ends_inner(it.items, it.steps):
+            if not body or self._ends_inner(it.items, it.steps) or self._ends_loop(body):
                 body.append(I.nop("loop end"))
             out.append(I.loop(len(body), loop.count, rcount=loop.rcount,
                               comment=f"{loop} x" + (f"R{loop.rcount}" if loop.rcount
@@ -1668,6 +1668,12 @@ class Builder:
     @staticmethod
     def _ends_inner(items: list, mine: list) -> bool:
         return not mine and bool(items) and isinstance(items[-1], LoopBlock)
+
+    @staticmethod
+    def _ends_loop(body: list) -> bool:
+        """A LOOP in the body (a guard emitted as instructions, generate.py's) ends on its last
+        instruction: a body must not end on an enclosing body's (docs/isa.md, LOOP)."""
+        return any(x.op == I.LOOP and i + x.w[0] == len(body) - 1 for i, x in enumerate(body))
 
 
 # =============================================================================== tracing context

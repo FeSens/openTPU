@@ -67,6 +67,32 @@ def test_register_freed_inside_a_loop_is_not_reused_with_that_loops_terms():
     assert np.array_equal(r.outputs["out"], want)
 
 
+@pytest.mark.parametrize("flag", [0, 1])
+def test_a_raw_guard_at_a_loop_body_end_gets_a_nop_after_it(flag):
+    """A guard emitted as instructions (generate.py's: LOOP R[r] + its body) last in a loop's
+    body: the compiler ends the body with a NOP, so the two bodies do not end together (at
+    count 0 the guard would skip the loop's back edge)."""
+    @ol.jit
+    def k(out):
+        b = current()
+        acc = ol.zeros([4])
+        f = ol.full([1], float(flag))
+        r = b.scratch()
+        b.rld(r, f)
+        for i in ol.range(3):
+            acc.set(acc + 1.0)
+            b.emit(I.loop(1, 0, rcount=r))
+            b.emit(I.vop(I.V_ADD, acc.base, acc.base, 0, 1, 4, 0, 0, 0, I.B_SCALAR, 10.0))
+        b.unscratch(r)
+        ol.store(out, acc)
+
+    prog = compile_kernel(k, Config(), out=Output((4,)))[0].programs[0]
+    outer = next(i for i, p in enumerate(prog) if p.op == I.LOOP and p.w[1] == 3)
+    assert prog[outer + prog[outer].w[0]].op == I.NOP
+    r = launch(k, Config(), out=Output((4,)))
+    assert np.array_equal(r.outputs["out"], np.full(4, 3.0 * (1 + 10 * flag), np.float32))
+
+
 def test_views_broadcast_and_division():
     @ol.jit
     def k(x, v, out):

@@ -142,14 +142,16 @@ class Slice:
             body = ins.w[0]
             if body < 1:
                 raise SimError("LOOP with empty body")
+            # whatever the count: one of 0 would jump past the enclosing body's end (and skip
+            # its back edge)
+            end = self.pc + body
+            if any(e[1] == end for e in self.stack):
+                raise SimError("nested loop bodies end on the same instruction")
             if count == 0:
                 self.pc += 1 + body
                 return
             if len(self.stack) >= 4:
                 raise SimError("loop stack overflow")
-            end = self.pc + body
-            if any(e[1] == end for e in self.stack):
-                raise SimError("nested loop bodies end on the same instruction")
             self.stack.append([self.pc + 1, end, count])
             self.pc += 1
             return
