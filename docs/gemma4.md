@@ -33,7 +33,8 @@ Gemma 4 E2B has 35 layers, hidden size 1536, a 262,144-token vocabulary and a ti
 - **Norms.** Plain RMSNorm `x * w` (not Gemma 3's `1 + w`) before and after every block, then
   the per-layer input, then `x *= layer_scalar` (0.018 to 0.88).
 - **Final soft cap.** `30 tanh(z / 30)` on the logits: monotonic, so greedy decoding picks the
-  same token; the host applies it (`gemma4.softcap`).
+  same token; the host applies it (`gemma4.softcap`), and so does a sampler on the host
+  (`chat.sampler(softcap=)`, `Engine.generate(sampler=)`) or on the card.
 
 ## How it maps
 

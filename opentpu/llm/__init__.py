@@ -17,6 +17,18 @@ def model_dir(name) -> Path:
     return ROOT / "models" / MODELS[name] if name in MODELS else Path(name)
 
 
+def rope_parameters(c: dict, model_dir, types=("default",)) -> dict:
+    """A config's RoPE parameters as transformers reads them (rope_scaling, then
+    rope_parameters over it). A RoPE type outside `types` is refused: Hugging Face's YaRN,
+    linear or dynamic scaling change the frequencies or cos / sin, the outputs with them."""
+    rp = dict(c.get("rope_scaling") or {})
+    rp.update(c.get("rope_parameters") or {})
+    kind = rp.get("rope_type", rp.get("type", "default"))
+    if kind not in types:
+        raise ValueError(f"{model_dir}: RoPE type {kind!r} is not supported")
+    return rp
+
+
 def load_spec(path):
     """The Spec of a Hugging Face checkpoint directory, chosen by its config's model_type."""
     t = json.loads((Path(path) / "config.json").read_text()).get("model_type")

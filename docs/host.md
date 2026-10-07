@@ -477,6 +477,15 @@ and int8 elsewhere; `int8`, `fp4` and `mix` choose explicitly, and `--head-forma
 head's. The tool prints the formats it chose (`weights: mix: int8 + gateup@9-35=fp4, head
 int8`); the interface's header and `/stats` panel show them, and otpu-smi's process line.
 
+The sampling flags (`--temperature`, `--top-k`, `--top-p` from 0 to 1, where 0 keeps only the
+most likely token, `--repetition-penalty`) default to the checkpoint's generation_config.json
+when it samples (SmolLM3-3B: temperature 0.6, top-p 0.95; Gemma 4: 1.0, top-k 64, top-p 0.95;
+LFM2.5-230M: 0.1, top-k 50, penalty 1.05), else to the model family's (LFM2-2.6B takes
+LFM2.5-230M's), else to greedy decoding, as Hugging Face's generate (Phi-4-mini). Qwen3 and
+Qwen3.5 take their model cards' non-thinking settings (0.7, top-k 20, top-p 0.8): their
+generation_config.json holds the thinking mode's. `--greedy` decodes greedily. Gemma's final
+soft cap applies before sampling, on the host as on the card.
+
 The first call writes the model image (at the default `--cap 2048`: 0.69 GiB for Qwen3-0.6B,
 0.27 GiB for LFM2.5-230M, 0.77 GiB for Qwen3.5-0.8B) to the card; every token then writes the
 embedding row and the token's program (a few tens of KiB), runs, and reads the logits (0.58 MiB

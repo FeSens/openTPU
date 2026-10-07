@@ -98,6 +98,31 @@ def test_specs(tiny):
         assert np.array_equal(W["model.layers.1.mlp.up_proj.weight"], gu[512:])
 
 
+def test_phi3_sliding_window_bounds_the_cache(tmp_path):
+    """Phi-3's sliding window (Hugging Face masks the keys at or before q - window; this code
+    has none): the KV capacity stays within it (Spec.ctx: Phi-3-medium-4k's 2047), or within
+    LongRoPE's range where that is smaller (Phi-4-mini: 4096 of a 262144 window); a larger
+    capacity is refused."""
+    import json
+    short = [1.0] * 48
+
+    def spec(window, **kw):
+        c = transformers.Phi3Config(
+            hidden_size=768, num_hidden_layers=2, num_attention_heads=6, num_key_value_heads=2,
+            intermediate_size=512, vocab_size=1000, partial_rotary_factor=0.75,
+            sliding_window=window, **kw)
+        (tmp_path / "config.json").write_text(json.dumps(c.to_dict()))
+        return load_spec(tmp_path)
+    s = spec(2047)
+    assert s.ctx == 2047 and spec(None).ctx == 0
+    long = dict(max_position_embeddings=131072, original_max_position_embeddings=4096,
+                rope_scaling={"type": "longrope", "short_factor": short, "long_factor": short})
+    assert spec(262144, **long).ctx == 4096 and spec(2047, **long).ctx == 2047
+    s.image(board_config(DRAM_BYTES=1 << 26), 1920)
+    with pytest.raises(ValueError, match="range"):
+        s.image(board_config(DRAM_BYTES=1 << 26), 2048)
+
+
 @pytest.mark.parametrize("config", ["design", "board"])
 def test_tiny_matches_hf(tiny, config):
     _, m, spec, W = tiny

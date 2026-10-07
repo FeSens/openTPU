@@ -30,9 +30,11 @@ draft per iteration): the same replies, greedy or sampled, in fewer runs of the 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -43,20 +45,27 @@ from opentpu.llm import generate as G
 from opentpu.llm.qwen3 import Engine, load_weights
 
 
-# Sampling defaults per model family (Spec module); command-line flags override them. LFM2's
-# are its generation_config.json; Qwen3.5's its model card's non-thinking settings (without the
-# presence penalty).
+# Sampling defaults per model family (Spec module; sampling() says when they apply);
+# command-line flags override them. LFM2's are LFM2.5-230M's generation_config.json; Qwen3's
+# and Qwen3.5's their model cards' non-thinking settings (Qwen3.5's without the presence
+# penalty).
 SAMPLING = {"qwen3": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
             "lfm2": dict(temperature=0.1, top_k=50, top_p=1.0, repetition_penalty=1.05),
             "qwen35": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penalty=1.0),
             "gemma4": dict(temperature=1.0, top_k=64, top_p=0.95, repetition_penalty=1.0)}
+# Hugging Face's defaults for the keys a generation_config.json leaves out
+HF_SAMPLING = dict(temperature=1.0, top_k=50, top_p=1.0, repetition_penalty=1.0)
 
 
 def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
-            repetition_penalty: float = 1.0):
+            repetition_penalty: float = 1.0, softcap: float | None = None):
     """pick(logits, context) -> token id. The repetition penalty (as Hugging Face's) divides
     the positive logits and multiplies the negative ones of every token in `context`; it
-    applies to greedy decoding (temperature 0) too.
+    applies to greedy decoding (temperature 0) too. softcap: the model's final logit soft cap
+    (Gemma's final_logit_softcapping, spec.softcap), c tanh(l / c) on the logits first, as
+    Hugging Face's model applies it before the penalty and the warpers (the engine's logits
+    are raw; the device's sampler caps them too); plain greedy (pick.greedy) takes the raw
+    logits' argmax, as the device's Greedy (the cap keeps their order).
 
     Top-k runs on the float32 logits: when the k largest are distinct and larger than the
     next one, the candidates and their order are unique, so this gives the picks of the
@@ -70,6 +79,8 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
     rng = np.random.default_rng(seed)
     seen = _Seen()
     block = 64
+    greedy = temperature <= 0 and repetition_penalty == 1.0     # argmax of the raw logits
+    cap = None if greedy or not softcap else softcap
 
     class Stream:
         def __init__(self, context=()):
@@ -87,6 +98,9 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
             hi = lo + len(v)
             b = self.buf[lo:hi]
             b[:] = v
+            if cap is not None:
+                c = b.dtype.type(cap)
+                b[:] = np.tanh(b / c) * c
             if self.ix is not None:
                 sel = self.ix[np.searchsorted(self.ix, lo):np.searchsorted(self.ix, hi)]
                 w = self.buf[sel]
@@ -134,14 +148,15 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
         """Run numpy's code paths of a pick once (the first pick of a process took 2-10 ms:
         np.union1d, the top-k selection and the generator's choice, first called) on a
         throwaway sampler with its own generator: this one's draws do not change."""
-        w = sampler(temperature, top_k, top_p, 0, repetition_penalty)
+        w = sampler(temperature, top_k, top_p, 0, repetition_penalty, softcap)
         w(np.linspace(-1.0, 1.0, 4096, dtype=np.float32), [1, 2, 3])
 
     pick.stream = Stream
     pick.warm = warm
-    pick.greedy = temperature <= 0 and repetition_penalty == 1.0   # argmax of the raw logits
+    pick.greedy = greedy
     pick.params = dict(temperature=temperature, top_k=top_k, top_p=top_p,
                        repetition_penalty=repetition_penalty)
+    pick.softcap = softcap
     pick.rng = rng
     return pick
 
@@ -210,10 +225,24 @@ class _Seen:
         return self.ids
 
 
-def sampling(spec, args) -> dict:
-    """The model family's SAMPLING defaults, overridden by the flags given on the command
-    line (None when not given)."""
-    d = dict(SAMPLING[type(spec).__module__.rsplit(".", 1)[-1]])
+def sampling(spec, args, path=None) -> dict:
+    """The model's sampling defaults, overridden by the flags given on the command line (None
+    when not given): the checkpoint's generation_config.json at `path` when it samples
+    (do_sample; Hugging Face's defaults for the keys it leaves out), else its family's
+    SAMPLING, else greedy (temperature 0) as Hugging Face's generate. Qwen3 and Qwen3.5 always
+    take SAMPLING's: their generation_config.json holds the thinking mode's settings. The
+    Llama-likes (llama.py: Qwen3's Spec without the q / k norms) have no family."""
+    fam = type(spec).__module__.rsplit(".", 1)[-1]
+    if fam == "qwen3" and not spec.qk_norm:
+        fam = None
+    g = {}
+    if path is not None and fam not in ("qwen3", "qwen35") and \
+            (Path(path) / "generation_config.json").exists():
+        g = json.loads((Path(path) / "generation_config.json").read_text())
+    if g.get("do_sample"):
+        d = {k: v if g.get(k) is None else g[k] for k, v in HF_SAMPLING.items()}
+    else:
+        d = dict(SAMPLING.get(fam, dict(HF_SAMPLING, temperature=0.0)))
     d.update({k: getattr(args, k) for k in d if getattr(args, k, None) is not None})
     return d
 
@@ -353,6 +382,10 @@ class Chat:
         self._next = None                   # logits after a reply cut at max_new (resume())
         self._reply: list[int] = []         # the last reply's tokens
         self.mtp = None                     # an MTP engine's decoder (opentpu/llm/mtp.py)
+        cap = getattr(engine.spec, "softcap", None)
+        if getattr(pick, "softcap", cap) != cap:    # it gets the engine's raw logits
+            raise ValueError(f"the sampler's softcap {pick.softcap} is not the model's {cap} "
+                             f"(chat.sampler(softcap=spec.softcap))")
         if getattr(engine.spec, "mtp", False):
             from opentpu.llm.mtp import MTPDecoder
             self.mtp = MTPDecoder(engine)
@@ -726,11 +759,12 @@ def main(argv=None):
     ap.add_argument("--think", action="store_true", help="enable Qwen3 / Qwen3.5 thinking mode")
     ap.add_argument("--greedy", action="store_true")
     ap.add_argument("--temperature", type=float,
-                    help="sampling flags default per model: " + "; ".join(
-                        f"{m} " + " ".join(f"{k}={v}" for k, v in d.items())
-                        for m, d in SAMPLING.items()))
+                    help="sampling flags default to the model's generation_config.json, else "
+                         "per family (Qwen3, Qwen3.5 always: their non-thinking settings): " +
+                         "; ".join(f"{m} " + " ".join(f"{k}={v}" for k, v in d.items())
+                                   for m, d in SAMPLING.items()) + "; else greedy")
     ap.add_argument("--top-k", type=int)
-    ap.add_argument("--top-p", type=float)
+    ap.add_argument("--top-p", type=float, help="0 .. 1 (0: the most likely token only)")
     ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=1024, help="tokens per reply at most")
@@ -753,6 +787,8 @@ def main(argv=None):
                          "(docs/mtp.md): the same replies, greedy or sampled, 1.3-1.6x the "
                          "decode tok/s")
     a = ap.parse_args(argv)
+    if a.top_p is not None and not 0 <= a.top_p <= 1:     # (Hugging Face's range)
+        ap.error(f"--top-p {a.top_p}: 0 .. 1 (0 keeps the most likely token only)")
     from transformers import AutoTokenizer
     path = model_dir(a.model)
     tok = AutoTokenizer.from_pretrained(path)
@@ -795,9 +831,9 @@ def main(argv=None):
     print(f"weights: {weights}", flush=True)
     if getattr(eng.backend, "status", None) is not None:
         eng.backend.status.update(weights=weights)      # for otpu-smi
-    sp = sampling(spec, a)
+    sp = sampling(spec, a, path)
     pick = sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
-                   sp["repetition_penalty"])
+                   sp["repetition_penalty"], getattr(spec, "softcap", None))
     clock = 0.0
     if a.backend.startswith("board"):
         khz = eng.backend.info.get("core_khz")

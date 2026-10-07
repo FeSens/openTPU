@@ -38,6 +38,7 @@ from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, RunVar, T
                         current)
 from . import formats as FM
 from . import generate as G
+from . import rope_parameters
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Additive, Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
@@ -70,8 +71,8 @@ class Spec:
     rotary: int = 0           # RoPE dimensions of a head, the first ones (0: all; Phi-4-mini 96)
     rope_div: tuple = ()      # per-frequency divisors of the angle (LongRoPE's short factors)
     rope_scale: float = 1.0   # factor on cos and sin (LongRoPE's attention factor)
-    ctx: int = 0              # the most positions the RoPE tables hold (LongRoPE: its short
-    #                           factors' range; 0: no limit)
+    ctx: int = 0              # the most positions the model takes (LongRoPE: its short
+    #                           factors' range; Phi-3: its sliding window; 0: no limit)
     embed: str = "f32"        # the embedding rows: fp32, or "int8" (per D block, as the tied
     #                           int8 LM head holds them: the device gathers them from it,
     #                           kernels.gather.gather_row)
@@ -86,6 +87,11 @@ class Spec:
     @staticmethod
     def from_hf(model_dir) -> "Spec":
         c = json.loads((Path(model_dir) / "config.json").read_text())
+        rp = rope_parameters(c, model_dir)          # (Qwen3's YaRN: not supported)
+        if c.get("use_sliding_window"):
+            raise ValueError(f"{model_dir}: sliding-window attention is not supported")
+        if c.get("attention_bias"):
+            raise ValueError(f"{model_dir}: attention biases are not supported")
         eos = c.get("eos_token_id", 151645)
         g = Path(model_dir) / "generation_config.json"
         if g.exists():
@@ -94,7 +100,8 @@ class Spec:
                     n_q=c["num_attention_heads"], n_kv=c["num_key_value_heads"],
                     head_dim=c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"],
                     ffn=c["intermediate_size"], vocab=c["vocab_size"], eps=c["rms_norm_eps"],
-                    theta=c.get("rope_theta", 1e6), tied=c.get("tie_word_embeddings", True),
+                    theta=rp.get("rope_theta") or c.get("rope_theta") or 10000.0,
+                    tied=c.get("tie_word_embeddings", True),
                     bos=c.get("bos_token_id", 151643),
                     eos=tuple(eos) if isinstance(eos, list) else (eos,), mix=FM.mix_for(c))
 
@@ -732,7 +739,8 @@ class Image(EmbedHost):
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         if spec.ctx and cap > spec.ctx:
-            raise ValueError(f"KV capacity {cap} above the model's RoPE range ({spec.ctx})")
+            raise ValueError(f"KV capacity {cap} above the model's range ({spec.ctx}: RoPE, "
+                             f"a sliding window)")
         S, D = cfg.S, cfg.D
         H, d, F_ = spec.hidden, spec.head_dim, spec.ffn
         self.spec, self.cfg, self.cap = spec, cfg, cap
@@ -2617,7 +2625,8 @@ class Engine:
 
     def generate_batch(self, prompts, max_new: int = 32, chunk: int | None = None) -> list:
         """Greedy generation for several prompts (one sequence each) decoded together; a
-        finished sequence keeps its row (its extra tokens are dropped) until all finish."""
+        finished sequence (EOS, max_new, or its KV cache full) leaves the batch's runs, its
+        last token not fed (as generate)."""
         n = len(prompts)
         nxt = [int(np.argmax(self.prefill(p, seq=s, chunk=chunk)))
                for s, p in enumerate(prompts)]
@@ -2629,9 +2638,14 @@ class Engine:
                     out[s].append(nxt[s])
                     done[s] = (nxt[s] in self.spec.eos or len(out[s]) >= max_new
                                or self.poss[s] >= self.cap)
-            if all(done):
+            live = [s for s in range(n) if not done[s]]
+            if not live:
                 break
-            nxt = [int(np.argmax(r)) for r in self.step_batch(nxt)]
+            lg = self.run_rows([(s, self.poss[s]) for s in live], [nxt[s] for s in live],
+                               list(range(len(live))))
+            for s, r in zip(live, lg):
+                self.poss[s] += 1
+                nxt[s] = int(np.argmax(r))
         return out
 
     # ---- the decode loop on the device (opentpu/llm/generate.py)
@@ -2791,11 +2805,20 @@ class Engine:
         return out
 
     def generate(self, prompt, max_new: int = 32, sampler=None, on_token=None) -> list:
-        """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token."""
+        """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token. The sampler
+        gets the logits Hugging Face's model returns: with the spec's final soft cap (Gemma's
+        final_logit_softcapping), which step() and prefill() leave out (greedy: their argmax,
+        the cap keeps the order); chat.sampler without its softcap samples them."""
+        from .gemma4 import softcap
+        cap = getattr(self.spec, "softcap", None)
+        if sampler is not None and cap and getattr(sampler, "softcap", None):
+            raise ValueError("generate caps the logits it hands the sampler: a sampler with "
+                             "no softcap")
         logits = self.prefill(prompt)
         out = []
         for _ in range(max_new):
-            t = int(np.argmax(logits)) if sampler is None else int(sampler(logits))
+            t = int(np.argmax(logits)) if sampler is None else \
+                int(sampler(softcap(self.spec, logits) if cap else logits))
             out.append(t)
             if on_token:
                 on_token(t)

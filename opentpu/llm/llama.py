@@ -25,6 +25,7 @@ import math
 from pathlib import Path
 
 from . import formats as FM
+from . import rope_parameters
 from .qwen3 import Spec
 
 MODEL_TYPES = ("llama", "smollm3", "phi3")
@@ -42,8 +43,7 @@ def spec_from_hf(model_dir) -> Spec:
     H, nq = c["hidden_size"], c["num_attention_heads"]
     d = c.get("head_dim") or H // nq
     L = c["num_hidden_layers"]
-    rp = dict(c.get("rope_scaling") or {})
-    rp.update(c.get("rope_parameters") or {})
+    rp = rope_parameters(c, model_dir, ("default", "longrope"))
     theta = rp.get("rope_theta", c.get("rope_theta", 10000.0))
     rotary = int(d * rp.get("partial_rotary_factor", c.get("partial_rotary_factor", 1.0)))
     kind = rp.get("rope_type", rp.get("type", "default"))
@@ -60,8 +60,11 @@ def spec_from_hf(model_dir) -> Spec:
         if len(extra["rope_div"]) != rotary // 2:
             raise ValueError(f"{len(extra['rope_div'])} short factors for {rotary // 2} "
                              f"frequencies")
-    elif kind != "default":
-        raise ValueError(f"{model_dir}: RoPE type {kind!r} is not supported")
+    # Phi-3's sliding window (Hugging Face masks the keys at or before q - window; this code
+    # has none): the KV capacity stays within it, where no key is masked
+    window = c.get("sliding_window")
+    if mt == "phi3" and window:
+        extra["ctx"] = min(extra.get("ctx") or window, window)
     if mt == "smollm3":
         flags = c.get("no_rope_layers")
         if flags is None:                               # SmolLM3Config's default

@@ -1351,6 +1351,42 @@ def test_chat_sampling_defaults_per_model_and_repetition_penalty():
     assert {pick(np.array([0.0, 0.0, 0.0, -50.0])) for _ in range(200)} == {0, 1, 2}
 
 
+def test_chat_sampling_defaults_from_generation_config(tmp_path):
+    """The checkpoint's generation_config.json when it samples (Hugging Face's defaults for
+    the keys it leaves out), else the family's, else greedy as Hugging Face's generate: the
+    Llama-likes on Qwen3's Spec (SmolLM3, Phi-4-mini) no longer take Qwen3's; Qwen3 keeps its
+    model card's non-thinking settings over its generation_config.json (the thinking mode's);
+    flags override."""
+    from opentpu.host.chat import SAMPLING, sampling
+    from opentpu.llm import lfm2, qwen3
+    q = qwen3.Spec(256, 2, 4, 2, 128, 512, 1000)
+    llama = replace(q, qk_norm=False)
+    f = lfm2.Spec(256, ("conv", "attn"), 4, 2, 64, 512, 1000)
+    none = types.SimpleNamespace(temperature=None, top_k=None, top_p=None,
+                                 repetition_penalty=None)
+
+    def ckpt(name, **g):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "generation_config.json").write_text(json.dumps(dict(eos_token_id=2, **g)))
+        return d
+    smol = ckpt("smollm3", do_sample=True, temperature=0.6, top_p=0.95)
+    assert sampling(llama, none, smol) == dict(temperature=0.6, top_k=50, top_p=0.95,
+                                               repetition_penalty=1.0)
+    assert sampling(llama, none, ckpt("phi")) == dict(temperature=0.0, top_k=50, top_p=1.0,
+                                                      repetition_penalty=1.0)
+    think = ckpt("qwen3", do_sample=True, temperature=0.6, top_k=20, top_p=0.95)
+    assert sampling(q, none, think) == SAMPLING["qwen3"]
+    assert sampling(f, none, ckpt("lfm2")) == SAMPLING["lfm2"]          # LFM2-2.6B's: none
+    moe = ckpt("lfm2-moe", do_sample=True, temperature=0.2, top_k=80, repetition_penalty=1.05)
+    assert sampling(f, none, moe) == dict(temperature=0.2, top_k=80, top_p=1.0,
+                                          repetition_penalty=1.05)
+    flags = types.SimpleNamespace(temperature=0.9, top_k=None, top_p=None, repetition_penalty=None)
+    assert sampling(llama, flags, smol)["temperature"] == 0.9
+    assert sampling(llama, none) == dict(temperature=0.0, top_k=50, top_p=1.0,
+                                         repetition_penalty=1.0)    # no checkpoint: greedy
+
+
 
 def test_sampler_fast_top_k_picks_as_the_float64_path():
     """The float32 top-k (block-max prefilter) gives the picks of the float64 argpartition

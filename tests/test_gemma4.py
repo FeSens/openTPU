@@ -96,6 +96,64 @@ def test_tiny_matches_hf_and_emulation(tiny):
     assert _cos(dev[:12], emu).min() > 0.99
 
 
+def test_host_sampler_caps_as_hf(tiny):
+    """The host's sampler (otpu-chat's picks off the card, its first token on the card) with the
+    model's softcap samples Hugging Face's distribution: Gemma4ForCausalLM caps the logits
+    before the penalty and the warpers. The final norm x30 puts the raw logits up to ~31 (a real
+    model's range), where the cap matters: with the same uniforms the picks are HF's, from
+    whole logits and streamed pieces; uncapped they are not. Engine.generate hands its sampler
+    the capped logits; Chat takes no sampler of another softcap."""
+    import copy
+    import types
+
+    from transformers.generation import logits_process as LP
+
+    from opentpu.host.chat import Chat, sampler
+    m, W, spec = tiny
+    m = copy.deepcopy(m)
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 16)]
+    with torch.no_grad():
+        m.model.norm.weight.mul_(30.0)
+        capped = m(torch.tensor([toks])).logits[0, -1]
+        m.config.final_logit_softcapping = None
+        raw = m(torch.tensor([toks])).logits[0, -1].numpy()
+    assert raw.max() > 25.0 and capped.max() < 0.8 * raw.max()
+    for T, k, tp, rp in [(1.0, 64, 0.95, 1.0), (0.8, 40, 0.95, 1.1), (1.0, 0, 1.0, 1.0)]:
+        procs = LP.LogitsProcessorList([LP.RepetitionPenaltyLogitsProcessor(rp),
+                                        LP.TemperatureLogitsWarper(T),
+                                        LP.TopKLogitsWarper(k or 1000), LP.TopPLogitsWarper(tp)])
+        p = torch.softmax(procs(torch.tensor([toks]), capped[None].clone()), -1)[0]
+        p = p.double().numpy()
+        kept = np.argsort(-p, kind="stable")[:int((p > 0).sum())]
+        rng = np.random.default_rng(3)
+        want = [int(kept[rng.choice(len(kept), p=p[kept] / p[kept].sum())])
+                for _ in range(300)]
+        assert len(set(want)) > 5
+        pick, stream = (sampler(T, k, tp, 3, rp, spec.softcap) for _ in range(2))
+        assert [pick(raw, toks) for _ in range(300)] == want
+        got = []
+        for _ in range(300):
+            s = stream.stream(toks)
+            s.begin(len(raw))
+            for lo in (512, 0):                         # pieces as the card streams them
+                s.feed(lo, raw[lo:lo + 512])
+            got.append(s.result())
+        assert got == want
+        uncapped = sampler(T, k, tp, 3, rp)
+        assert sum(uncapped(raw, toks) != w for w in want) > 30
+    # Engine.generate: the sampler gets the capped logits; a sampler that caps is refused
+    eng, ref = (Engine(spec, W, cap=1024, cfg=_cfg()) for _ in range(2))
+    seen = []
+    eng.generate(toks[:4], max_new=1, sampler=lambda lg: seen.append(lg) or 0)
+    assert np.array_equal(seen[0], G.softcap(spec, ref.prefill(toks[:4])))
+    with pytest.raises(ValueError, match="softcap"):
+        eng.generate(toks[:4], sampler=sampler(1.0, 64, 0.95, 3, softcap=spec.softcap))
+    gemma = types.SimpleNamespace(spec=spec)
+    with pytest.raises(ValueError, match="softcap"):
+        Chat(gemma, None, False, sampler(1.0, 64, 0.95, 3), 8)
+    Chat(gemma, None, False, sampler(1.0, 64, 0.95, 3, softcap=spec.softcap), 8)
+
+
 MIX = "attn@0-2=fp4,down@3-5=fp4,gateup@6-8=fp4,ple@6-8=fp4"
 
 

@@ -144,7 +144,9 @@ ARGMAX and RLD. No new unit is needed.
 - **Soft cap.** With a spec that has one (Gemma's final_logit_softcapping), the LM head caps
   the chunk first: `c tanh(l / c)` by `kernels.lib.softcap`, 5 VOPs; `generate.softcap_ref`
   is the same in the ISA's fp32 for `reference_pick`. Greedy takes the raw logits' argmax
-  (`Greedy.raw`: the cap keeps their order), and the stored logits stay raw.
+  (`Greedy.raw`: the cap keeps their order), and the stored logits stay raw. The host's
+  sampler caps them too (`chat.sampler(softcap=spec.softcap)`: a reply's first token, and
+  every token off the card), as Hugging Face's model before its processors.
 - **Repetition penalty.** `min(l * pa, l * pb)` with the DRAM vectors `pa`, `pb`. For the
   context's ids these hold 1/R and R, and 1 for every other id. The result is l/R for l > 0
   and l·R for l < 0, as Hugging Face computes it. The card marks each token it generates
@@ -163,7 +165,9 @@ ARGMAX and RLD. No new unit is needed.
    `all_gather`.
 3. **Softmax.** `p = exp2((l − l0) · log2(e)/T)`.
 4. **Cumulative sums.** One RDOT with a triangular ones matrix.
-5. **Top-p.** Keep element i while cum[i−1] < P · cum[last].
+5. **Top-p.** Keep element i while cum[i−1] < P · cum[last]. This keeps none for P = 0 (or
+   a P the VPU flushes), so `Sampling` takes P below 2^−126 as k = 1: the first token only,
+   as Hugging Face's top-p (min_tokens_to_keep 1) and chat.sampler.
 6. **The pick.** For the position's uniform u, pick = #{cum ≤ u · cum[last kept]}, capped at
    the last kept.
 

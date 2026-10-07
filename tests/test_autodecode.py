@@ -288,7 +288,8 @@ def test_gen_op_checks_on_the_board_config_rtl(have_verilator):
 # ---------------------------------------------------------------------------------- the sampler
 @pytest.mark.parametrize("S", [1, 2])
 @pytest.mark.parametrize("temperature,top_k,top_p,penalty", [
-    (0.7, 20, 0.8, 1.0), (0.1, 50, 1.0, 1.05), (1.0, 64, 0.95, 1.2), (2.0, 3, 1.0, 1.0)])
+    (0.7, 20, 0.8, 1.0), (0.1, 50, 1.0, 1.05), (1.0, 64, 0.95, 1.2), (2.0, 3, 1.0, 1.0),
+    (0.7, 20, 0.0, 1.0), (1.0, 64, 1e-40, 1.2)])                 # top-p 0, a denormal one
 def test_the_device_sampler_draws_from_the_host_samplers_distribution(S, temperature, top_k,
                                                                       top_p, penalty):
     """generate.reference_pick (the device's sampler, bit for bit) as a function of its uniform
@@ -512,6 +513,41 @@ def test_sampled_generate_matches_the_reference_pick(tiny, S, temperature, top_k
         c.append(t)
     assert got == want and a.pos == 260
     assert len(set(got)) > 3 or temperature == 0
+
+
+@pytest.mark.parametrize("S", [1, 2])
+def test_top_p_zero_keeps_the_first_token(tiny, S):
+    """top_p 0 (otpu-chat --top-p 0) keeps the most likely token, as Hugging Face's top-p
+    (min_tokens_to_keep 1) and chat.sampler: the device's sampled loop (Sampling takes it as
+    k 1) and reference_pick pick the host sampler's ids, the penalized logits' argmax (before,
+    no token was kept: the device picked the word before the ids)."""
+    from opentpu.host.chat import main, sampler
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    if name != "qwen3":
+        pytest.skip("one model")
+    cfg = device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=S)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, resident=True) for _ in range(2))
+    samp = G.Sampling(0.8, 5, 0.0, 1.1)
+    assert samp.k == 1 and G.Sampling.fits(0.8, 0, 0.0, 1.1)
+    bad = G.Sampling(0.8, 5)
+    bad.top_p = 0.0                                 # past Sampling's check: no token kept
+    with pytest.raises(ValueError, match="keeps no token"):
+        G.reference_pick(np.arange(256, dtype=np.float32), bad, [], 0.5)
+    with pytest.raises(SystemExit):                 # otpu-chat: Hugging Face's range
+        main(["--top-p", "-0.5"])
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 20)]
+    ctx = toks + [int(np.argmax(a.prefill(toks)))]
+    b.prefill(toks)
+    got = a.generate_card(ctx[-1], 8, stop_ids=[], sampling=samp, context=ctx,
+                          rng=np.random.default_rng(7))
+    host, want, c = sampler(0.8, 5, 0.0, 7, 1.1), [], list(ctx)
+    for u in np.random.default_rng(7).random(8):
+        lg = b.step(c[-1])
+        want.append(host(lg, c))
+        assert G.reference_pick(lg, samp, c, u, S) == want[-1]
+        c.append(want[-1])
+    assert got == want and len(set(got)) > 2
 
 
 @pytest.mark.parametrize("split", [None, True])
