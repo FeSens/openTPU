@@ -801,11 +801,51 @@ sleep slice (at most 1 ms apart). Not yet re-measured on the card.
 the memory adapter may still have writes in flight (STATUS WR_IDLE clear), and a host read
 through the XDMA may pass them. On the card (hp-wb aebb0bf0, resident decode, LFM2 fp4 + int8
 head, sampled, streamed) a tail read found words of the last logits piece unwritten.
-`Board.wait` now waits for WR_IDLE after HALTED (at most 2 ms; not on the board model, whose
-register script replays in order), and the streamed tail reads again for up to 5 ms before it
-calls a piece unwritten (the error names the words). `FakeTransport.logits_lag` lands the last
-piece after HALTED, with WR_IDLE clear until then (tests/test_host.py). Not yet re-run on the
-card.
+`Board.wait` now waits for WR_IDLE after HALTED (not on the board model, whose register
+script replays in order), and the streamed tail reads again for up to 5 ms before it calls a
+piece unwritten (the error names the words). `FakeTransport.logits_lag` lands the last piece
+after HALTED, with WR_IDLE clear until then (tests/test_host.py). Not yet re-run on the card.
+The wait reads STATUS back to back for 2 ms, then polls up to 1 s (`QUIET_WAIT`); WR_IDLE not
+set by then is an error (a DRAM write never answered), where it used to return the run's
+counters as a success after the 2 ms.
+
+**Ending a run.** `CTRL = 0` holds the core in reset, but the memory adapter
+(`otpu_native_dram`) is reset with the board only: a run cut short still has DRAM writes
+queued, and port B reads in flight (up to 128 beats a channel) that a program load right after
+would take for instruction rows. `Board.stop(wait)` ends a run the same way everywhere: up to
+`wait` seconds for HALTED (a run that halts by itself leaves a whole token), then `CTRL = 0`,
+1 ms for a cut-short run's reads, and STATUS QUIET (`board.QUIET`, WR_IDLE today) polled for
+up to 1 s. It runs:
+- when a locked `Board` opens (`Board.quiesce`, before anything writes the card): a process
+  killed mid-run (SIGKILL, the OOM killer) leaves RUN set and its program storing KV rows,
+  `out[]` and its state into DRAM, over the next holder's freshly written image. A run still
+  going is waited for up to 120 s (`QUIESCE_WAIT`; a long generate run ends by itself), then the
+  open is refused (`CardRunning`); `OTPU_STOP_RUN=1` cuts it short at once. Monitors
+  (`lock=False`) never touch it;
+- when a wait fails: `Board.wait`'s timeout cuts the run short; KeyboardInterrupt, SystemExit,
+  a host hook's error or a streamed-logits error in `BoardBackend.wait` give it 1 s
+  (`STOP_WAIT`) to halt first; `run_generate` writes the stop word first, so the card halts
+  after the token in flight;
+- in `load_program` after a run started and not seen halted, in `Board.close`, and at the
+  interpreter's exit (SystemExit, an uncaught KeyboardInterrupt).
+While a process holds the lock, SIGTERM and SIGHUP raise SystemExit in it (exit status 143 or
+129) instead of ending it at once, so these paths run (`runstate`; a repeat within 2 s is the
+same request, later ones end it at once). SIGKILL leaves the run to the next holder's open.
+
+**Bounded waits.** Every loop that waits on the card has a deadline: `BoardBackend`'s service
+of the host hook while a MoE run waits on it (600 s, `RUN_TIMEOUT`), the streamed-logits wait
+(600 s), `run_generate` (600 s without a token), `ddrcal.DqsPhase.move` (5 s; it runs inside
+`Board()`). Each raises a TimeoutError naming what it waited for, and the run is stopped.
+
+**The stop word.** `Board.write` writes only the 64-byte beats its bytes fall in: bytes off the
+128-byte chunk grid go beat by beat to their channels (`XdmaTransport.mem_write` merges a
+partial beat with a read of that beat alone). Widened to whole chunks, `run_generate`'s 4-byte
+stop word read the chunk's 32 words twice and wrote them all back, rolling back the next
+token's state (tok, tpos, left: words 0..15) whenever the card stored it in between (a window of
+0.1-0.25 ms per stop against 20-60 ms tokens: an estimated 0.1-0.5% of stops; a token lost or
+shown twice, Qwen3.5's DeltaNet state advanced twice). The state block's beats
+now have one writer each during a run: words 0..15 the card's, 16..31 the host's (the stop word
+and the sampler's), 32..47 the MTP loop's (moved from 20..28: docs/mtp.md).
 
 **Resident decode.** A decode program now takes the position and the token as run arguments
 (docs/isa.md "Arguments": ARG0..7, R8..R15 at the start; CAPS bit25), so one program serves

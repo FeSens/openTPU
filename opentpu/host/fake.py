@@ -16,7 +16,8 @@ With `i2c` (two fake_i2c.OpenDrainBus, e.g. fake_i2c.card_buses()) CAPS announce
 and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 announces the
 DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
 `args` CAPS bit25 announces the ARG0..7 registers (kept, read back), with `gen` CAPS bit30
-the decode loop's instructions (it runs nothing either way). Its identity (VERSION: D,
+the decode loop's instructions (it runs nothing either way), with `chash` CAPS bit7 the hashed
+channel interleave (the run's logits pieces land by that map). Its identity (VERSION: D,
 MCOLS, LANES) is by default the configuration the environment asks for (board_config:
 OTPU_MCOLS, OTPU_LANES), as a card built for it would report.
 """
@@ -27,6 +28,8 @@ import time
 import numpy as np
 
 from . import regs as R
+from .board import XdmaTransport as _Xdma   # (its poll; bound here: tests patch board's name)
+from .board import beat_at
 
 RATES = {"RUNNING": 0.80, "MXU_BUSY": 0.60, "MXU_MAC": 0.50, "VPU_BUSY": 0.12,
          "QNT_BUSY": 0.05, "DMA_BUSY": 0.03, "TMEM_DENY": 0.01, "DRAM_RD": 0.70,
@@ -44,7 +47,8 @@ class FakeTransport:
                  LANES: int | None = None,
                  i2c: list | None = None, ddr_mts: int | None = None,
                  w4: bool = True, pair: bool = False, dstep: bool = False,
-                 args: bool = False, stream: bool = False, gen: bool = False):
+                 args: bool = False, stream: bool = False, gen: bool = False,
+                 chash: bool = False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -65,6 +69,7 @@ class FakeTransport:
         self.args = args                # CAPS bit25: ARG0..7 (R_ARG0 + 4k, read back)
         self.stream = stream            # CAPS bit26: the stream engine
         self.gen = gen                  # CAPS bit30: the decode loop (RLD, ARGMAX, HALT CHAIN)
+        self.chash = chash              # CAPS bit7: the hashed channel interleave
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
@@ -95,13 +100,14 @@ class FakeTransport:
     logits_lag = 0.0            # the last piece lands this long after HALTED (a store in flight)
 
     def _put(self, addr: int, b: np.ndarray) -> None:
-        """Logical bytes at any address into the two channels (64-byte beats alternate)."""
+        """Logical bytes at any address into the two channels (64-byte beats alternate; CHASH:
+        board.beat_at's map)."""
         i = 0
         while i < len(b):
             x = addr + i
             k = min(len(b) - i, 64 - x % 64)
-            off = x // 128 * 64 + x % 64
-            self.ch[x // 64 % 2][off:off + k] = b[i:i + k]
+            c, off = beat_at(x, self.chash)
+            self.ch[c][off:off + k] = b[i:i + k]
             i += k
 
     def _halted(self) -> bool:
@@ -178,6 +184,7 @@ class FakeTransport:
                     | (R.CAP_PAIR if self.pair else 0)
                     | (R.CAP_DSTEP if self.dstep else 0) | (R.CAP_ARGS if self.args else 0)
                     | (R.CAP_STREAM if self.stream else 0) | (R.CAP_GEN if self.gen else 0)
+                    | (R.CAP_CHASH if self.chash else 0)
                     | self.trace_log2 << 8 | 6 << 16)
         if off == R.R_CORE_KHZ:
             return self.core_khz
@@ -216,5 +223,4 @@ class FakeTransport:
         return [self.reg_read(o) for o in offs]
 
     def poll(self, off, mask, val, timeout=600.0, expect=0.0):
-        from .board import XdmaTransport
-        return XdmaTransport.poll(self, off, mask, val, timeout, expect)
+        return _Xdma.poll(self, off, mask, val, timeout, expect)

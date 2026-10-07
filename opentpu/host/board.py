@@ -21,6 +21,11 @@ A Board takes the device's exclusive lock (runstate.DeviceLock, /tmp/otpu/<dev>.
 transport names a device (XdmaTransport, FakeTransport); monitors pass lock=False. Register map
 version 1 bitstreams (no REGMAP register) work for everything but the counters, the trace and
 the temperature: info() reports regmap 1 and snapshot() returns None.
+
+A locked Board ends what an earlier holder left on the card before anything writes it
+(Board.quiesce: a process killed mid-run leaves its program running, storing into DRAM), and
+stops its own run on the way out (Board.stop: an error, KeyboardInterrupt, SIGTERM / SIGHUP,
+which raise SystemExit while the lock is held, or the interpreter's exit).
 """
 from __future__ import annotations
 
@@ -33,6 +38,7 @@ import struct
 import sys
 import threading
 import time
+import weakref
 from dataclasses import replace
 from pathlib import Path
 
@@ -87,7 +93,23 @@ STREAM_EARLY = 0.3e-3           # probe a piece this long before it came complet
 STREAM_RETRY = 0.1e-3           # probe again after this when it is not complete yet
 STREAM_PROBE = 0.5e-3           # probe interval when no completion time is known yet
 TAIL_SETTLE = 5e-3              # after HALTED: how long the last stores may take to land
-WR_SETTLE = 2e-3                # after HALTED: the longest wait for WR_IDLE
+WR_SETTLE = 2e-3                # after HALTED: WR_IDLE read back to back this long, then polled
+                                # up to QUIET_WAIT (not seen then: an error)
+RUN_TIMEOUT = 600.0             # the longest run (Board.wait), and the longest a generate run may
+                                # go without a token (run_generate)
+# Ending a run (Board.stop): CTRL = 0 holds the core in reset, but the memory adapter
+# (otpu_native_dram) is reset with the board only, so a run cut short still has DRAM writes
+# queued, and reads in flight (port B: up to 128 beats a channel) whose data a program load
+# right after would take for instruction rows (docs/host.md, "Ending a run"). STATUS QUIET: the
+# bits that say the adapter is done with them; WR_IDLE covers the writes, and CUT_SETTLE gives
+# a cut-short run's reads time to come back (a few us).
+QUIET = R.ST_WR_IDLE
+QUIET_WAIT = 1.0                # after CTRL = 0: the longest wait for QUIET
+CUT_SETTLE = 1e-3
+STOP_WAIT = 1.0                 # a run stopped by an error or an exit: its time to halt by itself
+                                # (the token in flight) before it is cut short
+QUIESCE_WAIT = 120.0            # Board(): the longest wait for another process's run to halt
+SNAP_TRIES = 8                  # snapshot(): reads again when another process's SNAP came between
 RUN_CLOCK_N = 16                # run_clock: a program's time with no waits, the least of its last 16 runs
 HOST_IDLE = 50e-6               # BoardBackend.host: the sleep between polls it had nothing for
                                 # (a transport's host_idle instead: XdmaTransport's 0)
@@ -110,6 +132,15 @@ def hash_swap(addr: int, v: np.ndarray) -> None:
     inverse: logical order <-> channel order)."""
     p = swapped(addr, len(v))
     v[p] = v[p][:, ::-1]
+
+
+def beat_at(addr: int, chash: bool = False) -> tuple[int, int]:
+    """(channel, channel offset) of the logical byte `addr`: beat b = addr // BEAT % 2 of chunk
+    m = addr // (2 * BEAT) on channel b, or b ^ parity(m) with CHASH."""
+    m, c = addr // (2 * BEAT), addr // BEAT % 2
+    if chash:
+        c ^= m.bit_count() & 1
+    return c, m * BEAT + addr % BEAT
 
 
 def split(addr: int, data: np.ndarray, chash: bool = False) -> list[tuple[int, int, np.ndarray]]:
@@ -534,6 +565,10 @@ def rates(a: dict, b: dict, core_khz: int | None) -> dict:
     return out
 
 
+class CardRunning(RuntimeError):
+    """The card still runs a program another process started (Board.quiesce)."""
+
+
 class Board:
     """Logical-address access to the card's DRAM, program loading and runs, the counters and
     the trace buffer."""
@@ -550,20 +585,24 @@ class Board:
         self._t_run = 0.0               # when the started run began (perf_counter)
         self.in_run = False             # started and not seen halted: writes in RUN_H2C calls
         self._pool = None           # the DMA worker thread (large reads / writes on the card)
-        if check:
-            ident = self.t.reg_read(R_ID)
-            if ident != ID_OTPU:
-                self.close()
+        try:
+            ident = self.t.reg_read(R_ID) if check or self.lock is not None else ID_OTPU
+            if check and ident != ID_OTPU:
                 raise RuntimeError(f"no openTPU on the card (ID register {ident:#x})")
-            if calibrate:
-                try:
-                    memcal.ensure(self.t, log=lambda m: print(m, file=sys.stderr))
-                except Exception:
-                    self.close()
-                    raise
+            if self.lock is not None and ident == ID_OTPU:
+                self.quiesce()          # (before the calibration: it moves the DDR3 timing)
+                self.lock.cleanup.append(weakref.WeakMethod(self._at_exit))
+            if check and calibrate:
+                memcal.ensure(self.t, log=lambda m: print(m, file=sys.stderr))
+        except BaseException:
+            self.close()
+            raise
 
     def close(self) -> None:
-        """Release the device lock (for every Board on this transport)."""
+        """Release the device lock (for every Board on this transport); a run of this Board's
+        not seen halted is stopped first (stop)."""
+        if self.in_run:
+            self.abort(STOP_WAIT)
         if self._pool is not None:
             self._pool.shutdown()
             self._pool = None
@@ -571,6 +610,87 @@ class Board:
             self.lock.release()
             self.t._otpu_lock = None
         self.lock = None
+
+    def _at_exit(self) -> None:
+        """The lock is going (DeviceLock.release, at exit too: SystemExit, an uncaught
+        KeyboardInterrupt): a run of this Board's in flight is stopped first."""
+        if self.in_run:
+            self.abort(STOP_WAIT)
+
+    # ------------------------------------------------------------------ ending runs
+    def quiesce(self, wait: float | None = None) -> None:
+        """End what an earlier holder of the card left, before this process writes it: a process
+        killed mid-run (SIGKILL, the OOM killer) leaves RUN set and its program storing into
+        DRAM, which would overwrite a new image written meanwhile, silently. A run still going
+        is waited for up to `wait` seconds (QUIESCE_WAIT), then refused (CardRunning); with
+        OTPU_STOP_RUN=1 it is cut short at once. Then stop(): CTRL = 0, the adapter quiet. RUN
+        clear (an idle card, a new configuration before its calibration), nothing is done."""
+        st = self.t.reg_read(R_STATUS)
+        if not st & ST_RUN:
+            return
+        if not st & ST_HALTED and os.environ.get("OTPU_STOP_RUN") != "1":
+            wait = QUIESCE_WAIT if wait is None else wait
+            print(f"otpu: the card is still running a program started before this process; "
+                  f"waiting up to {wait:.0f} s for it to halt", file=sys.stderr, flush=True)
+            try:
+                self.t.poll(R_STATUS, ST_HALTED, ST_HALTED, wait)
+            except TimeoutError:
+                raise CardRunning(f"the card is still running a program started before this "
+                                  f"process ({wait:.0f} s, not halted): its process ended "
+                                  f"without stopping it. Wait for it, or cut it short with "
+                                  f"OTPU_STOP_RUN=1 (CTRL = 0)") from None
+        self.stop()
+
+    def stop(self, wait: float = 0.0) -> bool:
+        """End the card's run, if one goes: up to `wait` seconds for HALTED (a run that halts by
+        itself leaves DRAM as its program does: a whole token), then CTRL = 0 (the core held in
+        reset: a run still going is cut short) and the memory adapter quiet (QUIET; CUT_SETTLE),
+        so nothing of the run lands after the host's next writes or in a program load. Nothing
+        with RUN clear (the core is held in reset already: every CTRL = 0 of a run's is this
+        one's), nor on a card this process no longer holds (LockLost: it may be another
+        runner's). True when no run was cut short."""
+        t = self.t
+        self.in_run = False
+        if getattr(t, "batched", False):        # (the board model: a script, no run left)
+            t.reg_write(R_CTRL, 0)
+            return True
+        lk = self.lock
+        if lk is not None and lk.holder is not None and lk.lost():
+            return False
+        st = t.reg_read(R_STATUS)
+        if not st & ST_RUN:
+            return True
+        done = bool(st & ST_HALTED)
+        if not done and wait > 0:
+            try:
+                t.poll(R_STATUS, ST_HALTED, ST_HALTED, wait)
+                done = True
+            except TimeoutError:
+                pass
+        t.reg_write(R_CTRL, 0)
+        if not done:
+            time.sleep(CUT_SETTLE)
+        try:
+            t.poll(R_STATUS, QUIET, QUIET, QUIET_WAIT)
+        except TimeoutError:
+            raise RuntimeError(f"the memory adapter still has DRAM writes outstanding "
+                               f"{QUIET_WAIT:g} s after CTRL = 0 (STATUS WR_IDLE clear): one "
+                               "never got its response; reload the bitstream") from None
+        return done
+
+    def abort(self, wait: float = 0.0) -> None:
+        """stop() on an error's way out: its own errors are dropped (the error being raised is
+        the one to see)."""
+        try:
+            self.stop(wait)
+        except Exception:               # noqa: BLE001
+            pass
+
+    def _own(self) -> None:
+        """LockLost when the otpu-lock this process runs under has exited."""
+        lk = self.lock
+        if lk is not None and lk.holder is not None and lk.lost():
+            raise LockLost(lk.name, lk.holder)
 
     def __enter__(self):
         return self
@@ -623,8 +743,16 @@ class Board:
         if not self.v2:
             return None
         rm = (self._info or self.info())["regmap"]
-        self.t.reg_write(R.R_SNAP, 1)
-        return self.snap_dict(self.t.reg_read_many(self.snap_offs(rm)), rm)
+        # SNAP is the card's, not this process's: another one's (otpu-smi -l) between these
+        # reads latches the shadows again, mixing two instants (or a counter's two halves).
+        # SNAP's count read before the shadows and after them: equal, they are one latch's.
+        offs = [R.R_SNAP] + self.snap_offs(rm)
+        for _ in range(SNAP_TRIES):
+            self.t.reg_write(R.R_SNAP, 1)
+            v = self.t.reg_read_many(offs)
+            if v[0] == v[-1]:
+                break
+        return self.snap_dict(v[1:], rm)
 
     @staticmethod
     def snap_dict(v: list[int], regmap: int) -> dict:
@@ -635,23 +763,38 @@ class Board:
 
     # ------------------------------------------------------------------ DRAM
     def write(self, addr: int, data) -> None:
+        """Logical bytes to the card. Only the 64-byte beats they fall in are written: the
+        bytes off the chunk grid go beat by beat to their channels (a partial beat's other
+        bytes kept by the transport: XdmaTransport.mem_write reads that beat alone), never the
+        rest of their chunks, which the card may store meanwhile (a generate run's state words
+        beside the host's stop word: widened to its chunk, the stop write put back the words it
+        had read before the card's store)."""
+        self._own()
         data = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
         if len(data) == 0:
             return
-        a0 = addr // (2 * BEAT) * (2 * BEAT)
-        a1 = -(-(addr + len(data)) // (2 * BEAT)) * (2 * BEAT)
-        own = a0 != addr or a1 != addr + len(data)      # data is our own buffer
-        if own:                                         # widen: read-modify-write the edges
-            buf = np.empty(a1 - a0, np.uint8)
-            head, tail = addr - a0, a1 - addr - len(data)
-            if head:
-                buf[:2 * BEAT] = self.read(a0, 2 * BEAT)
-            if tail:
-                buf[-2 * BEAT:] = self.read(a1 - 2 * BEAT, 2 * BEAT)
-            buf[head:head + len(data)] = data
-            data = buf
+        end = addr + len(data)
+        a0 = -(-addr // (2 * BEAT)) * (2 * BEAT)        # the whole chunks inside
+        a1 = end // (2 * BEAT) * (2 * BEAT)
+        if a1 <= a0:
+            a0 = a1 = end                               # (none: beats only)
+        self._beats(addr, data[:a0 - addr])
+        if a1 > a0:
+            self._chunks(a0, data[a0 - addr:a1 - addr])
+        self._beats(a1, data[a1 - addr:])
+
+    def _beats(self, addr: int, data: np.ndarray) -> None:
+        """Bytes of at most a chunk's worth (a write's edges), beat by beat to their channels."""
+        x, end = addr, addr + len(data)
+        while x < end:
+            k = min(end, (x // BEAT + 1) * BEAT) - x
+            self.t.mem_write(*beat_at(x, self.chash), data[x - addr:x - addr + k])
+            x += k
+
+    def _chunks(self, a0: int, data: np.ndarray) -> None:
+        """Whole chunks from a0 (chunk aligned) to the two channels."""
         if self.chash:                                  # channel order (a copy)
-            data = data if own else data.copy()
+            data = data.copy()
             hash_swap(a0, data.reshape(-1, 2, BEAT))
         lim = getattr(self.t, "run_h2c", 0) if self.in_run else 0
         if lim:                                         # a run is in flight (RUN_H2C)
@@ -736,8 +879,12 @@ class Board:
 
     # ------------------------------------------------------------------ programs
     def load_program(self, addr: int, words: np.ndarray) -> None:
-        """Copy a program into DRAM at `addr` (chunk aligned) and into IMEM."""
+        """Copy a program into DRAM at `addr` (chunk aligned) and into IMEM. A run started and
+        not seen halted (a wait that raised) is stopped first: its reads in flight would land
+        in IMEM as the new program's rows."""
         words = np.asarray(words, "<u4")
+        if self.in_run:
+            self.stop()
         self.write(addr, words.view(np.uint8))
         t = self.t
         t.reg_write(R_CTRL, 0)
@@ -760,7 +907,7 @@ class Board:
     RUN_OFFS = [R_STATUS, R_CYCLES, R_CYCLES_HI, R_ICOUNT, R.R_B_RD, R.R_B_WR, R.R_A_RD,
                 R.R_A_WR, R.R_B_STALL]
 
-    def run(self, timeout: float = 600.0, trace: dict | None = None,
+    def run(self, timeout: float = RUN_TIMEOUT, trace: dict | None = None,
             expect: float = 0.0) -> dict:
         """Run the loaded program until it halts; returns the counters.
 
@@ -778,6 +925,7 @@ class Board:
 
     def start(self, trace: dict | None = None) -> None:
         """Start the loaded program (run's first half)."""
+        self._own()
         t = self.t
         self._trace = None
         if trace is not None:
@@ -794,25 +942,44 @@ class Board:
         t.reg_write(R_CTRL, CTRL_RUN)
         self._t_run = time.perf_counter()
 
-    def wait(self, timeout: float = 600.0, expect: float = 0.0) -> dict:
+    def wait(self, timeout: float = RUN_TIMEOUT, expect: float = 0.0) -> dict:
         """Wait for the started program to halt; returns the counters (run's second half).
-        expect counts from the start (the host's work in between is taken off)."""
+        expect counts from the start (the host's work in between is taken off). A run that does
+        not halt in `timeout` seconds is cut short (stop) before the TimeoutError; one this
+        wait leaves another way (KeyboardInterrupt, SystemExit) gets STOP_WAIT to halt first."""
         t = self.t
         if expect:
             expect = max(expect - (time.perf_counter() - self._t_run), 1e-9)
         traced = self._trace is not None
         depth, keep_first = self._trace or (0, True)
-        st0 = t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
+        try:
+            st0 = t.poll(R_STATUS, ST_HALTED, ST_HALTED, timeout, expect)
+        except TimeoutError:
+            self.abort()
+            raise
+        except BaseException:
+            self.abort(STOP_WAIT)
+            raise
         self.t_seen = time.perf_counter()           # HALTED seen (BoardBackend's run time)
+        self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         # HALTED rises once the last store has left the core, not when the DRAM has it
         # (WR_IDLE: the memory adapter's writes all answered); the host reads the results
-        # next, and a read may pass writes in flight: wait for WR_IDLE (bounded; the board
-        # model replays its register script in order: no such race)
-        while not getattr(t, "batched", False) and not st0 & R.ST_WR_IDLE and \
-                time.perf_counter() - self.t_seen < WR_SETTLE:
-            st0 = t.reg_read(R_STATUS)
+        # next, and a read may pass writes in flight: wait for WR_IDLE, read back to back for
+        # WR_SETTLE, then polled up to QUIET_WAIT; never seen, the run's results are not all
+        # in DRAM: an error (the board model replays its register script in order: no such race)
+        if not getattr(t, "batched", False) and not st0 & R.ST_WR_IDLE:
+            while not st0 & R.ST_WR_IDLE and time.perf_counter() - self.t_seen < WR_SETTLE:
+                st0 = t.reg_read(R_STATUS)
+            if not st0 & R.ST_WR_IDLE:
+                try:
+                    st0 = t.poll(R_STATUS, R.ST_WR_IDLE, R.ST_WR_IDLE, QUIET_WAIT)
+                except TimeoutError:
+                    self.abort()
+                    raise RuntimeError(f"the run halted, but its DRAM writes had not all landed "
+                                       f"{QUIET_WAIT:g} s later (STATUS WR_IDLE clear): its "
+                                       "results are not all there; reload the bitstream") \
+                        from None
         self.in_run = False
-        self.seen_exact = getattr(t, "poll_exact", False)   # else an upper bound
         if traced:                      # the last cycles' events still drain into the buffer
             t.poll(R.R_TRACE_CTRL, R.TR_BUSY, 0, timeout)
         offs = self.RUN_OFFS + ([R.R_TRACE_COUNT, R.R_TRACE_DROP] if traced else [])
@@ -1170,6 +1337,7 @@ class BoardBackend:
                 self._stream_tail(feed)
         except BaseException:
             self._armed, self._stream = None, None  # the region's state is unknown
+            self.board.abort(STOP_WAIT)             # (the run, if it still goes)
             raise
         finally:
             self._running = None
@@ -1190,9 +1358,13 @@ class BoardBackend:
         if getattr(t, "batched", False):
             return
         idle = getattr(t, "host_idle", HOST_IDLE)
+        end = time.perf_counter() + RUN_TIMEOUT
         while not t.reg_read(R_STATUS) & ST_HALTED:
             if not self.host() and idle:
                 time.sleep(idle)
+            if time.perf_counter() > end:
+                raise TimeoutError(f"the run did not halt in {RUN_TIMEOUT:.0f} s while the host "
+                                   "served its requests")
         self._seen = time.perf_counter()
 
     def _next_expect(self, dev: float) -> float:
@@ -1230,12 +1402,15 @@ class BoardBackend:
         mark = SENTINEL if gate is None else FILL_SENTINEL
         pieces, due = self._pieces(), {}
         t0, i, probes, tries = b._t_run, 0, 0, 0
-        halted = False
+        halted, chash = False, b.chash
         # from POLL_EARLY (+ 3%) before the expected end on, the slices are short, so a run
         # that ends while a piece is awaited is seen within ~POLL_MIN_SLEEP (1 ms slices: Qwen3,
         # whose next-to-last piece comes near the end, saw HALTED 0.7-0.8 ms late on the card)
         near = self._expect - POLL_EARLY - 0.03 * self._expect if self._expect else float("inf")
         while i < len(pieces) - 1:
+            if time.perf_counter() - t0 > RUN_TIMEOUT:
+                raise TimeoutError(f"streamed logits: the run did not halt in {RUN_TIMEOUT:.0f} s "
+                                   f"({i} of {len(pieces)} pieces handed over)")
             d = self._due.get(i)
             # a piece's time of the last token may be past this run's end (a token delayed
             # by the host): HALTED is checked after every slice, not only at the piece's time
@@ -1257,7 +1432,7 @@ class BoardBackend:
             last = addr + o + k - BEAT                  # the piece's last beat (64-byte aligned)
             probes += 1
             tries += 1
-            beat = t.mem_read(last // BEAT % 2, last // (2 * BEAT) * BEAT, BEAT)
+            beat = t.mem_read(*beat_at(last, chash), BEAT)
             w = None
             if not (beat.view(np.uint32) == mark).any():
                 w = b.read(addr + o, k).view(np.uint32)
@@ -1352,7 +1527,11 @@ class BoardBackend:
         fp32 ids from byte address `out`, OUT_MARK until written) while the card runs; stop()
         true writes the state block's stop word (at `state`): the card halts after the token in
         flight. Returns (the run's counters, the tokens). The host reads 64-byte beats of out[]
-        only, never the logits."""
+        only, never the logits. The stop word's beat holds the host's words only (generate.py's
+        state block), and Board.write writes that beat alone: the card's state stores beside it
+        are never rewritten. A run that hands over no token for RUN_TIMEOUT seconds is an error;
+        on any error (KeyboardInterrupt, SystemExit too) the stop word goes out and the run gets
+        STOP_WAIT to halt after its token before it is cut short (Board.stop)."""
         from opentpu.llm import generate as G
         b, t = self.board, self.board.t
         self.start(programs)
@@ -1378,27 +1557,40 @@ class BoardBackend:
         # the board model replays its register script in one simulation per flush: no reads
         # while the program runs, the tokens are read after it halts
         host, t_take, idle = self.host, 0.0, getattr(t, "host_idle", HOST_IDLE)
-        while k < n and not getattr(t, "batched", False):
-            served = host() if host is not None else 0
-            if host is None or time.perf_counter() - t_take >= HOST_TAKE:
-                t_take = time.perf_counter()
-                if take():
+        try:
+            while k < n and not getattr(t, "batched", False):
+                served = host() if host is not None else 0
+                if host is None or time.perf_counter() - t_take >= HOST_TAKE:
+                    t_take = time.perf_counter()
+                    if take():
+                        continue
+                if t.reg_read(R_STATUS) & ST_HALTED:
+                    break
+                if time.perf_counter() - t_tok > RUN_TIMEOUT:
+                    raise TimeoutError(f"the generate run handed over no token in "
+                                       f"{RUN_TIMEOUT:.0f} s ({k} of {n} so far)")
+                if stop is not None and not asked and state is not None and stop():
+                    b.write(state + 4 * G.S_HALT, np.ones(1, np.float32))
+                    asked = True
+                if served:
                     continue
-            if t.reg_read(R_STATUS) & ST_HALTED:
-                break
-            if stop is not None and not asked and state is not None and stop():
-                b.write(state + 4 * G.S_HALT, np.ones(1, np.float32))
-                asked = True
-            if served:
-                continue
-            if host is not None:            # the card's MoE layers wait for the hook
-                if idle:
-                    time.sleep(idle)
-                continue
-            # wake up a little before the next token is due, then every 50 us
-            due = t_tok + gap - time.perf_counter()
-            time.sleep(min(max(due * 0.5, 5e-5), 1e-3))
-        st = b.wait(expect=0.0)
+                if host is not None:            # the card's MoE layers wait for the hook
+                    if idle:
+                        time.sleep(idle)
+                    continue
+                # wake up a little before the next token is due, then every 50 us
+                due = t_tok + gap - time.perf_counter()
+                time.sleep(min(max(due * 0.5, 5e-5), 1e-3))
+            st = b.wait(expect=0.0)
+        except BaseException:
+            self._running = None
+            if b.in_run and state is not None and not asked:
+                try:                            # (the card halts after the token in flight)
+                    b.write(state + 4 * G.S_HALT, np.ones(1, np.float32))
+                except Exception:               # noqa: BLE001 (the error raised is the one)
+                    pass
+            b.abort(STOP_WAIT)
+            raise
         self._running = None
         while k < n and take():                            # the last tokens, after HALTED
             pass

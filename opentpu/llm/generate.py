@@ -34,7 +34,10 @@ from .. import isa as I
 from .. import language as ol
 from ..compiler import CompileError, Tensor, current
 
-# ---- the state block (fp32 words in DRAM, one per slice)
+# ---- the state block (fp32 words in DRAM, one per slice; 128-byte aligned). Its 64-byte beats
+# have one writer each during a run: words 0..15 the card's (the run-time variables), 16..31 the
+# host's (its stop word: BoardBackend.run_generate writes that beat alone, mid-run), 32..47 the
+# MTP loop's (mtp.py)
 STATE_WORDS = 64
 S_TOK, S_TPOS, S_RING, S_LEFT = 0, 1, 2, 3       # the run-time variables, the tokens left
 S_K, S_ITEMP, S_TOPP = 4, 5, 6                    # sampling: top-k, log2(e) / T, top-p
