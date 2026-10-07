@@ -356,13 +356,28 @@ bash tools/qual/qual.sh deploy_bl32mx120_be388a32 full    # full
 | warm soak (continuous Qwen3 decode) | 3 min | 5 min |
 | `otpu-diag --soak 20`, warm | quick memory test | march C- |
 | with CAPS bit31, WAITW on the host's writes (`tools/qual/waitw.py`): the host writes data, then a flag, while the card waits on the flag and then reads the data (XDMA's writes through otpu_mem_ch into LiteDRAM against the accelerator's reads); a WAITW timeout stops with ERROR | 200 rounds | 200 rounds |
-| after the soak: token-exact against the ISA simulator, 6 configurations, per-position and resident decode | yes | yes |
-| with CAPS bit30, the decode loop on the card (docs/autodecode.md): token-exact in 6 configurations, then `decode_profile --card-loop`, greedy and sampled | 6 + 4-bit profiles | 6 + all 6 profiles |
+| after the soak: token-exact against the ISA simulator (32 greedy tokens past EOS, every logits vector bit for bit), 6 configurations per-position and resident, and the long prompt (`LONG`, default LFM2.5 int8: 240 tokens, so the decode crosses position 256) per-position, resident and in prompt runs | 6 x 2 + 3 | 6 x 2 + 3 |
+| with CAPS bit30, the decode loop on the card (docs/autodecode.md): token-exact in 6 configurations and the long prompt's two (plain and in prompt runs), then `decode_profile --card-loop`, greedy and sampled | 6 + 2 + 4-bit profiles | 6 + 2 + all 6 profiles |
 | the DRAM's read / write turnarounds (`tools/qual/turnaround.py`, docs/litedram.md section 11): fp4 weight reads beside 64 KiB stores and loads of the tile stored before, the data against the ISA simulator, then both channels' ECC counters (sec / ded since the configuration) must be 0 | 30 s (`TURN`) | 30 s |
-| final `otpu-selftest` (after loading `REST` if set) | yes | yes |
+| the kernel's xdma errors since the load (`dmesg`): each a FAIL line | yes | yes |
+| the card's build again (after loading `REST` if set: REST's), final `otpu-selftest` | yes | yes |
 
 Every phase prints its duration; the table of phases is at the end and in `$OUT/phases.tsv`
-(`/tmp/qual-<deploy>`), with every PASS / FAIL line in `$OUT/checks.txt`.
+(`/tmp/qual-<deploy>`), with every PASS / FAIL line in `$OUT/checks.txt`. The exit status is 0
+only when the qual ran to its end with no FAIL line (`QUAL DONE <deploy> <time>: PASS`).
+
+**The card must run the candidate.** Every openTPU bitstream answers the rescan with the same
+ID, so after the JTAG load (with `LOAD=0` at the start) the script reads the card's `BUILD_ID`
+and `CAPS` (`Board.info`) and compares the build with `EXPECT`, by default the deploy's name's
+last 8 hex digits (`deploy_fpfix_e776703a` -> `e776703a`). It checks again at the end, and
+after loading `REST` it checks REST's build (`REST_EXPECT`, else the last 8 hex digits of its
+directory, the link resolved: `production/otpu.bit` -> `deploy_fmvf_542fc43a` -> `542fc43a`).
+A JTAG load that fails (`openFPGALoader`'s exit status), another build on the card and a
+probe of `BUILD_ID` and `CAPS` that fails are FAIL lines and stop the qual; if the candidate
+was loaded, `REST` goes back on the card first. (Before 2026-10-06 the loader's exit status was
+lost in a pipe and the build was never compared: a busy cable left the old bitstream on the
+card and the qual passed it under the candidate's name. A failed probe read as a bitstream
+without the decode loop and WAITW, and skipped their phases without a FAIL line.)
 
 A crash is a FAIL:
 - **Crashed steps:** every step's full output goes to `$OUT/logs/`. A step that exits non-zero
@@ -373,25 +388,44 @@ A crash is a FAIL:
   where `opentpu.llm.model_dir` looks (`models/`). A staged tree needs its `models` link. Without
   it the model phases are skipped, and that is a FAIL line.
 - **Failed soak runs:** a failed run ends the warm soak.
+- **Checks that test less than they say:** a resident run whose decode is not resident, a
+  prompt-runs run that does not take them, a long run whose decode does not cross position
+  256, a reference of the old format: each a FAIL line.
+- **The references' job:** after the last token-exact run it gets `REFS_WAIT` seconds (default
+  900); then it is killed (refs.py compute kills its jobs) and that is a FAIL line. An early
+  exit or a kill (SIGTERM) kills it too, and is a FAIL line.
 - **Why:** on 2026-09-29 a run from a tree without `models/` crashed in every model phase and
   still printed "0 FAIL lines".
 
-`tests/test_qual_sh.py` runs the script with stub tools, covering a clean run and each failure.
-`SOAK` (seconds) overrides the profile's warm soak, and `GEN=0` / `GEN=1` the bitstream's CAPS
-bit30.
+`tests/test_qual_sh.py` runs the script with stub tools (a stub card: the build it runs, its
+JTAG loads, its probe and its kernel log), covering a clean run and each failure.
+`SOAK` (seconds) overrides the profile's warm soak, `GEN=0` / `GEN=1` the bitstream's CAPS
+bit30, `RUNS`, `LONG` (empty: no long prompt) and `NTOK` the token-exact runs.
 
 The fast profile is
 meant for images that change timing or the DRAM path; use `full` for a new production
 candidate after RTL changes to the MXU, VPU or memory system, and whenever fast finds anything.
 
-The ISA references (greedy tokens of the ISA simulator, 32 tokens per configuration) are what
-costs time when they are not cached: 0.5 to 10 minutes each, 20 minutes for the six on a loaded
-omarchy. `tools/qual/refs.py` caches them by content: the sources of the `opentpu` package
-without `opentpu/host` (the card's host code; the simulator configuration it computes is hashed
-as a value), the configuration, the checkpoint, the formats and the token count. A host-only
-change (a poll fix, a new tool) reuses them; any compiler, kernel or simulator change computes
-new ones. The key holds no path or machine, so they can be computed ahead on any box and
-copied:
+The ISA references are what costs time when they are not cached. A reference (format 2,
+since 2026-10-06) holds the ISA simulator's 32 greedy tokens after the prompt, past EOS (no
+stop ids: before, every run stopped at the one-sentence answer's EOS after 8 tokens, at
+positions below 32), and every logits vector a token was picked from, as a sha256 of its fp32
+bits with its top 5 for the FAIL line. The card check compares the tokens and the logits bit
+for bit: all 32 per position and in resident decode (which gives per-position decoding's
+logits bit for bit), the prefill's on the decode loop (its logits stay on the card). The long
+prompt is a passage cut to 240 tokens, so the 32 tokens decode at positions 240 .. 270, across
+the attention bucket's end at 256 (a run per bucket; the decode loop's HALT CHAIN); its prompt
+runs have a reference of their own (prompt runs at run-time positions may split a 4-bit MM's
+rows otherwise than compile_rows' runs, docs/prefill.md). `tools/qual/refs.py` caches the
+references by content: the sources of the `opentpu` package without `opentpu/host` (the
+card's host code; the simulator configuration it computes is hashed as a value) but with
+`opentpu/host/offload.py` (the models import it), the configuration, the checkpoint, the
+formats, the `OTPU_*` variables those sources read (`OTPU_FORMATS`, `OTPU_PLE_FORMAT`,
+`OTPU_MLP_UNROLL_BODIES`, ...; not the caches' and tools' runtime ones, nor `OTPU_LOCK_HELD`,
+which only host code reads), the prompt and its token ids, the token count, prompt runs and
+the format's version. A host-only change (a poll fix, a new tool) reuses them; any compiler,
+kernel or simulator change computes new ones. The key holds no path or machine, so they can be
+computed ahead on any box and copied:
 
 ```sh
 python3 tools/qual/refs.py compute ~/otpu-build/refcache/configs/deploy_bl16mx120_be388a1f.pkl
@@ -399,10 +433,13 @@ rsync -a ~/otpu-build/refcache/ omarchy:otpu-build/refcache/    # from another b
 ```
 
 (`qual.sh` keeps each card's configuration as `$REFCACHE/configs/<deploy>.pkl`; a new build with
-the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On the Mac the six
-compute in 6.4 minutes one at a time (Qwen3.5 4-bit 139 s, LFM2 int8 11 s), against about 20
-minutes three at a time on a busy omarchy (Qwen3.5 4-bit 620 s), and give the same tokens
-(checked for all six against omarchy's references of 2026-09-28).
+the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On omarchy (2026-10-06,
+load 1-14 from other test runs, two jobs at a time) the eight compute in 7.4 minutes; per
+reference, the engine and its tokens: LFM2 int8 39 s, 4-bit 51 s, Qwen3 int8 97 s, 4-bit 139 s,
+Qwen3.5 int8 106 s, 4-bit 161 s, the long prompt 97 s and in prompt runs 114 s, with peak RSS
+2.3 to 6.4 GiB. The ISA simulator's resident decode gave the per-position logits bit for bit
+in all seven (the six and the long prompt), and the long prompt's prompt runs (int8) its
+tokens and all 32 logits vectors.
 
 A card check never waits for a reference nobody is computing: a job in progress keeps a
 `.pending` file with its pid and a heartbeat, a failed job leaves a `.failed` file with the
