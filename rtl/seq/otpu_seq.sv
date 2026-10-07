@@ -95,7 +95,7 @@ module otpu_seq
   //   LD:     d[0] = rd0          t0 = wr0 W
   //   ST:     d[0] = wr0 (dw)     t0 = rd0
   //   DSTEP:  d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2
-  //   STREAM: d[0] = wr0 (dw)     t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2, t4 = rd3
+  //   STREAM: d = wr0, wr2 (dw)   t0 = wr1 W, t1 = rd0, t2 = rd1, t3 = rd2, t4 = rd3
   //   MM:     d = rd0, rd1        t0 = hull(wr0, wr1) W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t0 = rd0, t1 = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t0 = rd0
@@ -169,8 +169,8 @@ module otpu_seq
       OP_ST: begin
         s.dw = 1'b1; s.d[0] = r32(f.wr[0]); t0 = f.rd[0];
       end
-      OP_DSTEP, OP_STREAM: begin
-        s.dw = 1'b1; s.d[0] = r32(f.wr[0]);
+      OP_DSTEP, OP_STREAM: begin   // (DSTEP's wr2 is empty)
+        s.dw = 1'b1; s.d[0] = r32(f.wr[0]); s.d[1] = r32(f.wr[2]);
         t0 = f.wr[1]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2]; t4 = f.rd[3];
       end
       OP_MM: begin
@@ -565,7 +565,7 @@ module otpu_seq
               (q_fp.rd[i].lo[31:8] != 0 || q_fp.rd[i].hi[31:17] != 0))
             $fatal(1, "otpu_seq: ACT read range of pc %0d exceeds 8/17 bits", q_pc);
         end
-        for (int i = 0; i < 2; i++) begin
+        for (int i = 0; i < 3; i++) begin
           if (q_fp.wr[i].v && q_fp.wr[i].sp == SP_DRAM) dwr = 1'b1;
           if (q_fp.wr[i].v && q_fp.wr[i].sp == SP_ACT &&
               (q_fp.wr[i].lo[31:8] != 0 || q_fp.wr[i].hi[31:17] != 0))

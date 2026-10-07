@@ -71,7 +71,7 @@ everything is FTZ. **Every stage configuration is bit-exact with a documented VO
 |---|---|
 | `w1` | `desc` [15:0]: TMEM word address of the descriptor; `ks` [31:16]: the constants' stride (static, so the scoreboard knows K's range) |
 | `w2 + R[ra]` | `src`: the stream, in DRAM bytes, or TMEM words with `SRC_T` |
-| `w3 + R[ra]` | `dst`: where Y goes (in place: dst = src) |
+| `w3 + R[ra]` | `dst`: where Y goes (in place: dst = src; or another state) |
 | `w4 + R[rb]` | `vec`: column slots, slot i at `vec + i*cols` (i = 0..3) |
 | `w5 + R[rc]` | `x`: row scalars, `X[r] = T[x + r]` |
 | `w6 + R[rd]` | `k`: constants, `K_j = T[k + j*ks]` (j = 0..3, ks from w1) |
@@ -171,8 +171,8 @@ The fill takes one step per 8 words, and the DMA sequences it.
 ### 4.4 Descriptor to hardware (`isa.stream_hw_cfg`)
 
 A descriptor runs on the board when:
-- the stream is in DRAM, written in place, with rows 1..256 and cols a multiple of 64 up to
-  256;
+- the stream is in DRAM, written in place or to a chunk-aligned dst apart from src (the
+  compiler checks both), with rows 1..256 and cols a multiple of 64 up to 256;
 - A is off or a slot (1 or 2);
 - U is FMMA with B = slot 1 and G ∈ {K0, slot 3, one};
 - Q is off or slot 0;
@@ -383,7 +383,7 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
   j*ks, out), then fills the slots the modes need (4.3). `o` is counted only with `q_en`.
 - **pkg / seq:** `OP_STREAM` = 0x13 is a U_DMA instruction. The sequencer cannot read the
   descriptor, so the footprint takes the subset's largest shape (rows, cols ≤ 256):
-  - DRAM `[src, src + 256 KiB)` written (in place);
+  - DRAM `[src, src + 256 KiB)` and `[dst, dst + 256 KiB)` written (the same range in place);
   - TMEM reads of desc `[desc, desc + 8)`, vec `[vec, vec + 1024)`, x `[x, x + 256)` and K
     `[k, k + ks + 1)` (ks from w1, which is why it is in the instruction);
   - a TMEM write of `[out, out + 256)`.

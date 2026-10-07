@@ -119,3 +119,43 @@ def test_stream_rtl_bit_exact(have_verilator, uarch, seed):
     assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
     bad = np.nonzero(drams[0] != m.slices[0].dram)[0]
     assert len(bad) == 0, f"{len(bad)} DRAM bytes differ, first at {bad[:8]}"
+
+
+# A STREAM into another state (dst != src: Qwen3.5's MTP verify writes the last row's state to the
+# other slot) waits for a long VOP chain (its row scalars); a younger LD, ST or MM of the
+# destination must wait for it too, though it has no dependency on anything else: the
+# scoreboard's footprint holds dst beside src (a DMA LD or ST ready before the STREAM would
+# otherwise start first, as would the MXU's stream).
+@pytest.mark.parametrize("young", ["ld", "st", "mm"])
+def test_stream_dst_orders_younger_accesses(have_verilator, young):
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True, STREAM=True)
+    r = np.random.default_rng(1800)
+    rows, cols, src, dst = 64, 128, 0x10000, 0x80000     # dst past src's 256 KiB range
+    dw, vec, x, k, o = 60000, 5000, 7000, 8000, 9000
+    dsc = I.gdn_desc(rows, cols)
+    prog = [I.ld(0, 0, 4096)] + _fill_words(dw, dsc.words())
+    prog += [I.ld(0, vec, 2 * cols),
+             I.vop(I.V_FILL, k, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 0.9),
+             I.vop(I.V_FILL, k + 1, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 0.5),
+             # about 2,000 VPU cycles before x is written
+             I.vop(I.V_ABS, 20000, 0, 0, 64, 256, 256, 0, 0),
+             I.vop(I.V_COPY, x, 20000 + 255, 0, 1, rows, 0, 0, 0),
+             I.stream(dw, src, dst, vec, x, k, o)]
+    if young == "ld":
+        prog.append(I.ld(dst, 40000, 4 * cols))
+    elif young == "st":
+        prog.append(I.st(dst + 4 * cols, 0, 2 * cols))
+    else:
+        prog += [I.qact(0, 2, 0, 2, 256),
+                 I.mm(dst, 0, 40000, 8, 2, 256, 8, 2, 0, 0, unit=True)]
+    prog.append(I.halt())
+    img = np.zeros(1 << 20, np.uint8)
+    img[:4 * 4096] = f(r.standard_normal(4096)).view(np.uint8)
+    img[src:src + 4 * rows * cols] = f(0.3 * r.standard_normal(rows * cols)).view(np.uint8)
+    img[dst:dst + 4 * rows * cols] = f(r.standard_normal(rows * cols)).view(np.uint8)
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()])
+    bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
+    assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
+    bad = np.nonzero(drams[0] != m.slices[0].dram)[0]
+    assert len(bad) == 0, f"{len(bad)} DRAM bytes differ, first at {bad[:8]}"

@@ -415,7 +415,7 @@ module otpu_dma
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
     if (!rst && ds_su && sc.op == OP_STREAM &&
-        (!su_ok || su_src % D != 0 ||
+        (!su_ok || su_src % D != 0 || su_dst % D != 0 ||
          (su_dst != su_src && su_dst < su_src + 32'(su_cfg.rows) * su_ns * W * 4 &&
           su_src < su_dst + 32'(su_cfg.rows) * su_ns * W * 4)))
       $fatal(1, "otpu_dma: STREAM's descriptor at %0d is not in the hardware subset", sc.w1[15:0]);

@@ -348,7 +348,7 @@ KDA, GLA, RetNet, Mamba2, mLSTM, RWKV-7, RMSNorm, attention's reductions) are in
 The board runs the subset `opentpu.isa.stream_hw_cfg` accepts, announced by **CAPS bit26 =
 STREAM** (`regs.CAP_STREAM`; bit26 is taken; the full CAPS list is the register table in
 [observability.md](observability.md)):
-- DRAM state in place, rows ≤ 256, cols 64..256;
+- DRAM state, in place or into a chunk-aligned `dst` apart from `src`, rows ≤ 256, cols 64..256;
 - the state-step modes.
 
 The compiler (`ol.state_step`) falls back to VOPs otherwise. DSTEP is STREAM with

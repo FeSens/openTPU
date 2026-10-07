@@ -81,7 +81,7 @@ package otpu_pkg;
   typedef struct packed {
     logic            all;       // BAR: conflicts with everything
     rng_t [3:0]      rd;
-    rng_t [1:0]      wr;
+    rng_t [2:0]      wr;        // wr[2]: STREAM's destination
   } fp_t;
 
   function automatic int unit_of(input logic [7:0] op);
@@ -111,10 +111,10 @@ package otpu_pkg;
   // RAW, WAR or WAW between two instructions.
   function automatic logic conflict(input fp_t n, input fp_t e);
     if (n.all || e.all) return 1'b1;
-    for (int i = 0; i < 2; i++) begin
+    for (int i = 0; i < 3; i++) begin
       for (int j = 0; j < 4; j++)
         if (ov(n.wr[i], e.rd[j]) || ov(e.wr[i], n.rd[j])) return 1'b1;
-      for (int j = 0; j < 2; j++)
+      for (int j = 0; j < 3; j++)
         if (ov(n.wr[i], e.wr[j])) return 1'b1;
     end
     return 1'b0;
@@ -129,7 +129,7 @@ package otpu_pkg;
       if (nd.rd[i].sp != SP_DRAM) nd.rd[i].v = 1'b0;
       if (ed.rd[i].sp != SP_DRAM) ed.rd[i].v = 1'b0;
     end
-    for (int i = 0; i < 2; i++) begin
+    for (int i = 0; i < 3; i++) begin
       if (nd.wr[i].sp != SP_DRAM) nd.wr[i].v = 1'b0;
       if (ed.wr[i].sp != SP_DRAM) ed.wr[i].v = 1'b0;
     end
@@ -252,10 +252,12 @@ package otpu_pkg;
       end
       OP_STREAM: begin
         // the shape is in the descriptor, which the sequencer cannot read: the hardware
-        // subset's largest (rows, cols <= 256; docs/stream.md 4.4), read and written in place
-        // (dst = src); o written; read: the descriptor's first 8 words (w1 = desc | ks << 16),
-        // the 4 column slots, x, and the constants K0 = T[k], K1 = T[k + ks]
+        // subset's largest (rows, cols <= 256; docs/stream.md 4.4), src read and written (in
+        // place) and dst written (the same range, or one apart from it); o written; read: the
+        // descriptor's first 8 words (w1 = desc | ks << 16), the 4 column slots, x, and the
+        // constants K0 = T[k], K1 = T[k + ks]
         f.wr[0] = mk(SP_DRAM, c.w2, 32'(4 * 256 * 256));
+        f.wr[2] = mk(SP_DRAM, c.w3, 32'(4 * 256 * 256));
         f.wr[1] = mk(SP_TMEM, c.w7, 32'd256);
         f.rd[0] = mk(SP_TMEM, 32'(c.w1[15:0]), 32'd8);
         f.rd[1] = mk(SP_TMEM, c.w4, 32'(4 * 256));
