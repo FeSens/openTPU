@@ -97,15 +97,17 @@ WR_SETTLE = 2e-3                # after HALTED: WR_IDLE read back to back this l
                                 # up to QUIET_WAIT (not seen then: an error)
 RUN_TIMEOUT = 600.0             # the longest run (Board.wait), and the longest a generate run may
                                 # go without a token (run_generate)
-# Ending a run (Board.stop): CTRL = 0 holds the core in reset, but the memory adapter
-# (otpu_native_dram) is reset with the board only, so a run cut short still has DRAM writes
-# queued, and reads in flight (port B: up to 128 beats a channel) whose data a program load
-# right after would take for instruction rows (docs/host.md, "Ending a run"). STATUS QUIET: the
-# bits that say the adapter is done with them; WR_IDLE covers the writes, and CUT_SETTLE gives
-# a cut-short run's reads time to come back (a few us).
+# Ending a run (Board.stop; docs/observability.md, "Stopping a run"): CTRL = 0, then STATUS
+# WR_IDLE (QUIET), then DRAM writes, a LOAD or a RUN. The run's writes given to the memory
+# still land after CTRL = 0: WR_IDLE orders the host's DMA writes after them. Its reads in
+# flight the card drops itself (from fix-board on: the loader and the next RUN start once none
+# is in flight). Older bitstreams released the core with port B reads in flight (up to 128
+# beats a channel) whose data a program load right after took for instruction rows:
+# CUT_SETTLE, before QUIET, gives a cut-short run's reads time to come back there (a few us;
+# a fallback only, the whole sequence on a current bitstream is CTRL = 0 and QUIET).
 QUIET = R.ST_WR_IDLE
 QUIET_WAIT = 1.0                # after CTRL = 0: the longest wait for QUIET
-CUT_SETTLE = 1e-3
+CUT_SETTLE = 1e-3               # (bitstreams before fix-board)
 STOP_WAIT = 1.0                 # a run stopped by an error or an exit: its time to halt by itself
                                 # (the token in flight) before it is cut short
 QUIESCE_WAIT = 120.0            # Board(): the longest wait for another process's run to halt
@@ -584,6 +586,8 @@ class Board:
         self._trace = None              # (depth, keep_first) of a started traced run
         self._t_run = 0.0               # when the started run began (perf_counter)
         self.in_run = False             # started and not seen halted: writes in RUN_H2C calls
+        self._ded0 = None               # STATUS ECC_DED as the run started (None: not read)
+        self._ded_said = False
         self._pool = None           # the DMA worker thread (large reads / writes on the card)
         try:
             ident = self.t.reg_read(R_ID) if check or self.lock is not None else ID_OTPU
@@ -644,8 +648,8 @@ class Board:
     def stop(self, wait: float = 0.0) -> bool:
         """End the card's run, if one goes: up to `wait` seconds for HALTED (a run that halts by
         itself leaves DRAM as its program does: a whole token), then CTRL = 0 (the core held in
-        reset: a run still going is cut short) and the memory adapter quiet (QUIET; CUT_SETTLE),
-        so nothing of the run lands after the host's next writes or in a program load. Nothing
+        reset: a run still going is cut short) and STATUS QUIET (its writes landed), so nothing
+        of the run lands after the host's next writes or in a program load. Nothing
         with RUN clear (the core is held in reset already: every CTRL = 0 of a run's is this
         one's), nor on a card this process no longer holds (LockLost: it may be another
         runner's). True when no run was cut short."""
@@ -668,7 +672,7 @@ class Board:
             except TimeoutError:
                 pass
         t.reg_write(R_CTRL, 0)
-        if not done:
+        if not done:                # (reads in flight: bitstreams before fix-board only)
             time.sleep(CUT_SETTLE)
         try:
             t.poll(R_STATUS, QUIET, QUIET, QUIET_WAIT)
@@ -946,6 +950,20 @@ class Board:
         self.in_run = True
         t.reg_write(R_CTRL, CTRL_RUN)
         self._t_run = time.perf_counter()
+        self._ded0 = None
+        if not getattr(t, "batched", False):    # (the board model: a script, read at its end)
+            # CTRL takes RUN (and LOAD) only while both channels are calibrated: else RUN
+            # stays 0 and a wait would poll HALTED until its timeout
+            st = t.reg_read(R_STATUS)
+            if not st & ST_RUN:
+                self.in_run = False
+                low = [ch for ch, bit in enumerate((ST_CALIB0, ST_CALIB1)) if not st & bit]
+                raise RuntimeError(
+                    f"the card did not start the run (STATUS {st:#x}, RUN clear): DDR3 channel "
+                    f"{' and '.join(map(str, low))} not calibrated, and CTRL takes neither RUN "
+                    "nor LOAD before both are (memcal: otpu-memcal cal; or reload the bitstream)"
+                    if low else f"the card did not start the run (STATUS {st:#x}, RUN clear)")
+            self._ded0 = bool(st & R.ST_ECC_DED)
 
     def wait(self, timeout: float = RUN_TIMEOUT, expect: float = 0.0) -> dict:
         """Wait for the started program to halt; returns the counters (run's second half).
@@ -1015,6 +1033,18 @@ class Board:
         if st & ST_AXI_ERR:
             raise RuntimeError("the memory path reported an error (STATUS AXI_ERR: a DDR3 controller "
                                "broke its port contract; on MIG bitstreams, an AXI error response)")
+        # ECC_DED is sticky (until the ECC counters' clear: Board.scrub): set during this run, a
+        # word it read was wrong; set before it, the run is not checked (said once a Board)
+        stats["ecc_ded"] = bool(st & R.ST_ECC_DED)
+        if stats["ecc_ded"] and self._ded0 is False:
+            raise RuntimeError("an uncorrectable ECC error during the run (STATUS ECC_DED): a "
+                               "word it read from DRAM was wrong, and so may be its results "
+                               "(memcal.ecc has the counts; Board.scrub clears them)")
+        if stats["ecc_ded"] and self._ded0 and not self._ded_said:
+            self._ded_said = True
+            print("otpu: STATUS ECC_DED was set before this run (an uncorrectable ECC error "
+                  "since the counters' last clear): runs are not checked for one until Board.scrub "
+                  "clears it", file=sys.stderr, flush=True)
         return stats
 
     def _trace_out(self, count: int, drop: int, depth: int, keep_first: bool,

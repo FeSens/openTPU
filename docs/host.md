@@ -809,13 +809,15 @@ The wait reads STATUS back to back for 2 ms, then polls up to 1 s (`QUIET_WAIT`)
 set by then is an error (a DRAM write never answered), where it used to return the run's
 counters as a success after the 2 ms.
 
-**Ending a run.** `CTRL = 0` holds the core in reset, but the memory adapter
-(`otpu_native_dram`) is reset with the board only: a run cut short still has DRAM writes
-queued, and port B reads in flight (up to 128 beats a channel) that a program load right after
-would take for instruction rows. `Board.stop(wait)` ends a run the same way everywhere: up to
-`wait` seconds for HALTED (a run that halts by itself leaves a whole token), then `CTRL = 0`,
-1 ms for a cut-short run's reads, and STATUS QUIET (`board.QUIET`, WR_IDLE today) polled for
-up to 1 s. It runs:
+**Ending a run.** A run cut short by `CTRL = 0` still has DRAM writes on their way: they land
+after it, so the host waits for STATUS WR_IDLE before it writes the DRAM, loads or runs
+(docs/observability.md, "Stopping a run"). Its reads in flight the card drops itself (from
+fix-board on, the loader and the next RUN start once none is in flight); older bitstreams
+released the core with port B reads in flight (up to 128 beats a channel), which a program load
+right after took for instruction rows. `Board.stop(wait)` ends a run the same way everywhere: up
+to `wait` seconds for HALTED (a run that halts by itself leaves a whole token), then `CTRL = 0`,
+and STATUS QUIET (`board.QUIET`: WR_IDLE) polled for up to 1 s; a run cut short gets 1 ms before
+that, for those older bitstreams' reads (`CUT_SETTLE`). It runs:
 - when a locked `Board` opens (`Board.quiesce`, before anything writes the card): a process
   killed mid-run (SIGKILL, the OOM killer) leaves RUN set and its program storing KV rows,
   `out[]` and its state into DRAM, over the next holder's freshly written image. A run still
@@ -831,6 +833,14 @@ up to 1 s. It runs:
 While a process holds the lock, SIGTERM and SIGHUP raise SystemExit in it (exit status 143 or
 129) instead of ending it at once, so these paths run (`runstate`; a repeat within 2 s is the
 same request, later ones end it at once). SIGKILL leaves the run to the next holder's open.
+
+**A run the card does not take, an ECC error.** CTRL takes neither RUN nor LOAD while a DDR3
+channel is not calibrated (STATUS CALIB0 / CALIB1, fix-board's RTL): `Board.start` reads
+STATUS after its RUN and raises when RUN is still clear, naming the channel, instead of a wait
+that polls HALTED until its timeout. STATUS ECC_DED (bit 9) is sticky until the ECC counters
+are cleared (`Board.scrub`, `memcal.ecc`): set during a run, a word the run read was wrong, and
+`Board.wait` raises; set before it, the run cannot be checked, so the run's stats carry
+`ecc_ded` and the Board says so once on stderr.
 
 **Bounded waits.** Every loop that waits on the card has a deadline: `BoardBackend`'s service
 of the host hook while a MoE run waits on it (600 s, `RUN_TIMEOUT`), the streamed-logits wait

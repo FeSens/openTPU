@@ -128,6 +128,40 @@ def test_close_and_exit_stop_a_run_in_flight():
     assert not t.regs[R.R_CTRL] & R.CTRL_RUN
 
 
+def test_a_run_on_an_uncalibrated_card_is_refused_at_its_start():
+    """CTRL takes neither RUN nor LOAD while a channel is not calibrated (STATUS CALIB0 / CALIB1;
+    fix-board's RTL): start() says so at once, instead of a wait polling HALTED until its
+    timeout."""
+    t = FakeTransport(run_s=0.01, devname=None, calib=(True, False))
+    b = Board(t)
+    b.load_program(4096, np.zeros(16, np.uint32))
+    t0 = time.perf_counter()
+    with pytest.raises(RuntimeError, match="channel 1 not calibrated"):
+        b.start()
+    assert time.perf_counter() - t0 < 0.5 and not b.in_run
+    t.calib = [True, True]
+    assert b.run(timeout=5.0)["instructions"] == [2]
+
+
+def test_an_ecc_error_during_a_run_is_an_error(capsys):
+    """STATUS ECC_DED (sticky, fix-board's RTL) set during a run: a word it read was wrong, so
+    the wait raises; set before the run (an earlier one's, not cleared), the run cannot be
+    checked: its stats say so (ecc_ded) and the Board says it once, no error."""
+    t = FakeTransport(run_s=0.01, devname=None)
+    b = Board(t)
+    b.load_program(4096, np.zeros(16, np.uint32))
+    assert b.run(timeout=5.0)["ecc_ded"] is False
+    b.start()
+    t.ecc_ded = True                                    # an uncorrectable word in this run
+    with pytest.raises(RuntimeError, match="uncorrectable ECC error during the run"):
+        b.wait(timeout=5.0)
+    assert not t.regs[R.R_CTRL] & R.CTRL_RUN
+    capsys.readouterr()
+    assert b.run(timeout=5.0)["ecc_ded"] is True        # set before: reported, not raised
+    assert b.run(timeout=5.0)["ecc_ded"] is True
+    assert capsys.readouterr().err.count("ECC_DED was set before this run") == 1
+
+
 def test_sigterm_ends_a_card_holder_through_its_cleanup():
     """SIGTERM to a process that holds the card: SystemExit (exit status 143) instead of the
     default action, so its run is stopped on the way out (Board's exit hook): the card's CTRL

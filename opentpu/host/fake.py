@@ -17,7 +17,9 @@ and I2C_CTRL / I2C_IN drive and read those bus models. With `ddr_mts` CAPS bit3 
 DDR_MTS register; without it the register reads 0xDEADBEEF, as on older bitstreams. With
 `args` CAPS bit25 announces the ARG0..7 registers (kept, read back), with `gen` CAPS bit30
 the decode loop's instructions (it runs nothing either way), with `chash` CAPS bit7 the hashed
-channel interleave (the run's logits pieces land by that map). Its identity (VERSION: D,
+channel interleave (the run's logits pieces land by that map). `calib` (STATUS CALIB0,
+CALIB1): CTRL takes RUN only while both are set, as the RTL; `ecc_ded`: STATUS ECC_DED (set
+by hand: sticky on the card). Its identity (VERSION: D,
 MCOLS, LANES) is by default the configuration the environment asks for (board_config:
 OTPU_MCOLS, OTPU_LANES), as a card built for it would report.
 """
@@ -48,7 +50,7 @@ class FakeTransport:
                  i2c: list | None = None, ddr_mts: int | None = None,
                  w4: bool = True, pair: bool = False, dstep: bool = False,
                  args: bool = False, stream: bool = False, gen: bool = False,
-                 chash: bool = False):
+                 chash: bool = False, calib: tuple = (True, True), ecc_ded: bool = False):
         self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2)]
         self.v, self.devname, self.dev = regmap, devname, devname and f"/dev/{devname}"
         self.run_s, self.cycles_per_run = run_s, cycles
@@ -70,6 +72,8 @@ class FakeTransport:
         self.stream = stream            # CAPS bit26: the stream engine
         self.gen = gen                  # CAPS bit30: the decode loop (RLD, ARGMAX, HALT CHAIN)
         self.chash = chash              # CAPS bit7: the hashed channel interleave
+        self.calib = list(calib)        # STATUS CALIB0 / CALIB1
+        self.ecc_ded = ecc_ded          # STATUS ECC_DED
         self.regs = {R.R_CTRL: 0, R.R_PROG_ADDR: 0, R.R_PROG_N: 0, R.R_SCRATCH: 0,
                      R.R_TRACE_CTRL: 0, R.R_TRACE_ADDR: 0, R.R_I2C_CTRL: 0}
         self.count = {k: 0 for k in R.counters(regmap)}
@@ -132,6 +136,8 @@ class FakeTransport:
             if off >= R.R_REGMAP:
                 return
         if off == R.R_CTRL:
+            if not (all(self.calib) or self.regs[R.R_CTRL] & R.CTRL_RUN):
+                val &= ~(R.CTRL_RUN | R.CTRL_LOAD)  # (uncalibrated: RUN and LOAD not taken)
             if val & R.CTRL_RUN and not self.regs[R.R_CTRL] & R.CTRL_RUN:
                 self.t_run = time.perf_counter()
                 self._wrote, self._t_logits = 0, self.t_run
@@ -167,8 +173,9 @@ class FakeTransport:
             h = self._halted()
             idle = self.logits is None or self._t_logits is None or \
                 self._wrote >= -(-self.logits[1] // self.logits[2])
-            return (R.ST_HALTED if run and h else 0) | R.ST_CALIB0 | R.ST_CALIB1 \
-                | (R.ST_WR_IDLE if idle else 0) | (R.ST_RUN if run else 0)
+            return (R.ST_HALTED if run and h else 0) | (R.ST_WR_IDLE if idle else 0) \
+                | (R.ST_CALIB0 if self.calib[0] else 0) | (R.ST_CALIB1 if self.calib[1] else 0) \
+                | (R.ST_RUN if run else 0) | (R.ST_ECC_DED if self.ecc_ded else 0)
         if off in (R.R_CYCLES, R.R_CYCLES_HI):
             c = self.cycles_per_run if self.runs else 0
             return c & 0xFFFFFFFF if off == R.R_CYCLES else c >> 32
