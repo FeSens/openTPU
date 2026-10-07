@@ -344,13 +344,15 @@ def test_halt_is_seen_soon_when_core_khz_is_off(run_dir, skew):
     assert np.median(late[4:]) < 0.4e-3, late
 
 
-@pytest.mark.parametrize("lag", [0.0, 1e-3, 20e-3])
+@pytest.mark.parametrize("lag", [0.0, 1e-3, 20e-3, None])
 def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
-    """The last logits piece lands `lag` after HALTED (its stores still in flight): the tail
-    read after HALTED reads again until it is there (up to TAIL_SETTLE); a piece missing for
-    longer is an error (seen on the card: LFM2 fp4 + int8 head, resident decode, sampled)."""
+    """The last logits piece lands `lag` after HALTED (its stores still in flight, WR_IDLE clear
+    until then): Board.wait waits for WR_IDLE (past TAIL_SETTLE too: it returned after 2 ms
+    without it), and the tail read after HALTED reads again until the words are there (up to
+    TAIL_SETTLE; seen on the card: LFM2 fp4 + int8 head, resident decode, sampled). Words the
+    run leaves unwritten (None: the region's last 64 bytes, WR_IDLE set) are an error."""
     from opentpu import lens as L
-    from opentpu.host.board import TAIL_SETTLE, sim_config
+    from opentpu.host.board import sim_config
     from opentpu.llm.qwen3 import HEAD_CHUNK, Engine
     spec, W = L._tiny_qwen()
     cfg = sim_config(spec, 256)
@@ -359,10 +361,11 @@ def test_streamed_tail_waits_for_the_last_stores(run_dir, lag):
     eng = Engine(spec, W, cap=256, cfg=cfg, pipeline=False,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=t))
     v = eng.image.v_loc
-    t.logits = (eng.image.io["logits"], 4 * v, 4 * min(HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
-    t.logits_lag = lag
+    t.logits = (eng.image.io["logits"], 4 * v - (64 if lag is None else 0),
+                4 * min(HEAD_CHUNK, eng.cfg.TMEM_WORDS // 8))
+    t.logits_lag = lag or 0.0
     want = np.arange(v, dtype=np.float32) % 997 * 1e-3
-    if lag > TAIL_SETTLE:
+    if lag is None:
         with pytest.raises(RuntimeError, match="unwritten"):
             eng.step(1)
     else:

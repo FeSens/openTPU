@@ -39,7 +39,7 @@ import time
 from pathlib import Path
 
 from . import regs as R
-from .runstate import run_dir
+from .runstate import ensure_run_dir, open_shared, read_shared, run_dir, write_shared
 
 BUSES = {"sensor": 0, "smbus": 1}
 SCAN_FIRST, SCAN_LAST = 0x08, 0x77
@@ -95,8 +95,8 @@ class Bus:
     # ------------------------------------------------------------------ lock
     def __enter__(self):
         if self._depth == 0 and self.lock_path is not None:
-            self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o666)
+            ensure_run_dir()
+            fd = open_shared(self.lock_path)
             deadline = time.monotonic() + self.lock_timeout
             while True:
                 try:
@@ -534,16 +534,17 @@ def cache_path(t) -> Path | None:
 def save_discovery(t, d: dict) -> None:
     p = cache_path(t)
     if p is not None:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d, indent=1))
-        tmp.replace(p)
+        try:
+            ensure_run_dir()
+            write_shared(p, json.dumps(d, indent=1))
+        except (OSError, RuntimeError):
+            pass                        # (a cache: discovered again next time)
 
 
 def load_discovery(t) -> dict | None:
     p = cache_path(t)
     try:
-        d = json.loads(p.read_text()) if p else None
+        d = json.loads(read_shared(p)) if p else None
     except (OSError, ValueError):
         return None
     return d if d and d.get("version") == 1 else None

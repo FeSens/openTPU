@@ -401,7 +401,14 @@ and feeds back each token. The MoE layers wait inside it. Per MoE layer, as buil
    computed it.
 3. **Post.** The k ids to the mailbox's row, then `seq + 1` in a second `ST`, so the host never
    reads a torn request. The fence comes first, so one row is enough. `seq` is a float, and
-   positive floats compare by their bits, so it works directly in `WAITW`'s GE compare.
+   positive floats compare by their bits, so it works directly in `WAITW`'s GE compare. A
+   float counts exactly up to 2^24 only: there `seq + 1` rounds back to `seq`, the post
+   repeats the last request's number, the host sees no request, and every miss after waits
+   out its WAITW (about 22 h of the 35B's decode, or 2.3 h of layer-major prefill, in one
+   process). So between runs (`BoardBackend.start`), once `seq` has reached 2^23
+   (`offload.SEQ_REBASE`), the host serves a request still unserved and sets the mailbox's
+   `seq` and `served` back to 0 (`ExpertServer.rebase`, `RowServer.rebase`). The card reads
+   both from DRAM at every post, so the programs do not change.
 4. **Look up.** A `LOOP` over the ids: `RLD` of the entry's offset (id x 8, one `VOP` for
    all), `LD` of its present flag.
 5. **Hits first.** A second `LOOP` over the ids with `LOOP R[present]` inside:

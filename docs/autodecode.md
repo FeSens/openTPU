@@ -227,7 +227,11 @@ programs (docs/mtp.md 10).
 
 **On the card**, `BoardBackend.run_generate` starts the program and reads new beats of `out[]`
 as the tokens land. It sleeps between reads on the expected token gap. If `stop()` returns
-true, it writes the state's stop word, and the card halts after the token in flight.
+true, it writes the state's stop word, and the card halts after the token in flight. The stop
+word's 64-byte beat (words 16..31) holds host words only, and the host writes that beat alone:
+the card stores its run-time words (0..15) meanwhile (docs/host.md, "The stop word"). On an
+error, KeyboardInterrupt or SIGTERM it writes the stop word too and stops the run before the
+process lets the card go (docs/host.md, "Ending a run").
 
 **On the ISA simulator**, `IsaBackend` runs the whole loop, then reads `out[]` at the end.
 

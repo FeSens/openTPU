@@ -363,9 +363,11 @@ class MTPDecoder:
 
 
 # ---- the loop on the card (docs/mtp.md 10)
-# the state block: generate.py's words, and the iteration's
-S_DRAFT, S_A0, S_A1, S_N, S_PAR, S_TPOS0, S_ITER, S_ACC = 20, 21, 22, 23, 24, 25, 26, 27
-S_END = 28          # 1.0: the iteration's D halts (a stop id, the host's word, no tokens left)
+# the state block: generate.py's words, and the iteration's, which the card stores in its own
+# 64-byte beat (words 32..47): not in the host's stop word's (16..31), which the host writes
+# during the run (BoardBackend.run_generate: the beat alone, its words read just before)
+S_DRAFT, S_A0, S_A1, S_N, S_PAR, S_TPOS0, S_ITER, S_ACC = 32, 33, 34, 35, 36, 37, 38, 39
+S_END = 40          # 1.0: the iteration's D halts (a stop id, the host's word, no tokens left)
 # a bucket's programs, in its chain table's order: the verify (V) and the bucket's last
 # position (E) per parity, the MTP layer over two rows (D) and over one (D1)
 KINDS = ("V0", "V1", "E0", "E1", "D", "D1")

@@ -110,6 +110,9 @@ def test_writes_during_a_run_move_run_h2c_per_call(addr, n, chash):
         def reg_write(self, off, val):
             pass
 
+        def reg_read(self, off):                # (start() checks that the card took RUN)
+            return R.ST_RUN | R.ST_CALIB0 | R.ST_CALIB1 if off == R.R_STATUS else 0
+
     rng = np.random.default_rng(n)
     t = T()
     b = Board(t, check=False)
