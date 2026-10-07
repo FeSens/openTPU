@@ -77,6 +77,18 @@ register per distinct coefficient pattern, steps it by `ADDI` at the end of the 
 after the loop and frees it when every loop that uses it has ended. Instructions add the
 register to their base field, which is the ISA's `w1 += R[ra]` rule.
 
+A freed register is 0 again, but the loops live when it was freed may still use it earlier in
+their body. So it takes no address with terms of those loops (their step would leave it
+non-zero for that use in the next iteration), and no address that starts at a run-time value
+(a `RunVar`'s argument, a `DevVar`'s register, the generate loop's `RLD MUL` of a state word:
+its init leaves `c * var` in the register after its loops), unless the loop's body zeroes the
+register before any address takes it (a scratch register given back at the body's head, as
+generate.py's token count). A loop with a device-computed count (a guard) may run 0 times and
+skip the inits and zeroings inside it: after it, a register whose value was set inside it is
+free again, taken last, and zeroed when an address or `scratch()` takes it. A body that would
+end on the last instruction of an inner body (a `LoopBlock` or a guard emitted as
+instructions) ends with a `NOP` (docs/isa.md, `LOOP`).
+
 ## The flash-attention loop, source to instructions
 
 `opentpu/kernels/attention.py` is an online-softmax (flash) attention, software-pipelined in the

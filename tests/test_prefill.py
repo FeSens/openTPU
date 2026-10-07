@@ -350,6 +350,28 @@ def test_bucket_1_programs_are_warmed_at_start(tmp_path, monkeypatch):
     PC.clear()
 
 
+@pytest.mark.parametrize("case", ["qwen3", "lfm2"])
+def test_prompt_runs_at_a_partial_last_bucket(guarded, case):
+    """A KV capacity of 384 (a multiple of D, not of the attention block): bucket 2's masked
+    block spans the cache's last 128 tokens and takes the first 128 entries of each row of its
+    mask tile (row by row). Prompts across 256 and on to the cache's end give the compile-time
+    runs' logits and DRAM bit for bit, reading nothing past the cache (every KV region is
+    followed by -NaN words here)."""
+    W, spec, cfg, kw = _model(case)
+    cap = 384
+    r = np.random.default_rng(5)
+    p1, p2 = ([int(t) for t in r.integers(0, 1000, n)] for n in (250, cap - 250))
+    a = Engine(spec, W, cap=cap, cfg=cfg, resident=True, prompt_runs=True, **kw)
+    b = Engine(spec, W, cap=cap, cfg=cfg, resident=True, **kw)
+    assert PF.supported(a) and guarded(a) and guarded(b)
+    got = [a.prefill(p1), a.prefill(p2)]
+    R_max = lambda blocks: a._prompt_rmax[blocks][0]       # noqa: E731
+    want = [_static(b, p1, R_max), _static(b, p2, R_max)]
+    assert all(np.isfinite(y).all() and np.array_equal(x, y) for x, y in zip(got, want))
+    assert a.pos == b.pos == cap and max(a._prompt_rmax) == 2
+    assert all(np.array_equal(x, y) for x, y in zip(_drams(a, cap), _drams(b, cap)))
+
+
 @pytest.mark.parametrize("case", ["qwen3-board", "lfm2", "kh8"])
 def test_prompt_runs_add_the_mask_tile(case):
     """docs/prefill.md 9: a prompt run's masked block loads its row's tile of the image's mask

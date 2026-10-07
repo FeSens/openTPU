@@ -142,14 +142,16 @@ class Slice:
             body = ins.w[0]
             if body < 1:
                 raise SimError("LOOP with empty body")
+            # whatever the count: one of 0 would jump past the enclosing body's end (and skip
+            # its back edge)
+            end = self.pc + body
+            if any(e[1] == end for e in self.stack):
+                raise SimError("nested loop bodies end on the same instruction")
             if count == 0:
                 self.pc += 1 + body
                 return
             if len(self.stack) >= 4:
                 raise SimError("loop stack overflow")
-            end = self.pc + body
-            if any(e[1] == end for e in self.stack):
-                raise SimError("nested loop bodies end on the same instruction")
             self.stack.append([self.pc + 1, end, count])
             self.pc += 1
             return
@@ -534,12 +536,15 @@ class Slice:
         baddr = dst + np.arange(rows)[:, None] * drs + np.arange(ne)[None, :] * es
         if np.any(baddr < 0) or np.any(baddr >= cfg.DRAM_BYTES):
             raise SimError("QST: byte address out of range")
-        self.dram[baddr] = q[:, :ne].view(np.uint8)
         if row_mode:
-            self.m32[self._widx(sdst + 4 * np.arange(rows))] = s[:, 0].view(np.uint32)
+            sa = sdst + 4 * np.arange(rows)
         else:
             sa = sdst + 4 * (np.arange(rows)[:, None] * KB + np.arange(KB)[None, :])
-            self.m32[self._widx(sa)] = s.view(np.uint32)
+        swi = self._widx(sa)
+        if _overlap(baddr, (4 * swi.reshape(-1)[:, None] + np.arange(4)).reshape(-1)):
+            raise SimError("QST: the data and scale ranges overlap")
+        self.dram[baddr] = q[:, :ne].view(np.uint8)
+        self.m32[swi] = (s[:, 0] if row_mode else s).view(np.uint32)
 
     # ---------------------------------------------------------------- VPU
     def _vop(self, ins: I.Instr) -> None:
@@ -647,6 +652,14 @@ class Slice:
                 raise SimError(f"slice {self.sid}: VOP read-after-write hazard at TMEM {v}")
 
 
+def _overlap(a, b) -> bool:
+    """Whether two sets of addresses meet (their spans first: most never do)."""
+    a, b = np.asarray(a, np.int64).reshape(-1), np.asarray(b, np.int64).reshape(-1)
+    if a.max() < b.min() or b.max() < a.min():
+        return False
+    return np.intersect1d(a, b).size > 0
+
+
 ARG0 = 8                    # the run's arguments are R8..R15 at the start (docs/isa.md)
 
 
@@ -744,16 +757,21 @@ class Machine:
 
     def _gather(self) -> None:
         sl = self.slices
-        ws = [s.waiting.w for s in sl]
-        key = [(w[1], w[2], w[4], w[5]) for w in ws]
+        key = [((s.reg(s.waiting.rb) + s.waiting.w[1]) & 0xFFFFFFFF,) + tuple(
+            s.waiting.w[i] for i in (2, 4, 5)) for s in sl]     # dst = R[rb] + w2, resolved
         if any(k != key[0] for k in key):
             raise SimError("GATHER: slices disagree on dst/rows/cols/drs/seg")
         vals = []
         for s in sl:
             w = s.waiting.w
             src = (s.reg(s.waiting.ra) + w[0]) & 0xFFFFFFFF
-            rows, cols, srs = w[2] & 0xFFFF, w[2] >> 16, w[3]
+            dst = (s.reg(s.waiting.rb) + w[1]) & 0xFFFFFFFF
+            rows, cols, srs, drs, seg = w[2] & 0xFFFF, w[2] >> 16, w[3], w[4], w[5]
             idx = src + np.arange(rows)[:, None] * srs + np.arange(cols)[None, :]
+            didx = dst + np.arange(len(sl))[:, None, None] * seg + \
+                np.arange(rows)[None, :, None] * drs + np.arange(cols)[None, None, :]
+            if _overlap(idx, didx):
+                raise SimError(f"slice {s.sid}: GATHER: the source and destination overlap")
             vals.append(s.tmem[s._tidx(idx)].copy())
         for s in sl:
             w = s.waiting.w

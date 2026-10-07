@@ -1105,7 +1105,7 @@ class RunRows(RunPos):
             return Bucket(self.blocks, self.bucket.z - 4 * r)
         base, step = self.amask
         return Bucket(self.blocks, self.bucket.z - 4 * r,
-                      Additive(Affine(base + step * r) + self.tpos * step))
+                      Additive(Affine(base + step * r) + self.tpos * step, self.block))
 
     @staticmethod
     def values(tokens, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:

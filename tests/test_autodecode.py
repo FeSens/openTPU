@@ -405,6 +405,29 @@ def test_generate_matches_the_host_loop(tiny, S, split):
     assert a.pos == 248 + j + 1                      # the stop id is not fed
 
 
+def test_generate_at_a_partial_last_bucket(guarded, tiny):
+    """A KV capacity of 384 (a multiple of D, not of the attention block): the decode loop on
+    the device runs bucket 2 with its masked block over the cache's last 128 tokens and gives
+    the per-position programs' tokens across 256, reading nothing past the cache (every KV
+    region is followed by -NaN words)."""
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    name, W, spec = tiny
+    cfg = device_config(spec, 384, rows=PREFILL_ROWS, lookup=True)
+    a, b = Engine(spec, W, cap=384, cfg=cfg, resident=True), Engine(spec, W, cap=384, cfg=cfg)
+    assert a.can_generate and not b.resident and guarded(a) and guarded(b)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 248)]
+    t0 = int(np.argmax(a.prefill(toks)))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref, t = [], t0
+    for _ in range(16):
+        lg = b.step(t)
+        assert np.isfinite(lg).all()
+        t = int(np.argmax(lg))
+        ref.append(t)
+    assert a.generate_card(t0, 16, stop_ids=[]) == ref and a.pos == 248 + 16
+    assert sorted(k[0] for k in a._gens) == [1, 2]
+
+
 @pytest.mark.parametrize("split", [None, True])
 def test_generate_with_the_int8_embedding(tiny, split):
     """Spec.embed "int8": the token's row gathered on the device at the run-time token (qwen3._embed)

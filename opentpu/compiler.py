@@ -412,6 +412,17 @@ def unnamed(rc: int, limit: int, x) -> bool:
     return True
 
 
+def _span(k: slice, n: int) -> tuple:
+    """[a, e) of slice k over n (Python's bounds and negative indices); a view is contiguous
+    rows or columns: a step other than 1, or an empty span, is refused."""
+    a, e, step = k.indices(n)
+    if step != 1:
+        raise CompileError(f"strided tile views are not supported ({k})")
+    if e <= a:
+        raise CompileError(f"an empty tile view ({k} of {n})")
+    return a, e
+
+
 class Tile:
     """fp32 values in TMEM: `base` word address, `shape` (1-D or 2-D), row stride `rs`."""
 
@@ -453,19 +464,20 @@ class Tile:
             if key == (None, slice(None)):
                 return Bcast(self, B_COLVIEW)
             if len(key) == 1 and isinstance(key[0], slice):
-                a, e, _ = key[0].indices(self.cols)
+                a, e = _span(key[0], self.cols)
                 return Tile(self.b, self.base + a, (e - a,), None, self.buf)
             raise CompileError(f"unsupported 1-D index {key}")
         rk = key[0]
         ck = key[1] if len(key) > 1 else slice(None)
         if isinstance(rk, (int, np.integer)) and isinstance(ck, slice):
-            a, e, _ = ck.indices(self.cols)
-            return Tile(self.b, self.base + int(rk) * self.rs + a, (e - a,), None, self.buf)
+            r = int(rk) + (self.rows if rk < 0 else 0)          # a negative row: from the end
+            if not 0 <= r < self.rows:
+                raise CompileError(f"row {rk} of a {self.rows}-row tile")
+            a, e = _span(ck, self.cols)
+            return Tile(self.b, self.base + r * self.rs + a, (e - a,), None, self.buf)
         if isinstance(rk, slice) and isinstance(ck, slice):
-            r0, r1, rstep = rk.indices(self.rows)
-            c0, c1, cstep = ck.indices(self.cols)
-            if rstep != 1 or cstep != 1:
-                raise CompileError("strided tile views are not supported")
+            r0, r1 = _span(rk, self.rows)
+            c0, c1 = _span(ck, self.cols)
             return Tile(self.b, self.base + r0 * self.rs + c0, (r1 - r0, c1 - c0), self.rs,
                         self.buf)
         raise CompileError(f"unsupported 2-D index {key}")
@@ -659,6 +671,16 @@ class Builder:
         self.moved: dict = {}         # argument k -> the released register it was copied to
         self.late_zero: set = set()   # address registers that hold an argument at the start:
                                       # zeroed at the release or before their loop, not there
+        # A loop that may run 0 times (a device-computed count: a guard) skips the inits and
+        # zeroings inside it: register -> the loops of that kind its value was last set in.
+        # When one ends, such a register (spare, live or free) holds an unknown value: it is
+        # free again, taken last and zeroed when taken (unset)
+        self.set_in: dict = {}
+        self.unset: set = set()
+        self.scratch_loops: dict = {}  # scratch register -> the loops live when it was taken
+        # register -> loops (ids) whose body zeroes it before any address takes it there (a
+        # scratch taken before the loop, given back in its body: generate.py's token count)
+        self.zero_head: dict = {}
         self.versions = weakref.WeakKeyDictionary()
         self.tmem_regions: list = []     # (base, end, weakref to the allocation's _Buf)
         self.tmem_peak = 0
@@ -717,11 +739,13 @@ class Builder:
                     else:
                         init = I.rld(r, words[v.name], mul=int(c), comment=what)
                     self._init_before_loops(key, init)
-                elif r in self.dirty:              # a released argument's: it starts at 0
-                    self._init_before_loops(key, I.li(r, 0, comment="released argument"))
+                elif r in self.dirty or r in self.unset:      # it starts at 0
+                    self._init_before_loops(key, I.li(r, 0, comment="released argument"
+                                                      if r in self.dirty else "register reset"))
                 if r in self.dirty:
                     self.dirty.discard(r)
                     self.late_zero.add(r)
+                self.unset.discard(r)
             if r is None:
                 raise CompileError("out of address registers")
             self.regs[key] = r
@@ -792,11 +816,59 @@ class Builder:
             if (lb.loop, dict(key).get(lb.loop)) in key:
                 items = self.stack[d]
                 items.insert(next(i for i, x in enumerate(items) if x is lb), ins)
+                self._set(ins.rd, self.loops[:d])
                 return
         if len(key) == 1 and self.run_words is not None:
             self.stack[-1].append(ins)
+            self._set(ins.rd, self.loops)
             return
         raise CompileError("a run-time address outside its loops")    # (a bare argument)
+
+    @staticmethod
+    def _may_skip(loop: Loop) -> bool:
+        return bool(loop.rcount) or not loop.count
+
+    def _set(self, r: int, loops) -> None:
+        """Register r's value is set by an instruction inside `loops` (LoopBlocks): note those
+        that may run 0 times (set_in)."""
+        g = tuple(lb.loop for lb in loops if self._may_skip(lb.loop))
+        if g:
+            self.set_in[r] = g
+        else:
+            self.set_in.pop(r, None)
+
+    def _unset_after(self, loop: Loop) -> None:
+        """`loop` (one that may run 0 times) has ended: the registers set inside it that the
+        compiler counts on (a spare's run-time value, a live run-time key's, a free register's
+        0) may hold what they held before it; they are free again, last in line, and zeroed
+        when taken. A free register that was the loop's own count is 0 when it ran 0 times."""
+        live = frozenset(id(lb.loop) for lb in self.loops)
+        run = lambda k: all(isinstance(l, RunVar) for l, _ in k)        # noqa: E731
+        for r, g in list(self.set_in.items()):
+            if not any(x is loop for x in g):
+                continue
+            rest = tuple(x for x in g if x is not loop)
+            spare = [s for s in self.spare_regs if s[2] == r]
+            key = next((k for k, x in self.regs.items() if x == r), None)
+            free = [t for f, t in self.free_regs if f == r]
+            if spare:
+                lt = live | spare[0][1]
+                self.spare_regs.remove(spare[0])
+            elif key is not None and run(key):
+                lt = live
+                del self.regs[key]
+            elif free and r != loop.rcount and r not in self.unset:
+                lt = live | free[0]
+                self.free_regs = [(f, t) for f, t in self.free_regs if f != r]
+            else:              # a scratch register (unscratch sets it), the loop's count, ...
+                if rest:
+                    self.set_in[r] = rest
+                else:
+                    del self.set_in[r]
+                continue
+            del self.set_in[r]
+            self.free_regs.insert(0, (r, lt))
+            self.unset.add(r)
 
     def _spare_for(self, key):
         """A retired register holding a subset of `key` whose missing terms all belong to loops
@@ -809,10 +881,16 @@ class Builder:
         return None
 
     def _free_for(self, key):
-        """A free register that may hold `key`: freed while none of its loops was live."""
+        """A free register that may hold `key`: freed while none of its loops was live, and for
+        a key with a run-time term while none of the live loops was: its init leaves c * var in
+        it after its loops, which an earlier use in a live loop's body would start from in the
+        loop's next iteration (unless that body zeroes it first: zero_head)."""
+        run = any(isinstance(l, RunVar) for l, _ in key)
+        live = {id(lb.loop) for lb in self.loops}
         for i in builtins.range(len(self.free_regs) - 1, -1, -1):
             r, live_then = self.free_regs[i]
-            if not any(id(l) in live_then for l, _ in key):
+            if not any(id(l) in live_then for l, _ in key) and \
+                    not (run and (live_then & live) - self.zero_head.get(r, set())):
                 del self.free_regs[i]
                 return r
         return None
@@ -857,6 +935,8 @@ class Builder:
                 self.regs[terms] = r
             else:
                 self.spare_regs.append((terms, frozenset(live), r))
+        if self._may_skip(loop):
+            self._unset_after(loop)
         depth = len(self.loops)
         for d, stat in self.loop_uses:
             if d > depth and not self.stationary_valid(stat):
@@ -872,14 +952,31 @@ class Builder:
             raise CompileError("out of registers for a device-computed value")
         r, _ = self.free_regs.pop()      # zeroed again before any later use of it
         if r in self.dirty:              # a released argument's: it still holds the argument
-            self.dirty.discard(r)
+            self.dirty.discard(r)        # (from the start: not zeroed there)
+            self.late_zero.add(r)
             self.emit(I.li(r, 0, comment="released argument"))
+            self._set(r, self.loops)
+        elif r in self.unset:            # set inside a loop that may not have run
+            self.unset.discard(r)
+            self.emit(I.li(r, 0, comment="register reset"))
+            self._set(r, self.loops)
         self.used_regs.add(r)
+        self.scratch_loops[r] = [lb.loop for lb in self.loops]
         return r
 
     def unscratch(self, r: int) -> None:
-        """Zero a scratch register (free registers hold 0) and return it to the pool."""
+        """Zero a scratch register (free registers hold 0) and return it to the pool. Zeroed
+        inside a loop that may run 0 times begun since it was taken (but the one it counts),
+        it keeps its value when that loop does not run."""
         self.emit(I.li(r, 0, comment="scratch free"))
+        since = self.scratch_loops.pop(r, [])
+        if self.loops and not any(self.loops[-1].loop is x for x in since):
+            self.zero_head.setdefault(r, set()).add(id(self.loops[-1].loop))
+        new = [lb for lb in self.loops if not any(lb.loop is x for x in since)
+               and lb.loop.rcount != r]
+        g = self.set_in.get(r, ()) + tuple(lb.loop for lb in new if self._may_skip(lb.loop))
+        if g:
+            self.set_in[r] = g
         self.free_regs.append((r, frozenset(id(lb.loop) for lb in self.loops)))
 
     def rld(self, r: int, t: "Tile", raw: bool = False, comment: str = "") -> None:
@@ -1125,6 +1222,7 @@ class Builder:
 
     def reduce(self, func: int, x: Tile, axis: int, temp: bool = False) -> Tile:
         x = self.materialize(x)
+        self.check_live(x)
         if axis not in (-1, len(x.shape) - 1):
             raise CompileError("reductions are along the last axis only")
         if func == I.V_RSUM and temp:
@@ -1149,11 +1247,13 @@ class Builder:
         # tile, attention.Additive): one LD, the pad words between the rows included
         strided = out is not None and len(t.shape) == 2 and t.shape[0] > 1 and \
             t.strides[1] == 1 and out.rs == t.strides[0] > t.shape[1]
+        # rows apart in the source go row by row into out's rows, whatever its row stride
+        by_row = len(t.shape) == 2 and t.strides[0] != t.shape[1]
         if out is None:
             out = self.alloc(t.shape)
         else:
             self.check_live(out)
-            if out.shape != tuple(t.shape) or not (out.contiguous or strided):
+            if out.shape != tuple(t.shape) or not (out.contiguous or strided or by_row):
                 raise CompileError(f"load: out {out} is not a contiguous {t.shape} tile")
             self.bump_version(out.buf)
         if strided:
@@ -1527,6 +1627,7 @@ class Builder:
 
     def store_quantized(self, x: Tile, dst: Affine, sdst: Affine, drs: int, es: int,
                         row_scale: bool, half: bool = False) -> None:
+        self.check_live(x)
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
@@ -1538,6 +1639,7 @@ class Builder:
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)
+        self.check_live(x)
         if len(x.shape) == 1:
             out = self.alloc((x.cols * S,))
             self.emit(I.gather(x.base, out.base, 1, x.cols, x.cols, x.cols * S, x.cols,
@@ -1569,7 +1671,7 @@ class Builder:
                 raise CompileError("a loop with a device-computed count cannot step registers")
             body = self._flatten(it.items)
             body += [I.addi(r, r, c, comment=f"{loop} step") for r, c in it.steps]
-            if not body or self._ends_inner(it.items, it.steps):
+            if not body or self._ends_inner(it.items, it.steps) or self._ends_loop(body):
                 body.append(I.nop("loop end"))
             out.append(I.loop(len(body), loop.count, rcount=loop.rcount,
                               comment=f"{loop} x" + (f"R{loop.rcount}" if loop.rcount
@@ -1581,6 +1683,12 @@ class Builder:
     @staticmethod
     def _ends_inner(items: list, mine: list) -> bool:
         return not mine and bool(items) and isinstance(items[-1], LoopBlock)
+
+    @staticmethod
+    def _ends_loop(body: list) -> bool:
+        """A LOOP in the body (a guard emitted as instructions, generate.py's) ends on its last
+        instruction: a body must not end on an enclosing body's (docs/isa.md, LOOP)."""
+        return any(x.op == I.LOOP and i + x.w[0] == len(body) - 1 for i, x in enumerate(body))
 
 
 # =============================================================================== tracing context
