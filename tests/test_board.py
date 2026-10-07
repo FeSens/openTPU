@@ -244,14 +244,15 @@ def test_pattern_and_address_lines_on_board_model(have_verilator):
 
 # ------------------------------------------------------------------------------ stops and resets
 @pytest.mark.parametrize("native", [True, "ld"])
-@pytest.mark.parametrize("after", [600, 2500])
+@pytest.mark.parametrize("after", [600, 1300, 2500])
 def test_run_dropped_then_load_and_run_at_once(have_verilator, native, after):
-    """CTRL = 0 in the middle of a run that streams reads and writes, then at once (without the
-    wait for WR_IDLE, docs/observability.md "Stopping a run") a LOAD of another program and its
-    RUN: the loader takes none of the dropped run's read data still in flight (it starts once the
-    memory adapter's reads are all back), the run starts once its writes are answered, and the
-    second program's results and instruction count are the ISA simulator's. Before, the loader
-    wrote the dropped run's late read data into IMEM as the new program."""
+    """CTRL = 0 in the middle of a run that streams reads and writes (600 and 1300 cycles in:
+    during its first LD's reads; 2500: later), then at once (without the wait for WR_IDLE,
+    docs/observability.md "Stopping a run") a LOAD of another program and its RUN: the loader
+    takes none of the dropped run's read data still in flight (it starts once the memory
+    adapter's reads are all back), the run starts once its writes are answered, and the second
+    program's results and instruction count are the ISA simulator's. Before, a drop during the
+    reads (600, 1300) left the loader writing their late data into IMEM: the program hung."""
     import dataclasses
     from opentpu import isa as I
     from opentpu.host.checks import PROG_AT, ZERO_AT, demo_image, demo_program
