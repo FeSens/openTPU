@@ -373,6 +373,33 @@ def test_scoreboard_stress_two_slices(have_verilator, seed):
         assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
 
 
+# A DRAM range ending exactly at 2^32 (the board's DRAM is 4 GiB) wrapped its end to 0 and
+# overlapped nothing. An ST into the last 256 bytes waits for a long VOP; a younger LD of those
+# words (ready at once on the DMA) or a WAITW on the last word (all of DRAM) must wait for it.
+# The RTL's 1 MiB DRAM is the 4 GiB space's top MiB (it decodes the low address bits); the ISA
+# simulator has the whole space (sparse).
+@pytest.mark.parametrize("young", ["ld", "waitw"])
+def test_dram_range_ending_at_4gib(have_verilator, young):
+    TOP, END = (1 << 32) - (1 << 20), 1 << 32
+    rng = np.random.default_rng(3100)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 4096] = rng.standard_normal(4096).astype(np.float32).view(np.uint8)
+    prog = [I.ld(TOP, 0, 4096),
+            I.vop(I.V_FILL, 8192, 0, 0, 64, 256, 256, 0, 0, I.B_SCALAR, 2.5),   # ~2K cycles
+            I.st(END - 256, 8192 + 64 * 256 - 64, 64)]
+    if young == "ld":
+        prog.append(I.ld(END - 256, 30000, 64))
+    else:
+        prog.append(I.waitw(END - 4, 30000, I.f32bits(2.5), I.C_EQ, timeout=100_000))
+    prog.append(I.halt())
+    m = Machine(Config(S=1, DRAM_BYTES=1 << 32), [prog], [None])
+    m.slices[0].dram[TOP:] = img
+    m.run()
+    drams, tmems, _ = rtlsim.run(Config(S=1), [prog], [img.copy()])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram[TOP:])
+
+
 # Only the fields docs/isa.md writes R[x] + w are register-relative; the counts, shapes and
 # strides beside them are immediates. The sequencer added R[rb] to every w2 and R[rc] to every
 # w3, so LD/ST's n, QACT's (rows, ab, KB) and srs and GATHER's (rows, cols) moved with registers

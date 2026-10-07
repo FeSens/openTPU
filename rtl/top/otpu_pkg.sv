@@ -95,12 +95,19 @@ package otpu_pkg;
     endcase
   endfunction
 
+  // A range that reaches 2^32 ends at the last byte, 0xFFFFFFFF, instead of wrapping to 0 (which
+  // overlapped nothing: a 4 GiB DRAM's top words, a STREAM's 256 KiB near the top). The lost byte
+  // never decides an overlap: every DRAM range starts at a word (DMA, MXU, WAITW) or covers its
+  // beats' words (QST, beats()), so a range holding the last byte also holds the word 0xFFFFFFFC.
+  // TMEM ranges that reach 2^32 do not fit the scoreboard's 16 bits anyway (otpu_seq: all).
   function automatic rng_t mk(input logic [1:0] sp, input logic [31:0] lo, input logic [31:0] len);
     rng_t r;
+    logic [32:0] hi;
+    hi = {1'b0, lo} + {1'b0, len};
     r.v = (len != 0);
     r.sp = sp;
     r.lo = lo;
-    r.hi = lo + len;
+    r.hi = hi[32] ? '1 : hi[31:0];
     return r;
   endfunction
 
@@ -353,8 +360,9 @@ package otpu_pkg;
       end
       OP_BAR: f.all = 1'b1;
       OP_RLD: f.rd[0] = mk(SP_TMEM, c.w1, 32'd1);
-      // WAITW: all of DRAM as written, so older stores land before its first read and younger
-      // DRAM readers see what the host wrote before the word; the one TMEM word
+      // WAITW: all of DRAM as written (up to the last byte, see mk), so older stores land before
+      // its first read and younger DRAM readers see what the host wrote before the word; the one
+      // TMEM word
       OP_WAITW: begin
         f.wr[0] = mk(SP_DRAM, 32'd0, 32'hFFFF_FFFF);
         f.wr[1] = mk(SP_TMEM, c.w2, 32'd1);

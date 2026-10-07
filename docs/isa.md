@@ -383,7 +383,7 @@ through whole.
   as a signed number: counters, and positive fp32 values, which order as their bits.
 - `w5`: cycles between reads, the first at once. `w6`: a timeout in cycles (0: none), at which
   the slice stops with an error the host sees.
-- The scoreboard footprint: all of DRAM read, `T[R[rb] + w2]` written. Older stores land before
+- The scoreboard footprint: all of DRAM and `T[R[rb] + w2]` written. Older stores land before
   its first read; younger instructions that read or write DRAM, and those that use the word,
   wait until it completes.
 - Every read is a fresh DRAM read. Once WAITW has seen a word the host wrote after an h2c DMA
