@@ -261,14 +261,18 @@ module otpu_mem_ch #(
   // count (up to a source period). In P percent of the first stage's samples each bit is the
   // count's bit a source cycle earlier or now, at random: a count that moved one bit is seen old
   // or new, one that moved two bits mixed. A bit once seen new stays new (`seen`, the stage's
-  // last sample: a wire's change arrives once, so a faster destination does not see it undone)
+  // last sample: a wire's change arrives once, so a faster destination does not see it undone).
+  // A sample ahead of the count (a mix of a two-bit step) is an error
   int cdc_skew = 0;
   initial void'($value$plusargs("cdc_skew=%d", cdc_skew));
-  function automatic logic [CW-1:0] cdc_smp(input logic [CW-1:0] now, input logic [CW-1:0] was,
-                                            input logic [CW-1:0] seen);
-    logic [CW-1:0] m;
+  function automatic logic [CW-1:0] cdc_smp(input string nm, input logic [CW-1:0] now,
+                                            input logic [CW-1:0] was, input logic [CW-1:0] seen);
+    logic [CW-1:0] m, r;
     m = (cdc_skew != 0 && int'($urandom % 100) < cdc_skew) ? CW'($urandom) & (seen ^ now) : '0;
-    return (now & ~m) | (was & m);
+    r = (now & ~m) | (was & m);
+    if (CW'(g2b(now) - g2b(r)) >= CW'(1 << (CW - 1)))
+      $error("otpu_mem_ch: %s's sample %0d ahead of the count, %0d", nm, g2b(r), g2b(now));
+    return r;
   endfunction
 `endif
 
@@ -547,7 +551,7 @@ module otpu_mem_ch #(
 `ifdef SYNTHESIS
         a_wacc_s1 <= a_wacc_g;
 `else
-        a_wacc_s1 <= cdc_smp(a_wacc_g, a_wacc_gq, a_wacc_s1);
+        a_wacc_s1 <= cdc_smp("a_wacc", a_wacc_g, a_wacc_gq, a_wacc_s1);
 `endif
         a_wacc_s2 <= a_wacc_s1; a_wb <= g2b(a_wacc_s2);
       end
@@ -557,7 +561,7 @@ module otpu_mem_ch #(
 `ifdef SYNTHESIS
         x_wacc_s1 <= x_wacc_g;
 `else
-        x_wacc_s1 <= cdc_smp(x_wacc_g, x_wacc_gq, x_wacc_s1);
+        x_wacc_s1 <= cdc_smp("x_wacc", x_wacc_g, x_wacc_gq, x_wacc_s1);
 `endif
         x_wacc_s2 <= x_wacc_s1; x_wb <= g2b(x_wacc_s2);
       end

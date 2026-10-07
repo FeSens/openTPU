@@ -116,6 +116,11 @@ SCEN["skew"] = SKEW + ["+seed=50"]
 SCEN["skewsh"] = SKEW + ["+psh=50", "+psp=20", "+seed=51"]
 SCEN["gen2skew"] = G2 + SKEW + ["+seed=52"]
 SCEN["gen2skewx"] = G2 + SKEW + ["+xreset=3000", "+xrep=6151", "+areset=2500", "+arep=7919", "+seed=53"]
+# the same with XDMA writing only, unstalled, and a controller busy half the time: the output
+# queues hold more writes of both parities, so both ports take XDMA writes in one cycle more often
+SKEWW = ["+cdc_skew=60", "+axi_stall=40", "+ldn_busy=50", "+wpct=100", "+outs=32", "+gapw=0", "+mstall=0"]
+SCEN["skeww"] = SKEWW + ["+seed=55"]
+SCEN["gen2skeww"] = G2 + SKEWW + ["+seed=52"]
 for i in range(10, 30):
     SCEN[f"s{i}"] = [f"+seed={i}", f"+psh={5 + i % 4 * 15}", f"+ppct={i % 5 * 20}", f"+wpct={30 + i % 3 * 20}"]
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
@@ -124,7 +129,7 @@ FBASE = ["+ntx=3000", "+tmax=100000000"]
 FUNC = [("ldn", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "areset", "resets",
                              "lateresets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "mstall70", "nogaps", "partial", "rawpart", "ctlstall", "fastcore",
                              "slowcore", "shared", "long", "seqrd", "seqwr", "seqmix", "pubstall",
-                             "doublebeat", "skew", "skewsh"]]
+                             "doublebeat", "skew", "skewsh", "skeww"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
 FUNC += [("cred", s) for s in ["default", "credstress"]]
 FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetlat", "xresetrep",
@@ -132,7 +137,7 @@ FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetla
                                "partial", "ctlstall", "fastcore", "slowcore", "shared", "shared21",
                                "pubstall", "seqrd", "seqwr", "seqmix", "gen2", "gen2xres",
                                "gen2part", "gen2full", "gen2deep", "gen2deepx", "gen2deep128",
-                               "gen2skew", "gen2skewx"]]
+                               "gen2skew", "gen2skewx", "gen2skeww"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
@@ -257,19 +262,20 @@ MUT = [
      [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
     # the write-accept counts summed over both ports before they cross (each a count that steps
     # by two when both ports take a write in a cycle): a sample between its bits reads a count
-    # ahead, and B comes before its beats are taken (+cdc_skew: the synchronizers' skew model)
+    # ahead (cdc_smp's error), or behind one already used, and B comes before its beats are
+    # taken (+cdc_skew: the synchronizers' skew model)
     ("B: both ports' write counts in one gray count (steps by two)", "xreg",
      [("if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[p]);",
        "if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + (p == 0 ? CW'(opw_x[0]) + CW'(opw_x[1]) : CW'(0));")],
-     ["gen2skew", "skew"]),
+     ["gen2skeww", "gen2skew", "skeww"]),
     ("B: both ports' write counts in one gray count (steps by two)", "ldn",
      [("if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[p]);",
        "if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + (p == 0 ? CW'(opw_x[0]) + CW'(opw_x[1]) : CW'(0));")],
-     ["skew", "skewsh"]),
+     ["skew", "skewsh", "skeww"]),
     ("n_wdone: both ports' write counts in one gray count (steps by two)", "ldn",
      [("if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + CW'(opw_a[p]);",
        "if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + (p == 0 ? CW'(opw_a[0]) + CW'(opw_a[1]) : CW'(0));")],
-     ["skew", "skewsh"]),
+     ["skew", "skewsh", "skeww"]),
     # otpu_dma_split's register slices
     ("slice: the skid entry not loaded (a beat taken under backpressure lost)", "xreg",
      [("otpu_axi_split2.sv", "if (!sk_v) sk_d <= s_data;", "if (1'b0) sk_d <= s_data;")],
