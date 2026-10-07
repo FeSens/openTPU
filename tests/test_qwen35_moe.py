@@ -94,19 +94,45 @@ def test_reference_matches_hf(tiny):
     assert np.abs(reference_logits(spec, W, toks) - hf).max() < 1e-4
 
 
+def _hf_routed(m, toks, card):
+    """HF's logits with every layer's experts the card's (card: the server's history, one
+    request of global ids per token and layer; the last token's last layer, whose request waits
+    for a next fence, keeps HF's own), weighted by HF's softmax over them."""
+    L = len(KINDS)
+
+    def hook(layer):
+        def route(mod, inp, out):
+            lg, _, idx = out
+            idx = idx.clone()
+            for t in range(len(toks)):
+                if t * L + layer < len(card):
+                    idx[t] = torch.tensor([g - layer * E for g in card[t * L + layer]])
+            p = torch.softmax(lg, dim=-1, dtype=torch.float).gather(-1, idx)
+            return lg, (p / p.sum(-1, keepdim=True)).to(lg.dtype), idx
+        return route
+    hs = [m.model.layers[i].mlp.gate.register_forward_hook(hook(i)) for i in range(L)]
+    try:
+        with torch.no_grad():
+            return m(torch.tensor([toks])).logits[0].numpy()
+    finally:
+        for h in hs:
+            h.remove()
+
+
 def test_device_follows_hf_and_routes_on_the_card(tiny):
-    """The logits follow HF and the emulation; the card's choices in the first layer, whose
-    input no routing has touched, are the emulation's wherever its k-th and (k+1)-th logits
-    are apart by more than the quantization's reach."""
+    """The logits follow HF routed as the card routed (every step but the last) and the
+    emulation; the card's choices in the first layer, whose input no routing has touched, are
+    the emulation's wherever its k-th and (k+1)-th logits are apart by more than the
+    quantization's reach. HF takes the card's experts: a choice within the quantization's reach
+    goes either way, and one unlike HF's takes the logits far from HF's own (cos 0.08 - 0.97;
+    6 of 16 token sequences failed a test against HF's own routing, on main too)."""
     m, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 12)]
-    with torch.no_grad():
-        hf = m(torch.tensor([toks])).logits[0].numpy()
     eng = _engine(spec, W)
     eng.server.history = []
     dev = np.array([eng.step(t) for t in toks])
-    c = _cos(dev, hf)
-    assert np.median(c) > 0.997 and (c > 0.99).mean() >= 0.75
+    c = _cos(dev, _hf_routed(m, toks, eng.server.history))[:-1]
+    assert c.min() > 0.99 and np.median(c) > 0.997
     routes = []
     emu = emulated_logits(spec, W, toks, routes=routes)
     assert np.median(_cos(dev, emu)) > 0.999
