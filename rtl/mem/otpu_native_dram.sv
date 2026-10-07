@@ -65,6 +65,11 @@
 //   point whose write has not gone out, and a read waits while its bucket's count is not zero (a
 //   collision only delays it). The fill read then follows those writes in the stream and reads
 //   their data.
+// - A fill read and its beat's write are not atomic: a B write, or the host's, to the beat's
+//   other bytes between them would be lost. The slice keeps B writes out (a QST's scoreboard
+//   footprint covers every word of its beats, otpu_pkg beats(), so an ST, DSTEP or STREAM into
+//   one waits for the QST or the QST for it); the host must not write the beats of a running
+//   QST (docs/isa.md, QST).
 // - A write drops channel c's A run, or the reused beat, when it has gone out on c (command and
 //   data taken; the stream carries nothing else meanwhile) and its beat is in them: the run's
 //   commands before it read the old beat, the ones after it the new. The drop lands at the end

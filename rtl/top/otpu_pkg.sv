@@ -104,6 +104,20 @@ package otpu_pkg;
     return r;
   endfunction
 
+  // A QST's DRAM range widened to every word of the 64-byte beats it touches: [lo & ~63,
+  // hi | 63). The board's DRAM adapter writes a QST's partial beat whole after reading it (its
+  // fill read; otpu_native_dram), so another unit's write to the beat's other bytes in between
+  // would be lost: an ST, DSTEP or STREAM into one of these beats now waits for the QST, or the
+  // QST for it. (No carry: the ends only gain bits; an end on a beat boundary also takes the next
+  // beat but its last byte, a false conflict at worst.)
+  function automatic rng_t beats(input rng_t r);
+    rng_t o;
+    o = r;
+    o.lo = {r.lo[31:6], 6'd0};
+    o.hi = r.hi | 32'd63;
+    return o;
+  endfunction
+
   function automatic logic ov(input rng_t a, input rng_t b);
     return a.v && b.v && a.sp == b.sp && a.lo < b.hi && b.lo < a.hi;
   endfunction
@@ -300,8 +314,8 @@ package otpu_pkg;
         rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
         if (rows != 0 && kb != 0) begin
           f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + kb * D);
-          f.wr[0] = mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1);
-          f.wr[1] = mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3));
+          f.wr[0] = beats(mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1));
+          f.wr[1] = beats(mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3)));
         end
       end
       OP_VOP: begin
