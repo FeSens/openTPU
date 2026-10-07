@@ -9,7 +9,8 @@
 // other function LANES columns per cycle. Composite functions
 // are slot programs, exactly the fp_add/fp_mul sequences of the ISA:
 //   ADD/SUB/RSUB/MUL/OUTER  1 slot  EXP2/EXP2SUB 9 (sub, range reduction, 7 Horner steps)
-//   RECIP             6 (3 Newton steps)      RSQRT  10 (h = x/2, 3 Newton steps)
+//   RECIP             6 (2 Newton steps, a correction step)
+//   RSQRT             10 (h = x/2, 2 Newton steps, a correction step)
 //   LOG2              10 (t = m - 1, 8 Horner steps, + i2f(e) from slot 1's input stages)
 //   MAX/MIN/COPY/ABS/FILL 0 (written the cycle after the read)
 // Slot 0 is a*b + c*e (two products): e = 1.0 except for OUTER, dst*D(c) + B(r)*C(c). OUTER
@@ -460,7 +461,8 @@ module otpu_vpu
   // every slot followed by a read of v writes v itself. f is always live; dead fields are not
   // carried. LOG2 keeps t in k1 (slots 1..9), i2f(e) in k2 (slot 1's input stages to slot 9)
   // and e in ii (boundary 0 to slot 1's input stages). RECIP and RSQRT keep their result's
-  // exponent adjustment (the range scaling, otpu_fp's rcp_sc / rsq_lo / rsq_hi) in ii.
+  // exponent adjustment in ii (RECIP's 127 - field, otpu_fp's rcp_ek; RSQRT's range scaling,
+  // rsq_lo / rsq_hi).
   function automatic logic k1_live(input int s);
     return s <= 8;
   endfunction
@@ -565,12 +567,10 @@ module otpu_vpu
         m0d.fh[V_COPY]:  st[0].v = xz;
         m0d.fh[V_ABS]:   st[0].v = fabs(x);
         m0d.fh[V_FILL]:  st[0].v = ftz(y);
-        m0d.fh[V_RECIP]: begin                               // |x| >= 2^123: on |x| / 16
-          logic sc;
-          sc = rcp_sc(ax);
-          st[0].k1 = {1'b1, ax[30:0] - (sc ? 31'h0200_0000 : 31'd0)};   // -|x|
-          st[0].k2 = ftz((sc ? RECIP_MAGIC + 32'h0200_0000 : RECIP_MAGIC) - ax);   // seed
-          st[0].ii = sc ? -9'sd4 : 9'd0;                     // y / 16
+        m0d.fh[V_RECIP]: begin                               // on the significand a
+          st[0].k1 = {9'h17F, xz[22:0]};                     // -a
+          st[0].k2 = RECIP_MAGIC - {9'h07F, xz[22:0]};       // seed
+          st[0].ii = rcp_ek(xz);                             // y * 2^(127 - field)
           st[0].f  = {xz[31], (ax >= 32'h7E80_0000), (ax == 0)};
         end
         m0d.fh[V_RSQRT]: begin                               // on 16x / x / 16 (rsq_lo / hi)
@@ -670,8 +670,12 @@ module otpu_vpu
             end
           end
           sf[V_RECIP]: if (s < 6) begin
-            if (s % 2 == 0) begin ia = t.k1; ib = t.k2; ic_ = F_TWO; dest = 2'd1; end   // 2 - |x|y
-            else begin ia = t.k2; ib = t.v; dest = 2'd3; end                              // y = y*t
+            if (s % 2 == 0) begin                                       // 2 - ay; 1 - ay (s 4)
+              ia = t.k1; ib = t.k2; ic_ = (s == 4) ? F_ONE : F_TWO; dest = 2'd1;
+            end else begin                                              // y = y*t; y*e + y (s 5)
+              ia = t.k2; ib = t.v; dest = 2'd3;
+              if (s == 5) ic_ = t.k2;
+            end
           end
           sf[V_RSQRT]: begin
             if (s == 0) begin                                                             // -h
@@ -679,8 +683,12 @@ module otpu_vpu
               ib = ftz(x); dest = 2'd2; negd = 1'b1;           // (x 8, x / 32: h of the scaled x)
             end
             else if ((s - 1) % 3 == 0) begin ia = t.k2; ib = t.k2; dest = 2'd1; end       // y*y
-            else if ((s - 1) % 3 == 1) begin ia = t.k1; ib = t.v; ic_ = F_1P5; dest = 2'd1; end
-            else begin ia = t.k2; ib = t.v; dest = 2'd3; end                              // y*c
+            else if ((s - 1) % 3 == 1) begin                         // 1.5 - h yy; 0.5 - h yy (s 8)
+              ia = t.k1; ib = t.v; ic_ = (s == 8) ? F_HALF : F_1P5; dest = 2'd1;
+            end else begin                                              // y = y*c; y*e + y (s 9)
+              ia = t.k2; ib = t.v; dest = 2'd3;
+              if (s == 9) ic_ = t.k2;
+            end
           end
           sf[V_LOG2]: begin
             if (s == 0) begin ia = t.k1; ic_ = F_M1; dest = 2'd2; end                 // t = m - 1

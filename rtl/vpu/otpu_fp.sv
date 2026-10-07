@@ -459,14 +459,17 @@ package otpu_fp;
     return r;
   endfunction
 
-  // The composites' range scaling (docs/isa.md): the Newton steps are exact under x -> x * 2^2k,
-  // y -> y * 2^-k (or 2^-2k for recip) while nothing flushes, so out-of-range inputs run scaled
-  // and the result's exponent field is adjusted back. RCP_SC: |x| in [2^123, 2^126) runs on
-  // |x|/16 (unscaled, the seed flushes above 0x7E7311C3); RSQ_LO / RSQ_HI: exponent field <= 2
-  // runs on 16x (h = x/2 flushes at field 1), field 250..254 on x/16 (y*y flushes at >= 252).
-  function automatic logic rcp_sc(input f32_t ax);       // ax = |x|, flushed, below 2^126
-    return ax[30:23] >= 8'd250;
+  // recip runs on the significand a (x's fraction with exponent field 127, in [1, 2)) and its
+  // result y (in [0.5, 1]) gets 127 - (x's field) added to its exponent field: rcp_ek, a 9-bit
+  // two's complement (-125..126 below 2^126; it stays normal).
+  function automatic logic [8:0] rcp_ek(input f32_t x);
+    return 9'd127 - 9'(x[30:23]);
   endfunction
+
+  // rsqrt's range scaling (docs/isa.md): the Newton steps are exact under x -> x * 2^2k,
+  // y -> y * 2^-k while nothing flushes, so out-of-range inputs run scaled and the result's
+  // exponent field is adjusted back. RSQ_LO / RSQ_HI: exponent field <= 2 runs on 16x (h = x/2
+  // flushes at field 1), field 250..254 on x/16 (y*y flushes at >= 252).
   function automatic logic rsq_lo(input f32_t x);
     return x[30:23] <= 8'd2;
   endfunction
@@ -475,17 +478,15 @@ package otpu_fp;
   endfunction
 
   function automatic f32_t fp_recip(input f32_t x_in);
-    f32_t x, ax, y;
-    logic sc;
+    f32_t x, a, y;
     x = ftz(x_in);
-    ax = {1'b0, x[30:0]};
-    if (ax == 0) return F_ZERO;
-    if (ax >= 32'h7E80_0000) return {x[31], 31'b0};      // |x| >= 2^126 (incl. inf): flushes
-    sc = rcp_sc(ax);
-    if (sc) ax = ax - 32'h0200_0000;                      // |x| / 16
-    y = ftz(RECIP_MAGIC - ax);
-    for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_TWO, fp_mul(ax, y)));
-    if (sc) y = y - 32'h0200_0000;                        // y / 16: y >= 2^-122, stays normal
+    if (x[30:0] == 0) return F_ZERO;
+    if (x[30:0] >= 31'h7E80_0000) return {x[31], 31'b0};   // |x| >= 2^126 (incl. inf): flushes
+    a = {9'h07F, x[22:0]};                                  // the significand, in [1, 2)
+    y = RECIP_MAGIC - a;
+    for (int k = 0; k < 2; k++) y = fp_mul(y, fp_sub(F_TWO, fp_mul(a, y)));
+    y = fp_add(fp_mul(y, fp_sub(F_ONE, fp_mul(a, y))), y);     // y*e + y, e = 1 - a*y
+    y = y + {rcp_ek(x), 23'd0};
     return x[31] ? fneg(y) : y;
   endfunction
 
@@ -500,7 +501,8 @@ package otpu_fp;
     if (hi) x = x - 32'h0200_0000;                        // x / 16
     y = RSQRT_MAGIC - (x >> 1);
     h = fp_mul(F_HALF, x);
-    for (int k = 0; k < 3; k++) y = fp_mul(y, fp_sub(F_1P5, fp_mul(h, fp_mul(y, y))));
+    for (int k = 0; k < 2; k++) y = fp_mul(y, fp_sub(F_1P5, fp_mul(h, fp_mul(y, y))));
+    y = fp_add(fp_mul(y, fp_sub(F_HALF, fp_mul(h, fp_mul(y, y)))), y);   // e = 0.5 - h*(y*y)
     if (lo) y = y + 32'h0100_0000;                        // * 4
     if (hi) y = y - 32'h0100_0000;                        // / 4
     return y;

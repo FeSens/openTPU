@@ -22,16 +22,28 @@ def _both(cfg, prog, dram):
 
 
 def _corner_words(rng, n):
-    """Words from recip's and rsqrt's scaled ranges (exponent fields 0..5 and 246..255, both
-    signs), NaNs, and normals."""
-    e = rng.choice(list(range(6)) + list(range(246, 255)), n).astype(np.uint32)
+    """n words: rsqrt's scaled ranges (exponent fields 0..5 and 246..255, both signs), random
+    words of every field, every power of two and its neighbours (recip's significand edges,
+    rsqrt's powers of four), exp2 near its range limits and where x + 1 rounds to 1, NaNs."""
+    p = np.arange(1, 255, dtype=np.int64) << 23
+    p = np.concatenate([p, p - 1, p + 1])
+    k = np.float32([-127, -126, -125, -1, 0, 1, 126, 127, 128])
+    t = np.exp2(-np.arange(20, 31))
+    ex = np.concatenate([np.nextafter(k, np.float32(-np.inf)), np.nextafter(k, np.float32(np.inf)),
+                         -t, t]).astype(np.float32)
+    extra = np.concatenate([
+        np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001, 0xFFBFFFFF, 0x7F800000, 0xFF800000,
+                   0x7E800000, 0x7E7311C3, 0x7E7311C4, 0x7E7FFFFF, 0x00800000, 0x00FFFFFF,
+                   0x3F800000]),
+        np.concatenate([p, p | (1 << 31)]).astype(np.uint32), ex.view(np.uint32)])
+    n = n - len(extra)
+    e = np.where(rng.random(n) < 0.5, rng.choice(list(range(6)) + list(range(246, 255)), n),
+                 rng.integers(1, 255, n)).astype(np.uint32)
     m = rng.integers(0, 1 << 23, n, dtype=np.uint32)
     m[rng.random(n) < 0.1] = 0
     m[rng.random(n) < 0.1] = 0x7FFFFF
     s = rng.integers(0, 2, n, dtype=np.uint32)
     w = (s << 31) | (e << 23) | m
-    extra = np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001, 0xFFBFFFFF, 0x7F800000, 0xFF800000,
-                       0x7E800000, 0x7E7311C3, 0x7E7311C4, 0x00800000, 0x00FFFFFF, 0x3F800000])
     return F.from_bits(np.concatenate([w, extra])).copy()
 
 
@@ -42,7 +54,7 @@ def test_composites_on_their_scaled_ranges_rtl(have_verilator, lanes, dstep):
     cfg = Config(S=1, LANES=lanes, MCOLS=min(8, lanes), DSTEP=dstep, DRAM_BYTES=1 << 20)
     rng = np.random.default_rng(11 + lanes)
     cols = 64
-    x = _corner_words(rng, 6 * cols - 12)
+    x = _corner_words(rng, 40 * cols)
     n = len(x)
     rows = n // cols
     dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
@@ -60,9 +72,9 @@ def test_composites_on_their_scaled_ranges_rtl(have_verilator, lanes, dstep):
 
 
 def test_quantizer_huge_and_tiny_amax_rtl(have_verilator):
-    """QST (row groups and blocks): an amax in [2^123, 2^126) (recip on amax / 16), at 2^126
-    (inv = 0), tiny ones (inv = 127 * recip(amax) is +inf: the zeros give 0 * inf = NaN, q 0)
-    and an inf element (inf * 0)."""
+    """QST (row groups and blocks): an amax in [2^123, 2^126) (once recip's scaled range), at
+    2^126 (inv = 0), tiny ones (inv = 127 * recip(amax) is +inf: the zeros give 0 * inf = NaN,
+    q 0) and an inf element (inf * 0)."""
     cfg = Config(S=1, DRAM_BYTES=1 << 20)
     D, KB = cfg.D, 2
     rng = np.random.default_rng(3)
@@ -82,6 +94,33 @@ def test_quantizer_huge_and_tiny_amax_rtl(have_verilator):
     prog = [I.ld(0, 0, x.size),
             I.qst(0, 0x40000, 0x48000, R, KB, KB * D, KB * D, 1),                 # blocks
             I.qst(0, 0x50000, 0x58000, R, KB, KB * D, KB * D, 1, row=True),       # rows
+            I.halt()]
+    _both(cfg, prog, dram)
+
+
+def test_quantizer_recip_every_exponent_rtl(have_verilator):
+    """QST (blocks and rows): an amax at every power of two (recip on the significand 1.0, the
+    result's exponent field 127 - field away), its neighbours, random ones of every field, the
+    largest below 2^126, and amax across the point where inv = 127 * recip(amax) overflows to
+    +inf (otpu_qscale scales 127 * y after the multiply and saturates the field there)."""
+    cfg = Config(S=1, DRAM_BYTES=1 << 20)
+    D, KB = cfg.D, 2
+    rng = np.random.default_rng(4)
+    p = np.arange(1, 253, dtype=np.int64) << 23
+    am = np.concatenate([p, p[1:] - 1, p + 1, p | rng.integers(0, 1 << 23, len(p)),
+                         (5 << 23) + np.arange(8257526, 8257546), [0x7E7FFFFF, 0x7E800000]])
+    am = F.from_bits(am.astype(np.uint32))
+    am = np.resize(am, -(-len(am) // KB) * KB)
+    R = len(am) // KB
+    r = (rng.standard_normal((R * KB, D)) * 0.3).astype(np.float32) * am[:, None]
+    r[rng.random(r.shape) < 0.3] = 0.0
+    r[:, 0] = am
+    x = r.reshape(R, KB * D)
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    dram[:4 * x.size] = x.view(np.uint8).reshape(-1)
+    prog = [I.ld(0, 0, x.size),
+            I.qst(0, 0x40000, 0x60000, R, KB, KB * D, KB * D, 1),                 # blocks
+            I.qst(0, 0x70000, 0x90000, R, KB, KB * D, KB * D, 1, row=True),       # rows
             I.halt()]
     _both(cfg, prog, dram)
 

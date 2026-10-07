@@ -161,6 +161,30 @@ def test_se_comp_range_reduction(tmp_path):
     check(chunks, got)
 
 
+def test_se_comp_boundaries(tmp_path):
+    """RECIP and RSQRT at every power of two and its neighbours (both signs: RECIP's significand
+    edges, RSQRT's powers of four), the largest |x| below 2^126 and random words of every
+    exponent field (RECIP's 127 - field, RSQRT's scaled ranges); EXP2 and EXP2SUB near their
+    range limits and where x + 1 rounds to 1 (f = 1: p(1) = 2)."""
+    rng = np.random.default_rng(12)
+    p = np.arange(0, 256, dtype=np.int64) << 23
+    r = (np.repeat(np.arange(1, 255), 8) << 23) | rng.integers(0, 1 << 23, 254 * 8)
+    p = np.concatenate([p, p - 1, p + 1, [0x7E7FFFFF, 0x7E800000], r])
+    p = F.from_bits((np.concatenate([p, p | (1 << 31)]) & 0xFFFFFFFF).astype(np.uint32))
+    ex = np.concatenate([F.from_bits(0x43000000 - np.arange(1, 64, dtype=np.uint32)),
+                         F.from_bits(0xC2FC0000 + np.arange(-32, 32).astype(np.uint32)),
+                         -np.exp2(-np.arange(1, 40)).astype(np.float32),
+                         np.exp2(-np.arange(1, 40)).astype(np.float32)]).astype(np.float32)
+    chunks = []
+    for f, v in [(V_RECIP, p), (V_RSQRT, p), (V_EXP2, ex), (V_EXP2SUB, ex)]:
+        v = np.resize(v, -(-len(v) // 8) * 8).astype(np.float32)
+        y = np.zeros(len(v), np.float32)
+        for k in range(0, len(v), 8):
+            chunks.append((f, v[k:k + 8], y[k:k + 8]))
+    got, _ = run_comp(chunks, tmp_path)
+    check(chunks, got)
+
+
 @pytest.mark.parametrize("seed", [1, 2, 3])
 def test_se_comp_mixed_stalls(seed, tmp_path):
     """Random programs of all functions, random gaps and enable stalls (the latency rule and

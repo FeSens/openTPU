@@ -93,7 +93,14 @@ def _vectors(n=20000):
     scx = F.from_bits(sc)
     add(6, scx, scx, F.bits(F.recip(scx)))
     add(7, scx, scx, F.bits(F.rsqrt(scx)))
-    # exp2 around every integer, near its range limits and where x + 1 rounds to 1 (f = 1)
+    # where the definitions are exact or turn: every power of two and its neighbours (recip's
+    # significand edges, rsqrt's powers of four), the largest |x| below 2^126, and exp2 around
+    # every integer, near its range limits and where x + 1 rounds to 1 (f = 1)
+    p = np.arange(1, 255, dtype=np.int64) << 23
+    p = np.concatenate([p, p - 1, p + 1, [0x7E7FFFFF, 0x7E800000]])
+    p = F.from_bits(np.concatenate([p, p | (1 << 31)]).astype(np.uint32))
+    add(6, p, p, F.bits(F.recip(p)))
+    add(7, p, p, F.bits(F.rsqrt(p)))
     k = np.arange(-130, 131).astype(np.float32)
     up, dn = np.nextafter(k, np.float32(np.inf)), np.nextafter(k, np.float32(-np.inf))
     ex = np.concatenate([k, up, dn, F.from_bits(0x43000000 - np.arange(1, 200, dtype=np.uint32)),
@@ -238,6 +245,44 @@ def test_exp2_exact_at_integers_and_monotone():
     r = np.random.default_rng(6)
     x = np.sort(F.f32(r.uniform(-126, 128, 1 << 21)))
     assert np.all(np.diff(F.exp2(x).astype(np.float64)) >= 0)
+
+
+def test_recip_error_bound():
+    """recip (docs/isa.md: on the significand, two Newton steps and a correction step) within
+    1.2 ulp: every fp32 in [1, 2) of both signs, and samples of every exponent field 1..252 (the
+    result's field is 127 - field away). Exact at every power of two (the plain Newton step's
+    fixed point is 1 ulp low: recip(1) was 0.99999994)."""
+    for s in (0, 1):
+        x = _binade(0, s)
+        u = _ulps(F.recip(x), 1 / x.astype(np.float64))
+        assert u.max() < 1.2, (u.max(), x[np.argmax(u)])
+    r = np.random.default_rng(7)
+    e = np.repeat(np.arange(1, 253, dtype=np.uint32), 4096)
+    x = F.from_bits((r.integers(0, 2, len(e)).astype(np.uint32) << np.uint32(31))
+                    | (e << np.uint32(23)) | r.integers(0, 1 << 23, len(e)).astype(np.uint32))
+    ref = 1 / x.astype(np.float64)
+    ok = np.abs(ref) >= 2.0 ** -126
+    u = _ulps(F.recip(x)[ok], ref[ok])
+    assert u.max() < 1.2, (u.max(), x[ok][np.argmax(u)])
+    p = np.exp2(np.arange(-126, 126)).astype(np.float32)
+    for s in (1, -1):
+        assert np.array_equal(F.recip(s * p), (s / p.astype(np.float64)).astype(np.float32))
+
+
+def test_rsqrt_error_bound():
+    """rsqrt (docs/isa.md: two Newton steps and a correction step) within 1.05 ulp: every fp32 in
+    [1, 4), and samples of every exponent field (the scaled ranges, fields 1..2 and 250..254,
+    included). Exact at every power of four (rsqrt(1) was 0.99999994)."""
+    x = np.concatenate([_binade(0), _binade(1)])
+    u = _ulps(F.rsqrt(x), 1 / np.sqrt(x.astype(np.float64)))
+    assert u.max() < 1.05, (u.max(), x[np.argmax(u)])
+    r = np.random.default_rng(8)
+    e = np.repeat(np.arange(1, 255, dtype=np.uint32), 4096)
+    x = F.from_bits((e << np.uint32(23)) | r.integers(0, 1 << 23, len(e)).astype(np.uint32))
+    u = _ulps(F.rsqrt(x), 1 / np.sqrt(x.astype(np.float64)))
+    assert u.max() < 1.05, (u.max(), x[np.argmax(u)])
+    p = np.exp2(np.arange(-126, 128, 2)).astype(np.float32)
+    assert np.array_equal(F.rsqrt(p), (1 / np.sqrt(p.astype(np.float64))).astype(np.float32))
 
 
 def test_rtl_fp_bit_exact(tmp_path):

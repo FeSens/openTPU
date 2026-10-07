@@ -79,18 +79,25 @@ compares order raw sign-magnitude bits (a NaN with the sign set is below `-inf`)
   non-decreasing over every fp32 `f` in [0, 1], and `p(1) = 2`): `tests/test_fp.py`. (Taylor
   coefficients `ln2^k/k!` were up to 13 ulp off near `f = 1`.)
 - `recip(x)`: `x == 0` returns `+0`; `|x| >= 2^126` (including infinity) returns a zero with
-  the sign of `x` (the result would be subnormal and flush). Otherwise on `a = |x|`:
-  `y = bits(0x7EF311C3 - bits(a))`, three times `y = y * (2 - a*y)`; the sign of `x` is
-  applied at the end. If `|x| >= 2^123` (exponent field >= 250), `a = |x|/16` (the field minus
-  4) and the result is `y/16` (y's field minus 4; y >= 2^-122 there, so it stays normal):
-  unscaled, the seed flushes for `|x| > 0x7E7311C3`. This keeps `silu(x) = x * recip(1 + exp2(-x*log2e))` exact at `-0` for
-  very negative `x`, where `exp2` overflows to infinity.
+  the sign of `x` (the result would be subnormal and flush). Otherwise, with `ex` the exponent
+  field of `x`, on its significand `a = bits(127 << 23 | (bits(x) & 0x7FFFFF))` (in [1, 2)):
+  `y = bits(0x7EF311C3 - bits(a))`, twice `y = y * (2 - a*y)`, then `e = 1 - a*y` and
+  `y = y*e + y` (a rounded `mul` then a rounded `add`); the result is `y` (in [0.5, 1]) with
+  `127 - ex` added to its exponent field (it stays in 1..254) and the sign of `x`. The last
+  step is in correction form because `y * (2 - a*y)` without a fused multiply-add has a fixed
+  point an ulp below `1/a` (`recip(1)` was `0.99999994`). The result is within 1.16 ulp of the
+  exact value (every fp32 in [1, 2), and samples of every exponent) and exact at every power of
+  two: `tests/test_fp.py`. Returning a zero for `|x| >= 2^126` keeps
+  `silu(x) = x * recip(1 + exp2(-x*log2e))` exact at `-0` for very negative `x`, where `exp2`
+  overflows to infinity.
 - `rsqrt(x)`: `x <= 0` (any sign bit set) and `x = +inf` return `+0`. With `x'` = `16x` if x's
   exponent field is <= 2, `x/16` if it is 250..254, else `x` (a change of the field by 4):
-  `y = bits(0x5F3759DF - (bits(x') >> 1))`, `h = 0.5*x'`, three times `y = y * (1.5 - h*(y*y))`;
-  the result is `4y`, `y/4` or `y` (y's field plus 2, minus 2, unchanged). Unscaled, `h`
-  flushes at field 1 and `y*y` at fields >= 252 (NaN or errors up to 4x). The steps are exact
-  under the scaling, so every other input gives the unscaled bits.
+  `y = bits(0x5F3759DF - (bits(x') >> 1))`, `h = 0.5*x'`, twice `y = y * (1.5 - h*(y*y))`,
+  then `e = 0.5 - h*(y*y)` and `y = y*e + y`; the result is `4y`, `y/4` or `y` (y's field plus
+  2, minus 2, unchanged). Unscaled, `h` flushes at field 1 and `y*y` at fields >= 252 (NaN or
+  errors up to 4x). The steps are exact under the scaling, so every other input gives the
+  unscaled bits. The result is within 1.03 ulp of the exact value (every fp32 in [1, 4), and
+  samples of every exponent) and exact at every power of four: `tests/test_fp.py`.
 - `log2(x)`: `x = +-0` returns `-inf`, `x < 0` (and NaN) the canonical NaN, `x = +inf` `+inf`.
   Otherwise, with `f` the 23 fraction bits of `x` and `ex` its exponent field: `ge = f >= 0x3504F3`
   (the mantissa is at least sqrt(2)), `e = ex - 127 + ge`, `m = bits((ge ? 126 : 127) << 23 | f)`
