@@ -164,20 +164,142 @@ def test_quantized_golden_follows_the_isa_simulator(name, wformat):
     assert V.summary([g["pairs"]["fp32"] for g in gold])["kl_mean"] > q["kl_mean"]
 
 
+class _DeviceCodes:
+    """The int8 groups of a device run (every fp32.quantize call: the ISA simulator's QACT / QST
+    and the image's host-side ones), each as r = x * 127 / amax and its codes, found again by
+    content: the place of the largest |r|, then the smallest max |r - r_device| (under 0.25; a
+    group the device did not quantize is 25 or more away)."""
+
+    def __init__(self):
+        self.parts, self.unmatched = [], 0
+
+    def record(self, x, axis, q):
+        x = np.moveaxis(np.asarray(x, np.float32), axis, -1)
+        n = x.shape[-1]
+        x = x.reshape(-1, n).astype(np.float64)
+        a = np.abs(x).max(-1, keepdims=True)
+        self.parts.append((x * 127 / np.where(a == 0, 1, a),
+                           np.moveaxis(q, axis, -1).reshape(-1, n)))
+
+    def index(self):
+        self.R, self.Q, self.at = {}, {}, {}
+        for n in {r.shape[1] for r, _ in self.parts}:
+            self.R[n] = np.concatenate([r for r, _ in self.parts if r.shape[1] == n])
+            self.Q[n] = np.concatenate([q for r, q in self.parts if r.shape[1] == n])
+            k = np.abs(self.R[n]).argmax(-1)
+            self.at[n] = {int(i): np.nonzero(k == i)[0] for i in np.unique(k)}
+
+    def find(self, r):
+        """(max |r - r_device|, the device's codes) of the group r [n] (a longer device group:
+        its first n), or (inf, None)."""
+        k = int(np.abs(r).argmax())
+        for every in (False, True):           # the same largest place, else every group
+            best = (0.25, None)
+            for m, R in self.R.items():
+                if m < len(r):
+                    continue
+                rows = np.arange(len(R)) if every else self.at[m].get(k, np.arange(0))
+                if len(rows):
+                    d = np.abs(R[rows, :len(r)] - r).max(-1)
+                    i = int(np.argmin(d))
+                    if d[i] < best[0]:
+                        best = (d[i], self.Q[m][rows[i], :len(r)])
+            if best[1] is not None:
+                return best
+        return np.inf, None
+
+    def force(self, r, q):
+        """q, the emulation's codes of the groups r [g, n], with the device's where r is within
+        its group's distance from the device's (+ 1e-3: r_device is recomputed in float64) of a
+        rounding tie, the only places the two can round apart."""
+        q = q.copy()
+        for g in np.nonzero(np.abs(r).max(-1) > 0)[0]:
+            d, qd = self.find(r[g])
+            if qd is None:
+                self.unmatched += 1
+                continue
+            near = np.abs(r[g] - np.rint(r[g])) > 0.5 - d - 1e-3
+            q[g, near] = qd[near]
+        return q
+
+
+def _teacher_forced(mp, mod, dev):
+    """The emulation's int8 points (opentpu.llm.qwen3's _fake_q and _v_parts, which its _pv and
+    _fake_w call, and the port module's imports of them) with the device's codes near ties:
+    their own results but a forced code's value (code * scale)."""
+    from opentpu.llm import qwen3 as Q3
+    fake_q, v_parts = Q3._fake_q, Q3._v_parts
+
+    def fq(x, D=128):
+        out = np.asarray(fake_q(x, D), np.float64)
+        xb = np.asarray(x, np.float64).reshape(-1, D)
+        a = np.abs(xb).max(-1, keepdims=True)
+        s = np.where(a == 0, 1, a / 127)
+        q = np.rint(out.reshape(-1, D) / s)
+        return out + ((dev.force(xb / s, q) - q) * s).reshape(out.shape)
+
+    def vp(v):
+        q, sc = v_parts(v)
+        a = np.abs(v).max(-1, keepdims=True)
+        r = (v / np.where(a == 0, 1, a / 127)).reshape(-1, v.shape[-1])
+        return dev.force(r, q.reshape(r.shape)).reshape(q.shape), sc
+    for m in {Q3, mod}:
+        mp.setattr(m, "_fake_q", fq)
+        mp.setattr(m, "_v_parts", vp)
+
+
+def _unfolded_pv(pp, Vq, vs, D: int = 128):
+    """P.V with V's per-token scales applied after P is quantized (a wrong emulation)."""
+    from opentpu.llm import qwen3 as Q3
+    ppad = np.zeros(-(-len(pp) // D) * D)
+    ppad[:len(pp)] = pp
+    return (Q3._fake_q(ppad, D)[:len(pp)] * vs) @ Vq
+
+
 @pytest.mark.parametrize("name", ["qwen3", "lfm2", "qwen35"])
-def test_emulated_logits_follow_the_isa_simulator(name):
+def test_emulated_logits_follow_the_isa_simulator(name, monkeypatch):
     """The ports' emulated_logits (float64, the device's quantization points) are the ISA
-    simulator's logits to fp32 rounding with fp4 weights on these tiny models (no int8 value
-    rounds the other way): P.V as the device takes it, V's per-token scales folded into P before
-    P is quantized (QACT CSCALE). Without the fold the emulation is about 1% off."""
+    simulator's logits to fp32 rounding with fp4 weights on these tiny models: P.V as the device
+    takes it, V's per-token scales folded into P before P is quantized (QACT CSCALE). Without
+    the fold the emulation is about 1% off, which the test asserts too. Teacher forced at the
+    rounding ties: an int8 value whose float64 and fp32 sides lie across a tie takes the
+    device's code; unforced, it rounds the other way now and then and the steps after it stray
+    by 0.1 - 2.5% (on main 7 / 13 / 16 of 32 prompts over 16 model seeds of qwen3 / lfm2 /
+    qwen35, which ones depending on the host's float64 summation order). Forced, every prompt
+    of 16 seeds is within 4e-7 on the Mac and omarchy, and a 1% error in K or in V's scales,
+    or K or V left unrounded, is 0.7 - 2.3% off. Every int8 group finds its device group but the
+    head's inputs at the prompts' earlier positions (the device takes no logits there)."""
     import importlib
+    from opentpu import fp32 as F
+    from opentpu.llm import qwen3 as Q3
     _, W, spec = _tiny(name)
-    _, runs = _runs(spec, W, "fp4")
-    emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
-    for p, r in zip(PROMPTS, runs):
-        seq = list(p) + list(r["tokens"][:-1])
-        emu = emulated_logits(spec, W, seq, wformat="fp4")[len(p) - 1:]
-        assert np.abs(r["logits"] - emu).max() < 1e-5 * np.abs(emu).max()
+    dev, quantize = _DeviceCodes(), F.quantize
+
+    def recorded(x, axis=-1):
+        q, s = quantize(x, axis)
+        dev.record(x, axis, q)
+        return q, s
+    with monkeypatch.context() as mp:
+        mp.setattr(F, "quantize", recorded)
+        _, runs = _runs(spec, W, "fp4")
+    dev.index()
+    mod = importlib.import_module(type(spec).__module__)
+    _teacher_forced(monkeypatch, mod, dev)
+
+    def errors():
+        err = []
+        for p, r in zip(PROMPTS, runs):
+            seq = list(p) + list(r["tokens"][:-1])
+            emu = mod.emulated_logits(spec, W, seq, wformat="fp4")[len(p) - 1:]
+            err.append(np.abs(r["logits"] - emu).max() / np.abs(emu).max())
+        return np.array(err)
+    err = errors()
+    assert (err < 1e-5).all(), err
+    assert dev.unmatched <= sum(len(p) - 1 for p in PROMPTS) * spec.hidden // 128, dev.unmatched
+    for m in {Q3, mod}:
+        monkeypatch.setattr(m, "_pv", _unfolded_pv)
+    err = errors()
+    assert (err > 1e-3).all(), err
 
 
 @pytest.mark.parametrize("fmt", ["int8", "fp4"])
