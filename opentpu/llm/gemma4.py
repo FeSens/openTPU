@@ -92,7 +92,7 @@ from . import moe as MO
 from .lfm2 import plan
 from ..host.offload import LINE, BackendDram, ExpertServer, Layout, RowLayout, RowServer
 from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, RunPos, _Bump, _lm_head, _lm_head_rows, _qdesc,
-                    _tdesc, amask_table, fill_logits, step_descriptors)
+                    _tdesc, amask_table, fill_logits, finite, step_descriptors)
 
 SLIDE, FULL = "sliding", "full"
 
@@ -282,17 +282,18 @@ class _Rows:
     def __getitem__(self, key):
         sl = self.f.get_slice(self.name)
         if isinstance(key, slice):
-            return sl[key].float().numpy()
+            return finite(sl[key].float().numpy(), f"{self.name}[{key.start}:{key.stop}]")
         if isinstance(key, (int, np.integer)):
-            return sl[int(key):int(key) + 1].float().numpy()[0]
-        return np.stack([sl[int(i):int(i) + 1].float().numpy()[0] for i in key])
+            return finite(sl[int(key):int(key) + 1].float().numpy()[0], f"{self.name}[{key}]")
+        return np.stack([finite(sl[int(i):int(i) + 1].float().numpy()[0], f"{self.name}[{i}]")
+                         for i in key])
 
 
 class Weights(dict):
     """The language model of a Gemma 4 checkpoint, loaded lazily: W[name] reads one tensor as
     fp32 (HF names of a text-only model, model.language_model.* -> model.*; a text-only
     checkpoint's as they are); the PLE table stays in the file (_Rows). Holds nothing but the
-    open file."""
+    open file. A tensor (or PLE row) with a NaN or an infinity is refused (qwen3.finite)."""
 
     PLE = "model.embed_tokens_per_layer.weight"
 
@@ -328,7 +329,7 @@ class Weights(dict):
         f, name = self._files[k]
         if k == self.PLE:
             return _Rows(f, name)
-        return f.get_tensor(name).float().numpy()
+        return finite(f.get_tensor(name).float().numpy(), k)
 
     def get(self, k, default=None):
         return self[k] if k in self._files else default
@@ -337,7 +338,7 @@ class Weights(dict):
         """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
         read alone, fp32."""
         f, name = self._files[k]
-        return f.get_slice(name)[int(i)].float().numpy()
+        return finite(f.get_slice(name)[int(i)].float().numpy(), f"{k}[{int(i)}]")
 
     def rows(self, k, idx) -> np.ndarray:
         """Rows idx (a list) of tensor k, fp32, without loading the rest."""

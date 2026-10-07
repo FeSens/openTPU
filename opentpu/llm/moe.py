@@ -60,6 +60,9 @@ layer block's MLP (lfm2.Image), so the FFN is kernels.mlp.swiglu_down at the slo
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -187,20 +190,95 @@ def gemma_router(W, p: str) -> np.ndarray:
     return w * (np.asarray(W[p + "router.scale"], np.float32) * np.float32(w.shape[1] ** -0.5))
 
 
-def open_pool(layout: Layout, pool_file, mapped: bool = True) -> PoolFile:
+# ---------------------------------------------------------------------------- the pool's key
+def quant_source(wformat: str) -> str:
+    """The quantizer's code an expert's bytes depend on: quant.py, and for int8 fp32.py too
+    (runtime.quantize_rows rounds by fp32.quantize, its scale by fp32.recip). Not numpy's
+    version (qcache._source's): a pool is packed on one host and read on another."""
+    from .. import fp32 as F
+    h = hashlib.blake2b(digest_size=16)
+    for f in [Q.__file__] + ([F.__file__] if wformat == "int8" else []):
+        h.update(Path(f).read_bytes())
+    return h.hexdigest()
+
+
+def checkpoint_id(model_dir) -> str | None:
+    """A checkpoint's identity: its config.json's hash (strip_experts.py copies the file as it
+    is, so the card host's checkpoint without the experts has the packing host's); None
+    without one."""
+    f = Path(model_dir) / "config.json" if model_dir is not None else None
+    if f is None or not f.exists():
+        return None
+    return hashlib.blake2b(f.read_bytes(), digest_size=16).hexdigest()
+
+
+def pool_key(image, model_dir=None) -> dict:
+    """The key of `image`'s expert pool (`<pool>.key`, JSON): what decides its experts' bytes,
+    the quantizer's code (quant_source), the format, D, the layout (the pool's and the slot's:
+    ExpertFormat's parts) and the checkpoint (checkpoint_id); "numpy" and "model" are notes,
+    not compared."""
+    f, L = image.fmt, image.offload
+    return {"key": 1, "quant": quant_source(f.wformat), "format": f.wformat, "D": f.D,
+            "layout": {"layers": L.layers, "E": L.E, "slot_bytes": L.slot_bytes, "H": f.H,
+                       "F": f.F0, "C": f.C, "wg": list(f.wg), "wu": list(f.wu),
+                       "wd": [list(x) for x in f.wd]},
+            "checkpoint": checkpoint_id(model_dir), "numpy": np.__version__,
+            "model": None if model_dir is None else Path(model_dir).name}
+
+
+def key_diff(have: dict, want: dict) -> list:
+    """The fields in which a pool's key `have` differs from `want` (the checkpoint only when
+    both know it)."""
+    out = [k for k in ("key", "quant", "format", "D", "layout") if have.get(k) != want.get(k)]
+    if None not in (have.get("checkpoint"), want.get("checkpoint")) and \
+            have["checkpoint"] != want["checkpoint"]:
+        out.append("checkpoint")
+    return out
+
+
+def check_pool_key(pool_file, want: dict) -> None:
+    """Refuse an expert pool whose key (`<pool>.key`) is not `want`: its experts were packed by
+    another quantizer, in another format or layout, or from another checkpoint. A pool without
+    a key (packed before keys) is taken with a warning."""
+    kf = Path(str(pool_file) + ".key")
+    if not kf.exists():
+        print(f"warning: {pool_file} has no key file (a pool packed before keys): taken as "
+              f"{want['format']}, unchecked; once it is known current, stamp it: python3 "
+              f"tools/offload/pack_pool.py MODEL {pool_file} stamp", file=sys.stderr, flush=True)
+        return
+    have = json.loads(kf.read_text())
+    diff = key_diff(have, want)
+    if diff:
+        note = {k: (have.get(k), want.get(k)) for k in diff if k != "layout"}
+        raise ValueError(
+            f"{pool_file} was packed for another model image ({', '.join(diff)} differ"
+            f"{': ' + str(note) if note else ''}; {have.get('format')} D {have.get('D')} of "
+            f"{have.get('model')}, this run is {want['format']} D {want['D']} of "
+            f"{want.get('model')}): its experts' bytes are not this image's. Repack it: remove "
+            f"{pool_file} and its .packed, .format and .key, then python3 "
+            f"tools/offload/pack_pool.py MODEL {pool_file} init and its pack workers (or let "
+            f"the run pack the experts it asks for)")
+
+
+def open_pool(layout: Layout, pool_file, mapped: bool = True,
+              key: dict | None = None) -> PoolFile:
     """The expert pool file for `layout`, opened, and its packed experts' read into the page
     cache started (PoolFile.warm: the host's RAM tier; the Engine opens it before it builds the
     image, so the read runs during the build). The file is the whole pool's size (sparse until
     packed), and `<pool_file>.packed` marks the experts in it (a file of the right size without
     one is a pool packed whole). A new file is in the split format
     (opentpu.host.offload.split_order), as `<pool_file>.format` says; a file without it holds
-    the slot format. The page cache stays the kernel's to reclaim: nothing is pinned. mapped:
-    PoolFile's (its reads touched through a read-only map: docs/offload.md 10.7)."""
+    the slot format. With `key` (pool_key) a new file gets it as `<pool_file>.key`, and an
+    existing one must have it (check_pool_key; one without a key file is taken with a warning).
+    The page cache stays the kernel's to reclaim: nothing is pinned. mapped: PoolFile's (its
+    reads touched through a read-only map: docs/offload.md 10.7)."""
     L = layout
     n = L.layers * L.E
     path = Path(pool_file)
     done = Path(str(path) + ".packed")
     fresh = not path.exists() or path.stat().st_size != n * L.slot_bytes
+    if not fresh and key is not None:
+        check_pool_key(path, key)
     if fresh:
         with open(path, "wb") as f:
             f.truncate(n * L.slot_bytes)
@@ -209,6 +287,11 @@ def open_pool(layout: Layout, pool_file, mapped: bool = True) -> PoolFile:
     fmt = Path(str(path) + ".format")
     if fresh:
         fmt.write_text(SPLIT + "\n")
+        kf = Path(str(path) + ".key")
+        if key is not None:
+            kf.write_text(json.dumps(key, indent=1) + "\n")
+        elif kf.exists():
+            kf.unlink()
     pf = PoolFile(path, L.slot_bytes, fmt.exists() and fmt.read_text().strip() == SPLIT,
                   mapped=mapped)
     pf.arr = np.memmap(path, np.uint8, "r+", shape=(n, L.slot_bytes))

@@ -64,7 +64,9 @@ def named(spec, wformat: str, formats: str | None) -> tuple:
 
 def rules(formats: str | None, kinds, default: str = "", unranged=("head",)) -> list:
     """The rules of a formats string (None: OTPU_FORMATS, else `default`): a list of (kind,
-    first layer, last layer, ranged, format). ValueError names a malformed item."""
+    first layer, last layer, ranged, format). ValueError names a malformed item, and a range
+    that is not a or a-b with a <= b (one that would cover no layer, or other layers than
+    written)."""
     if formats is None:
         formats = os.environ.get("OTPU_FORMATS", default)
     out = []
@@ -72,13 +74,13 @@ def rules(formats: str | None, kinds, default: str = "", unranged=("head",)) -> 
         if not item:
             continue
         key, _, fmt = item.partition("=")
-        kind, _, span = key.partition("@")
-        lo, _, hi = span.partition("-")
-        if kind not in kinds or fmt not in FORMATS or (span and not (lo + hi).isdigit()) or \
-                (span and kind in unranged):
+        kind, at, span = key.partition("@")
+        lo, dash, hi = span.partition("-")
+        hi = hi if dash else lo
+        if kind not in kinds or fmt not in FORMATS or (at and kind in unranged) or \
+                (at and not (lo.isdigit() and hi.isdigit() and int(lo) <= int(hi))):
             raise ValueError(f"weight format {item!r}: kind[@a-b]=int8|int4|fp4")
-        out.append((kind, int(lo) if span else 0, int(hi or lo) if span else 1 << 30,
-                    bool(span), fmt))
+        out.append((kind, int(lo) if at else 0, int(hi) if at else 1 << 30, bool(at), fmt))
     return out
 
 

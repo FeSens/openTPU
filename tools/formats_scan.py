@@ -35,7 +35,8 @@ ckpt).
         the perplexity and dKL of formats strings (as OTPU_FORMATS; "" for none), each with the
         standard error of its difference from int8's (paired over the tokens)
     python tools/formats_scan.py check
-        tiny random models of each family (SmolLM3, Phi-3, Qwen3.5 with 4 key heads, LFM2):
+        tiny random models of each family (Qwen3 with K outliers, SmolLM3, Phi-3, Qwen3.5
+        with 4 key heads, LFM2):
         emulate() against emulated_logits (formats including ranged ones) and the NLL of the
         chunked head against the full logits (Gemma 4's: tests/test_gemma4.py)
 
@@ -125,8 +126,8 @@ def _qwen3(spec, W, i, x, w, fq, c, s, D):
     k = (h @ w(p + "self_attn.k_proj.weight").T).reshape(T, spec.n_kv, d)
     v = (h @ w(p + "self_attn.v_proj.weight").T).reshape(T, spec.n_kv, d)
     if spec.qk_norm:
-        q = norm(q, W[p + "self_attn.q_norm.weight"])
-        k = norm(k, W[p + "self_attn.k_norm.weight"])
+        gq, gk = Q3.qk_gains(spec, W, p)
+        q, k = norm(q, gq), norm(k, gk)
     if i not in spec.nope:
         q, k = rot(q), rot(k)
     o = _attend(q, fq(k, D), v, fq, D, D, math.sqrt(d))
@@ -673,6 +674,10 @@ def check() -> None:
     short = [1.0 + 0.05 * i for i in range(48)]
     lt = ["linear_attention", "linear_attention", "full_attention"] * 2
     models = {
+        "qwen3": transformers.Qwen3ForCausalLM(transformers.Qwen3Config(
+            hidden_size=256, num_hidden_layers=4, num_attention_heads=4, num_key_value_heads=2,
+            head_dim=128, intermediate_size=512, vocab_size=1000, rms_norm_eps=1e-6,
+            rope_theta=1e6, tie_word_embeddings=True, max_position_embeddings=4096)),
         "smollm3": transformers.SmolLM3ForCausalLM(transformers.SmolLM3Config(
             hidden_size=256, num_hidden_layers=8, num_attention_heads=8, num_key_value_heads=2,
             head_dim=128, intermediate_size=512, vocab_size=1000, rms_norm_eps=1e-6,
@@ -714,6 +719,8 @@ def check() -> None:
                 if "norm" in n:
                     p.copy_((0.0 if name == "qwen35" and not n.endswith("linear_attn.norm.weight")
                              else 1.0) + 0.1 * torch.randn_like(p))
+                    if name == "qwen3" and n.endswith("k_norm.weight"):   # K smoothed (qk_gains)
+                        p[[5, 69]] = 60.0
         with tempfile.TemporaryDirectory() as d:
             m.save_pretrained(d)
             spec = load_spec(d)

@@ -324,6 +324,43 @@ def test_golden_weights_are_the_images(fmt):
     assert V.Golden(m, spec, "int8", fmt).formats["lm_head.weight"] == fmt
 
 
+def test_golden_takes_the_devices_k_smoothing():
+    """Qwen3's K outliers planted (k_norm gains 60 on two RoPE pairs, their q gains 0.01, as
+    test_qwen3's): the device smooths K's channels into the q_norm / k_norm gains
+    (qwen3.qk_gains) and stays near the fp32 golden (KL 3e-5; 1.1e-3 unsmoothed), and the
+    quantized golden smooths them too: it follows the ISA simulator as on the plain model (KL
+    1e-14 here; a golden that did not smooth K would be 1e-3 away). The weights mode takes the
+    device's gains, bit-identical to the checkpoint's there (sigma, a power of two, changes
+    only how K rounds); fp32 is the checkpoint (the fp32 reference)."""
+    from dataclasses import replace
+
+    from opentpu.llm.qwen3 import reference_logits
+
+    def planted():
+        m, _, spec = _tiny("qwen3")
+        with torch.no_grad():
+            for n, p in m.named_parameters():
+                if n.endswith(("q_norm.weight", "k_norm.weight")):
+                    p[[5, 69, 30, 94]] = 0.01 if "q_norm" in n else 60.0
+        return m, spec
+    m, spec = planted()
+    W = {k: v.float().numpy().copy() for k, v in m.state_dict().items()}
+    eng, runs = _runs(spec, W)
+    g = V.Golden(m, spec, "int8", image=V.image_formats(eng.image))
+    gold = V.against_golden(g, PROMPTS, runs, ["quant", "fp32"], 8, spec.eos)
+    q = V.summary([x["goldens"]["quant"] for x in gold])
+    assert q["top1"] >= V.MIN_TOP1 and q["min_cos"] > 0.999 and q["kl_mean"] < 1e-6
+    assert V.summary([x["goldens"]["fp32"] for x in gold])["kl_mean"] < 1e-4
+    g.set("weights")
+    smooth = g.logits(PROMPTS[1])
+    g.set("fp32")
+    assert np.abs(g.logits(PROMPTS[1]) - reference_logits(spec, W, PROMPTS[1])).max() < 1e-4
+    plain = V.Golden(planted()[0], replace(spec, qk_smooth=False), "int8")
+    plain.set("weights")
+    assert np.array_equal(smooth, plain.logits(PROMPTS[1]))
+
+
+
 def test_two_devices_must_agree_bit_for_bit(qwen3_int8):
     """agreement(): equal runs pass; one logit 1 ulp off fails at that step, a different token
     fails at that token (the steps after it are not compared)."""

@@ -924,6 +924,17 @@ the paths in `env.sh`. The host's files come from `tools/offload/strip_experts.p
 checkpoint without its experts) and `pack_pool.py` (the pool, packed in workers or streamed to
 another host).
 
+A pool file has a key, `<pool>.key` (`moe.pool_key`): the quantizer's code (quant.py, and for
+int8 fp32.py too), the experts' format, D, the layout (the pool's and the slot's) and the
+checkpoint's config.json (strip_experts.py copies it as it is). `pack_pool.py init` and a run that
+creates the pool write it; every run that opens the pool checks it (`moe.open_pool`), and so do
+`pack` and `recv` (against the key that `send` puts first in its stream). A pool packed by another
+quantizer, in another format of the same size (int4 against fp4) or from another checkpoint is
+refused, with how to repack it. A pool packed before keys is taken with a one-line warning;
+`pack_pool.py MODEL POOL stamp` gives it the key of MODEL and `--wformat` once it is known to be
+current, and `pack_pool.py MODEL POOL info` prints the key, or for a pool without one its format as
+its slot size says (int8, or 4-bit: fp4 and int4 have the same size).
+
 The first run found a bug. The Engine's compile worker process, which the card's backend
 compiles ahead in, built its image without the MoE's `experts`: every expert resident, over
 DRAM (4568 MiB for 4096). It failed at the first prefill step, before the card ran anything.

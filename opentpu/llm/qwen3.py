@@ -67,6 +67,7 @@ class Spec:
     eos: tuple = (151645, 151643)
     # the Llama-like models of llama.py (SmolLM3, Phi-3 / Phi-4-mini) run on this code too:
     qk_norm: bool = True      # RMSNorm on each q and k head (Qwen3); Llama-likes have none
+    qk_smooth: bool = True    # with qk_norm: K's channels smoothed into the gains (qk_gains)
     nope: tuple = ()          # layers without RoPE (SmolLM3: every 4th)
     rotary: int = 0           # RoPE dimensions of a head, the first ones (0: all; Phi-4-mini 96)
     rope_div: tuple = ()      # per-frequency divisors of the angle (LongRoPE's short factors)
@@ -128,17 +129,32 @@ class Spec:
                      formats)
 
 
+def finite(v: np.ndarray, name: str) -> np.ndarray:
+    """v, a tensor converted from a checkpoint, or a ValueError naming it when it holds a NaN or
+    an infinity (a corrupt or mis-converted checkpoint): the quantizers would turn its block
+    into a NaN or infinite scale, and the model image would hold garbage. One float64 sum (no
+    finite fp32 values sum to an infinity there)."""
+    if np.isfinite(np.sum(v, dtype=np.float64)):
+        return v
+    bad = ~np.isfinite(v)
+    at = tuple(int(i) for i in np.unravel_index(int(np.argmax(bad)), v.shape))
+    raise ValueError(f"{name}: {int(bad.sum())} of its {v.size} values are not finite (NaN or "
+                     f"inf; the first at {at}): the checkpoint is corrupt or was converted wrong")
+
+
 class Weights(Mapping):
     """The tensors of a HF safetensors checkpoint, read and converted to fp32 numpy arrays
     when first used (load_weights): a multi-billion-parameter model is never all in memory in
     fp32 (LFM2-2.6B: 10 GB), the image build converts one tensor at a time. Tensors of at most
     CACHE bytes stay cached (norms, conv taps: read per token by the references), and the
-    last larger one (the embedding table a reference indexes per token)."""
+    last larger one (the embedding table a reference indexes per token). A tensor with a NaN or
+    an infinity is refused (finite)."""
 
     CACHE = 16 << 20
 
     def __init__(self, model_dir, mtp: bool = False):
         from safetensors import safe_open
+        self.model_dir = Path(model_dir)
         self._files, self._where = [], {}
         skip = ("model.visual.",) if mtp else ("model.visual.", "mtp.")
         for f in sorted(Path(model_dir).glob("*.safetensors")):
@@ -184,7 +200,7 @@ class Weights(Mapping):
         import torch
         h, k, rows = self._where[name]
         t = h.get_tensor(k) if rows is None else h.get_slice(k)[rows[0]:rows[1]]
-        v = t.to(torch.float32).numpy()
+        v = finite(t.to(torch.float32).numpy(), name)
         if v.nbytes <= self.CACHE:
             self._small[name] = v
         else:
@@ -219,11 +235,13 @@ class LazyWeights(dict):
     """load_weights' names over a checkpoint's safetensors files, each tensor read as fp32 when
     it is asked for and not kept: for a model whose fp32 weights would not fit host RAM (a
     MoE; its experts are packed one at a time, opentpu.llm.moe). release() gives the files'
-    pages back once the image is built (a later read reopens its file)."""
+    pages back once the image is built (a later read reopens its file). A tensor with a NaN or
+    an infinity is refused (finite)."""
 
     def __init__(self, model_dir):
         super().__init__()
         from safetensors import safe_open
+        self.model_dir = Path(model_dir)    # (moe.pool_key: the checkpoint's identity)
         self._at, self._h = {}, {}          # name -> (file, its name there); file -> handle
         for f in sorted(Path(model_dir).glob("*.safetensors")):
             h = self._h[str(f)] = safe_open(str(f), "pt")
@@ -241,14 +259,14 @@ class LazyWeights(dict):
     def __getitem__(self, k):
         import torch
         h, name = self._open(k)
-        return h.get_tensor(name).to(torch.float32).numpy()
+        return finite(h.get_tensor(name).to(torch.float32).numpy(), k)
 
     def part(self, k, i):
         """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
         read alone."""
         import torch
         h, name = self._open(k)
-        return h.get_slice(name)[i].to(torch.float32).numpy()
+        return finite(h.get_slice(name)[i].to(torch.float32).numpy(), f"{k}[{i}]")
 
     def release(self) -> None:
         """Close the files (safe_open maps each whole: the pages a read touched stay mapped,
@@ -294,6 +312,48 @@ def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
     ang = pos * inv
     sc = getattr(spec, "rope_scale", 1.0)
     return (np.cos(ang) * sc).astype(np.float32), (np.sin(ang) * sc).astype(np.float32)
+
+
+# =============================================================================== K smoothing
+def qk_sigma(spec: Spec, wq, wk, gq, gk) -> np.ndarray:
+    """sigma [head_dim]: the factors K's channels are divided by and q's multiplied by (q . K
+    unchanged), so that K's int8 rounding (one scale per token and head block) does not lose
+    the small channels to a few large ones (docs/quant.md, "K smoothing"). Qwen3's k_norm
+    gains have outlier channels (Qwen3-0.6B: up to 42 times their median in a layer); K's
+    rounding cost Qwen3-0.6B a KL of 0.048 nats a token, the int8 weights 0.0023.
+
+    sigma = sqrt(kmag / qmag) (SmoothQuant's balance between q and K), from the weights alone
+    (wq [n_q d, H], wk [n_kv d, H], the gains gq, gk [d]): a channel's magnitude is its gain
+    times its projection row's norm over its head's RMS row norm, the largest over the heads,
+    as the heads share the gains; the same within each RoPE pair (c, c + rope_dim / 2), so it
+    commutes with RoPE; and a power of two, so that it scales q and K exactly and changes only
+    how they round."""
+    d = spec.head_dim
+
+    def mag(w, g, heads):
+        r = np.linalg.norm(np.asarray(w, np.float64).reshape(heads, d, -1), axis=-1)
+        r = r / np.sqrt(np.mean(r * r, -1, keepdims=True))
+        m = np.abs(np.asarray(g, np.float64)) * r.max(0)
+        h = spec.rope_dim // 2
+        m[:h] = m[h:2 * h] = np.maximum(m[:h], m[h:2 * h])
+        return m
+
+    km, qm = mag(wk, gk, spec.n_kv), mag(wq, gq, spec.n_q)
+    ok = (km > 0) & (qm > 0)
+    s = np.sqrt(np.where(ok, km, 1) / np.where(ok, qm, 1))
+    return np.exp2(np.round(np.log2(s)))
+
+
+def qk_gains(spec: Spec, W, p: str) -> tuple[np.ndarray, np.ndarray]:
+    """Layer p's q_norm and k_norm gains (fp32) as the device applies them: times and divided
+    by qk_sigma with spec.qk_smooth, else the checkpoint's."""
+    gq = np.asarray(W[p + "self_attn.q_norm.weight"], np.float32)
+    gk = np.asarray(W[p + "self_attn.k_norm.weight"], np.float32)
+    if not spec.qk_smooth:
+        return gq, gk
+    s = qk_sigma(spec, W[p + "self_attn.q_proj.weight"], W[p + "self_attn.k_proj.weight"], gq,
+                 gk)
+    return (gq * s).astype(np.float32), (gk / s).astype(np.float32)
 
 
 # =============================================================================== lookup tables
@@ -663,6 +723,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     def norm(v, g):
         return (v / np.sqrt(np.mean(v * v, -1, keepdims=True) + spec.eps)) * g
 
+    qk = [qk_gains(spec, W, f"model.layers.{i}.") if spec.qk_norm else None
+          for i in range(spec.layers)]
     Kc = [[] for _ in range(spec.layers)]
     Vc = [[] for _ in range(spec.layers)]
     out = []
@@ -684,8 +746,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             k = (w(p + "self_attn.k_proj.weight") @ h).reshape(spec.n_kv, d)
             v = (w(p + "self_attn.v_proj.weight") @ h).reshape(spec.n_kv, d)
             if spec.qk_norm:
-                q = norm(q, W[p + "self_attn.q_norm.weight"])
-                k = norm(k, W[p + "self_attn.k_norm.weight"])
+                q, k = norm(q, qk[i][0]), norm(k, qk[i][1])
             if i not in spec.nope:
                 q, k = rot(q), rot(k)
             Kc[i].append(_fake_q(k, D))
@@ -885,12 +946,13 @@ class Image(EmbedHost):
             mf = self.mats_formats(self.lf[i])
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
                       (base + v if isinstance(v, int) else v)) for k, v in lofs.items()}
+            qk = qk_gains(spec, W, p) if spec.qk_norm else None
             for s in range(S):
                 put(s, Lo["g_in"], f32(W[p + "input_layernorm.weight"]))
                 put(s, Lo["g_post"], f32(W[p + "post_attention_layernorm.weight"]))
                 if spec.qk_norm:
-                    put(s, Lo["qn"], f32(W[p + "self_attn.q_norm.weight"]))
-                    put(s, Lo["kn"], f32(W[p + "self_attn.k_norm.weight"]))
+                    put(s, Lo["qn"], f32(qk[0]))
+                    put(s, Lo["kn"], f32(qk[1]))
                 if spec.nope:
                     put(s, Lo["rg"], np.array([0, 1] if i in spec.nope else [1, 0], np.float32))
             wq, wk, wv, wo = head_parallel_attention_weights(
@@ -2032,8 +2094,9 @@ class Engine:
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         if pool_file is not None and getattr(self.image, "offload", None) is not None:
-            from .moe import open_pool      # its read into the page cache runs during the build
-            pool_file = open_pool(self.image.offload, pool_file, mapped=pool_map)
+            from .moe import open_pool, pool_key    # its read into the page cache runs during
+            pool_file = open_pool(self.image.offload, pool_file, mapped=pool_map,  # the build
+                                  key=pool_key(self.image, getattr(W, "model_dir", None)))
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
