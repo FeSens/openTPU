@@ -746,8 +746,10 @@ class Machine:
 
     def _gather(self) -> None:
         sl = self.slices
-        ws = [s.waiting.w for s in sl]
-        key = [(w[1], w[2], w[4], w[5]) for w in ws]
+        key = []                 # dst resolved: the RTL writes every slice at slice 0's
+        for s in sl:
+            w = s.waiting.w
+            key.append(((s.reg(s.waiting.rb) + w[1]) & 0xFFFFFFFF, w[2], w[4], w[5]))
         if any(k != key[0] for k in key):
             raise SimError("GATHER: slices disagree on dst/rows/cols/drs/seg")
         vals = []

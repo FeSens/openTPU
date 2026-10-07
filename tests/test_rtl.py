@@ -373,6 +373,56 @@ def test_scoreboard_stress_two_slices(have_verilator, seed):
         assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
 
 
+# Only the fields docs/isa.md writes R[x] + w are register-relative; the counts, shapes and
+# strides beside them are immediates. The sequencer added R[rb] to every w2 and R[rc] to every
+# w3, so LD/ST's n, QACT's (rows, ab, KB) and srs and GATHER's (rows, cols) moved with registers
+# the instructions do not name (the assembler encodes 0 there; these set them).
+@pytest.mark.parametrize("op", ["ld", "st", "qact", "gather"])
+def test_count_fields_are_immediates(have_verilator, op):
+    cfg = Config(S=2)
+    D = cfg.D
+    rng = np.random.default_rng(3200)
+    imgs = _images(rng, 2)
+    prog = [I.li(3, 5), I.li(4, 0x100), I.ld(DATA, 0, 4096)]
+    if op == "ld":
+        prog.append(I.Instr(I.LD, rc=3, w=I._w(DATA + 4096, 5000, 64)))
+    elif op == "st":
+        prog.append(I.Instr(I.ST, rc=3, w=I._w(SCRATCH, 0, 64)))
+    elif op == "qact":
+        # rows 2, ab 0, KB 2, srs 2D (R4 would make ab 1, R3 move row 1); the MM reads them
+        prog += [I.Instr(I.QACT, rb=4, rc=3, w=I._w(0, 2 | 2 << 16, 2 * D)),
+                 I.mm(INT8, SCALES, 5000, 16, 2, 2 * D, 16, 2, 0, 8)]
+    else:
+        prog.append(I.Instr(I.GATHER, rc=3, w=I._w(0, 5000, 2 | 16 << 16, 32, 16, 64)))
+    prog.append(I.halt())
+    m = Machine(cfg, [prog, prog], [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog, prog], [i.copy() for i in imgs])
+    for s in range(2):
+        assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
+        assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
+
+
+# GATHER's dst is R[rb] + w2 and every slice names the same one (otpu_coll writes at slice 0's),
+# here through different registers; slices that name different ones stop the simulation, as
+# they raise in the ISA simulator.
+def test_gather_dst_through_registers(have_verilator):
+    cfg = Config(S=2)
+    rng = np.random.default_rng(3300)
+    imgs = _images(rng, 2)
+    progs = [[I.ld(DATA, 0, 4096), I.gather(0, 5000, 2, 16, 32, 16, 64), I.halt()],
+             [I.li(6, 40), I.ld(DATA, 0, 4096), I.gather(0, 4960, 2, 16, 32, 16, 64, rb=6),
+              I.halt()]]
+    m = Machine(cfg, progs, [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, progs, [i.copy() for i in imgs])
+    for s in range(2):
+        assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
+    progs[1][0] = I.li(6, 48)
+    with pytest.raises(SimError, match="disagree"):
+        Machine(cfg, progs, [i.copy() for i in imgs]).run()
+    with pytest.raises(RuntimeError, match="otpu_coll"):
+        rtlsim.run(cfg, progs, [i.copy() for i in imgs])
+
+
 # ------------------------------------------------------------------ the board's memory path
 # The AXI adapter (two interleaved DDR3 channels) in front of an AXI memory model that stalls
 # every handshake and delays every response at random, with the program booted from DRAM by

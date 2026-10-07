@@ -104,6 +104,22 @@ def test_gather_two_slices():
         assert np.array_equal(got, np.array([[1, 1, 1, 2, 2, 2]] * 2, np.float32))
 
 
+def test_gather_slices_must_name_the_same_resolved_dst():
+    # dst is R[rb] + w2: equal immediates through different registers are different addresses
+    # (the collective unit writes every slice's TMEM at slice 0's); equal addresses through
+    # different registers are the same GATHER
+    cfg = Config(S=2)
+    fill = I.vop(I.V_FILL, 0, 0, 0, 1, 4, 4, 0, 0, I.B_SCALAR, 1.0)
+    progs = [[fill, I.gather(0, 100, 1, 4, 4, 4, 4), I.halt()],
+             [I.li(1, 8), fill, I.gather(0, 100, 1, 4, 4, 4, 4, rb=1), I.halt()]]
+    with pytest.raises(SimError, match="disagree"):
+        Machine(cfg, progs, [None, None]).run()
+    progs[1][2] = I.gather(0, 92, 1, 4, 4, 4, 4, rb=1)
+    m = Machine(cfg, progs, [None, None]).run()
+    for sl in m.slices:
+        assert np.array_equal(sl.tget(100 + np.arange(8)), np.ones(8, np.float32))
+
+
 def test_mm_needs_n_and_kb():
     # N = 0 or KB = 0 is not an MM (docs/isa.md): the RTL's MXU skips it, which wrote nothing
     # where the simulator wrote +0 (KB = 0) or failed on RMAX's empty rows (N = 0)

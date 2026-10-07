@@ -279,14 +279,20 @@ module otpu_seq
     return (r == 0) ? 32'd0 : R[r];
   endfunction
 
-  // STREAM: src (w2) and dst (w3) += R[ra], vec (w4) += R[rb], x (w5) += R[rc], k (w6) += R[rd]
+  // STREAM: src (w2) and dst (w3) += R[ra], vec (w4) += R[rb], x (w5) += R[rc], k (w6) += R[rd].
+  // The others: w1 += R[ra], w2 += R[rb] and w3 += R[rc] where docs/isa.md writes the field as
+  // R[x] + w; the counts and shapes there are immediates: QACT's w2 (rows, ab, KB) and w3 (srs),
+  // LD's and ST's w3 (n), GATHER's w3 (rows, cols) (the enables decode the opcode beside the
+  // register reads)
   cmd_t dcmd;
   wire  is_str = (op == OP_STREAM);
+  wire  rel2 = (op != OP_QACT);
+  wire  rel3 = !(op == OP_QACT || op == OP_LD || op == OP_ST || op == OP_GATHER);
   always_comb begin
     dcmd.op = op; dcmd.flags = flags;
     dcmd.w1 = iw[1] + (is_str ? 32'd0 : rv(ra));
-    dcmd.w2 = iw[2] + (is_str ? rv(ra) : rv(rb));
-    dcmd.w3 = iw[3] + (is_str ? rv(ra) : rv(rc));
+    dcmd.w2 = iw[2] + (is_str ? rv(ra) : rel2 ? rv(rb) : 32'd0);
+    dcmd.w3 = iw[3] + (is_str ? rv(ra) : rel3 ? rv(rc) : 32'd0);
     dcmd.w4 = iw[4] + (is_str ? rv(rb) : 32'd0);
     dcmd.w5 = iw[5] + (is_str ? rv(rc) : 32'd0);
     dcmd.w6 = iw[6] + (is_str ? rv(rd) : 32'd0);

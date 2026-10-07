@@ -115,7 +115,9 @@ Quantization of a group `x[0..n)` (a block of `D`, or a whole row in row mode):
 
 Every instruction is 8 x 32-bit words `w0..w7`.
 `w0 = opcode[7:0] | ra[11:8] | rb[15:12] | rc[19:16] | rd[23:20] | flags[31:24]`.
-`R[x]` is the register value. Addresses below are "register + immediate".
+`R[x]` is the register value. Addresses below are "register + immediate". Only the fields
+written `R[x] + w` are: counts, shapes and strides are immediates whatever the register fields
+hold (LD/ST's `n`, QACT's `w2` and `w3`, GATHER's `w3`).
 
 | op | name | semantics |
 |---|---|---|
@@ -430,7 +432,8 @@ bucket chains to the next bucket's.
 
 ### GATHER
 
-All slices must execute a `GATHER` with the same `dst`, `rows`, `cols`, `drs`, `seg`.
+All slices must execute a `GATHER` with the same `dst` (the address `R[rb]+w2`, through any
+register), `rows`, `cols`, `drs`, `seg`.
 `src = R[ra]+w1`, `dst = R[rb]+w2`, `rows = w3[15:0]`, `cols = w3[31:16]`, `srs = w4`,
 `drs = w5`, `seg = w6` (words). For every slice `s`, every `r < rows`, `c < cols`:
 `T_all[dst + s*seg + r*drs + c] = T_s[src + r*srs + c]` is written into every slice's TMEM.
