@@ -4,6 +4,7 @@ shared expert; the host's server moves the missing experts. A tiny random model 
 Hugging Face transformers and the quantized emulation; a small cache gives the same logits
 bit for bit as one holding every expert."""
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -712,6 +713,113 @@ def test_pack_pool_tool_packs_the_images_experts(tiny, tmp_path, monkeypatch):
         run(stripped, b, "recv", stdin=f)
     assert a.read_bytes() == b.read_bytes()
     assert Path(str(b) + ".packed").read_bytes() == bytes([1] * n)
+
+
+def test_pool_key_refuses_another_images_pool(tiny, tmp_path, monkeypatch, capsys):
+    """An expert pool's key (`<pool>.key`, moe.pool_key: the quantizer's code, the format, D,
+    the layout, the checkpoint's config.json), written with a new pool (pack_pool init, or the
+    Engine's), is checked whenever the pool is opened: a pool of the same size packed in
+    another format (int4 against fp4), by another quantizer or from another checkpoint is
+    refused with how to repack it. A pool without a key (packed before keys) serves with a
+    one-line warning until pack_pool stamp writes its key; info tells int8 from 4-bit by the
+    key, or without one by the slot size. send puts the key first in its stream, and recv
+    refuses a stream packed for another image."""
+    import json
+    import runpy
+    import sys
+
+    from safetensors.numpy import save_file
+
+    from opentpu.llm.qwen3 import LazyWeights
+
+    m = tmp_path / "model"
+    tiny[0].config.save_pretrained(m)
+    save_file({k: np.ascontiguousarray(v) for k, v in tiny[1].items()},
+              str(m / "model.safetensors"))
+    tool = str(Path(__file__).resolve().parents[1] / "tools" / "offload" / "pack_pool.py")
+
+    def run(*args, stdin=None, stdout=None):
+        monkeypatch.setattr(sys, "argv", ["pack_pool.py", *map(str, args)])
+        if stdin is not None:
+            monkeypatch.setattr(sys, "stdin", stdin)
+        if stdout is not None:
+            monkeypatch.setattr(sys, "stdout", stdout)
+        try:
+            runpy.run_path(tool, run_name="__main__")
+        finally:
+            monkeypatch.undo()
+
+    spec = Spec.from_hf(m)
+    toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 3)]
+
+    def engine(pool, wformat="fp4"):
+        cfg = device_config(spec, 256, S=1, experts=K, wformat=wformat)
+        eng = Engine(spec, LazyWeights(m), cap=256, cfg=cfg, experts=K, wformat=wformat,
+                     pool_file=pool)
+        return np.array([eng.step(t) for t in toks])
+
+    a = tmp_path / "a.bin"
+    run(m, a, "init")
+    capsys.readouterr()
+    kf = Path(str(a) + ".key")
+    key = json.loads(kf.read_text())
+    assert (key["format"], key["D"], key["model"]) == ("fp4", 128, "model")
+    want = engine(a)
+    assert "warning" not in capsys.readouterr().err
+    good = kf.read_text()
+    for field, edit, wformat in (("format", None, "int4"),
+                                 ("quant", dict(key, quant="0" * 32), "fp4"),
+                                 ("layout", dict(key, layout={**key["layout"], "C": 128}), "fp4")):
+        if edit is not None:
+            kf.write_text(json.dumps(edit))
+        with pytest.raises(ValueError, match=f"{field} differ.*Repack it: remove .*pack_pool"):
+            engine(a, wformat)
+        kf.write_text(good)
+    cj = m / "config.json"
+    conf = cj.read_text()
+    cj.write_text(conf.replace("{", '{"_another": 1,', 1))      # another checkpoint's config
+    with pytest.raises(ValueError, match="checkpoint differ"):
+        engine(a)
+    cj.write_text(conf)
+    kf.unlink()                                         # a pool packed before keys
+    assert np.array_equal(engine(a).view(np.uint32), want.view(np.uint32))
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1 and "has no key file" in err[0] and "stamp" in err[0]
+    run(m, a, "info")
+    assert out_line(capsys) == "4-bit (fp4 or int4: the same size)"
+    run(m, a, "stamp")
+    assert json.loads(kf.read_text()) == key
+    with pytest.raises(SystemExit, match="has a key already: this one"):
+        run(m, a, "stamp")
+    engine(a)
+    assert "warning" not in capsys.readouterr().err
+    with pytest.raises(SystemExit, match="not this model's pool in this format"):
+        run(m, a, "stamp", "--wformat", "int8")
+    b = tmp_path / "b.bin"                              # int8: info by its key, then its size
+    run(m, b, "init", "--wformat", "int8")
+    capsys.readouterr()
+    run(m, b, "info", "--wformat", "int8")
+    out = capsys.readouterr().out
+    assert "key: int8, D 128" in out and "the same key" in out
+    Path(str(b) + ".key").unlink()
+    run(m, b, "info")
+    assert out_line(capsys) == "int8"
+    run(m, a, "info")
+    assert "key: fp4" in capsys.readouterr().out
+    stream, c = tmp_path / "stream", tmp_path / "c.bin"      # send | recv: the key goes first
+    ids = tmp_path / "ids.txt"
+    ids.write_text("0\n5\n")
+    with open(stream, "wb") as f:
+        run(m, "-", "send", ids, stdout=f)
+    run(m, c, "init", "--wformat", "int4")              # the same size, another format
+    with open(stream, "rb") as f, pytest.raises(SystemExit, match="format differ"):
+        run(m, c, "recv", "--wformat", "int4", stdin=f)
+    assert not np.fromfile(str(c) + ".packed", np.uint8).any()
+
+
+def out_line(capsys):
+    """The format info printed for a pool without a key (its last line's, after the colon)."""
+    return capsys.readouterr().out.strip().splitlines()[-1].split(" bytes: ", 1)[1]
 
 
 @pytest.mark.parametrize("ahead", ["index", "hint"])

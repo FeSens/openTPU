@@ -154,6 +154,7 @@ class Weights(Mapping):
 
     def __init__(self, model_dir, mtp: bool = False):
         from safetensors import safe_open
+        self.model_dir = Path(model_dir)
         self._files, self._where = [], {}
         skip = ("model.visual.",) if mtp else ("model.visual.", "mtp.")
         for f in sorted(Path(model_dir).glob("*.safetensors")):
@@ -240,6 +241,7 @@ class LazyWeights(dict):
     def __init__(self, model_dir):
         super().__init__()
         from safetensors import safe_open
+        self.model_dir = Path(model_dir)    # (moe.pool_key: the checkpoint's identity)
         self._at, self._h = {}, {}          # name -> (file, its name there); file -> handle
         for f in sorted(Path(model_dir).glob("*.safetensors")):
             h = self._h[str(f)] = safe_open(str(f), "pt")
@@ -2092,8 +2094,9 @@ class Engine:
         self._rope = None if self.device_inputs else \
             [np.stack(t) for t in zip(*(rope_tables(spec, p) for p in range(cap)))]
         if pool_file is not None and getattr(self.image, "offload", None) is not None:
-            from .moe import open_pool      # its read into the page cache runs during the build
-            pool_file = open_pool(self.image.offload, pool_file, mapped=pool_map)
+            from .moe import open_pool, pool_key    # its read into the page cache runs during
+            pool_file = open_pool(self.image.offload, pool_file, mapped=pool_map,  # the build
+                                  key=pool_key(self.image, getattr(W, "model_dir", None)))
         images = self.image.build(W)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
