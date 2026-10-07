@@ -842,6 +842,10 @@ class Board:
         for c in (0, 1):
             for off in range(0, CH_BYTES, len(z)):
                 self.t.mem_write(c, off, z)
+        # the ECC counters (STATUS ECC_DED) from here on: a read of a beat not yet written (an
+        # earlier run's, a tool's) counted its random check bits as uncorrectable
+        from opentpu.host import memcal
+        memcal.ecc(self.t, clear=True)
         self.t.reg_write(R.R_SCRATCH, R.DRAM_INIT)
         return True
 
@@ -915,7 +919,8 @@ class Board:
         with CAPS.trace): STOP_WHEN_FULL keeps the first DEPTH records, the ring the last. It
         adds stats["trace"]: records (uint64, oldest first), count (TRACE_COUNT), drop
         (TRACE_DROP: events the capture queue lost), depth, keep, wrapped (the ring overwrote
-        records) and lost (records written but not in the buffer: count - depth, or 0).
+        records), lost (records written but not in the buffer: count - depth, or 0) and
+        saturated (TRACE_COUNT's high bits saturated past 2^32 - depth records: lost is more).
         expect: the run's expected wall time in seconds, a hint for the poll (Transport.poll).
 
         start() and wait() are the two halves: the host can work between them while the card
@@ -1021,9 +1026,11 @@ class Board:
             raw = self.read_trace(start, n, depth)
         else:
             raw = np.concatenate([raw[start:], raw[:start]]) if wrapped else raw[:n]
+        # TRACE_COUNT saturates in its high bits (its low log2(depth) bits, the ring's write
+        # slot, keep counting): there, lost is a lower bound
         return {"records": raw, "count": count, "drop": drop, "depth": depth,
                 "keep": "first" if keep_first else "last", "wrapped": wrapped,
-                "lost": max(0, count - depth)}
+                "lost": max(0, count - depth), "saturated": count >= (1 << 32) - depth}
 
     def read_trace(self, start: int, n: int, depth: int) -> np.ndarray:
         """n records from ring index `start` on (TRACE_HI reads step TRACE_ADDR; the address is

@@ -92,6 +92,22 @@ set fh [open $out/reports/SUMMARY.txt w]
 set wns [get_property SLACK [lindex [get_timing_paths -max_paths 1 -nworst 1 -setup] 0]]
 set whs [get_property SLACK [lindex [get_timing_paths -max_paths 1 -nworst 1 -hold] 0]]
 puts $fh "WNS $wns ns   WHS $whs ns"
+# the XADC's ADC clock: DCLK / the divider in INIT_42[15:8] (bd_native.tcl DCLK_FREQUENCY), at
+# most 26 MHz (DS182)
+foreach x [get_cells -quiet -hierarchical -filter {REF_NAME == XADC}] {
+  set i42 [get_property -quiet INIT_42 $x]
+  set dc [get_clocks -quiet -of_objects [get_pins -quiet $x/DCLK]]
+  if {[regexp {([0-9A-Fa-f]{4})$} $i42 -> h] && [llength $dc] == 1} {
+    scan $h %x v
+    set cd [expr {($v >> 8) & 0xFF}]
+    set f [expr {1000.0 / [get_property PERIOD $dc] / max($cd, 2)}]
+    set ok [expr {$f <= 26.0}]
+    puts $fh [format "XADC ADCCLK %.2f MHz (DCLK / %d)%s" $f $cd [expr {$ok ? "" : "  OUT OF SPEC (> 26 MHz)"}]]
+    if {!$ok} { puts "CRITICAL WARNING: \[build.tcl\] XADC ADCCLK [format %.2f $f] MHz > 26 MHz (INIT_42 $i42)" }
+  } else {
+    puts "CRITICAL WARNING: \[build.tcl\] XADC $x: INIT_42 '$i42', DCLK clock '$dc': ADCCLK not checked"
+  }
+}
 foreach clk [get_clocks] {
   set p [lindex [get_timing_paths -max_paths 1 -nworst 1 -setup -to $clk] 0]
   if {$p ne ""} {

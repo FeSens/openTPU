@@ -10,7 +10,10 @@
 //       simulator prints the lines: G, E (by slot), S (by unit; R after an S whose delay field
 //       saturated), D + two O, U + V (MXU, QUANT, VPU), H + V, P + V, Q + V
 //   W   the record is written to the ring (DEPTH records, simple dual-port block RAM) at
-//       count mod DEPTH; with stop, recording ends once DEPTH records are written
+//       count mod DEPTH; with stop, recording ends once DEPTH records are written. count
+//       saturates in its high bits only: past 2^32 - DEPTH records its low log2(DEPTH) bits keep
+//       counting, so count mod DEPTH is the next record's slot (the host's oldest record) on any
+//       run, and count stays >= DEPTH
 // Reading: rdata is the record at raddr, two cycles after raddr (the block RAM's output register).
 // busy: events are on their way to the ring; after the halt the host waits for it to clear
 // (the events of the last cycles, up to QD bundles of up to 61 records, are still draining).
@@ -29,7 +32,8 @@ module otpu_trace
   input  logic        clear,          // empty the ring, zero count and drop
   input  logic [31:0] raddr,
   output logic [63:0] rdata,
-  output logic [31:0] count,          // records written since the clear (saturating)
+  output logic [31:0] count,          // records written since the clear (saturating; the low
+                                      //   log2(DEPTH) bits always the write slot)
   output logic [31:0] drop,           // events lost to a full queue (saturating)
   output logic        busy            // events taken and not yet written (or dropped)
 );
@@ -39,6 +43,12 @@ module otpu_trace
     if (DEPTH != (1 << LD) || QD != (1 << QW)) $fatal(1, "otpu_trace: DEPTH, QD: powers of two");
     if (WIN > 16) $fatal(1, "otpu_trace: slot fields are 4 bits (WIN <= 16)");
   end
+`ifndef SYNTHESIS
+  // +trace_count0=<hex> (tests/test_observability.py): a clear starts count (and the write slot)
+  // there instead of 0, to run a ring past 2^32 records in a short simulation
+  logic [31:0] cnt0;
+  initial if (!$value$plusargs("trace_count0=%h", cnt0)) cnt0 = '0;
+`endif
   localparam logic [3:0] T_D = 1, T_S = 2, T_G = 3, T_E = 4, T_U = 5, T_P = 6, T_Q = 7, T_H = 8,
                          T_O = 9, T_R = 10, T_V = 11;
 
@@ -230,7 +240,12 @@ module otpu_trace
     if (rst || clear) begin
       q_t <= '0; q_hd <= '0; q_n <= '0;
       pend <= '0; r_v <= 1'b0;
-      wp <= '0; count <= '0; drop <= '0;
+`ifdef SYNTHESIS
+      wp <= '0; count <= '0;
+`else
+      wp <= cnt0[LD-1:0]; count <= cnt0;
+`endif
+      drop <= '0;
     end else begin
       if (push) q_t <= q_t + 1'b1;
       if (load) begin
@@ -246,7 +261,8 @@ module otpu_trace
       r_rec <= rec;
       if (wr) begin
         wp <= wp + 1'b1;
-        if (count != '1) count <= count + 1;
+        count[LD-1:0] <= count[LD-1:0] + 1'b1;
+        if (count[LD-1:0] == '1 && count[31:LD] != '1) count[31:LD] <= count[31:LD] + 1'b1;
       end
     end
   end
@@ -255,5 +271,9 @@ module otpu_trace
   always_ff @(posedge clk)
     if (!rst && pf.sq.d && pf.sq.d_pc[31:16] != '0)
       $fatal(1, "otpu_trace: pc %0d does not fit the D record's 16 bits", pf.sq.d_pc);
+  // the write slot is count mod DEPTH
+  always_ff @(posedge clk)
+    if (!rst && !clear && wp != count[LD-1:0])
+      $fatal(1, "otpu_trace: write slot %0d, count %0d", wp, count);
 `endif
 endmodule

@@ -36,7 +36,11 @@ module otpu_board #(
 ) (
   input  logic         clk,
   input  logic         rst,            // synchronous, active high
+  input  logic         ctl_mrst,       // the control master's reset (the SmartConnect's, in clk:
+                                       //   PCIe hot reset or link down too): otpu_axil_iso
   input  logic [1:0]   calib,          // memory controllers calibrated (any clock domain)
+  input  logic [1:0]   ded,            // a channel's ECC counted an uncorrectable word (any clock
+                                       //   domain; STATUS ECC_DED)
   input  logic [11:0]  temp,           // XADC die-temperature code (any clock domain, slow)
   output logic [2:0]   led,
   // ---- I2C pins (otpu_fpga_top_ld's IOBUFs): 1 drives the line low; the levels (any clock)
@@ -76,16 +80,20 @@ module otpu_board #(
 );
   import otpu_pkg::*;
 
-  // ---- calibration flags from the memory controllers' clock domains
-  (* ASYNC_REG = "TRUE" *) logic [1:0] cal_s1, cal_s2;
+  // ---- calibration and uncorrectable-ECC flags from the memory controllers' clock domains
+  // (registers there; levels, each bit on its own)
+  (* ASYNC_REG = "TRUE" *) logic [1:0] cal_s1, cal_s2, ded_s1, ded_s2;
   always_ff @(posedge clk) begin
     cal_s1 <= calib;
     cal_s2 <= cal_s1;
+    ded_s1 <= ded;
+    ded_s2 <= ded_s1;
   end
 
   // ---- die temperature: two flip-flops per bit, then a code is taken only when two
   // consecutive samples agree (it changes slowly: a sample caught mid-change is skipped). Valid
-  // once channel 0 (which owns the XADC) is calibrated and has reported a reading.
+  // once the XADC (the block design's, on the core clock) has reported a reading; it does not
+  // wait for the memory (the MIG builds' XADC was channel 0's, valid once it was calibrated).
   (* ASYNC_REG = "TRUE" *) logic [11:0] tmp_s1, tmp_s2;
   logic [11:0] tmp_s3, temp_q;
   logic        temp_v;
@@ -96,7 +104,7 @@ module otpu_board #(
     if (rst) begin
       temp_q <= '0;
       temp_v <= 1'b0;
-    end else if (tmp_s2 == tmp_s3 && cal_s2[0] && tmp_s3 != '0) begin
+    end else if (tmp_s2 == tmp_s3 && tmp_s3 != '0) begin
       temp_q <= tmp_s3;
       temp_v <= 1'b1;
     end
@@ -110,7 +118,7 @@ module otpu_board #(
   end
 
   // ---- control
-  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle, a_inval;
+  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle, rd_idle, a_inval;
   logic [31:0] ld_addr, ld_n, icount;
   logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag, b_rdy;
@@ -126,19 +134,41 @@ module otpu_board #(
   logic [31:0] tr_addr, tr_count, tr_drop;
   logic [63:0] tr_rdata;
 
+  // the registers reset with rst (PERST#), the master also on a hot reset: an access in flight
+  // then is completed here and its response dropped (otpu_axil_iso)
+  logic [11:0] c_awaddr, c_araddr;
+  logic [31:0] c_wdata, c_rdata;
+  logic [3:0]  c_wstrb;
+  logic [1:0]  c_bresp, c_rresp;
+  logic c_awvalid, c_awready, c_wvalid, c_wready, c_bvalid, c_bready;
+  logic c_arvalid, c_arready, c_rvalid, c_rready;
+  otpu_axil_iso #(.AW(12)) u_iso (
+    .clk, .m_rst(ctl_mrst), .s_rst(rst),
+    .m_awaddr(s_ctl_awaddr), .m_awvalid(s_ctl_awvalid), .m_awready(s_ctl_awready),
+    .m_wdata(s_ctl_wdata), .m_wstrb(s_ctl_wstrb), .m_wvalid(s_ctl_wvalid),
+    .m_wready(s_ctl_wready), .m_bresp(s_ctl_bresp), .m_bvalid(s_ctl_bvalid),
+    .m_bready(s_ctl_bready), .m_araddr(s_ctl_araddr), .m_arvalid(s_ctl_arvalid),
+    .m_arready(s_ctl_arready), .m_rdata(s_ctl_rdata), .m_rresp(s_ctl_rresp),
+    .m_rvalid(s_ctl_rvalid), .m_rready(s_ctl_rready),
+    .s_awaddr(c_awaddr), .s_awvalid(c_awvalid), .s_awready(c_awready), .s_wdata(c_wdata),
+    .s_wstrb(c_wstrb), .s_wvalid(c_wvalid), .s_wready(c_wready), .s_bresp(c_bresp),
+    .s_bvalid(c_bvalid), .s_bready(c_bready), .s_araddr(c_araddr), .s_arvalid(c_arvalid),
+    .s_arready(c_arready), .s_rdata(c_rdata), .s_rresp(c_rresp), .s_rvalid(c_rvalid),
+    .s_rready(c_rready));
+
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
               .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL)) u_ctrl (
     .clk, .rst,
-    .s_awaddr(s_ctl_awaddr), .s_awvalid(s_ctl_awvalid), .s_awready(s_ctl_awready),
-    .s_wdata(s_ctl_wdata), .s_wstrb(s_ctl_wstrb), .s_wvalid(s_ctl_wvalid),
-    .s_wready(s_ctl_wready), .s_bresp(s_ctl_bresp), .s_bvalid(s_ctl_bvalid),
-    .s_bready(s_ctl_bready), .s_araddr(s_ctl_araddr), .s_arvalid(s_ctl_arvalid),
-    .s_arready(s_ctl_arready), .s_rdata(s_ctl_rdata), .s_rresp(s_ctl_rresp),
-    .s_rvalid(s_ctl_rvalid), .s_rready(s_ctl_rready),
+    .s_awaddr(c_awaddr), .s_awvalid(c_awvalid), .s_awready(c_awready),
+    .s_wdata(c_wdata), .s_wstrb(c_wstrb), .s_wvalid(c_wvalid),
+    .s_wready(c_wready), .s_bresp(c_bresp), .s_bvalid(c_bvalid),
+    .s_bready(c_bready), .s_araddr(c_araddr), .s_arvalid(c_arvalid),
+    .s_arready(c_arready), .s_rdata(c_rdata), .s_rresp(c_rresp),
+    .s_rvalid(c_rvalid), .s_rready(c_rready),
     .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .wait_to, .icount, .wr_idle,
     .axi_err(|n_err),                  // the channels' bridges (otpu_mem_ch)
-    .calib(cal_s2),
+    .calib(cal_s2), .ecc_ded(|ded_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(b_req && !b_rdy),
     .temp_v, .temp(temp_q),
@@ -166,9 +196,16 @@ module otpu_board #(
 
   // ---- the slice (held in reset while RUN is 0) and the collective unit (one slice).
   // core_rst reaches ~15k flip-flops across the die: synthesis replicates it (a single copy's
-  // net took 9.6 ns, the worst core_clk path at 100 MHz)
+  // net took 9.6 ns, the worst core_clk path at 100 MHz). A run starts from a quiet memory
+  // adapter (go_ok: no read in flight, every write taken, sampled while RUN is 0 and until the
+  // run starts): the adapter does not reset with RUN, so a run the host stopped leaves its reads
+  // and writes going, and the next run's units would take the old reads' data
   (* max_fanout = 256 *) logic core_rst;
-  always_ff @(posedge clk) core_rst <= rst || !run;
+  logic go_ok;
+  always_ff @(posedge clk) begin
+    go_ok <= !rst && ((run && go_ok) || (rd_idle && wr_idle));
+    core_rst <= rst || !run || !go_ok;
+  end
 
   logic         coll_req, coll_ack, coll_gl;
   cmd_t         coll_cmd;
@@ -183,7 +220,7 @@ module otpu_board #(
                .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
                .HAS_DSTEP(DSTEP)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .rinit(arg), .ld_start, .ld_addr, .ld_n, .ld_busy,
-    .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
+    .a_rdy, .b_rdy, .sw_rdy, .wr_idle, .rd_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
@@ -214,7 +251,7 @@ module otpu_board #(
         .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
-    .b_rdata, .wr_idle,
+    .b_rdata, .wr_idle, .rd_idle,
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
     .n_rvalid, .n_rdata, .n_wdone);
 

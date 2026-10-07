@@ -119,6 +119,7 @@ def hw_profile(name: str, cfg, programs: list, stats: dict, core_khz: int | None
     d["config"]["MEM"] = "ddr3"
     d["board"] = {k: v for k, v in stats.items() if k != "trace"}
     meta = {k: tr[k] for k in ("count", "drop", "depth", "keep", "wrapped", "lost")}
+    meta["saturated"] = tr.get("saturated", False)
     meta.update(records=int(len(tr["records"])), open_at_end=open_,
                 traced_to=int(last), complete=not tr["drop"] and not tr["lost"])
     d["hwtrace"] = meta
@@ -133,7 +134,9 @@ def lost_text(m: dict) -> list[str]:
         out.append(f"The trace capture queue dropped {m['drop']} events (TRACE_DROP): "
                    "the timeline misses them.")
     if m["lost"]:
-        out.append(f"{m['lost']} of {m['count']} trace records did not fit the {m['depth']}-record "
+        n = (f"At least {m['lost']} trace records (TRACE_COUNT saturated)" if m.get("saturated")
+             else f"{m['lost']} of {m['count']} trace records")
+        out.append(f"{n} did not fit the {m['depth']}-record "
                    "buffer: " + ("the ring kept the last ones, the start of the run is missing."
                                  if m["keep"] == "last" else
                                  f"the buffer kept the first ones, the run after cycle "

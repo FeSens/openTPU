@@ -152,9 +152,14 @@ set_property CONFIG.ASSOCIATED_RESET {xdma_aresetn} [get_bd_ports xdma_aclk]
 set_property CONFIG.FREQ_HZ $XDMA_HZ [get_bd_ports xdma_aclk]
 
 # ------------------------------------------------------------------ XADC (die temperature)
-# temp_out for the accelerator's TEMP register, the XADC registers at BAR0 0x30000.
+# temp_out for the accelerator's TEMP register, the XADC registers at BAR0 0x30000. Its DCLK is
+# core_clk: the wizard divides it down to ADCCLK (at most 26 MHz, DS182) from DCLK_FREQUENCY, so
+# that is core_clk's (in whole MHz, rounded up: the divider errs high). The fixed 100 gave a
+# divider of 4: 33 MHz at core_clk 133.33 MHz, out of spec (build.tcl checks the divider the
+# netlist has).
+set XADC_DCLK_MHZ [expr {int(ceil($CORE_HZ / 1.0e6))}]
 set xadc [create_bd_cell -type ip -vlnv [ip_vlnv xadc_wiz] xadc_temp]
-set_property -dict [list CONFIG.INTERFACE_SELECTION {Enable_AXI} CONFIG.DCLK_FREQUENCY {100} \
+set_property -dict [list CONFIG.INTERFACE_SELECTION {Enable_AXI} CONFIG.DCLK_FREQUENCY $XADC_DCLK_MHZ \
   CONFIG.XADC_STARUP_SELECTION {single_channel} CONFIG.SINGLE_CHANNEL_SELECTION {TEMPERATURE} \
   CONFIG.TIMING_MODE {Continuous} CONFIG.ENABLE_TEMP_BUS {true} \
   CONFIG.OT_ALARM {false} CONFIG.USER_TEMP_ALARM {false} CONFIG.VCCINT_ALARM {false} \

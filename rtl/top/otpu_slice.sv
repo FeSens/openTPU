@@ -6,11 +6,16 @@
 //   DRAM A the MXU scale stream (reads); QST writes have their own scalar write port (SW)
 // The slice's DRAM sits outside (otpu_top) so that board wrappers can swap it. The DRAM may
 // refuse requests (a_rdy/b_rdy, which must not depend on this cycle's requests), return reads
-// after any latency (in order per port), and acknowledge writes late (wr_idle: none pending).
+// after any latency (in order per port), and acknowledge writes late (wr_idle: none pending);
+// rd_idle: no read of the slice's in flight (a run stopped by the host, rst, leaves its reads
+// to come back after it).
 //
 // Loader: while the slice is held in reset (rst), ld_start copies ld_n instructions from DRAM
 // byte address ld_addr (chunk aligned) into IMEM, one chunk (D/32 instructions) per cycle.
-// It runs on sys_rst only, so the board can load a program and then release rst.
+// It runs on sys_rst only, so the board can load a program and then release rst. Its reads
+// start once the DRAM has no read in flight (rd_idle), so that no read of a stopped run, or of
+// a load before, is taken for one of its rows; a LOAD restarts it. A HALT CHAIN reload that rst
+// interrupts (the host stopped the run) stops.
 //
 // HALT CHAIN (docs/isa.md): when the sequencer halts with CHAIN and the DRAM has no write
 // pending (wr_idle), the slice holds the sequencer and the units in reset (c_rst), loads the
@@ -55,6 +60,7 @@ module otpu_slice
   input  logic          b_rdy,
   input  logic          sw_rdy,
   input  logic          wr_idle,
+  input  logic          rd_idle,    // no read in flight (the loader waits for it)
   output logic          a_req,
   output logic          a_we,
   output logic [31:0]   a_addr,
@@ -99,6 +105,10 @@ module otpu_slice
   input  logic          dump
 );
   localparam int BW = $clog2(LANES);
+  // the stream engine (docs/stream.md): the DMA moves a stream (DSTEP, STREAM) through SE in
+  // the VPU; streams need 8 lanes on both sides (otpu_dma W = 8: D >= 32). Without it DSTEP and
+  // STREAM are illegal instructions (otpu_seq STREAMS: the slice stops with ERROR)
+  localparam bit HAS_SS = HAS_DSTEP && LANES == 8 && D >= 32;
   localparam int P_MXU = 0, P_DMA = 1, P_Q = 2, P_VA = 3, P_VB = 4, P_Q3 = 5, P_Q2 = 6, P_COLL = 7, NRP = 8;
   // the board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
   // WPB = 1): the arbiter only masks write banks (see the arbiter), and the VPU's grant only
@@ -118,27 +128,38 @@ module otpu_slice
   logic im_we;
   logic [31:0] im_row;
   seq_ev_t sq_ev;
-  logic        srst;              // the sequencer's and the units' reset: rst, or a CHAIN reload
+  logic        srst;              // the sequencer's and the units' reset: rst, a CHAIN reload, or
+                                  //   a WAITW timeout (to_err)
   logic        sq_halted, sq_ch, sq_err, rl_v;
-  logic        dma_err;           // a WAITW timed out: the slice stops with an error
+  logic        dma_err;           // a WAITW timed out: the slice stops with an error (to_err)
   logic [31:0] sq_icount, sq_cha, sq_chn, rl_val;
-  otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN)) u_seq (
+  otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .SID(SID), .S(S), .D(D), .WIN(WIN), .STREAMS(HAS_SS)) u_seq (
     .clk, .rst(srst), .ucmd, .ustart, .urel, .urdy, .udone, .halted(sq_halted), .error(sq_err),
     .icount(sq_icount), .ev(sq_ev), .rinit, .rl_v, .rl_val, .ch_req(sq_ch), .ch_addr(sq_cha),
     .ch_n(sq_chn), .im_we, .im_row, .im_data(b_rdata));
 
-  // ---- HALT CHAIN: reload IMEM from the chained program's address, the units held in reset
-  logic        c_rst, c_ld;
+  // ---- HALT CHAIN: reload IMEM from the chained program's address, the units held in reset.
+  // A WAITW timeout (dma_err) stops the slice until rst: to_err holds the sequencer and the
+  // units in reset, so no instruction starts or ends after it (TMEM, DRAM and ICOUNT stay as
+  // they were), and HALTED rises once they are in reset (to_q: the units' resets are up to two
+  // registers behind srst) and the DRAM has taken every write they gave it (wr_idle). ICOUNT
+  // keeps the sequencer's count as it stood (ic_base, as at a CHAIN reload)
+  logic        c_rst, c_ld, to_err;
+  logic [2:0]  to_q;
   logic [31:0] c_addr, c_n, ic_base;
-  assign srst = rst || c_rst;
-  assign halted = (sq_halted && !sq_ch) || dma_err;
-  assign error = sq_err || dma_err;
-  assign wait_to = dma_err;
+  assign srst = rst || c_rst || to_err;
+  assign halted = (sq_halted && !sq_ch) || (to_q[2] && wr_idle);
+  assign error = sq_err || to_err;
+  assign wait_to = to_err;
   assign icount = ic_base + sq_icount;
   always_ff @(posedge clk) begin
     c_ld <= 1'b0;
+    to_q <= rst ? 3'b000 : {to_q[1:0], to_err};
     if (rst) begin
-      c_rst <= 1'b0; ic_base <= '0;
+      c_rst <= 1'b0; ic_base <= '0; to_err <= 1'b0;
+    end else if (dma_err || to_err) begin
+      to_err <= 1'b1;
+      if (to_err && !to_q[0]) ic_base <= ic_base + sq_icount;   // its last cycle out of reset
     end else if (!c_rst) begin
       if (sq_halted && sq_ch && wr_idle) begin
         c_rst <= 1'b1; c_ld <= 1'b1;
@@ -148,29 +169,37 @@ module otpu_slice
     end else if (!c_ld && !ld_busy) c_rst <= 1'b0;      // loaded (the loader starts after c_ld)
   end
 
-  // ---- program loader
+  // ---- program loader (see the top): ld_go once the DRAM had no read in flight; ld_ch: a HALT
+  // CHAIN reload (rst stops it). While busy the loader has port B to itself
   localparam int IPR = D / 32;
   logic [31:0] ld_rows, ld_iss, ld_cmp, ld_a;
-  wire ld_req = ld_busy && ld_iss < ld_rows;
-  wire [31:0] ld_n_s = c_ld ? c_n : ld_n;
-  assign im_we  = ld_busy && b_rvalid;
+  logic        ld_go, ld_ch;
+  wire ld_req = ld_busy && ld_go && ld_iss < ld_rows;
+  wire [31:0] ld_n_s = ld_start ? ld_n : c_n;
+  assign im_we  = ld_busy && ld_go && b_rvalid;
   assign im_row = ld_cmp;
   always_ff @(posedge clk) begin
     if (sys_rst) begin
       ld_busy <= 1'b0;
-    end else if ((ld_start || c_ld) && !ld_busy) begin
+    end else if (ld_start || (c_ld && !ld_busy)) begin
       ld_rows <= (ld_n_s + IPR - 1) / IPR;
       ld_iss <= '0; ld_cmp <= '0;
-      ld_a <= (c_ld ? c_addr : ld_addr) >> 2;
+      ld_a <= (ld_start ? ld_addr : c_addr) >> 2;
       ld_busy <= (ld_n_s != 0);
+      ld_go <= 1'b0;
+      ld_ch <= !ld_start;
     end else if (ld_busy) begin
-      if (ld_req && b_rdy) begin
-        ld_iss <= ld_iss + 1;
-        ld_a <= ld_a + D / 4;
-      end
-      if (b_rvalid) begin
-        ld_cmp <= ld_cmp + 1;
-        if (ld_cmp + 1 == ld_rows) ld_busy <= 1'b0;
+      if (rst && ld_ch) ld_busy <= 1'b0;
+      else if (!ld_go) ld_go <= rd_idle;
+      else begin
+        if (ld_req && b_rdy) begin
+          ld_iss <= ld_iss + 1;
+          ld_a <= ld_a + D / 4;
+        end
+        if (b_rvalid) begin
+          ld_cmp <= ld_cmp + 1;
+          if (ld_cmp + 1 == ld_rows) ld_busy <= 1'b0;
+        end
       end
     end
   end
@@ -259,9 +288,7 @@ module otpu_slice
       $fatal(1, "otpu_slice: a unit started while in reset (ustart %b)", ustart);
 `endif
 
-  // the stream engine (docs/stream.md): the DMA moves a stream (DSTEP, STREAM) through SE in
-  // the VPU; streams need 8 lanes on both sides (otpu_dma W = 8: D >= 32)
-  localparam bit HAS_SS = HAS_DSTEP && LANES == 8 && D >= 32;
+  // the stream engine (HAS_SS, above)
   logic        ss_req, ss_gnt, ss_pe, ss_in_v, ss_y_v, ss_o_v;
   ss_cfg_t     ss_cfg;
   logic [2:0]  ss_fk;

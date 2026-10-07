@@ -32,6 +32,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
                board's subset and a DSTEP against the ISA simulator
  11 model      (with --model) greedy decoding of Qwen3, LFM2 or Qwen3.5 on the card equals the
                ISA simulator, token for token, and the answer to "What is the capital of France?"
+ 12 ecc        no uncorrectable ECC word in what the stages read (STATUS ECC_DED, since the
+               scrub cleared the counters); the channels' corrected and uncorrectable counts
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ import traceback
 
 from opentpu.host import memcal
 from opentpu.host.runstate import busy_exits
+from opentpu.host import regs as R
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
@@ -91,7 +94,25 @@ HINTS = {
               "model (tests/test_board.py::test_stream_on_board_model).",
     "model": "Kernels pass but the model differs: compare per-token logits against "
              "IsaBackend with opentpu.llm.qwen3.Engine; check that the image fits the DRAM.",
+    "ecc": "A DDR3 channel's ECC found an uncorrectable word (STATUS bit9 ECC_DED) in what the "
+           "stages read: a weak bit or a marginal calibration on that channel (otpu-memcal cal "
+           "--force recalibrates; the corrected count shows how close it is). A read of DRAM "
+           "not written since configuration also counts: scrub first (the scrub stage).",
 }
+
+
+def ecc_check(t) -> tuple[bool, str]:
+    """No uncorrectable ECC word since the counters' clear (Board.scrub's): STATUS ECC_DED, and
+    each channel's counts where the host reaches the CSRs."""
+    st = t.reg_read(R_STATUS)
+    counts = memcal.ecc(t)
+    msg = "ECC_DED set" if st & R.ST_ECC_DED else "no uncorrectable word"
+    if counts:
+        msg += "; " + ", ".join(f"channel {c}: {sec} corrected, {ded} uncorrectable"
+                                for c, (sec, ded) in enumerate(counts))
+    elif not getattr(t, "ecc", False):
+        msg += " (no ECC on the model)"
+    return not st & R.ST_ECC_DED, msg
 
 
 class Runner:
@@ -247,6 +268,9 @@ def main(argv=None) -> int:
     def model():
         return model_check(t, cfg, a.model, a.tokens, a.sim, a.wformat, a.head_format)
 
+    def ecc():
+        return ecc_check(t)
+
     r.stage("link", link)
     r.stage("config", config)
     r.stage("calib", calib)
@@ -260,6 +284,7 @@ def main(argv=None) -> int:
     r.stage("stream", stream)
     if a.model:
         r.stage("model", model)
+    r.stage("ecc", ecc)
     print("ALL PASS" if not r.failed else f"stopped at stage '{r.failed}'")
     return 1 if r.failed else 0
 

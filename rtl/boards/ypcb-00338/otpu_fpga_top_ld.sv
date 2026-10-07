@@ -20,7 +20,13 @@
 // Resets: core_rst from the block design (MMCM lock, PCIe PERST#), xrst from XDMA's axi_aresetn;
 // the LiteDRAM core has none (its MMCMs' lock resets it), so a PCIe reset or a host driver
 // restart keeps the channels calibrated, and only a new configuration needs the host to
-// calibrate them again.
+// calibrate them again. The core's CSR port crosses into its sys clock through FIFOs whose two
+// sides must reset together: its ctl side resets with the core's sys reset (ld_sys_rst, brought
+// into the CSR clock), not with PERST# (a ctl side reset alone left the sys side's pointers ahead,
+// and the sys side replayed old CSR accesses: calibration, BIST, DFII writes). The block design's
+// SmartConnect, the CSR port's and the control registers' master, resets with axi_aresetn (PERST#,
+// hot reset, link down); otpu_axil_iso (otpu_ctrl.sv) in front of each completes an access in
+// flight at its reset and drops the response, so neither answers the reset master.
 // DDR3 port names are the LiteDRAM core's (ddram0_*, ddram1_*), so its XDC places them.
 module otpu_fpga_top_ld #(
   parameter int MCOLS = 4,                  // MXU columns (activation rows per weight chunk)
@@ -88,7 +94,7 @@ module otpu_fpga_top_ld #(
   logic        clk50_ib, clk50;
   logic        core_clk, core_rstn, xdma_aclk, xdma_aresetn, pcie_link_up;
   logic        ld_sys_clk, ld_sys_rst;
-  logic [1:0]  calib;
+  logic [1:0]  calib, ded;
   logic [11:0] device_temp;                  // XADC die-temperature code (core_clk)
 
   // the 50 MHz oscillator on one global buffer: the block design's MMCM and the LiteDRAM core's
@@ -158,6 +164,11 @@ module otpu_fpga_top_ld #(
   logic core_rst, xrst;
   always_ff @(posedge core_clk) core_rst <= !core_rstn;
   always_ff @(posedge xdma_aclk) xrst <= !xdma_aresetn;
+  // the SmartConnect's reset (axi_aresetn) in core_clk, where its control masters are (M_AXI_CTL;
+  // M_AXI_MEMCAL at PCIE_GEN 2): the masters' side of otpu_axil_iso. Two flip-flops
+  // (otpu_top_native.tcl: one core_clk period from xdma_aclk); the reset lasts many cycles
+  (* ASYNC_REG = "TRUE" *) logic lrs1 = 1'b1, lrs2 = 1'b1;
+  always_ff @(posedge core_clk) begin lrs1 <= xrst; lrs2 <= lrs1; end
 
   // ---- the channels' controller ports (otpu_mem_ch <-> the LiteDRAM core), sys_clk: two per
   // channel, [channel][port] (port 1 = the core's c<n>b_*: the odd banks)
@@ -169,19 +180,46 @@ module otpu_fpga_top_ld #(
   logic [1:0][1:0][63:0]  c_wdata_we;
 
   // ---- LiteDRAM: both channels, their CSRs (BAR0 0x10000) and calibration ready bits
+  // The CSR port's clock (ctl_clk: core_clk at PCIE_GEN 2, else xdma_aclk) and reset: the core's
+  // sys reset, in that clock through two flip-flops (otpu_top_native.tcl: one ctl_clk period
+  // from sys), so the crossing's two sides reset together, at configuration and when the core's
+  // clocks lose lock, never on PERST#
+  wire ld_ctl_clk = PCIE_GEN == 2 ? core_clk : xdma_aclk;
+  (* ASYNC_REG = "TRUE" *) logic ld_crs1 = 1'b1, ld_crs2 = 1'b1;
+  always_ff @(posedge ld_ctl_clk) begin ld_crs1 <= ld_sys_rst; ld_crs2 <= ld_crs1; end
+  // the CSR port behind otpu_axil_iso: the SmartConnect's reset (lrs2 in core_clk; xrst in
+  // xdma_aclk at PCIE_GEN 1) is its master's
+  logic [15:0] lc_awaddr, lc_araddr;
+  logic [31:0] lc_wdata, lc_rdata;
+  logic [3:0]  lc_wstrb;
+  logic [1:0]  lc_bresp, lc_rresp;
+  logic lc_awvalid, lc_awready, lc_wvalid, lc_wready, lc_bvalid, lc_bready;
+  logic lc_arvalid, lc_arready, lc_rvalid, lc_rready;
+  otpu_axil_iso #(.AW(16)) u_mc_iso (
+    .clk(ld_ctl_clk), .m_rst(PCIE_GEN == 2 ? lrs2 : xrst), .s_rst(ld_crs2),
+    .m_awaddr(mc_awaddr[15:0]), .m_awvalid(mc_awvalid), .m_awready(mc_awready),
+    .m_wdata(mc_wdata), .m_wstrb(mc_wstrb), .m_wvalid(mc_wvalid), .m_wready(mc_wready),
+    .m_bresp(mc_bresp), .m_bvalid(mc_bvalid), .m_bready(mc_bready),
+    .m_araddr(mc_araddr[15:0]), .m_arvalid(mc_arvalid), .m_arready(mc_arready),
+    .m_rdata(mc_rdata), .m_rresp(mc_rresp), .m_rvalid(mc_rvalid), .m_rready(mc_rready),
+    .s_awaddr(lc_awaddr), .s_awvalid(lc_awvalid), .s_awready(lc_awready), .s_wdata(lc_wdata),
+    .s_wstrb(lc_wstrb), .s_wvalid(lc_wvalid), .s_wready(lc_wready), .s_bresp(lc_bresp),
+    .s_bvalid(lc_bvalid), .s_bready(lc_bready), .s_araddr(lc_araddr), .s_arvalid(lc_arvalid),
+    .s_arready(lc_arready), .s_rdata(lc_rdata), .s_rresp(lc_rresp), .s_rvalid(lc_rvalid),
+    .s_rready(lc_rready));
   otpu_litedram u_ld (
     .clk50g(clk50), .rst(1'b0), .sys_clk(ld_sys_clk), .sys_rst(ld_sys_rst),
-    .ctl_clk(PCIE_GEN == 2 ? core_clk : xdma_aclk), .ctl_rst(PCIE_GEN == 2 ? core_rst : xrst),
-    .ctl_awvalid(mc_awvalid), .ctl_awready(mc_awready), .ctl_awaddr(mc_awaddr[15:0]),
-    .ctl_wvalid(mc_wvalid), .ctl_wready(mc_wready), .ctl_wdata(mc_wdata), .ctl_wstrb(mc_wstrb),
-    .ctl_bvalid(mc_bvalid), .ctl_bready(mc_bready), .ctl_bresp(mc_bresp),
-    .ctl_arvalid(mc_arvalid), .ctl_arready(mc_arready), .ctl_araddr(mc_araddr[15:0]),
-    .ctl_rvalid(mc_rvalid), .ctl_rready(mc_rready), .ctl_rdata(mc_rdata), .ctl_rresp(mc_rresp),
+    .ctl_clk(ld_ctl_clk), .ctl_rst(ld_crs2),
+    .ctl_awvalid(lc_awvalid), .ctl_awready(lc_awready), .ctl_awaddr(lc_awaddr),
+    .ctl_wvalid(lc_wvalid), .ctl_wready(lc_wready), .ctl_wdata(lc_wdata), .ctl_wstrb(lc_wstrb),
+    .ctl_bvalid(lc_bvalid), .ctl_bready(lc_bready), .ctl_bresp(lc_bresp),
+    .ctl_arvalid(lc_arvalid), .ctl_arready(lc_arready), .ctl_araddr(lc_araddr),
+    .ctl_rvalid(lc_rvalid), .ctl_rready(lc_rready), .ctl_rdata(lc_rdata), .ctl_rresp(lc_rresp),
     .c0_cmd_valid(c_cmd_valid[0][0]), .c0_cmd_ready(c_cmd_ready[0][0]), .c0_cmd_we(c_cmd_we[0][0]),
     .c0_cmd_addr(c_cmd_addr[0][0]), .c0_wdata_valid(c_wdata_valid[0][0]),
     .c0_wdata_ready(c_wdata_ready[0][0]), .c0_wdata_data(c_wdata_data[0][0]),
     .c0_wdata_we(c_wdata_we[0][0]), .c0_rdata_valid(c_rdata_valid[0][0]), .c0_rdata_ready(1'b1),
-    .c0_rdata_data(c_rdata_data[0][0]), .c0_ready(c_ready[0]),
+    .c0_rdata_data(c_rdata_data[0][0]), .c0_ready(c_ready[0]), .c0_ded(ded[0]),
     .c0b_cmd_valid(c_cmd_valid[0][1]), .c0b_cmd_ready(c_cmd_ready[0][1]), .c0b_cmd_we(c_cmd_we[0][1]),
     .c0b_cmd_addr(c_cmd_addr[0][1]), .c0b_wdata_valid(c_wdata_valid[0][1]),
     .c0b_wdata_ready(c_wdata_ready[0][1]), .c0b_wdata_data(c_wdata_data[0][1]),
@@ -191,7 +229,7 @@ module otpu_fpga_top_ld #(
     .c1_cmd_addr(c_cmd_addr[1][0]), .c1_wdata_valid(c_wdata_valid[1][0]),
     .c1_wdata_ready(c_wdata_ready[1][0]), .c1_wdata_data(c_wdata_data[1][0]),
     .c1_wdata_we(c_wdata_we[1][0]), .c1_rdata_valid(c_rdata_valid[1][0]), .c1_rdata_ready(1'b1),
-    .c1_rdata_data(c_rdata_data[1][0]), .c1_ready(c_ready[1]),
+    .c1_rdata_data(c_rdata_data[1][0]), .c1_ready(c_ready[1]), .c1_ded(ded[1]),
     .c1b_cmd_valid(c_cmd_valid[1][1]), .c1b_cmd_ready(c_cmd_ready[1][1]), .c1b_cmd_we(c_cmd_we[1][1]),
     .c1b_cmd_addr(c_cmd_addr[1][1]), .c1b_wdata_valid(c_wdata_valid[1][1]),
     .c1b_wdata_ready(c_wdata_ready[1][1]), .c1b_wdata_data(c_wdata_data[1][1]),
@@ -204,6 +242,7 @@ module otpu_fpga_top_ld #(
     .ddram1_cas_n, .ddram1_we_n, .ddram1_reset_n, .ddram1_clk_p, .ddram1_clk_n, .ddram1_cke,
     .ddram1_cs_n, .ddram1_odt);
   assign calib = c_ready;                   // STATUS CALIB0/1 (sys_clk; otpu_board syncs them)
+                                            // ded: STATUS ECC_DED (the same)
 
   // I2C: each line released (high-Z, pulled up) unless its I2C_CTRL bit drives it low
   logic [3:0] i2c_lo, i2c_lvl;
@@ -218,8 +257,8 @@ module otpu_fpga_top_ld #(
                     .LANES(LANES),
                     .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS),
                     .DSTEP(DSTEP), .HOSTCAL(1'b1), .XREG(PCIE_GEN == 2)) u_sys (
-    .clk(core_clk), .rst(core_rst), .xclk(xdma_aclk), .xrst,
-    .calib, .temp(device_temp), .led(board_led), .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
+    .clk(core_clk), .rst(core_rst), .ctl_mrst(lrs2), .xclk(xdma_aclk), .xrst,
+    .calib, .ded, .temp(device_temp), .led(board_led), .i2c_lo, .i2c_pin({lm73_alert_n, i2c_lvl}),
     .s_ctl_awaddr(ctl_awaddr[11:0]), .s_ctl_awvalid(ctl_awvalid), .s_ctl_awready(ctl_awready),
     .s_ctl_wdata(ctl_wdata), .s_ctl_wstrb(ctl_wstrb), .s_ctl_wvalid(ctl_wvalid),
     .s_ctl_wready(ctl_wready), .s_ctl_bresp(ctl_bresp), .s_ctl_bvalid(ctl_bvalid),

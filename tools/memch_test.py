@@ -107,6 +107,20 @@ SCEN["gen2deep"] = G2 + ["+awdly=200", "+outs=64", "+wlen=8", "+gapw=0", "+mstal
 SCEN["gen2deepx"] = G2 + ["+awdly=300", "+outs=64", "+gapw=0", "+mstall=40", "+xreset=3000", "+xrep=6151", "+seed=45"]
 SCEN["gen2deep128"] = G2 + ["+awdly=100", "+outs=64", "+wlen=8", "+psh=40", "+gapw=0", "+mstall=85",
                             "+axi_stall=50", "+seed=46"]
+# the write-accept counts' synchronizers sampling bits a source cycle apart (+cdc_skew, the bus
+# skew their constraints allow), with both ports taking writes in the same cycles: the controller
+# stalls, so writes of both bank parities back up in the output queues, XDMA's bursts of 1 to 64
+# lanes from any 16-byte offset (odd 64-byte beat counts), many in flight
+SKEW = ["+cdc_skew=60", "+axi_stall=40", "+ldn_busy=20", "+wpct=80", "+outs=32", "+gapw=0", "+mstall=20"]
+SCEN["skew"] = SKEW + ["+seed=50"]
+SCEN["skewsh"] = SKEW + ["+psh=50", "+psp=20", "+seed=51"]
+SCEN["gen2skew"] = G2 + SKEW + ["+seed=52"]
+SCEN["gen2skewx"] = G2 + SKEW + ["+xreset=3000", "+xrep=6151", "+areset=2500", "+arep=7919", "+seed=53"]
+# the same with XDMA writing only, unstalled, and a controller busy half the time: the output
+# queues hold more writes of both parities, so both ports take XDMA writes in one cycle more often
+SKEWW = ["+cdc_skew=60", "+axi_stall=40", "+ldn_busy=50", "+wpct=100", "+outs=32", "+gapw=0", "+mstall=0"]
+SCEN["skeww"] = SKEWW + ["+seed=55"]
+SCEN["gen2skeww"] = G2 + SKEWW + ["+seed=52"]
 for i in range(10, 30):
     SCEN[f"s{i}"] = [f"+seed={i}", f"+psh={5 + i % 4 * 15}", f"+ppct={i % 5 * 20}", f"+wpct={30 + i % 3 * 20}"]
 # functional runs: 3000 runs or bursts per master unless the scenario says otherwise (the first
@@ -115,14 +129,15 @@ FBASE = ["+ntx=3000", "+tmax=100000000"]
 FUNC = [("ldn", s) for s in ["default", "seed2", "seed3", "seed4", "xreset", "areset", "resets",
                              "lateresets", "xresetlat", "aresetlat", "xresetrep", "aresetrep", "resetsrep", "aresetshort", "xresetshort", "xresetshortsh", "mstall70", "nogaps", "partial", "rawpart", "ctlstall", "fastcore",
                              "slowcore", "shared", "long", "seqrd", "seqwr", "seqmix", "pubstall",
-                             "doublebeat"]]
+                             "doublebeat", "skew", "skewsh", "skeww"]]
 FUNC += [("ldn", f"s{i}") for i in range(10, 30)]
 FUNC += [("cred", s) for s in ["default", "credstress"]]
 FUNC += [("xreg", s) for s in ["default", "seed2", "xreset", "resets", "xresetlat", "xresetrep",
                                "resetsrep", "xresetshort", "xresetshortsh", "mstall70", "nogaps",
                                "partial", "ctlstall", "fastcore", "slowcore", "shared", "shared21",
                                "pubstall", "seqrd", "seqwr", "seqmix", "gen2", "gen2xres",
-                               "gen2part", "gen2full", "gen2deep", "gen2deepx", "gen2deep128"]]
+                               "gen2part", "gen2full", "gen2deep", "gen2deepx", "gen2deep128",
+                               "gen2skew", "gen2skewx", "gen2skeww"]]
 
 # throughput: sequential 32-beat runs (64-beat bursts for XDMA), one kind of master at a time,
 # whole beats unless the run says otherwise (the first plusarg of a name wins)
@@ -157,19 +172,20 @@ MUT = [
      [("x_rok <= (x_pend + xr_used) <= XOW'(XRD - 2);", "x_rok <= (x_pend + xr_used) <= XOW'(XRD - 1);")],
      ["mstall70", "default"]),
     ("n_wdone: gray code not decoded", "ldn",
-     [("n_wdone <= g2b(a_wacc_s2);", "n_wdone <= a_wacc_s2;")], ["default"]),
+     [("a_wacc_s2 <= a_wacc_s1; a_wb <= g2b(a_wacc_s2);", "a_wacc_s2 <= a_wacc_s1; a_wb <= a_wacc_s2;")],
+     ["default"]),
     ("n_wdone: reads counted too", "ldn",
      [("assign opw_a[p] = opop[p] && oc[26] && !oc[25];", "assign opw_a[p] = opop[p] && !oc[25];")],
      ["default"]),
     ("n_wdone: the second port's writes not counted", "ldn",
-     [("a_wacc <= a_wacc + CW'(opw_a[0]) + CW'(opw_a[1]);", "a_wacc <= a_wacc + CW'(opw_a[0]);")],
+     [("else n_wdone <= g_port[0].a_wb + g_port[1].a_wb;", "else n_wdone <= g_port[0].a_wb;")],
      ["default"]),
     ("n_wdone: counted on the core side once command and data are in (before the controller)", "ldn",
      [("  assign ar_rr    = 1'b1;\n", "  assign ar_rr    = 1'b1;\n  logic [15:0] mu_c, mu_d;\n"),
-      ("if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; end",
-       "if (a_crst) begin a_wacc_s1 <= '0; a_wacc_s2 <= '0; n_wdone <= '0; mu_c <= '0; mu_d <= '0; end"),
-      ("n_wdone <= g2b(a_wacc_s2); end",
-       "mu_c <= mu_c + 16'(aq_wv && n_cwe); mu_d <= mu_d + 16'(ad_wv); n_wdone <= (mu_c < mu_d) ? mu_c : mu_d; end")],
+      ("    if (a_crst) n_wdone <= '0;\n    else n_wdone <= g_port[0].a_wb + g_port[1].a_wb;",
+       "    if (a_crst) begin n_wdone <= '0; mu_c <= '0; mu_d <= '0; end\n"
+       "    else begin mu_c <= mu_c + 16'(aq_wv && n_cwe); mu_d <= mu_d + 16'(ad_wv); "
+       "n_wdone <= (mu_c < mu_d) ? mu_c : mu_d; end")],
      ["shared", "shared21", "shared22", "default"]),
     # the core issues reads no faster than it drains them, so a 64-beat FIFO does not fill without
     # credits in any traffic here (ARD 16 does, above); the slot check still sees it: a read holds
@@ -206,7 +222,7 @@ MUT = [
      [("otpu_afifo.sv", "(!wrst && wvld[wbin[AW-1:0]])", "(!wrst && (wvld[wbin[AW-1:0]] || wput))")],
      ["default", "seqrd"]),
     ("XDMA's B: once its beats are in the bridge (before the controller)", "ldn",
-     [("x_wacc_c <= g2b(x_wacc_s2); end", "x_wacc_c <= x_wacc_c + CW'(xq_wv && x_selw); end")],
+     [("else x_wacc_c <= g_port[0].x_wb + g_port[1].x_wb;", "else x_wacc_c <= x_wacc_c + CW'(xq_wv && x_selw);")],
      ["pubstall", "shared", "default"]),
     ("XDMA FIFOs: the registered wready not counting this cycle's write", "ldn",
      [("otpu_afifo.sv", "((wbin + (AW + 1)'(wput)) - rbin_w)", "(wbin - rbin_w)")],
@@ -244,6 +260,22 @@ MUT = [
      [("x_req <= xrst || (x_req && !x_hs2);", "x_req <= xrst;")], ["xresetshort"]),
     ("reset: the accelerator's request not kept up until its hold is seen (a short reset)", "ldn",
      [("a_req <= rst || (a_req && !a_hs2);", "a_req <= rst;")], ["aresetshort"]),
+    # the write-accept counts summed over both ports before they cross (each a count that steps
+    # by two when both ports take a write in a cycle): a sample between its bits reads a count
+    # ahead (cdc_smp's error), or behind one already used, and B comes before its beats are
+    # taken (+cdc_skew: the synchronizers' skew model)
+    ("B: both ports' write counts in one gray count (steps by two)", "xreg",
+     [("if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[p]);",
+       "if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + (p == 0 ? CW'(opw_x[0]) + CW'(opw_x[1]) : CW'(0));")],
+     ["gen2skeww", "gen2skew", "skeww"]),
+    ("B: both ports' write counts in one gray count (steps by two)", "ldn",
+     [("if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + CW'(opw_x[p]);",
+       "if (x_hold) x_wacc <= '0; else x_wacc <= x_wacc + (p == 0 ? CW'(opw_x[0]) + CW'(opw_x[1]) : CW'(0));")],
+     ["skew", "skewsh", "skeww"]),
+    ("n_wdone: both ports' write counts in one gray count (steps by two)", "ldn",
+     [("if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + CW'(opw_a[p]);",
+       "if (a_hold) a_wacc <= '0; else a_wacc <= a_wacc + (p == 0 ? CW'(opw_a[0]) + CW'(opw_a[1]) : CW'(0));")],
+     ["skew", "skewsh", "skeww"]),
     # otpu_dma_split's register slices
     ("slice: the skid entry not loaded (a beat taken under backpressure lost)", "xreg",
      [("otpu_axi_split2.sv", "if (!sk_v) sk_d <= s_data;", "if (1'b0) sk_d <= s_data;")],

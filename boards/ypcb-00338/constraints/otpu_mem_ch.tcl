@@ -13,8 +13,10 @@
 # a synchronizer (ASYNC_REG in the RTL) or data that a synchronized pointer guards, and each gets
 # set_max_delay -datapath_only here, so all of them are timed, without clock skew:
 #   - gray-coded buses: the FIFOs' pointers and the write-accept counters behind n_wdone and
-#     XDMA's B. One source period, and set_bus_skew of the smaller period, so that the bits of one
-#     count (which moves one bit per source cycle) arrive together;
+#     XDMA's B (one per controller port and master, g_port[p]: the two ports can take a write in
+#     the same cycle, so a count of both would step by two). One source period, and set_bus_skew
+#     of the smaller period per count, so that the bits of one count (which moves one bit per
+#     source cycle) arrive together;
 #   - a FIFO's distributed RAM, written in one clock and read (asynchronously) in the other: one
 #     destination period. An entry is read no sooner than two destination cycles after its write
 #     pointer crossed, and the pointer is written in the same source cycle as the entry;
@@ -45,11 +47,15 @@ set_max_delay -datapath_only -from $c_ucl -to [get_cells x_hs1_reg] $t_ucl
 set_max_delay -datapath_only -from $c_ucl -to [get_cells e_s1_reg] $t_ucl
 
 # ---------------------------------------------------------------- write-accept counters (gray)
-# a_wacc (n_wdone) uclk -> clk, x_wacc (XDMA's B) uclk -> xclk
-set_max_delay -datapath_only -from $c_ucl -to [get_cells {a_wacc_s1_reg[*]}] $t_ucl
-set_bus_skew -from [get_cells {a_wacc_g_reg[*]}] -to [get_cells {a_wacc_s1_reg[*]}] $k_cu
-set_max_delay -datapath_only -from $c_ucl -to [get_cells {x_wacc_s1_reg[*]}] $t_ucl
-set_bus_skew -from [get_cells {x_wacc_g_reg[*]}] -to [get_cells {x_wacc_s1_reg[*]}] $k_xu
+# per controller port p (g_port[p]): a_wacc (n_wdone) uclk -> clk, x_wacc (XDMA's B) uclk -> xclk;
+# the bus skew per count (each moves one bit per uclk cycle; the two ports' counts are summed only
+# after their synchronizers)
+set_max_delay -datapath_only -from $c_ucl -to [get_cells {g_port[*].a_wacc_s1_reg[*]}] $t_ucl
+set_max_delay -datapath_only -from $c_ucl -to [get_cells {g_port[*].x_wacc_s1_reg[*]}] $t_ucl
+foreach p {0 1} {
+  set_bus_skew -from [get_cells "g_port\[$p\].a_wacc_g_reg\[*\]"] -to [get_cells "g_port\[$p\].a_wacc_s1_reg\[*\]"] $k_cu
+  set_bus_skew -from [get_cells "g_port\[$p\].x_wacc_g_reg\[*\]"] -to [get_cells "g_port\[$p\].x_wacc_s1_reg\[*\]"] $k_xu
+}
 
 # ---------------------------------------------------------------- FIFOs
 # Per FIFO: the write pointer (write clock -> read clock), the read pointer (back), the RAM's
@@ -142,8 +148,8 @@ set w_nr  [get_pins -quiet {n_rdata_reg[*]/D}]
 if {[llength $w_ar] && [llength $w_nr]} {
   create_waiver -scoped -type CDC -id {CDC-26} -user "otpu_mem_ch" -description "otpu_mem_ch: u_ar's head (distributed RAM, written in uclk) into n_rdata every clk cycle; used only with n_rvalid, the FIFO's registered not-empty, when the entry is stable" -from $w_ar -to $w_nr
 }
-set w_gs {a_wacc_g_reg[*]/C x_wacc_g_reg[*]/C}
-set w_gd {a_wacc_s1_reg[*]/D x_wacc_s1_reg[*]/D}
+set w_gs {g_port[*].a_wacc_g_reg[*]/C g_port[*].x_wacc_g_reg[*]/C}
+set w_gd {g_port[*].a_wacc_s1_reg[*]/D g_port[*].x_wacc_s1_reg[*]/D}
 foreach f {u_aq u_ad u_ar u_xq u_xd u_xr} {
   lappend w_gs $f/wgray_reg\[*\]/C $f/rgray_reg\[*\]/C
   lappend w_gd $f/wgray_r1_reg\[*\]/D $f/rgray_w1_reg\[*\]/D
