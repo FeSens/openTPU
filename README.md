@@ -196,12 +196,13 @@ in the formats you pick), and its activations are rounded to int8 per 128 values
 device's quantizer rounds them: every matmul input, and in attention the query, K, V and the
 softmax weights. The device is the ISA simulator, the RTL (Verilator) or the card, and
 `--against` adds a second device that must give the same tokens and bit-identical logits. It
-is measured on Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B; Gemma 4 and the MoE models are not
+is measured on Qwen3-0.6B, LFM2.5-230M, Qwen3.5-0.8B and Gemma 4 E2B; the MoE models are not
 supported.
 
 ```sh
 python3 tools/validate.py --model qwen3                                    # ISA simulator, int8
 python3 tools/validate.py --model lfm2 --wformat fp4 --head-format int8   # 4-bit layers
+python3 tools/validate.py --model gemma4                                   # E2B: 16 GB (below)
 
 # the RTL against the ISA simulator, bit for bit: slow, so one prompt and a few tokens
 # (this one takes 4 minutes on a 16-core host, the Verilator build included)
@@ -243,11 +244,22 @@ the eight default prompts and 16 tokens each:
 | Qwen3-0.6B | 4-bit, int8 head | 97.7%, 0.0155 | 0.0185 | 85.2%, 0.166 | 0.166 |
 | Qwen3.5-0.8B | int8 | 96.1%, 0.0020 | 0.0017 | 97.7%, 0.0033 | 0.0029 |
 | Qwen3.5-0.8B | 4-bit, int8 head | 96.9%, 0.0020 | 0.0021 | 88.3%, 0.076 | 0.077 |
+| Gemma 4 E2B | int8, 4-bit PLE table | 100.0%, 0.0036 | 0.0035 | 99.2%, 0.015 | 0.017 |
+| Gemma 4 E2B | 4-bit, int8 head and PLE table | 99.2%, 0.0029 | 0.0036 | 96.9%, 0.045 | 0.043 |
 
 KL is the mean KL(golden || device) in nats per token. The device's KL from the quantized
-golden is 0.84 to 1.16 times the floor's, and its distance from fp32 is what the quantization
-alone predicts. A run takes 2 to 14 minutes on a 16-core host and peaks at 2.5 GB (LFM2) to
-8.6 GB (Qwen3.5).
+golden is 0.82 to 1.16 times the floor's, and its distance from fp32 is what the quantization
+alone predicts. A run takes 2 to 14 minutes on a 16-core host (Gemma 4 E2B: 16 and 26, the
+host shared with other jobs) and peaks at 2.5 GB (LFM2) to 16 GB (Gemma 4 E2B).
+
+Gemma 4 runs in its image's formats, which follow the card's fit (E2B's int8 image keeps its
+per-layer-embedding table in 4-bit). The golden takes its embedding rows from the LM head, as
+the device gathers them, its per-layer embeddings from the device's PLE records, and it
+compares the logits after the soft cap. E2B in fp32 is about 20 GB, so Hugging Face loads the
+language model alone, without its 9.4 GB PLE table (the golden reads the rows it needs from the
+checkpoint), and the golden keeps the bf16 checkpoint's weights in bf16, which is exact, and
+widens them a matrix at a time for its fp32 passes. An E2B run peaks at 16 GB: give it a host
+with 22 GB free.
 
 A run passes when the device agrees with the quantized golden on at least 80% of the top-1
 tokens and its mean KL is at most three times the floor's (`--min-top1`, `--kl-ratio`), and,

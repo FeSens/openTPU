@@ -290,8 +290,9 @@ class _Rows:
 
 class Weights(dict):
     """The language model of a Gemma 4 checkpoint, loaded lazily: W[name] reads one tensor as
-    fp32 (HF names of a text-only model, model.language_model.* -> model.*); the PLE table
-    stays in the file (_Rows). Holds nothing but the open file."""
+    fp32 (HF names of a text-only model, model.language_model.* -> model.*; a text-only
+    checkpoint's as they are); the PLE table stays in the file (_Rows). Holds nothing but the
+    open file."""
 
     PLE = "model.embed_tokens_per_layer.weight"
 
@@ -299,12 +300,15 @@ class Weights(dict):
         from safetensors import safe_open
         super().__init__()
         self.model_dir = Path(model_dir)
-        self._files = {}
+        self._files, text = {}, {}
         for p in sorted(Path(model_dir).glob("*.safetensors")):
             f = safe_open(str(p), "pt")
             for k in f.keys():
                 if k.startswith("model.language_model."):
                     self._files[k.replace("model.language_model.", "model.", 1)] = (f, k)
+                elif k.startswith(("model.", "lm_head.")):
+                    text[k] = (f, k)
+        self._files = self._files or text       # (Gemma4ForCausalLM's: model.*, lm_head.*)
         if not self._files:
             raise ValueError(f"{model_dir}: no Gemma 4 language model tensors")
 
