@@ -1,5 +1,8 @@
 import collections
+import getpass
 import os
+import shutil
+import tempfile
 import time
 
 import numpy as np
@@ -26,6 +29,20 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: long; runs only with --runslow")
+    # a temporary root of this session's own: pytest's default (<tmp>/pytest-of-<user>, the newest
+    # three kept) let gates running side by side on one host remove each other's directories
+    # mid-run (fix-core's omarchy gate: the progcache tests and a wall-clock test failed, and
+    # passed again with a --basetemp of their own); removed at the end, as pytest's own are
+    if config.option.basetemp is None:
+        config.option.basetemp = os.path.join(
+            tempfile.gettempdir(), f"pytest-of-{getpass.getuser()}", f"pid-{os.getpid()}")
+        config._otpu_basetemp = config.option.basetemp
+
+
+def pytest_unconfigure(config):
+    own = getattr(config, "_otpu_basetemp", None)
+    if own:
+        shutil.rmtree(own, ignore_errors=True)
 
 
 def pytest_collection_modifyitems(config, items):
