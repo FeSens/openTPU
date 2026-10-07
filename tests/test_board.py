@@ -288,6 +288,61 @@ def test_run_dropped_then_load_and_run_at_once(have_verilator, native, after):
     assert np.array_equal(b.read(0, a_out), sl.dram[:a_out])
 
 
+def test_axil_iso_resets_apart(have_verilator):
+    """otpu_axil_iso (otpu_ctrl.sv: in front of the control registers and the LiteDRAM core's CSR
+    port) under random master and slave resets (sim/verilator/tb_axil_iso.sv): no response the
+    master did not ask for, every access answered (SLVERR after a slave reset), the slave never
+    left with half a write. Without it (BYPASS, the ports as they were) the same traffic fails:
+    a response to an access from before the master's reset reaches the master after it."""
+    import subprocess
+    from opentpu import rtlsim
+    board = rtlsim.RTL / "boards" / "ypcb-00338"
+    for bypass in (0, 1):
+        exe = rtlsim.build("tb_axil_iso", [board / "otpu_ctrl.sv", rtlsim.TB / "tb_axil_iso.sv"],
+                           {"BYPASS": bypass})
+        for seed in (1, 2):
+            r = subprocess.run([str(exe), f"+seed={seed}", "+mrst=300", "+slvrst=60",
+                                "+cycles=400000"], capture_output=True, text=True, timeout=120)
+            if bypass:
+                assert "FAIL" in r.stdout and "did not ask for" in r.stdout, r.stdout[-2000:]
+            else:
+                assert "PASS" in r.stdout, r.stdout[-2000:]
+
+
+def test_uncalibrated_channel_refuses_run_and_load(have_verilator):
+    """A channel not calibrated (STATUS CALIB1 clear, +calib): CTRL takes neither RUN nor LOAD
+    (nothing would answer their memory requests); TEMP is valid all the same (the XADC does not
+    wait for the DDR3)."""
+    t = SimTransport(ch_bytes=1 << 20, plusargs=["+calib=1"])
+    t.reg_write(R.R_PROG_ADDR, 0)
+    t.reg_write(R.R_PROG_N, 4)
+    t.reg_write(R.R_CTRL, R.CTRL_LOAD)
+    t.wait_cycles(20)
+    i = [t.queue_read(R.R_STATUS)]
+    t.reg_write(R.R_CTRL, R.CTRL_RUN)
+    t.wait_cycles(20)
+    i += [t.queue_read(R.R_STATUS), t.queue_read(R.R_ICOUNT), t.queue_read(R.R_TEMP)]
+    t.flush()
+    st0, st1, ic, temp = (t.results[k] for k in i)
+    for st in (st0, st1):
+        assert st & (R.ST_CALIB0 | R.ST_CALIB1) == R.ST_CALIB0
+        assert not st & (R.ST_LOADING | R.ST_RUN)
+    assert ic == 0 and temp & R.TEMP_VALID
+
+
+@pytest.mark.parametrize("ded", [0, 2])
+def test_ecc_ded_in_status(have_verilator, ded):
+    """STATUS ECC_DED: a channel's uncorrectable-ECC count is not zero (+ded, the LiteDRAM core's
+    c<n>_ded); CLEAR does not clear it. otpu-selftest's ecc stage fails on it."""
+    from opentpu.host import selftest
+    t = SimTransport(ch_bytes=1 << 20, plusargs=[f"+ded={ded}"])
+    t.reg_write(R.R_CTRL, R.CTRL_CLEAR)
+    t.reg_write(R.R_CTRL, 0)
+    assert bool(t.reg_read(R.R_STATUS) & R.ST_ECC_DED) == bool(ded)
+    ok, msg = selftest.ecc_check(t)
+    assert ok == (not ded) and msg.startswith("ECC_DED set" if ded else "no uncorrectable word")
+
+
 def test_stream_without_the_stream_engine_is_an_error(have_verilator):
     """On a bitstream without the stream engine (DSTEP = 0, CAPS bit6 clear) a DSTEP or STREAM
     stops the run with ERROR, an illegal instruction (the sequencer had sent it to a unit that

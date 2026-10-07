@@ -4,15 +4,26 @@
 //
 //   0x00 ID        RO  0x4F545055 ("OTPU")
 //   0x04 VERSION   RO  {D[15:0], MCOLS[7:0], LANES[7:0]}
-//   0x08 CTRL      RW  bit0 RUN: 1 releases the slice from reset (write 0, then 1, per run)
+//   0x08 CTRL      RW  bit0 RUN: 1 releases the slice from reset (write 0, then 1, per run); it
+//                      rises only while both channels are calibrated (CALIB0 and CALIB1), else
+//                      the write leaves it 0 (STATUS RUN)
 //                      bit1 LOAD (write 1: copy PROG_N instructions from PROG_ADDR into IMEM;
-//                      only while RUN = 0)
+//                      only while RUN = 0 and both channels are calibrated)
 //                      bit2 CLEAR: zero the per-run counters (0x18 .. 0x34)
+//                      Stopping a run (RUN 1 -> 0) stops the slice at once; what it gave the memory
+//                      still goes: wait for WR_IDLE before writing the DRAM the run wrote or read.
+//                      Its reads still in flight are dropped (a LOAD and the next run start after
+//                      them)
 //   0x0C STATUS    RO  bit0 HALTED, bit1 ERROR (illegal instruction; or WAIT_TO), bit2 LOADING,
-//                      bit3 WR_IDLE, bit4 AXI_ERR (sticky: a DDR3 controller broke its port contract,
+//                      bit3 WR_IDLE (every write the slice gave the memory is taken by the DDR3
+//                      controllers), bit4 AXI_ERR (sticky: a DDR3 controller broke its port contract,
 //                      otpu_mem_ch n_err; on the MIG builds an AXI error response), bit5 CALIB0,
 //                      bit6 CALIB1, bit7 RUN,
-//                      bit8 WAIT_TO (with ERROR: a WAITW timed out; as ERROR, until RUN falls)
+//                      bit8 WAIT_TO (with ERROR: a WAITW timed out; as ERROR, until RUN falls),
+//                      bit9 ECC_DED (a channel's ECC counted an uncorrectable 64-bit word since its
+//                      counters were last cleared: the LiteDRAM CSR ecc_clear / ecc1_clear; the
+//                      word's data was wrong, and a partial write merged into it wrote it back
+//                      with good check bits)
 //   0x10 PROG_ADDR RW  program byte address in the slice's DRAM (chunk aligned)
 //   0x14 PROG_N    RW  program length in instructions
 //   0x18 CYCLES    RO  core cycles since RUN rose, until HALTED (low 32 bits)
@@ -111,6 +122,7 @@ module otpu_ctrl #(
   input  logic        wr_idle,
   input  logic        axi_err,
   input  logic [1:0]  calib,
+  input  logic        ecc_ded,           // STATUS ECC_DED (synchronized: otpu_board)
   input  logic        b_rd, b_wr, a_rd, a_wr, b_wait,
   input  logic        temp_v,
   input  logic [11:0] temp,
@@ -173,8 +185,8 @@ module otpu_ctrl #(
         s_bvalid <= 1'b1;
         case (s_awaddr[11:2])
           10'h002: begin
-            run <= s_wdata[0];
-            ld_start <= s_wdata[1] && !s_wdata[0] && !run;
+            run <= s_wdata[0] && (run || &calib);
+            ld_start <= s_wdata[1] && !s_wdata[0] && !run && &calib;
             clear <= s_wdata[2];
           end
           10'h004: ld_addr <= s_wdata;
@@ -265,8 +277,8 @@ module otpu_ctrl #(
       10'h000: r_d <= 32'h4F54_5055;
       10'h001: r_d <= {16'(D), 8'(MCOLS), 8'(LANES)};
       10'h002: r_d <= {31'd0, run};
-      10'h003: r_d <= {23'd0, wait_to, run, calib, axi_err, wr_idle, ld_busy || ld_pend, error,
-                       halted};
+      10'h003: r_d <= {22'd0, ecc_ded, wait_to, run, calib, axi_err, wr_idle, ld_busy || ld_pend,
+                       error, halted};
       10'h004: r_d <= ld_addr;
       10'h005: r_d <= ld_n;
       10'h006: r_d <= cycles[31:0];
@@ -302,5 +314,117 @@ module otpu_ctrl #(
         else
           r_d <= 32'hDEAD_BEEF;
     endcase
+  end
+endmodule
+
+// AXI4-Lite between a master and a slave that reset apart (otpu_board: the control registers;
+// otpu_fpga_top_ld: the LiteDRAM core's CSR port). The block design's SmartConnect, the master,
+// resets with XDMA's axi_aresetn (PERST#, and a PCIe hot reset or link down too); the control
+// registers reset with the core reset (PERST#, not a hot reset), the LiteDRAM core's CSR port with
+// the core's own clocks only. A slave that answered an access after its master's reset handed the
+// fresh master a response it never asked for. One access at a time: a write's AW and W are taken
+// together (as otpu_ctrl takes them), a read's AR, and given to the slave; its response is taken
+// from the slave and held for the master. m_rst, the master's reset: the master's side forgets
+// the access (a held response is dropped), but what the slave was given is completed with it (AW
+// and W both, its response taken and dropped), so the slave never sees half an access or answers
+// into the master's next one; a new access waits for that. s_rst, the slave's reset (the LiteDRAM
+// core's sys reset: its PLL, or its ctrl_reset CSR): an access it had is answered SLVERR. An access
+// costs three cycles more (the request and the response registered).
+module otpu_axil_iso #(
+  parameter int AW = 32
+) (
+  input  logic          clk,
+  input  logic          m_rst,
+  input  logic          s_rst,
+  // the master's side
+  input  logic [AW-1:0] m_awaddr,
+  input  logic          m_awvalid,
+  output logic          m_awready,
+  input  logic [31:0]   m_wdata,
+  input  logic [3:0]    m_wstrb,
+  input  logic          m_wvalid,
+  output logic          m_wready,
+  output logic [1:0]    m_bresp,
+  output logic          m_bvalid,
+  input  logic          m_bready,
+  input  logic [AW-1:0] m_araddr,
+  input  logic          m_arvalid,
+  output logic          m_arready,
+  output logic [31:0]   m_rdata,
+  output logic [1:0]    m_rresp,
+  output logic          m_rvalid,
+  input  logic          m_rready,
+  // the slave's side
+  output logic [AW-1:0] s_awaddr,
+  output logic          s_awvalid,
+  input  logic          s_awready,
+  output logic [31:0]   s_wdata,
+  output logic [3:0]    s_wstrb,
+  output logic          s_wvalid,
+  input  logic          s_wready,
+  input  logic [1:0]    s_bresp,
+  input  logic          s_bvalid,
+  output logic          s_bready,
+  output logic [AW-1:0] s_araddr,
+  output logic          s_arvalid,
+  input  logic          s_arready,
+  input  logic [31:0]   s_rdata,
+  input  logic [1:0]    s_rresp,
+  input  logic          s_rvalid,
+  output logic          s_rready
+);
+  // busy: an access is with the slave, or its response with the master (m_bvalid / m_rvalid);
+  // wr: it is a write; drop: the master was reset since it gave it (its response goes nowhere).
+  // Both resets are on at configuration (the valids clear)
+  logic busy = 1'b0, wr = 1'b0, drop = 1'b0;
+  // a write's ready waits for both its valids (as otpu_ctrl's), a read's does not (as otpu_ctrl's)
+  assign m_awready = !s_rst && !m_rst && !busy && m_awvalid && m_wvalid;
+  assign m_wready  = m_awready;
+  assign m_arready = !s_rst && !m_rst && !busy && !(m_awvalid && m_wvalid);
+  assign s_bready  = busy && wr && !m_bvalid;
+  assign s_rready  = busy && !wr && !m_rvalid;
+  always_ff @(posedge clk) begin
+    if (m_awready) begin
+      busy <= 1'b1; wr <= 1'b1; drop <= 1'b0;
+      s_awvalid <= 1'b1; s_wvalid <= 1'b1;
+      s_awaddr <= m_awaddr; s_wdata <= m_wdata; s_wstrb <= m_wstrb;
+    end else if (m_arvalid && m_arready) begin
+      busy <= 1'b1; wr <= 1'b0; drop <= 1'b0;
+      s_arvalid <= 1'b1;
+      s_araddr <= m_araddr;
+    end
+    if (s_awvalid && s_awready) s_awvalid <= 1'b0;
+    if (s_wvalid && s_wready) s_wvalid <= 1'b0;
+    if (s_arvalid && s_arready) s_arvalid <= 1'b0;
+    // the slave's response: to the master, or dropped (the access is then over)
+    if (s_bvalid && s_bready) begin
+      if (drop || m_rst) busy <= 1'b0;
+      else m_bvalid <= 1'b1;
+      m_bresp <= s_bresp;
+    end
+    if (s_rvalid && s_rready) begin
+      if (drop || m_rst) busy <= 1'b0;
+      else m_rvalid <= 1'b1;
+      m_rresp <= s_rresp; m_rdata <= s_rdata;
+    end
+    if ((m_bvalid && m_bready) || (m_rvalid && m_rready)) begin
+      busy <= 1'b0; m_bvalid <= 1'b0; m_rvalid <= 1'b0;
+    end
+    // the master's reset: a held response is dropped (the access is over), one still with the
+    // slave will be
+    if (m_rst) begin
+      m_bvalid <= 1'b0; m_rvalid <= 1'b0;
+      if (m_bvalid || m_rvalid) busy <= 1'b0;
+      else if (busy) drop <= 1'b1;
+    end
+    // the slave's reset: what it was given is gone; an access still with it is answered SLVERR
+    // (the master is not left waiting), or over if its master was reset too
+    if (s_rst) begin
+      s_awvalid <= 1'b0; s_wvalid <= 1'b0; s_arvalid <= 1'b0;
+      if (busy && !m_bvalid && !m_rvalid) begin
+        if (drop || m_rst) busy <= 1'b0;
+        else begin m_bvalid <= wr; m_rvalid <= !wr; m_bresp <= 2'b10; m_rresp <= 2'b10; end
+      end
+    end
   end
 endmodule

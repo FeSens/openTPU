@@ -701,6 +701,10 @@ class Board:
         for c in (0, 1):
             for off in range(0, CH_BYTES, len(z)):
                 self.t.mem_write(c, off, z)
+        # the ECC counters (STATUS ECC_DED) from here on: a read of a beat not yet written (an
+        # earlier run's, a tool's) counted its random check bits as uncorrectable
+        from opentpu.host import memcal
+        memcal.ecc(self.t, clear=True)
         self.t.reg_write(R.R_SCRATCH, R.DRAM_INIT)
         return True
 
