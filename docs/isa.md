@@ -115,9 +115,9 @@ Quantization of a group `x[0..n)` (a block of `D`, or a whole row in row mode):
 
 Every instruction is 8 x 32-bit words `w0..w7`.
 `w0 = opcode[7:0] | ra[11:8] | rb[15:12] | rc[19:16] | rd[23:20] | flags[31:24]`.
-`R[x]` is the register value. Addresses below are "register + immediate". Only the fields
-written `R[x] + w` are: counts, shapes and strides are immediates whatever the register fields
-hold (LD/ST's `n`, QACT's `w2` and `w3`, GATHER's `w3`).
+`R[x]` is the register value. Addresses below are "register + immediate": the fields written
+`R[x] + w`. Counts, shapes and strides are immediates, whatever the register fields hold (LD's
+and ST's `n`, QACT's `w2` and `w3`, GATHER's `w3`).
 
 | op | name | semantics |
 |---|---|---|
