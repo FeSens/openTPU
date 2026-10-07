@@ -575,12 +575,33 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
 
 
 def _fake_q(x, D: int = 128):
-    """int8 quantize-dequantize per (row, D-block) of the last axis (numerics of QACT/QST)."""
+    """int8 quantize-dequantize per (row, D-block) of the last axis (numerics of QACT/QST). A
+    value within 2^-31 of a rounding tie is the tie, rounded half to even: an exact tie is not
+    left to float64 noise (the attention output of a flash block is an integer vector times a
+    scalar, _pv: its ties are exact), so that two summation orders agree."""
     sh = x.shape
     xb = x.reshape(*sh[:-1], sh[-1] // D, D)
     a = np.abs(xb).max(-1, keepdims=True)
     s = np.where(a == 0, 1, a / 127)
-    return (np.clip(np.rint(xb / s), -127, 127) * s).reshape(sh)
+    r = np.rint(xb / s * 2.0 ** 30) * 2.0 ** -30
+    return (np.clip(np.rint(r), -127, 127) * s).reshape(sh)
+
+
+def _v_parts(v):
+    """V rows [..., d] as the KV cache holds them: int8 values and one scale per row (an all-zero
+    row's scale is 0, as the device's)."""
+    a = np.abs(v).max(-1, keepdims=True)
+    return np.clip(np.rint(v / np.where(a == 0, 1, a / 127)), -127, 127), a[..., 0] / 127
+
+
+def _pv(pp, Vq, vs, D: int = 128):
+    """P.V as the device's flash attention takes it (kernels/attention.py _attend_heads): the
+    softmax numerators pp [T] times V's row scales vs [T] (folded in by QACT CSCALE), int8 per D
+    tokens, against V's int8 values Vq [T, d]."""
+    T = len(pp)
+    ppad = np.zeros(-(-T // D) * D)
+    ppad[:T] = pp * vs
+    return _fake_q(ppad, D)[:T] @ Vq
 
 
 def _fake_w(a, D: int, fmt: str = "int8"):
@@ -613,8 +634,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                     head_format: str | None = None, formats: str | None = None) -> np.ndarray:
     """float64 decode that applies openTPU's quantization points but none of its rounding:
     int8 (or 4-bit: `wformat`, `head_format`, `formats` as in Image) weights, int8 matmul
-    inputs per D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens).
-    Separates quantization error from kernel bugs."""
+    inputs per D-block, int8 K (per token, D-block) and V (per token), int8 P (per D tokens)
+    with V's per-token scales folded in (_pv). Separates quantization error from kernel bugs."""
     d, G = spec.head_dim, spec.n_q // spec.n_kv
     Wq: dict = {}
     head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
@@ -655,16 +676,14 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             if i not in spec.nope:
                 q, k = rot(q), rot(k)
             Kc[i].append(_fake_q(k, D))
-            Vc[i].append(_fake_q(v, v.shape[-1]))
-            K, V = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
+            Vc[i].append(_v_parts(v))
+            K = np.stack(Kc[i], 1)
+            Vq, Vs = (np.stack(z, 1) for z in zip(*Vc[i]))
             o = np.zeros((spec.n_q, d))
             for hq in range(spec.n_q):
                 sc = K[hq // G] @ _fake_q(q[hq] / math.sqrt(d), D)
                 pp = np.exp(sc - sc.max())
-                T = len(pp)
-                ppad = np.zeros(-(-T // D) * D)
-                ppad[:T] = pp
-                o[hq] = (_fake_q(ppad, D)[:T] @ V[hq // G]) / pp.sum()
+                o[hq] = _pv(pp, Vq[hq // G], Vs[hq // G], D) / pp.sum()
             x = x + w(p + "self_attn.o_proj.weight") @ _fake_q(o.reshape(-1), D)
             h = _fake_q(norm(x, W[p + "post_attention_layernorm.weight"]), D)
             g = w(p + "mlp.gate_proj.weight") @ h

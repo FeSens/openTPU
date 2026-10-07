@@ -111,6 +111,22 @@ def test_quantized_golden_follows_the_isa_simulator(name, wformat):
     assert V.summary([g["pairs"]["fp32"] for g in gold])["kl_mean"] > q["kl_mean"]
 
 
+@pytest.mark.parametrize("name", ["qwen3", "lfm2", "qwen35"])
+def test_emulated_logits_follow_the_isa_simulator(name):
+    """The ports' emulated_logits (float64, the device's quantization points) are the ISA
+    simulator's logits to fp32 rounding with fp4 weights on these tiny models (no int8 value
+    rounds the other way): P.V as the device takes it, V's per-token scales folded into P before
+    P is quantized (QACT CSCALE). Without the fold the emulation is about 1% off."""
+    import importlib
+    _, W, spec = _tiny(name)
+    _, runs = _runs(spec, W, "fp4")
+    emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
+    for p, r in zip(PROMPTS, runs):
+        seq = list(p) + list(r["tokens"][:-1])
+        emu = emulated_logits(spec, W, seq, wformat="fp4")[len(p) - 1:]
+        assert np.abs(r["logits"] - emu).max() < 1e-5 * np.abs(emu).max()
+
+
 @pytest.mark.parametrize("fmt", ["int8", "fp4"])
 def test_golden_weights_are_the_images(fmt):
     """device_weight of the tied LM head equals the head rows the Engine's image holds,

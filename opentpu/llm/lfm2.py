@@ -58,8 +58,8 @@ from .qwen3 import (OutTokens, RunPos, RunRows, RunWords, _formats, _inputs, _in
                     _amask, _lookup_alloc, _lookup_build, _lookup_desc, _tok_arg, _tokens_arg,
                     compile_decode)
 from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_q, _fake_w, _lm_head,
-                    _lm_head_rows, _mlp, _qdesc, _tdesc, rope_tables, EmbedHost, fill_logits,
-                    step_descriptors)
+                    _lm_head_rows, _mlp, _pv, _qdesc, _tdesc, _v_parts, rope_tables, EmbedHost,
+                    fill_logits, step_descriptors)
 
 CONV, ATTN = "conv", "attn"
 # A plan with more layer bodies than this runs each MLP's F chunks as a hardware loop
@@ -350,16 +350,14 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                 q = rot(norm(q, W[a + "q_layernorm.weight"]))
                 k = rot(norm(k, W[a + "k_layernorm.weight"]))
                 Kc[i].append(_fake_q(k, min(d, D)))
-                Vc[i].append(_fake_q(v, d))
-                Kh, Vh = np.stack(Kc[i], 1), np.stack(Vc[i], 1)
+                Vc[i].append(_v_parts(v))
+                Kh = np.stack(Kc[i], 1)
+                Vq, Vs = (np.stack(z, 1) for z in zip(*Vc[i]))
                 o = np.zeros((spec.n_q, d))
                 for hq in range(spec.n_q):
                     sc = Kh[hq // G] @ _fake_q(q[hq] / math.sqrt(d), min(d, D))
                     pp = np.exp(sc - sc.max())
-                    T = len(pp)
-                    ppad = np.zeros(-(-T // D) * D)
-                    ppad[:T] = pp
-                    o[hq] = (_fake_q(ppad, D)[:T] @ Vh[hq // G]) / pp.sum()
+                    o[hq] = _pv(pp, Vq[hq // G], Vs[hq // G], D) / pp.sum()
                 x = x + w(a + "out_proj.weight") @ _fake_q(o.reshape(-1), D)
             h = _fake_q(norm(x, W[p + "ffn_norm.weight"]), D)
             if spec.is_moe(i):

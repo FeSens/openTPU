@@ -64,7 +64,7 @@ from opentpu.llm import lfm2 as L2
 from opentpu.llm import load_spec, model_dir
 from opentpu.llm import qwen3 as Q3
 from opentpu.llm import qwen35 as Q35
-from opentpu.llm.qwen3 import _fake_q, rope_tables
+from opentpu.llm.qwen3 import _fake_q, _v_parts, rope_tables
 
 ROOT = Path(__file__).resolve().parent.parent
 HEAD_ROWS = 16384       # LM head rows per pass (quantize_mxu's pieces: the same quantization)
@@ -89,18 +89,20 @@ def dequant(a, fmt, D):
     return Q.dequantize_w4(rows[:, :a.shape[1] // 2], words, fmt, D)
 
 
-def _attend(q, K, V, fq, D, qd, scale):
-    """Causal attention of every row [T, n_q, d] on its query group's K, V [T, n_kv, d] (int8
-    already): q quantized per qd-block, P per D keys (emulated_logits' points)."""
+def _attend(q, K, v, fq, D, qd, scale):
+    """Causal attention of every row [T, n_q, d] on its query group's K (int8 already) and V
+    [T, n_kv, d]: q quantized per qd-block, V per token, P per D keys with V's scales folded in
+    (emulated_logits' points)."""
     T, nq, _ = q.shape
     G, Dp = nq // K.shape[1], -(-T // D) * D
+    V, vs = _v_parts(v) if fq is _fake_q else (v, np.ones(v.shape[:2]))
     causal = np.tri(T, dtype=bool)
     o = np.zeros((T, nq, V.shape[2]))
     for hq in range(nq):
         sc = np.where(causal, fq(q[:, hq] / scale, qd) @ K[:, hq // G].T, -np.inf)
         pp = np.exp(sc - sc.max(1, keepdims=True))
         ppad = np.zeros((T, Dp))
-        ppad[:, :T] = pp
+        ppad[:, :T] = pp * vs[:, hq // G]
         o[:, hq] = (fq(ppad, D)[:, :T] @ V[:, hq // G]) / pp.sum(1, keepdims=True)
     return o
 
@@ -127,7 +129,7 @@ def _qwen3(spec, W, i, x, w, fq, c, s, D):
         k = norm(k, W[p + "self_attn.k_norm.weight"])
     if i not in spec.nope:
         q, k = rot(q), rot(k)
-    o = _attend(q, fq(k, D), fq(v, d), fq, D, D, math.sqrt(d))
+    o = _attend(q, fq(k, D), v, fq, D, D, math.sqrt(d))
     x = x + fq(o.reshape(T, -1), D) @ w(p + "self_attn.o_proj.weight").T
     h = fq(norm(x, W[p + "post_attention_layernorm.weight"]), D)
     g, u = h @ w(p + "mlp.gate_proj.weight").T, h @ w(p + "mlp.up_proj.weight").T
@@ -161,7 +163,7 @@ def _lfm2(spec, W, i, x, w, fq, c, s, D):
 
         q = rot(norm(q, W[a + "q_layernorm.weight"]))
         k = rot(norm(k, W[a + "k_layernorm.weight"]))
-        o = _attend(q, fq(k, min(d, D)), fq(v, d), fq, D, min(d, D), math.sqrt(d))
+        o = _attend(q, fq(k, min(d, D)), v, fq, D, min(d, D), math.sqrt(d))
         x = x + fq(o.reshape(T, -1), D) @ w(a + "out_proj.weight").T
     if spec.is_moe(i):
         raise ValueError("formats_scan: dense models only")
@@ -212,7 +214,7 @@ def _qwen35(spec, W, i, x, w, fq, c, s, D):
         v = (h @ w(a + "v_proj.weight").T).reshape(T, spec.n_kv, d)
         q = Q35._rot(Q35._norm(q, g1(a + "q_norm.weight"), eps), c, s, spec.rope_dim)
         k = Q35._rot(Q35._norm(k, g1(a + "k_norm.weight"), eps), c, s, spec.rope_dim)
-        o = _attend(q, fq(k, D), fq(v, d), fq, D, D, math.sqrt(d)) / (1 + np.exp(-gate))
+        o = _attend(q, fq(k, D), v, fq, D, D, math.sqrt(d)) / (1 + np.exp(-gate))
         x = x + fq(o.reshape(T, -1), D) @ w(a + "o_proj.weight").T
     if spec.moe is not None:
         raise ValueError("formats_scan: dense models only")
