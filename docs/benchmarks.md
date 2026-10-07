@@ -122,7 +122,8 @@ device run.
 chunk runs the LM head, and only for its last row.
 
 **Batched decode:** `Engine.step_batch(tokens)` and `Engine.generate_batch(prompts)` step b
-sequences together, each at its own position.
+sequences together, each at its own position. In `generate_batch` a sequence that finishes
+(EOS, max_new, its KV cache full) leaves the runs; the others go on.
 
 **b=1 decode:** keeps `qwen3_step`, the per-token kernel with per-head lazy Q.
 

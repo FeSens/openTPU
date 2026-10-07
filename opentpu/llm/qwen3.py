@@ -2617,7 +2617,8 @@ class Engine:
 
     def generate_batch(self, prompts, max_new: int = 32, chunk: int | None = None) -> list:
         """Greedy generation for several prompts (one sequence each) decoded together; a
-        finished sequence keeps its row (its extra tokens are dropped) until all finish."""
+        finished sequence (EOS, max_new, or its KV cache full) leaves the batch's runs, its
+        last token not fed (as generate)."""
         n = len(prompts)
         nxt = [int(np.argmax(self.prefill(p, seq=s, chunk=chunk)))
                for s, p in enumerate(prompts)]
@@ -2629,9 +2630,14 @@ class Engine:
                     out[s].append(nxt[s])
                     done[s] = (nxt[s] in self.spec.eos or len(out[s]) >= max_new
                                or self.poss[s] >= self.cap)
-            if all(done):
+            live = [s for s in range(n) if not done[s]]
+            if not live:
                 break
-            nxt = [int(np.argmax(r)) for r in self.step_batch(nxt)]
+            lg = self.run_rows([(s, self.poss[s]) for s in live], [nxt[s] for s in live],
+                               list(range(len(live))))
+            for s, r in zip(live, lg):
+                self.poss[s] += 1
+                nxt[s] = int(np.argmax(r))
         return out
 
     # ---- the decode loop on the device (opentpu/llm/generate.py)

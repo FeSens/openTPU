@@ -273,6 +273,21 @@ def test_tiny_batched_decode_matches_separate_runs(tiny):
         assert np.array_equal(lg[s], ref.step(t))
 
 
+def test_tiny_batch_goes_on_when_a_sequence_fills_the_cache(tiny):
+    """A sequence that reaches the cap ends (as Engine.generate) and leaves the batch: the
+    others decode on, each equal to its separate run; a finished sequence is fed no more (its
+    position stays after its last token fed). Before, the next step fed every row and the full
+    sequence's raised "KV cache full"."""
+    _, W, spec = tiny
+    rng = np.random.default_rng(5)
+    prompts = [[int(t) for t in rng.integers(0, 1000, n)] for n in (126, 3)]
+    eng = Engine(spec, W, cap=128, batch=2, rows=8)
+    got = eng.generate_batch(prompts, max_new=6, chunk=8)
+    for s, p in enumerate(prompts):
+        assert got[s] == Engine(spec, W, cap=128, rows=8).generate(p, max_new=6)
+    assert [len(g) for g in got] == [3, 6] and eng.poss == [128, 8]
+
+
 @pytest.mark.skipif(not REAL.exists(), reason="models/Qwen3-0.6B not downloaded")
 def test_qwen3_0_6b_chunked_prefill_and_batch_match_hf():
     """Real weights: chunked prefill then decode gives HF's greedy tokens, and two prompts
