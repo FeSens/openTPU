@@ -144,7 +144,9 @@ ARGMAX and RLD. No new unit is needed.
 - **Soft cap.** With a spec that has one (Gemma's final_logit_softcapping), the LM head caps
   the chunk first: `c tanh(l / c)` by `kernels.lib.softcap`, 5 VOPs; `generate.softcap_ref`
   is the same in the ISA's fp32 for `reference_pick`. Greedy takes the raw logits' argmax
-  (`Greedy.raw`: the cap keeps their order), and the stored logits stay raw.
+  (`Greedy.raw`: the cap keeps their order), and the stored logits stay raw. The host's
+  sampler caps them too (`chat.sampler(softcap=spec.softcap)`: a reply's first token, and
+  every token off the card), as Hugging Face's model before its processors.
 - **Repetition penalty.** `min(l * pa, l * pb)` with the DRAM vectors `pa`, `pb`. For the
   context's ids these hold 1/R and R, and 1 for every other id. The result is l/R for l > 0
   and l·R for l < 0, as Hugging Face computes it. The card marks each token it generates

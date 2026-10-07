@@ -53,10 +53,14 @@ SAMPLING = {"qwen3": dict(temperature=0.7, top_k=20, top_p=0.8, repetition_penal
 
 
 def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
-            repetition_penalty: float = 1.0):
+            repetition_penalty: float = 1.0, softcap: float | None = None):
     """pick(logits, context) -> token id. The repetition penalty (as Hugging Face's) divides
     the positive logits and multiplies the negative ones of every token in `context`; it
-    applies to greedy decoding (temperature 0) too.
+    applies to greedy decoding (temperature 0) too. softcap: the model's final logit soft cap
+    (Gemma's final_logit_softcapping, spec.softcap), c tanh(l / c) on the logits first, as
+    Hugging Face's model applies it before the penalty and the warpers (the engine's logits
+    are raw; the device's sampler caps them too); plain greedy (pick.greedy) takes the raw
+    logits' argmax, as the device's Greedy (the cap keeps their order).
 
     Top-k runs on the float32 logits: when the k largest are distinct and larger than the
     next one, the candidates and their order are unique, so this gives the picks of the
@@ -70,6 +74,8 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
     rng = np.random.default_rng(seed)
     seen = _Seen()
     block = 64
+    greedy = temperature <= 0 and repetition_penalty == 1.0     # argmax of the raw logits
+    cap = None if greedy or not softcap else softcap
 
     class Stream:
         def __init__(self, context=()):
@@ -87,6 +93,9 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
             hi = lo + len(v)
             b = self.buf[lo:hi]
             b[:] = v
+            if cap is not None:
+                c = b.dtype.type(cap)
+                b[:] = np.tanh(b / c) * c
             if self.ix is not None:
                 sel = self.ix[np.searchsorted(self.ix, lo):np.searchsorted(self.ix, hi)]
                 w = self.buf[sel]
@@ -134,14 +143,15 @@ def sampler(temperature: float, top_k: int, top_p: float, seed: int | None,
         """Run numpy's code paths of a pick once (the first pick of a process took 2-10 ms:
         np.union1d, the top-k selection and the generator's choice, first called) on a
         throwaway sampler with its own generator: this one's draws do not change."""
-        w = sampler(temperature, top_k, top_p, 0, repetition_penalty)
+        w = sampler(temperature, top_k, top_p, 0, repetition_penalty, softcap)
         w(np.linspace(-1.0, 1.0, 4096, dtype=np.float32), [1, 2, 3])
 
     pick.stream = Stream
     pick.warm = warm
-    pick.greedy = temperature <= 0 and repetition_penalty == 1.0   # argmax of the raw logits
+    pick.greedy = greedy
     pick.params = dict(temperature=temperature, top_k=top_k, top_p=top_p,
                        repetition_penalty=repetition_penalty)
+    pick.softcap = softcap
     pick.rng = rng
     return pick
 
@@ -353,6 +363,10 @@ class Chat:
         self._next = None                   # logits after a reply cut at max_new (resume())
         self._reply: list[int] = []         # the last reply's tokens
         self.mtp = None                     # an MTP engine's decoder (opentpu/llm/mtp.py)
+        cap = getattr(engine.spec, "softcap", None)
+        if getattr(pick, "softcap", cap) != cap:    # it gets the engine's raw logits
+            raise ValueError(f"the sampler's softcap {pick.softcap} is not the model's {cap} "
+                             f"(chat.sampler(softcap=spec.softcap))")
         if getattr(engine.spec, "mtp", False):
             from opentpu.llm.mtp import MTPDecoder
             self.mtp = MTPDecoder(engine)
@@ -799,7 +813,7 @@ def main(argv=None):
         eng.backend.status.update(weights=weights)      # for otpu-smi
     sp = sampling(spec, a)
     pick = sampler(0 if a.greedy else sp["temperature"], sp["top_k"], sp["top_p"], a.seed,
-                   sp["repetition_penalty"])
+                   sp["repetition_penalty"], getattr(spec, "softcap", None))
     clock = 0.0
     if a.backend.startswith("board"):
         khz = eng.backend.info.get("core_khz")

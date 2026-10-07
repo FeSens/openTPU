@@ -2791,11 +2791,20 @@ class Engine:
         return out
 
     def generate(self, prompt, max_new: int = 32, sampler=None, on_token=None) -> list:
-        """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token."""
+        """Greedy (or `sampler(logits) -> id`) generation; stops at an EOS token. The sampler
+        gets the logits Hugging Face's model returns: with the spec's final soft cap (Gemma's
+        final_logit_softcapping), which step() and prefill() leave out (greedy: their argmax,
+        the cap keeps the order); chat.sampler without its softcap samples them."""
+        from .gemma4 import softcap
+        cap = getattr(self.spec, "softcap", None)
+        if sampler is not None and cap and getattr(sampler, "softcap", None):
+            raise ValueError("generate caps the logits it hands the sampler: a sampler with "
+                             "no softcap")
         logits = self.prefill(prompt)
         out = []
         for _ in range(max_new):
-            t = int(np.argmax(logits)) if sampler is None else int(sampler(logits))
+            t = int(np.argmax(logits)) if sampler is None else \
+                int(sampler(softcap(self.spec, logits) if cap else logits))
             out.append(t)
             if on_token:
                 on_token(t)
