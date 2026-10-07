@@ -67,6 +67,7 @@ class Spec:
     eos: tuple = (151645, 151643)
     # the Llama-like models of llama.py (SmolLM3, Phi-3 / Phi-4-mini) run on this code too:
     qk_norm: bool = True      # RMSNorm on each q and k head (Qwen3); Llama-likes have none
+    qk_smooth: bool = True    # with qk_norm: K's channels smoothed into the gains (qk_gains)
     nope: tuple = ()          # layers without RoPE (SmolLM3: every 4th)
     rotary: int = 0           # RoPE dimensions of a head, the first ones (0: all; Phi-4-mini 96)
     rope_div: tuple = ()      # per-frequency divisors of the angle (LongRoPE's short factors)
@@ -294,6 +295,48 @@ def rope_tables(spec: Spec, pos: int) -> tuple[np.ndarray, np.ndarray]:
     ang = pos * inv
     sc = getattr(spec, "rope_scale", 1.0)
     return (np.cos(ang) * sc).astype(np.float32), (np.sin(ang) * sc).astype(np.float32)
+
+
+# =============================================================================== K smoothing
+def qk_sigma(spec: Spec, wq, wk, gq, gk) -> np.ndarray:
+    """sigma [head_dim]: the factors K's channels are divided by and q's multiplied by (q . K
+    unchanged), so that K's int8 rounding (one scale per token and head block) does not lose
+    the small channels to a few large ones (docs/quant.md, "K smoothing"). Qwen3's k_norm
+    gains have outlier channels (Qwen3-0.6B: up to 42 times their median in a layer); K's
+    rounding cost Qwen3-0.6B a KL of 0.048 nats a token, the int8 weights 0.0023.
+
+    sigma = sqrt(kmag / qmag) (SmoothQuant's balance between q and K), from the weights alone
+    (wq [n_q d, H], wk [n_kv d, H], the gains gq, gk [d]): a channel's magnitude is its gain
+    times its projection row's norm over its head's RMS row norm, the largest over the heads,
+    as the heads share the gains; the same within each RoPE pair (c, c + rope_dim / 2), so it
+    commutes with RoPE; and a power of two, so that it scales q and K exactly and changes only
+    how they round."""
+    d = spec.head_dim
+
+    def mag(w, g, heads):
+        r = np.linalg.norm(np.asarray(w, np.float64).reshape(heads, d, -1), axis=-1)
+        r = r / np.sqrt(np.mean(r * r, -1, keepdims=True))
+        m = np.abs(np.asarray(g, np.float64)) * r.max(0)
+        h = spec.rope_dim // 2
+        m[:h] = m[h:2 * h] = np.maximum(m[:h], m[h:2 * h])
+        return m
+
+    km, qm = mag(wk, gk, spec.n_kv), mag(wq, gq, spec.n_q)
+    ok = (km > 0) & (qm > 0)
+    s = np.sqrt(np.where(ok, km, 1) / np.where(ok, qm, 1))
+    return np.exp2(np.round(np.log2(s)))
+
+
+def qk_gains(spec: Spec, W, p: str) -> tuple[np.ndarray, np.ndarray]:
+    """Layer p's q_norm and k_norm gains (fp32) as the device applies them: times and divided
+    by qk_sigma with spec.qk_smooth, else the checkpoint's."""
+    gq = np.asarray(W[p + "self_attn.q_norm.weight"], np.float32)
+    gk = np.asarray(W[p + "self_attn.k_norm.weight"], np.float32)
+    if not spec.qk_smooth:
+        return gq, gk
+    s = qk_sigma(spec, W[p + "self_attn.q_proj.weight"], W[p + "self_attn.k_proj.weight"], gq,
+                 gk)
+    return (gq * s).astype(np.float32), (gk / s).astype(np.float32)
 
 
 # =============================================================================== lookup tables
@@ -663,6 +706,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
     def norm(v, g):
         return (v / np.sqrt(np.mean(v * v, -1, keepdims=True) + spec.eps)) * g
 
+    qk = [qk_gains(spec, W, f"model.layers.{i}.") if spec.qk_norm else None
+          for i in range(spec.layers)]
     Kc = [[] for _ in range(spec.layers)]
     Vc = [[] for _ in range(spec.layers)]
     out = []
@@ -684,8 +729,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             k = (w(p + "self_attn.k_proj.weight") @ h).reshape(spec.n_kv, d)
             v = (w(p + "self_attn.v_proj.weight") @ h).reshape(spec.n_kv, d)
             if spec.qk_norm:
-                q = norm(q, W[p + "self_attn.q_norm.weight"])
-                k = norm(k, W[p + "self_attn.k_norm.weight"])
+                q, k = norm(q, qk[i][0]), norm(k, qk[i][1])
             if i not in spec.nope:
                 q, k = rot(q), rot(k)
             Kc[i].append(_fake_q(k, D))
@@ -885,12 +929,13 @@ class Image(EmbedHost):
             mf = self.mats_formats(self.lf[i])
             Lo = {k: (tuple(base + x for x in v) if isinstance(v, tuple) else
                       (base + v if isinstance(v, int) else v)) for k, v in lofs.items()}
+            qk = qk_gains(spec, W, p) if spec.qk_norm else None
             for s in range(S):
                 put(s, Lo["g_in"], f32(W[p + "input_layernorm.weight"]))
                 put(s, Lo["g_post"], f32(W[p + "post_attention_layernorm.weight"]))
                 if spec.qk_norm:
-                    put(s, Lo["qn"], f32(W[p + "self_attn.q_norm.weight"]))
-                    put(s, Lo["kn"], f32(W[p + "self_attn.k_norm.weight"]))
+                    put(s, Lo["qn"], f32(qk[0]))
+                    put(s, Lo["kn"], f32(qk[1]))
                 if spec.nope:
                     put(s, Lo["rg"], np.array([0, 1] if i in spec.nope else [1, 0], np.float32))
             wq, wk, wv, wo = head_parallel_attention_weights(

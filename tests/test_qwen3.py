@@ -101,6 +101,62 @@ def test_tiny_matches_hf(tiny):
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
+OUTLIERS = [5, 69, 30, 94]          # two RoPE pairs (c, c + head_dim / 2)
+
+
+def _planted(W, spec):
+    """Qwen3's K outliers planted in every layer: k_norm gains 60 on two RoPE pairs, their q
+    gains 0.01 (Qwen3-0.6B's k_norm reaches 42x its layer's median where q_norm is near 0)."""
+    W = dict(W)
+    for i in range(spec.layers):
+        p = f"model.layers.{i}.self_attn."
+        gq, gk = W[p + "q_norm.weight"].copy(), W[p + "k_norm.weight"].copy()
+        gq[OUTLIERS], gk[OUTLIERS] = 0.01, 60.0
+        W[p + "q_norm.weight"], W[p + "k_norm.weight"] = gq, gk
+    return W
+
+
+def _kl(ref, dev):
+    lp, lq = ((x - x.max(-1, keepdims=True)) for x in (np.float64(ref), np.float64(dev)))
+    lp, lq = (x - np.log(np.exp(x).sum(-1, keepdims=True)) for x in (lp, lq))
+    return float((np.exp(lp) * (lp - lq)).sum(-1).mean())
+
+
+def test_tiny_k_smoothing(tiny):
+    """K's channels smoothed into the q_norm / k_norm gains (qk_gains). With the K outliers
+    planted, K's int8 scale (per token and head block) follows them and the other channels
+    round to a few levels: unsmoothed, the device is far from the fp32 reference. Smoothed
+    (sigma 64 on the outlier pairs: q . K unchanged, K's rounding balanced against q's) it is
+    as close as the plain tiny model's (KL ~3e-5 against 1.3e-3 unsmoothed), and follows the
+    emulation. sigma is a power of two, the same within each RoPE pair, and 1 on the plain tiny
+    model (its image unchanged); the fp32 reference stays the checkpoint's."""
+    from dataclasses import replace
+
+    from opentpu.llm.qwen3 import qk_gains, qk_sigma
+    _, W0, spec = tiny
+    for i in range(spec.layers):
+        p = f"model.layers.{i}."
+        g = qk_gains(spec, W0, p)
+        assert np.array_equal(g[0], W0[p + "self_attn.q_norm.weight"])
+        assert np.array_equal(g[1], W0[p + "self_attn.k_norm.weight"])
+    W = _planted(W0, spec)
+    a, h = "model.layers.0.self_attn.", spec.rope_dim // 2
+    s = qk_sigma(spec, *(W[a + n + ".weight"] for n in ("q_proj", "k_proj", "q_norm", "k_norm")))
+    assert np.array_equal(np.exp2(np.round(np.log2(s))), s) and np.array_equal(s[:h], s[h:])
+    assert (s[OUTLIERS] == 64).all() and (np.delete(s, OUTLIERS) == 1).all()
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 24)]
+    ref = reference_logits(spec, W, toks)
+    assert np.array_equal(ref, reference_logits(replace(spec, qk_smooth=False), W, toks))
+    devs = {}
+    for on in (True, False):
+        eng = Engine(replace(spec, qk_smooth=on), W, cap=256)
+        devs[on] = np.array([eng.step(t) for t in toks])
+    assert _cos(devs[True], ref).min() > 0.999 and _kl(ref, devs[True]) < 1e-4
+    assert _cos(devs[False], ref).min() < 0.99 and _kl(ref, devs[False]) > 10 * _kl(ref, devs[True])
+    emu = emulated_logits(spec, W, toks[:12])
+    assert _cos(devs[True][:12], emu).min() > 0.9995
+
+
 @pytest.mark.parametrize("wformat", ["int4", "fp4"])
 def test_tiny_4bit_follows_emulation(tiny, wformat):
     """4-bit weights: the device follows the float64 emulation of the same 4-bit weights."""
