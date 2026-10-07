@@ -1469,7 +1469,7 @@ def _row_add(p, block: int, start: bool = False):
     if getattr(p, "amask", None) is None:
         return None
     base, step = p.amask
-    return Additive(Affine(base + (block * step if start else 0)) + p.tpos * step)
+    return Additive(Affine(base + (block * step if start else 0)) + p.tpos * step, block)
 
 
 def _full_seq(m, p, block: int):

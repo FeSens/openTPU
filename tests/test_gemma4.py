@@ -427,6 +427,10 @@ def test_one_sequence_one_slice(tiny):
     from opentpu.isasim import design_config
     with pytest.raises(ValueError, match="one slice"):
         spec.image(design_config(), 256)
+    # whole attention blocks only (the sliding ring and the global layers' masked block):
+    # a capacity of 384 (a multiple of D) is refused, not run past the cache
+    with pytest.raises(ValueError, match="multiple of the attention block"):
+        spec.image(_cfg(), 384)
 
 
 def test_named_mix(tiny, monkeypatch):

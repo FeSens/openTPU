@@ -67,6 +67,40 @@ def assert_fill_is_transparent(make, toks):
     for sa, sb in zip(a.backend.machine.slices, b.backend.machine.slices):
         assert np.array_equal(sa.dram, sb.dram)
 
+
+GUARD = 1 << 16       # bytes: more than an attention block's tokens of any KV region
+
+
+@pytest.fixture
+def guarded(monkeypatch):
+    """Images built while it is active leave GUARD bytes after every allocation (qwen3._Bump,
+    which every model's image uses); poison_past_cap fills those after the KV regions."""
+    from opentpu.llm import qwen3
+    alloc = qwen3._Bump.alloc
+    monkeypatch.setattr(qwen3._Bump, "alloc", lambda self, n: alloc(self, n + GUARD))
+    return poison_past_cap
+
+
+def poison_past_cap(eng) -> int:
+    """Fill the guards after every KV head's regions (K rows, K scales, V^T, V scales: cap
+    tokens each) of a `guarded` image with 0xFF bytes (fp32 -NaN words, int8 -1): a program
+    that reads past the cache's capacity reads them. Returns the regions poisoned."""
+    from opentpu.compiler import Affine
+    img = eng.image
+    cap, D = img.cap, img.cfg.D
+    bad = np.full(GUARD, 0xFF, np.uint8)
+    n = 0
+    for s in range(img.cfg.S):
+        m = img.descriptors(s)
+        for li in range(img.spec.layers):
+            for kv in getattr(m.layer(li), "kvs", ()):
+                for r in kv.heads.values():
+                    for name, size in (("k", cap * kv.d), ("ks", 4 * cap * (kv.d // D)),
+                                       ("vt", kv.d * cap), ("vs", 4 * cap)):
+                        eng.backend.write(s, Affine.of(r[name]).static() + size, bad)
+                        n += 1
+    return n
+
 @pytest.fixture(scope="session")
 def have_verilator():
     import shutil

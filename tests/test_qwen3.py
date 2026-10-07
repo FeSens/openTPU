@@ -126,6 +126,34 @@ def test_tiny_resident_decode_is_bit_exact(tiny):
     assert sorted(a._decodes) == [1, 2]
 
 
+@pytest.mark.parametrize("name, cap, P, end", [("qwen3", 640, 515, True),
+                                               ("qwen3", 384, 257, True),
+                                               ("lfm2", 384, 257, True),
+                                               ("qwen35", 384, 257, False)])
+def test_resident_decode_at_a_partial_last_bucket(guarded, name, cap, P, end):
+    """A KV capacity that is a multiple of D but not of the attention block (256): the last
+    bucket's masked block ends at the cache's end (cap - t0 tokens, attention.Bucket), so
+    resident decode reads nothing past the cache (every KV region is followed by -NaN words
+    here) and gives the per-position programs' logits bit for bit, after a prefill past the
+    last full block and (`end`) up to the cache's last position."""
+    from test_autodecode import _tiny
+    W, spec = _tiny(name)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, cap)]
+    a, b = Engine(spec, W, cap=cap, resident=True), Engine(spec, W, cap=cap)
+    assert a.resident and guarded(a) and guarded(b)
+    same = lambda x, y: np.isfinite(y).all() and np.array_equal(x.view(np.uint32),  # noqa: E731
+                                                                y.view(np.uint32))
+    assert same(a.prefill(toks[:P]), b.prefill(toks[:P]))
+    for t in toks[P:P + 2]:
+        assert same(a.step(t), b.step(t)), a.pos
+    if end:
+        assert same(a.prefill(toks[P + 2:cap - 2]), b.prefill(toks[P + 2:cap - 2]))
+        for t in toks[cap - 2:]:
+            assert same(a.step(t), b.step(t)), a.pos
+        assert a.pos == cap
+    assert sorted(a._decodes) == [-(-cap // 256)]
+
+
 def test_tiny_device_inputs(tiny, monkeypatch):
     """With the image's tables (resident decode's lookup tables), prefill runs and
     per-position steps read their embedding and RoPE rows from the image too (the token ids

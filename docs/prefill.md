@@ -450,6 +450,14 @@ maxima (ACC + RMAX: docs/isa.md, the maxima of the values written, after the add
   lookup tables (the ones that run prompt runs) hold them; MoE images keep their slots. A row's
   tile is at the table + (tpos + r) x its stride: an argument register, no instruction.
   Decode at a run-time position keeps its mask rows.
+- **A partial last bucket.** A capacity that is a multiple of D but not of the block (640, 384)
+  ends its last bucket's masked block at the cache's end: cap - t0 tokens, so it reads no K row,
+  K or V scale past the cache (it read up to a block past it: the next allocation's bytes, NaN
+  logits). The mask row is that many entries; the tile is the first cap - t0 entries of each of
+  its rows, loaded row by row (the table's stride is the whole block's). Bit for bit the
+  per-position programs' tail block, with the KV regions followed by -NaN words (tests:
+  test_qwen3.py and test_prefill.py, *_at_a_partial_last_bucket). Gemma 4 refuses such a
+  capacity (gemma4.Image: cap % block).
 - **Cycles** (RTL co-sim of E2B's mix, a checkpoint of layers 0-4, 15, 19, 25 and 29 with the
   mix's formats, its PLE table on the host to fit the RTL's 1 GiB DRAM model; the board's
   memory path, LiteDRAM DDR3-1066 at 133.33 MHz; a 208-token prompt in prompt runs of 4 rows,

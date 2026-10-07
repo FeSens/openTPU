@@ -1149,11 +1149,13 @@ class Builder:
         # tile, attention.Additive): one LD, the pad words between the rows included
         strided = out is not None and len(t.shape) == 2 and t.shape[0] > 1 and \
             t.strides[1] == 1 and out.rs == t.strides[0] > t.shape[1]
+        # rows apart in the source go row by row into out's rows, whatever its row stride
+        by_row = len(t.shape) == 2 and t.strides[0] != t.shape[1]
         if out is None:
             out = self.alloc(t.shape)
         else:
             self.check_live(out)
-            if out.shape != tuple(t.shape) or not (out.contiguous or strided):
+            if out.shape != tuple(t.shape) or not (out.contiguous or strided or by_row):
                 raise CompileError(f"load: out {out} is not a contiguous {t.shape} tile")
             self.bump_version(out.buf)
         if strided:
