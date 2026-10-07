@@ -203,7 +203,8 @@ supported.
 python3 tools/validate.py --model qwen3                                    # ISA simulator, int8
 python3 tools/validate.py --model lfm2 --wformat fp4 --head-format int8   # 4-bit layers
 
-# the RTL against the ISA simulator: minutes a token, so one prompt and a few tokens
+# the RTL against the ISA simulator, bit for bit: slow, so one prompt and a few tokens
+# (this one takes 4 minutes on a 16-core host, the Verilator build included)
 python3 tools/validate.py --model lfm2 --backend rtl --against isa --tokens 3 "The capital of France is"
 
 # the card against the ISA simulator, bit for bit, on the card host

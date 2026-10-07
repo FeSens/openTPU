@@ -42,8 +42,8 @@ then runs the ISA simulator in the configuration the card ran in, and the golden
 
 Devices: isa, the ISA simulator in --cfg's configuration (default isasim.board_config, with
 OTPU_MCOLS etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
-(opentpu.llm.rtl_backend: minutes per token on a real model, so a prompt and a few tokens of
-LFM2.5-230M); board, the card through the host driver as otpu-chat --backend board (run it
+(opentpu.llm.rtl_backend: slow, so a prompt and a few tokens of LFM2.5-230M; 3 tokens of
+"The capital of France is" took 4 minutes on omarchy with the build, bit for bit); board, the card through the host driver as otpu-chat --backend board (run it
 under otpu-lock on the card host; a simulator then takes the card's configuration from its
 registers). The device runs first and is freed before Hugging Face loads (Qwen3.5-0.8B's ISA
 run peaks near 9 GB). Gemma 4 and the MoE models are not supported (unsupported()). Exit
