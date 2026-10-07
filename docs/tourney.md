@@ -330,7 +330,9 @@ removed after the results are fetched. Other hosts, directories and images can b
 sync's fast tests on omarchy, through `tools/omarchy_test.sh --exec`. The script:
 
 - ships the slot's tracked files, including uncommitted edits, to
-  `~/otpu-test/tourney-<run>-<slot>`;
+  `~/otpu-test/tourney-<run>-<slot>`, and deletes there the files the slot no longer tracks
+  (the tree is the script's own, whatever the current directory; it says which, and its commit,
+  on stderr);
 - links the model checkpoints;
 - runs the command with Verilator 5.046 (`~/.local`) and `~/otpu-venv` on PATH, niced;
 - waits for one of omarchy's 2 test slots (`OTPU_REMOTE_JOBS`), which it shares with other users of the script.
