@@ -51,6 +51,7 @@ PROG_SLOT = 1 << 18        # bytes per bucket program in the chain area (8K inst
 MODES = 2                  # chain areas: 0 greedy, 1 sampled (Samp)
 BLK = 64                   # the sampler's block of logits (block maxima, gathers)
 K_MAX = 64                 # the largest top-k the sampler takes
+TOPP_MIN = 2.0 ** -126     # the smallest top-p the sampler takes (below: the first token only)
 
 
 def buckets(cap: int, block: int) -> int:
@@ -170,11 +171,14 @@ class Sampling:
     """The sampled decode loop's parameters, as chat.sampler takes them: temperature (0:
     greedy, with the penalty), top_k (1 .. K_MAX), top_p, repetition_penalty (>= 1). kmax,
     penalty: what the program is compiled for (the candidate buffers; the penalty's loads);
-    the rest are run-time words of the state block."""
+    the rest are run-time words of the state block. top_p <= 0 keeps the first token, as
+    Hugging Face's top-p (min_tokens_to_keep 1) and chat.sampler: greedy too (Sampler's rule
+    keeps the first i with sum(p[:i]) < P * sum(p): none below the smallest normal P, which
+    the VPU flushes to 0)."""
 
     def __init__(self, temperature: float, top_k: int, top_p: float = 1.0,
                  repetition_penalty: float = 1.0):
-        greedy = temperature <= 0
+        greedy = temperature <= 0 or top_p < TOPP_MIN
         if not greedy and not 0 < top_k <= K_MAX:
             raise ValueError(f"the sampler on the device takes top_k 1 .. {K_MAX}")
         if repetition_penalty < 1.0:
@@ -192,7 +196,8 @@ class Sampling:
 
     @staticmethod
     def fits(temperature: float, top_k: int, top_p: float, repetition_penalty: float) -> bool:
-        return (temperature <= 0 or 0 < top_k <= K_MAX) and repetition_penalty >= 1.0
+        return (temperature <= 0 or top_p < TOPP_MIN or 0 < top_k <= K_MAX) and \
+            repetition_penalty >= 1.0
 
 
 # ---- the sampler
@@ -488,6 +493,8 @@ def reference_pick(logits, samp: Sampling, context, u, S: int = 1, softcap: floa
     cum = F.rdot(U, np.broadcast_to(p, (km, km)))
     prev = np.concatenate([[f32(0)], cum[:-1]]).astype(f32)
     kept = step(F.sub(F.mul(cum[-1], f32(samp.top_p)), prev))
+    if not kept[0]:              # the device would pick the word before the ids
+        raise ValueError(f"top_p {samp.top_p} keeps no token (Sampling: P >= TOPP_MIN)")
     zk = F.chain_max(F.mul(cum, kept)[None, :])[0]
     uu = np.minimum(np.atleast_1d(np.asarray(u, f32)), f32(1 - 2.0 ** -24))
     t = F.mul(uu, zk)[:, None]

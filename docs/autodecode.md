@@ -163,7 +163,9 @@ ARGMAX and RLD. No new unit is needed.
    `all_gather`.
 3. **Softmax.** `p = exp2((l − l0) · log2(e)/T)`.
 4. **Cumulative sums.** One RDOT with a triangular ones matrix.
-5. **Top-p.** Keep element i while cum[i−1] < P · cum[last].
+5. **Top-p.** Keep element i while cum[i−1] < P · cum[last]. This keeps none for P = 0 (or
+   a P the VPU flushes), so `Sampling` takes P below 2^−126 as k = 1: the first token only,
+   as Hugging Face's top-p (min_tokens_to_keep 1) and chat.sampler.
 6. **The pick.** For the position's uniform u, pick = #{cum ≤ u · cum[last kept]}, capped at
    the last kept.
 

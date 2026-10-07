@@ -730,7 +730,7 @@ def main(argv=None):
                         f"{m} " + " ".join(f"{k}={v}" for k, v in d.items())
                         for m, d in SAMPLING.items()))
     ap.add_argument("--top-k", type=int)
-    ap.add_argument("--top-p", type=float)
+    ap.add_argument("--top-p", type=float, help="0 .. 1 (0: the most likely token only)")
     ap.add_argument("--repetition-penalty", type=float)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--max-new", type=int, default=1024, help="tokens per reply at most")
@@ -753,6 +753,8 @@ def main(argv=None):
                          "(docs/mtp.md): the same replies, greedy or sampled, 1.3-1.6x the "
                          "decode tok/s")
     a = ap.parse_args(argv)
+    if a.top_p is not None and not 0 <= a.top_p <= 1:     # (Hugging Face's range)
+        ap.error(f"--top-p {a.top_p}: 0 .. 1 (0 keeps the most likely token only)")
     from transformers import AutoTokenizer
     path = model_dir(a.model)
     tok = AutoTokenizer.from_pretrained(path)
