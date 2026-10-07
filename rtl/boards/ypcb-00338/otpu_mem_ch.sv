@@ -260,12 +260,14 @@ module otpu_mem_ch #(
   // +cdc_skew=P (tb_memch): a model of the skew set_bus_skew allows between the bits of a gray
   // count (up to a source period). In P percent of the first stage's samples each bit is the
   // count's bit a source cycle earlier or now, at random: a count that moved one bit is seen old
-  // or new, one that moved two bits mixed
+  // or new, one that moved two bits mixed. A bit once seen new stays new (`seen`, the stage's
+  // last sample: a wire's change arrives once, so a faster destination does not see it undone)
   int cdc_skew = 0;
   initial void'($value$plusargs("cdc_skew=%d", cdc_skew));
-  function automatic logic [CW-1:0] cdc_smp(input logic [CW-1:0] now, input logic [CW-1:0] was);
+  function automatic logic [CW-1:0] cdc_smp(input logic [CW-1:0] now, input logic [CW-1:0] was,
+                                            input logic [CW-1:0] seen);
     logic [CW-1:0] m;
-    m = (cdc_skew != 0 && int'($urandom % 100) < cdc_skew) ? CW'($urandom) : '0;
+    m = (cdc_skew != 0 && int'($urandom % 100) < cdc_skew) ? CW'($urandom) & (seen ^ now) : '0;
     return (now & ~m) | (was & m);
   endfunction
 `endif
@@ -545,7 +547,7 @@ module otpu_mem_ch #(
 `ifdef SYNTHESIS
         a_wacc_s1 <= a_wacc_g;
 `else
-        a_wacc_s1 <= cdc_smp(a_wacc_g, a_wacc_gq);
+        a_wacc_s1 <= cdc_smp(a_wacc_g, a_wacc_gq, a_wacc_s1);
 `endif
         a_wacc_s2 <= a_wacc_s1; a_wb <= g2b(a_wacc_s2);
       end
@@ -555,7 +557,7 @@ module otpu_mem_ch #(
 `ifdef SYNTHESIS
         x_wacc_s1 <= x_wacc_g;
 `else
-        x_wacc_s1 <= cdc_smp(x_wacc_g, x_wacc_gq);
+        x_wacc_s1 <= cdc_smp(x_wacc_g, x_wacc_gq, x_wacc_s1);
 `endif
         x_wacc_s2 <= x_wacc_s1; x_wb <= g2b(x_wacc_s2);
       end
