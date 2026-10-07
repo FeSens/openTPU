@@ -121,25 +121,46 @@ def qwen3_int8():
     return m, W, spec, eng, runs
 
 
+def _top1_where_clear(golden, runs, noise):
+    """Per prompt, teacher forced on the device's tokens against the quantized golden: the steps
+    whose top-1 leads its runner-up by more than `noise`, and whether the device's top-1 is the
+    golden's at each step."""
+    golden.set("quant")
+    res = []
+    for ids, r in zip(PROMPTS, runs):
+        gl = golden.logits(list(ids) + r["tokens"][:-1])[len(ids) - 1:]
+        v = min(gl.shape[1], r["logits"].shape[1])
+        gl, dl = gl[:, :v], golden.device_logits(r["logits"][:, :v])
+        top2 = np.sort(gl, -1)[:, -2:]
+        res.append((top2[:, 1] - top2[:, 0] > noise, dl.argmax(-1) == gl.argmax(-1)))
+    return res
+
+
 @pytest.mark.parametrize("name,wformat", [("qwen3", "int8"), ("qwen3", "fp4"),
                                           ("lfm2", "fp4"), ("qwen35", "fp4"),
                                           ("gemma4", "int8"), ("gemma4", "fp4")])
 def test_quantized_golden_follows_the_isa_simulator(name, wformat):
     """The ISA simulator's greedy run against the goldens, teacher forced: the quantized golden
-    (W+A) agrees on every top-1 and is at least 5x closer in KL than fp32 (about 150x with int8
-    weights here, over 1000x with fp4; a rounding difference that flips an int8 value is what
-    is left, e.g. the tiny Qwen3.5's int8 run: 9x); its greedy tokens are the device's. Gemma
-    4 (sliding and global layers, KV-shared ones, per-layer inputs): its embedding rows the
-    head's, its PLE rows the device's records, its formats the device image's."""
+    (W+A) agrees on every top-1 but near ties and is at least 5x closer in KL than fp32 (about
+    150x with int8 weights here, over 1000x with fp4; a rounding difference that flips an int8
+    value is what is left, e.g. the tiny Qwen3.5's int8 run: 9x). A near tie is a step whose
+    top two logits are closer than the most the golden's own 1-ulp noise moves a logit (the
+    floor's max |difference|): it may go either way (the tiny Gemma 4 has steps 4e-4 apart),
+    and so may the greedy continuation from it (the golden's tokens part from the device's
+    only at a top-1 that differs on the same context). Gemma 4 (sliding and global
+    layers, KV-shared ones, per-layer inputs): its embedding rows the head's, its PLE rows the
+    device's records, its formats the device image's."""
     m, W, spec = _tiny(name)
     eng, runs = _runs(spec, W, wformat)
-    gold = V.against_golden(V.Golden(m, spec, wformat, image=V.image_formats(eng.image)),
-                            PROMPTS, runs, ["quant", "fp32"], 8, spec.eos)
+    golden = V.Golden(m, spec, wformat, image=V.image_formats(eng.image))
+    gold = V.against_golden(golden, PROMPTS, runs, ["quant", "fp32"], 8, spec.eos)
     q = V.summary([g["goldens"]["quant"] for g in gold])
     f = V.summary([g["goldens"]["fp32"] for g in gold])
-    assert q["top1"] == 1.0 and q["min_cos"] > 0.999
+    noise = V.summary([g["pairs"]["floor"] for g in gold])["max_abs"]
+    for clear, same in _top1_where_clear(golden, runs, noise):
+        assert same[clear].all()
+    assert q["top1"] >= V.MIN_TOP1 and q["min_cos"] > 0.999
     assert q["kl_mean"] * 5 < f["kl_mean"]
-    assert all(g["goldens"]["quant"]["first_diff"] is None for g in gold)
     assert V.summary([g["pairs"]["fp32"] for g in gold])["kl_mean"] > q["kl_mean"]
 
 
@@ -291,7 +312,8 @@ def test_the_command_line_on_a_tiny_checkpoint(tmp_path, capsys):
 def test_the_command_line_on_a_tiny_gemma4(tmp_path):
     """main() on a tiny Gemma 4 checkpoint (text-only, as Hugging Face saves it) with fp4
     weights: the device image's formats reach the golden (--json's image), Hugging Face loads
-    without its PLE table (the golden reads the rows it needs from the checkpoint): PASS."""
+    without its PLE table (the golden reads the rows it needs from the checkpoint): PASS (top-1
+    agreement at least MIN_TOP1, KL near the floor; a near tie may flip, see above)."""
     import json
     prompts = _checkpoint("gemma4", tmp_path)
     assert V.main(["--model", str(tmp_path), "--tokens", "6", "--wformat", "fp4", "--json",
@@ -299,4 +321,4 @@ def test_the_command_line_on_a_tiny_gemma4(tmp_path):
     res = json.loads((tmp_path / "r.json").read_text())
     assert res["image"]["head"] == "fp4" and res["image"]["ple_table"] == "int8"
     assert res["formats"]["model.per_layer_model_projection.weight"] == "fp4"
-    assert res["pass"] and res["goldens"]["quant"]["top1"] == 1.0
+    assert res["pass"]
