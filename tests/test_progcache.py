@@ -54,6 +54,41 @@ def test_the_key_sees_the_layout_the_environment_and_what(monkeypatch):
     assert PC.key(("spec", 512), ("gen", 1)) == PC.key(("spec", 512), ("gen", 1))
 
 
+def test_the_key_sees_the_host_modules_the_programs_take(monkeypatch):
+    """The programs take constants from opentpu/host/offload.py (LINE, TAG, RUN, Layout and
+    RowLayout: where the mailboxes, slots and tags are): a change there misses, one in a host
+    driver does not; every host module the compiler, kernels and models import is in the key."""
+    import ast
+    from pathlib import Path
+    root = Path(PC.__file__).resolve().parent
+    k = PC.key(("spec", 512), ("gen", 1))
+    read = Path.read_bytes
+
+    def edited(name):
+        return lambda f: read(f) + (b"\n# changed\n" if f == root / "host" / name else b"")
+
+    for name, misses in (("offload.py", True), ("board.py", False)):
+        monkeypatch.setattr(PC, "_SRC", None)
+        monkeypatch.setattr(Path, "read_bytes", edited(name))
+        assert (PC.key(("spec", 512), ("gen", 1)) != k) == misses, name
+    keyed = {f.relative_to(root).as_posix() for f in PC.keyed()}
+    for f in root.rglob("*.py"):
+        rel = f.relative_to(root).parts
+        if rel[0] == "host":
+            continue
+        for node in ast.parse(f.read_text()).body:          # the module-level imports
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            mod = (node.module or "").split(".")
+            if node.level:
+                mod = list(rel[:len(rel) - node.level]) + mod
+            elif mod[0] == "opentpu":
+                mod = mod[1:]
+            if mod and mod[0] == "host":
+                for m in ([mod] if len(mod) > 1 else [mod + [a.name] for a in node.names]):
+                    assert "/".join(m) + ".py" in keyed, (f, m)
+
+
 def test_engines_share_the_bucket_programs(tmp_path, monkeypatch):
     """A second engine of the layout in this process compiles none of the generate loop's and
     resident decode's bucket programs; after clear() (a new process) one reads them from the

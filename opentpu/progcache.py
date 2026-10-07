@@ -6,8 +6,9 @@ A program is a function of the image's layout and of what is compiled. The layou
 Spec, Config, KV capacity, batch, rows, attention block and image keywords (formats, lookup tables,
 expert slots, the image's own choices: Engine._image_kw). What is compiled is a tuple naming the
 program and its arguments (("gen", blocks, ...)). The key hashes both, the source of the compiler
-and the kernels (every module of opentpu but opentpu/host) and the OTPU_* environment (some kernels
-read it, e.g. OTPU_FORMATS, OTPU_MLP_UNROLL_BODIES): any change misses.
+and the kernels (every module of opentpu but opentpu/host, and the host modules whose constants the
+programs take: HOST_KEYED) and the OTPU_* environment (some kernels read it, e.g. OTPU_FORMATS,
+OTPU_MLP_UNROLL_BODIES): any change misses.
 
 `get(layout, what, compile)` returns the cached value or compile()'s, which it keeps. A value is
 (programs, run_args): programs one per slice (a list of Instr, or its assembled words, as the
@@ -46,6 +47,9 @@ FREE_FLOOR = 20 << 30           # free disk a write must leave
 RUNTIME_ENV = ("OTPU_PROG_CACHE", "OTPU_PROG_CACHE_GB", "OTPU_IMAGE_CACHE", "OTPU_IMAGE_CACHE_GB",
                "OTPU_QUIET", "OTPU_PREBUILD_CFG", "OTPU_PREBUILD_MIN_GB",
                "OTPU_PREBUILD_QUIET_WAIT")      # read by the host's tools only: not in the key
+# the host modules the compiler, kernels and models import: opentpu/host/offload.py's LINE, TAG,
+# RUN, Layout and RowLayout place the mailboxes, slots and tags the programs address
+HOST_KEYED = ("host/offload.py",)
 stats = {"memory": 0, "disk": 0, "compile": 0, "write": 0}
 _mem: dict = {}
 _SRC: str | None = None
@@ -67,17 +71,23 @@ def cache_dir() -> Path | None:
     return home / "qcache" / "prog" if home.is_dir() else None
 
 
+def keyed() -> list[Path]:
+    """The modules source() hashes: every module of opentpu but opentpu/host (the compiler, the
+    kernels, the models' layouts and kernels), and HOST_KEYED."""
+    root = Path(__file__).resolve().parent
+    return [f for f in sorted(root.rglob("*.py"))
+            if not f.relative_to(root).as_posix().startswith("host/")
+            or f.relative_to(root).as_posix() in HOST_KEYED]
+
+
 def source() -> str:
-    """A hash of every module of opentpu but opentpu/host (the compiler, the kernels, the
-    models' layouts and kernels)."""
+    """A hash of the keyed() modules."""
     global _SRC
     if _SRC is None:
         root = Path(__file__).resolve().parent
         h = hashlib.blake2b(digest_size=16)
-        for f in sorted(root.rglob("*.py")):
-            rel = f.relative_to(root).as_posix()
-            if not rel.startswith("host/"):
-                h.update(rel.encode() + b"\0" + f.read_bytes())
+        for f in keyed():
+            h.update(f.relative_to(root).as_posix().encode() + b"\0" + f.read_bytes())
         _SRC = h.hexdigest()
     return _SRC
 
