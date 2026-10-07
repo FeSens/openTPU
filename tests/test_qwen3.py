@@ -60,6 +60,33 @@ def test_the_embedding_table_goes_to_the_host_when_it_does_not_fit(tiny):
         assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
 
 
+def test_from_hf_refuses_what_it_would_run_unlike_hf(tmp_path):
+    """Spec.from_hf takes the RoPE theta where transformers writes it (rope_parameters; the top
+    level's rope_theta is null) and refuses what this code would run unlike Hugging Face: a
+    RoPE scaling (Qwen3's YaRN recipe rescales the frequencies and cos / sin at every
+    position), the sliding window, attention biases."""
+    import json
+    base = transformers.Qwen3Config(hidden_size=256, num_hidden_layers=2, num_attention_heads=4,
+                                    num_key_value_heads=2, head_dim=128, intermediate_size=512,
+                                    vocab_size=1000, rope_theta=5e5).to_dict()
+
+    def spec(**kw):
+        (tmp_path / "config.json").write_text(json.dumps(dict(base, **kw)))
+        return Spec.from_hf(tmp_path)
+    assert spec().theta == 5e5
+    assert spec(rope_parameters=None, rope_theta=1e6).theta == 1e6     # an older config
+    yarn = {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}
+    for kw in (dict(rope_parameters=dict(yarn, rope_theta=1e6)),
+               dict(rope_parameters=None, rope_theta=1e6, rope_scaling=yarn),
+               dict(rope_parameters=None, rope_scaling={"type": "linear", "factor": 2.0})):
+        with pytest.raises(ValueError, match="RoPE type"):
+            spec(**kw)
+    with pytest.raises(ValueError, match="sliding"):
+        spec(use_sliding_window=True, sliding_window=4096)
+    with pytest.raises(ValueError, match="bias"):
+        spec(attention_bias=True)
+
+
 def test_tiny_matches_hf(tiny):
     m, W, spec = tiny
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 140)]  # > one KV block

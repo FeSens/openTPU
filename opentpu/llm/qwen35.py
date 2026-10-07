@@ -76,6 +76,7 @@ from .lfm2 import _place, plan, run_layers
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
+from . import rope_parameters
 from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords,
                     _amask, _attention, _attention_rows, _Bump,
                     _embed, _fake_q, _fake_w, _formats, _gather, _inputs, _inputs_rows,
@@ -148,7 +149,7 @@ class Spec:
     def from_hf(model_dir) -> "Spec":
         top = json.loads((Path(model_dir) / "config.json").read_text())
         c = top.get("text_config", top)
-        rope = c.get("rope_parameters") or {}
+        rope = rope_parameters(c, model_dir)        # (mRoPE: 1-D RoPE for text)
         d = c.get("head_dim") or c["hidden_size"] // c["num_attention_heads"]
         eos = c.get("eos_token_id", 248044)
         eos = tuple(eos) if isinstance(eos, list) else (eos,)

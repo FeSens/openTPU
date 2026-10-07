@@ -54,6 +54,7 @@ from ..runtime import quantize_rows
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
+from . import rope_parameters
 from .qwen3 import (OutTokens, RunPos, RunRows, RunWords, _formats, _inputs, _inputs_rows,
                     _amask, _lookup_alloc, _lookup_build, _lookup_desc, _tok_arg, _tokens_arg,
                     compile_decode)
@@ -124,7 +125,7 @@ class Spec:
         g = Path(model_dir) / "generation_config.json"
         if g.exists():
             eos = json.loads(g.read_text()).get("eos_token_id", eos)
-        rope = c.get("rope_parameters") or {}
+        rope = rope_parameters(c, model_dir)
         moe = None
         if c.get("model_type") == "lfm2_moe":
             if not c.get("use_expert_bias", True):
