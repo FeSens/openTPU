@@ -412,6 +412,17 @@ def unnamed(rc: int, limit: int, x) -> bool:
     return True
 
 
+def _span(k: slice, n: int) -> tuple:
+    """[a, e) of slice k over n (Python's bounds and negative indices); a view is contiguous
+    rows or columns: a step other than 1, or an empty span, is refused."""
+    a, e, step = k.indices(n)
+    if step != 1:
+        raise CompileError(f"strided tile views are not supported ({k})")
+    if e <= a:
+        raise CompileError(f"an empty tile view ({k} of {n})")
+    return a, e
+
+
 class Tile:
     """fp32 values in TMEM: `base` word address, `shape` (1-D or 2-D), row stride `rs`."""
 
@@ -453,19 +464,20 @@ class Tile:
             if key == (None, slice(None)):
                 return Bcast(self, B_COLVIEW)
             if len(key) == 1 and isinstance(key[0], slice):
-                a, e, _ = key[0].indices(self.cols)
+                a, e = _span(key[0], self.cols)
                 return Tile(self.b, self.base + a, (e - a,), None, self.buf)
             raise CompileError(f"unsupported 1-D index {key}")
         rk = key[0]
         ck = key[1] if len(key) > 1 else slice(None)
         if isinstance(rk, (int, np.integer)) and isinstance(ck, slice):
-            a, e, _ = ck.indices(self.cols)
-            return Tile(self.b, self.base + int(rk) * self.rs + a, (e - a,), None, self.buf)
+            r = int(rk) + (self.rows if rk < 0 else 0)          # a negative row: from the end
+            if not 0 <= r < self.rows:
+                raise CompileError(f"row {rk} of a {self.rows}-row tile")
+            a, e = _span(ck, self.cols)
+            return Tile(self.b, self.base + r * self.rs + a, (e - a,), None, self.buf)
         if isinstance(rk, slice) and isinstance(ck, slice):
-            r0, r1, rstep = rk.indices(self.rows)
-            c0, c1, cstep = ck.indices(self.cols)
-            if rstep != 1 or cstep != 1:
-                raise CompileError("strided tile views are not supported")
+            r0, r1 = _span(rk, self.rows)
+            c0, c1 = _span(ck, self.cols)
             return Tile(self.b, self.base + r0 * self.rs + c0, (r1 - r0, c1 - c0), self.rs,
                         self.buf)
         raise CompileError(f"unsupported 2-D index {key}")
@@ -1210,6 +1222,7 @@ class Builder:
 
     def reduce(self, func: int, x: Tile, axis: int, temp: bool = False) -> Tile:
         x = self.materialize(x)
+        self.check_live(x)
         if axis not in (-1, len(x.shape) - 1):
             raise CompileError("reductions are along the last axis only")
         if func == I.V_RSUM and temp:
@@ -1614,6 +1627,7 @@ class Builder:
 
     def store_quantized(self, x: Tile, dst: Affine, sdst: Affine, drs: int, es: int,
                         row_scale: bool, half: bool = False) -> None:
+        self.check_live(x)
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
@@ -1625,6 +1639,7 @@ class Builder:
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)
+        self.check_live(x)
         if len(x.shape) == 1:
             out = self.alloc((x.cols * S,))
             self.emit(I.gather(x.base, out.base, 1, x.cols, x.cols, x.cols * S, x.cols,

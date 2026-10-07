@@ -71,8 +71,9 @@ class Instr:
     src: tuple = ()          # kernel source frames that emitted it (set by the compiler)
 
     def encode(self) -> list[int]:
-        for r in (self.ra, self.rb, self.rc, self.rd):
-            assert 0 <= r < 16
+        _check(all(0 <= r < 16 for r in (self.ra, self.rb, self.rc, self.rd)),
+               f"{OPNAMES.get(self.op, self.op)}: a register field outside R0..R15")
+        _check(0 <= self.flags < 256, f"{OPNAMES.get(self.op, self.op)}: flags {self.flags:#x}")
         w0 = (self.op & 0xFF) | (self.ra << 8) | (self.rb << 12) | (self.rc << 16) \
             | (self.rd << 20) | ((self.flags & 0xFF) << 24)
         return [u32(w0)] + [u32(x) for x in self.w]
@@ -89,6 +90,13 @@ class Instr:
         regs = f"ra=R{self.ra} rb=R{self.rb} rc=R{self.rc} rd=R{self.rd}"
         c = f"  ; {self.comment}" if self.comment else ""
         return f"{name:6s} {regs} fl={self.flags:#x} w={[hex(x) for x in self.w]}{c}"
+
+
+def _check(ok: bool, what: str) -> None:
+    """A field that does not fit its bits, or a flag combination the instruction does not
+    have: an error (an assert would let python -O truncate the word silently)."""
+    if not ok:
+        raise ValueError(what)
 
 
 def _w(*vals) -> list:
@@ -186,6 +194,7 @@ def dstep(dram, qk, v, rows, cols, g, gs, o, zero=False, ra=0, rb=0, rc=0, comme
     o(r) = T[o + r] is written. Row by row: kv = rdot(St[r], k), d = (v(r) - kv * e) * beta,
     St[r] = St[r] * e + d * k, o(r) = rdot(St[r], q) -- the rounding of RDOT, MUL, SUB, MUL,
     OUTER, RDOT (docs/isa.md). `zero`: the state starts at +0 and is not read (position 0)."""
+    _check(0 < rows < 65536 and 0 < cols < 65536, f"DSTEP: rows {rows}, cols {cols}")
     return Instr(DSTEP, ra=ra, rb=rb, rc=rc, flags=F_DZERO if zero else 0,
                  w=_w(dram, qk, v, rows | (cols << 16), g, o, gs), comment=comment)
 
@@ -217,7 +226,7 @@ STREAM_DESC_AREA = 64                # the compiler's descriptor words at the to
 def _fsafe(p: int) -> int:
     """A 24-bit payload as a float-safe word: exponent field 0x80 (a normal fp32 in [2, 4)),
     payload in the sign bit and the 23 mantissa bits, so a FILL writes it exactly."""
-    assert 0 <= p < 1 << 24
+    _check(0 <= p < 1 << 24, f"STREAM descriptor payload {p:#x} is not 24 bits")
     return ((p >> 23) & 1) << 31 | 0x80 << 23 | (p & 0x7FFFFF)
 
 
@@ -263,9 +272,11 @@ class StreamDesc:
     ops: tuple = ()                  # ((op, dst, a, b), ...)
 
     def words(self) -> list[int]:
-        assert 0 < self.rows < 1 << 12 and 0 < self.cols < 1 << 12
-        assert len(self.ops) <= STREAM_MAX_OPS
-        assert self.srs < 1 << 12 and self.drs < 1 << 12
+        _check(0 < self.rows < 1 << 12 and 0 < self.cols < 1 << 12,
+               f"STREAM descriptor: rows {self.rows}, cols {self.cols} (1 .. 4095)")
+        _check(len(self.ops) <= STREAM_MAX_OPS, f"STREAM descriptor: {len(self.ops)} ops")
+        _check(0 <= self.srs < 1 << 12 and 0 <= self.drs < 1 << 12,
+               f"STREAM descriptor: srs {self.srs}, drs {self.drs} (0 .. 4095)")
         c1 = (int(self.a_en) | self.a_op << 1 | self.a_idx << 3 | self.u_mode << 5
               | self.g_src << 7 | self.g_idx << 9 | self.b_src << 12 | self.b_idx << 14
               | self.d_reg << 17 | int(self.q_en) << 20 | self.q_idx << 21
@@ -307,7 +318,7 @@ def stream(desc, src, dst, vec, x, k, out, ks=1, zero=False, src_t=False, dst_t=
     at vec + R[rb] (slot i at + i * cols), row scalars X[r] = T[x + R[rc] + r], constants
     K_j = T[k + R[rd] + j * ks], row outputs O[r] = T[out + r]. desc and ks share w1 (desc in
     [15:0], ks in [31:16]) so the scoreboard knows the constants' range."""
-    assert 0 <= desc < 1 << 16 and 0 <= ks < 1 << 16
+    _check(0 <= desc < 1 << 16 and 0 <= ks < 1 << 16, f"STREAM: desc {desc}, ks {ks} (16 bits)")
     fl = (F_SZERO if zero else 0) | (F_SRC_T if src_t else 0) | (F_DST_T if dst_t else 0) | \
         (F_NODST if nodst else 0)
     return Instr(STREAM, ra=ra, rb=rb, rc=rc, rd=rd, flags=fl,
@@ -371,11 +382,12 @@ def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=Fal
     `wf`: the streamed weights' format (W8, W4I, W4F). `pair` (4-bit only): column reuse,
     ACT row j + m carries the odd K-blocks of row j and both terms of a chunk are summed
     before the partial sums (docs/isa.md, "Column reuse")."""
-    assert 0 < n < 65536 and 0 < kb < 65536 and 0 < m < 256 and 0 <= ab < 256 and ors < 65536
-    assert wf in (W8, W4I, W4F)
-    assert not pair or wf != W8, "PAIR needs 4-bit weights"
+    _check(0 < n < 65536 and 0 < kb < 65536 and 0 < m < 256 and 0 <= ab < 256
+           and 0 <= ors < 65536, f"MM: n {n}, kb {kb}, m {m}, ab {ab}, ors {ors}")
+    _check(wf in (W8, W4I, W4F), f"MM: weight format {wf}")
+    _check(not pair or wf != W8, "MM: PAIR needs 4-bit weights")
     if ascale is not None:
-        assert unit and acc, "ASCALE needs UNIT and ACC"
+        _check(unit and acc, "MM: ASCALE needs UNIT and ACC")
         ssa = ascale
     fl = (F_UNIT if unit else 0) | (F_ACC if acc else 0) | (F_RMAX if rmax else 0) | \
         (F_ASCALE if ascale is not None else 0) | (F_PAIR if pair else 0) | (wf << WF_SHIFT)
@@ -389,7 +401,8 @@ def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False,
     """QACT. `cscale`/`rscale`: TMEM addresses of a per-column / per-row factor applied before
     quantization, x' = (x * T[rscale + r]) * T[cscale + c]. `dup`: ACT row r + rows receives
     a copy of row r in the same cycles (the odd K-blocks' column of an MM PAIR)."""
-    assert 0 < rows < 256 and 0 <= ab < 256 and 0 < kb < 65536
+    _check(0 < rows < 256 and 0 <= ab < 256 and 0 < kb < 65536,
+           f"QACT: rows {rows}, ab {ab}, kb {kb}")
     fl = (F_ROW if row else 0) | (F_CSCALE if cscale is not None else 0) | \
         (F_RSCALE if rscale is not None else 0) | (F_DUP if dup else 0)
     return Instr(QACT, ra=ra, flags=fl,
@@ -399,8 +412,8 @@ def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False,
 
 def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=0, rc=0,
         comment=""):
-    assert 0 < rows < 65536 and 0 < kb < 65536
-    assert row or not half, "QST HALF needs ROW mode"
+    _check(0 < rows < 65536 and 0 < kb < 65536, f"QST: rows {rows}, kb {kb}")
+    _check(row or not half, "QST: HALF needs ROW mode")
     return Instr(QST, ra=ra, rb=rb, rc=rc, flags=(F_ROW if row else 0) | (F_HALF if half else 0),
                  w=_w(src, dst, sdst, rows | (kb << 16), srs, drs, es), comment=comment)
 
@@ -408,8 +421,9 @@ def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=
 def vop(func, dst, a, b, rows, cols, drs, ars, brs, bmode=B_FULL, imm=0.0,
         ra=0, rb=0, rc=0, rd=0, comment=""):
     """imm: an fp32 immediate (ARGMAX: an int, the index base)."""
-    assert 0 < rows < 65536 and 0 < cols < 65536
-    assert drs < 65536 and ars < 65536 and brs < 65536
+    _check(0 < rows < 65536 and 0 < cols < 65536, f"VOP: rows {rows}, cols {cols}")
+    _check(0 <= drs < 65536 and 0 <= ars < 65536 and 0 <= brs < 65536,
+           f"VOP: drs {drs}, ars {ars}, brs {brs} (16 bits)")
     iw = u32(imm) if func == V_ARGMAX else f32bits(imm)
     return Instr(VOP, ra=ra, rb=rb, rc=rc, rd=rd,
                  w=_w(dst, a, b, rows | (cols << 16), drs | (ars << 16),
@@ -420,7 +434,7 @@ def vop(func, dst, a, b, rows, cols, drs, ars, brs, bmode=B_FULL, imm=0.0,
 def argmax(dst, a, rows, cols, drs=2, ars=0, base=0, ra=0, rb=0, rd=0, comment="argmax"):
     """VOP ARGMAX: T[dst + r*drs] = the row maximum (RMAX), T[dst + r*drs + 1] =
     i2f(c + R[rd] + base) for c the first column holding it (rows > 1: drs >= 2)."""
-    assert rows == 1 or drs >= 2, "ARGMAX: the rows' (max, index) pairs need drs >= 2"
+    _check(rows == 1 or drs >= 2, "ARGMAX: the rows' (max, index) pairs need drs >= 2")
     return vop(V_ARGMAX, dst, a, 0, rows, cols, drs, ars, 0, B_FULL, base, ra=ra, rb=rb, rd=rd,
                comment=comment)
 
@@ -430,7 +444,8 @@ def outer(dst, d, b, c, rows, cols, drs, brs, dmode="scalar", ra=0, rb=0, rc=0, 
     """VOP OUTER: T[dst + r*drs + j] = T[dst + r*drs + j] * Dv(j) + T[b + r*brs] * T[c + j],
     Dv(j) = T[d] (dmode "scalar"), T[d + j] ("column") or 1.0 ("one", d unused). The decay
     address travels in the A field and the column vector's in the immediate word (w7 += R[rd])."""
-    assert 0 < rows < 65536 and 0 < cols <= OUTER_MAX_COLS and drs < 65536 and brs < 65536
+    _check(0 < rows < 65536 and 0 < cols <= OUTER_MAX_COLS and 0 <= drs < 65536
+           and 0 <= brs < 65536, f"OUTER: rows {rows}, cols {cols}, drs {drs}, brs {brs}")
     fl = {"scalar": F_DSCALAR, "column": 0, "one": F_DONE}[dmode]
     return Instr(VOP, ra=ra, rb=rb, rc=rc, rd=rd, flags=fl,
                  w=_w(dst, d, b, rows | (cols << 16), drs, brs | (V_OUTER << 16) | (B_ROW << 24),
@@ -439,6 +454,7 @@ def outer(dst, d, b, c, rows, cols, drs, brs, dmode="scalar", ra=0, rb=0, rc=0, 
 
 
 def gather(src, dst, rows, cols, srs, drs, seg, ra=0, rb=0, comment=""):
+    _check(0 < rows < 65536 and 0 < cols < 65536, f"GATHER: rows {rows}, cols {cols}")
     return Instr(GATHER, ra=ra, rb=rb, w=_w(src, dst, rows | (cols << 16), srs, drs, seg),
                  comment=comment)
 

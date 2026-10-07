@@ -93,6 +93,41 @@ def test_a_raw_guard_at_a_loop_body_end_gets_a_nop_after_it(flag):
     assert np.array_equal(r.outputs["out"], np.full(4, 3.0 * (1 + 10 * flag), np.float32))
 
 
+def test_tile_views_index_like_python_or_refuse():
+    """Tile views: a negative row counts from the end; a row outside the tile, a slice step and
+    an empty view are compile errors (they would address words outside the view)."""
+    @ol.jit
+    def k():
+        t = ol.zeros([3, 8])
+        assert t[-1].base == t[2].base == t.base + 2 * t.rs and t[-1].shape == (8,)
+        assert t[1:, -4:].base == t.base + t.rs + 4 and t[1:, -4:].shape == (2, 4)
+        v = ol.zeros([8])
+        assert v[-3:].base == v.base + 5
+        for bad in (lambda: t[3], lambda: t[-4], lambda: t[::2, :], lambda: t[:, 1::2],
+                    lambda: v[::2], lambda: v[5:2], lambda: t[2:2, :]):
+            with pytest.raises(CompileError):
+                bad()
+
+    k.trace(Config(), 0, {})
+
+
+def test_every_op_refuses_a_dead_tile():
+    """A tile moved into another by .set() is dead: reductions, all-gathers and quantized
+    stores refuse it as the elementwise ops do."""
+    @ol.jit
+    def k():
+        b = current()
+        t = ol.zeros([2, 32])
+        t.dead = True
+        for bad in (lambda: ol.sum(t, axis=1), lambda: ol.max(t, axis=1),
+                    lambda: b.all_gather(t, 2),
+                    lambda: b.store_quantized(t, Affine(0), Affine(1024), 32, 1, False)):
+            with pytest.raises(CompileError, match="dead"):
+                bad()
+
+    k.trace(Config(S=1, D=32), 0, {})
+
+
 def test_views_broadcast_and_division():
     @ol.jit
     def k(x, v, out):
