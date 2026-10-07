@@ -4,7 +4,7 @@ import pytest
 
 from opentpu import Config, isa as I
 from opentpu import language as ol
-from opentpu.compiler import Affine, CompileError, RunVar, Tensor, arg_words
+from opentpu.compiler import Affine, CompileError, RunVar, Tensor, arg_words, current
 from opentpu.isasim import Machine
 from opentpu.runtime import Input, KVCache, Output, Weight, compile_kernel, launch
 
@@ -336,3 +336,307 @@ def test_released_argument_registers(n_keys, late_arg):
     k2, _ = _released_kernel(15, True)
     with pytest.raises(CompileError, match="R13 is taken"):
         k2.trace(cfg, 0, {"out": out})
+
+
+def _run_out(cfg, b, prog, xs, vals, out):
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    dram[:4 * len(xs)] = xs.view(np.uint8)
+    args = arg_words(b.run_args, vals) if b.run_args else None
+    m = Machine(cfg, [prog], [dram], args=args).run()
+    return m.slices[0].dram[out:out + 16].view(np.float32)
+
+
+def test_a_run_time_address_does_not_take_a_register_freed_in_a_live_loop():
+    """A register freed inside a loop that is still running (its earlier use, in the loop's
+    body, starts from 0) must not take an address that starts at a run-time value: its init
+    (ADDI r, R_arg, 0) before the inner loop would leave c * tok in it at the end of the body,
+    for the earlier use in the next iteration."""
+    tok = RunVar("tok", bound=16)
+    cfg = Config(DRAM_BYTES=1 << 16)
+    X = Tensor(Affine(0), (4096,), (1,))
+
+    @ol.jit
+    def k():
+        acc = ol.zeros([4])
+        for i in ol.range(2):
+            for j in ol.range(1):                   # j only: takes R1, frees it in i's body
+                acc.set(acc + ol.load(X[j * 8:j * 8 + 4]))
+            for j in ol.range(1):                   # tok + j
+                acc.set(acc + ol.load(X[tok * 8 + j * 8:tok * 8 + j * 8 + 4]))
+        ol.store(Tensor(Affine(1 << 15), (4,), (1,)), acc)
+
+    b = k.trace(cfg, 0, {})
+    xs = np.arange(4096, dtype=np.float32)
+    got = _run_out(cfg, b, b.finish(), xs, {"tok": 5}, 1 << 15)
+    assert np.array_equal(got, 2 * (xs[0:4] + xs[40:44]))
+
+
+@pytest.mark.parametrize("head", [True, False])
+def test_a_run_time_word_load_in_the_token_loop(head):
+    """The generate loop's form (run_words): the eight argument registers taken, c * tpos
+    alone is loaded from tpos's TMEM word into an address register where it is used (RLD MUL).
+    It must not take a register a layer loop before it freed in the token loop's body (that
+    loop's addresses would start from c * tpos in the next token), unless the body zeroes that
+    register first: the token count's register given back at the body's head (head, as
+    generate.py does; LFM2.5-8B-A1B's generate programs take it)."""
+    cfg = Config(DRAM_BYTES=1 << 16)
+    X = Tensor(Affine(0), (4096,), (1,))
+    args = [RunVar(f"a{i}", bound=16) for i in range(8)]
+    tpos = RunVar("tpos", bound=16)
+    vals = {**{f"a{i}": i + 1 for i in range(8)}, "tpos": 5}
+    count = []
+
+    @ol.jit
+    def k():
+        b = current()
+        acc = ol.zeros([4])
+        w = ol.full([1], float(vals["tpos"]))
+        r = b.scratch()
+        count.append(r)
+        b.rld(r, ol.full([1], 2.0))
+        g = b.begin_loop(0, rcount=r)                # the token loop, 2 tokens
+        if head:
+            b.unscratch(r)
+        b.run_words = {"tpos": w.base}
+        for v in args:                               # the argument registers, all taken
+            acc.set(acc + ol.load(X[v * 4:v * 4 + 4]))
+        for i in ol.range(2):                        # a layer loop: takes a register, frees it
+            acc.set(acc + ol.load(X[i * 8:i * 8 + 4]) * 10.0)
+        acc.set(acc + ol.load(X[tpos * 4:tpos * 4 + 4]) * 100.0)    # an RLD MUL of tpos's word
+        b.end_loop(g)
+        b.run_words = None
+        if not head:
+            b.unscratch(r)
+        ol.store(Tensor(Affine(1 << 15), (4,), (1,)), acc)
+
+    b = k.trace(cfg, 0, {})
+    prog = b.finish()
+    xs = np.arange(4096, dtype=np.float32)
+    one = sum(xs[4 * (i + 1):4 * (i + 1) + 4] for i in range(8)) + \
+        10 * (xs[0:4] + xs[8:12]) + 100 * xs[20:24]
+    assert np.array_equal(_run_out(cfg, b, prog, xs, vals, 1 << 15), 2 * one)
+    rld = next(p for p in prog if p.op == I.RLD and p.flags & I.F_MUL)
+    assert (rld.rd == count[0]) == head          # the zeroed count register, or another
+
+
+@pytest.mark.parametrize("flag", [0, 1, 2])
+def test_a_register_set_inside_a_guard_is_not_counted_on_after_it(flag):
+    """A run-time address first used inside a device-count loop (a guard: 0, 1 or 2 times)
+    is initialized there; after the guard its register holds c * tok only if the guard ran,
+    so a later address of the same run-time term starts from an init of its own."""
+    tok = RunVar("tok", bound=16)
+    cfg = Config(DRAM_BYTES=1 << 16)
+    X = Tensor(Affine(0), (4096,), (1,))
+
+    @ol.jit
+    def k():
+        b = current()
+        acc = ol.zeros([4])
+        f = ol.full([1], float(flag))
+        r = b.scratch()
+        b.rld(r, f)
+        g = b.begin_loop(0, rcount=r)
+        for j in ol.range(1):
+            acc.set(acc + ol.load(X[tok * 8 + j * 8:tok * 8 + j * 8 + 4]) * 1000.0)
+        b.end_loop(g)
+        b.unscratch(r)
+        for j in ol.range(1):                       # the same run-time term after the guard
+            acc.set(acc + ol.load(X[tok * 8 + j * 8:tok * 8 + j * 8 + 4]))
+        ol.store(Tensor(Affine(1 << 15), (4,), (1,)), acc)
+
+    b = k.trace(cfg, 0, {})
+    xs = np.arange(4096, dtype=np.float32)
+    got = _run_out(cfg, b, b.finish(), xs, {"tok": 5}, 1 << 15)
+    assert np.array_equal(got, xs[40:44] * (1000.0 * flag + 1))
+
+
+def test_a_released_argument_taken_by_scratch_keeps_it_until_then():
+    """scratch() of a released argument's register zeroes it there: the program's start must
+    not zero it (it holds the argument for the addresses before the release)."""
+    tok = RunVar("tok", bound=16)
+    cfg = Config(DRAM_BYTES=1 << 16)
+    X = Tensor(Affine(0), (4096,), (1,))
+
+    @ol.jit
+    def k():
+        b = current()
+        acc = ol.zeros([4])
+        acc.set(acc + ol.load(X[tok * 8:tok * 8 + 4]))
+        ol.release(tok)
+        rs = [b.scratch() for _ in range(15)]       # the last one is tok's register
+        for r in rs:
+            b.unscratch(r)
+        ol.store(Tensor(Affine(1 << 15), (4,), (1,)), acc)
+
+    b = k.trace(cfg, 0, {})
+    xs = np.arange(4096, dtype=np.float32)
+    assert np.array_equal(_run_out(cfg, b, b.finish(), xs, {"tok": 5}, 1 << 15), xs[40:44])
+
+
+NX = 1 << 14
+
+
+def _fuzz_tree(rng, nvars):
+    """A random kernel: nested hardware loops (1-3 iterations), guards (device-computed counts
+    0-2, their own count register freed inside or after them), device values (DevVar, a
+    scratch register), scratch registers held across a part, top-level releases of run-time
+    values, and loads at affine addresses (loop terms, at most one run-time or device term);
+    in random places the shapes of the two run-time register hazards (a run-time address in a
+    loop after a sibling loop freed a register in the same body; one inside a guard and again
+    after it)."""
+    avail = set(range(nvars))
+    budget = [rng.randint(6, 30)]
+
+    def gen(depth, loops, dvs):
+        items = []
+        for _ in range(rng.randint(1, 5)):
+            if budget[0] <= 0:
+                break
+            budget[0] -= 1
+            x = rng.random()
+            if depth == 0 and avail and x < 0.08:
+                v = rng.choice(sorted(avail))
+                avail.discard(v)
+                items.append(("rel", v))
+            elif depth < 3 and avail and x < 0.2:      # the hazards' shapes, in random parts
+                v, l1, l2 = rng.choice(sorted(avail)), rng.randrange(1 << 30), \
+                    rng.randrange(1 << 30)
+                ld = lambda l, run: ("ld", rng.randint(0, 200) * 4,       # noqa: E731
+                                     {l: 4 * rng.randint(1, 2)}, run, float(rng.randint(1, 5)))
+                inner = [("loop", l1, rng.randint(1, 2), [ld(l1, None)]),
+                         ("loop", l2, rng.randint(1, 2), [ld(l2, ("var", v, 4))])]
+                if rng.random() < 0.5:
+                    lid = rng.randrange(1 << 30)
+                    items.append(("loop", lid, rng.randint(2, 3), inner))
+                else:
+                    items.append(("guard", rng.randint(0, 2), rng.random() < 0.5, inner[1:]))
+                    items.append(inner[1])
+            elif depth < 4 and x < 0.42:
+                lid = rng.randrange(1 << 30)
+                items.append(("loop", lid, rng.randint(1, 3), gen(depth + 1, loops + [lid], [])))
+            elif depth < 4 and x < 0.5:
+                items.append(("guard", rng.randint(0, 2), rng.random() < 0.5,
+                              gen(depth + 1, loops, dvs)))
+            elif x < 0.54:
+                did = rng.randrange(1 << 30)
+                items.append(("dv", did, 4 * rng.randint(0, 50), gen(depth, [], dvs + [did])))
+            elif x < 0.57:
+                items.append(("scr", gen(depth, loops, dvs)))
+            else:
+                terms = {l: 4 * rng.randint(1, 2) for l in loops if rng.random() < 0.6}
+                run = None
+                if avail and rng.random() < 0.5:
+                    run = ("var", rng.choice(sorted(avail)), 4)
+                elif dvs and rng.random() < 0.4:
+                    run = ("dv", rng.choice(dvs), 1)
+                items.append(("ld", rng.randint(0, 200) * 4, terms, run, float(rng.randint(1, 5))))
+        return items
+    return gen(0, [], [])
+
+
+def _fuzz_one(seed):
+    import random
+    rng = random.Random(seed)
+    nvars = rng.randint(0, 3)
+    tree = _fuzz_tree(rng, nvars)
+    words = rng.random() < 0.3              # the generate loop's form: run-time values in TMEM
+    vars_ = [RunVar(f"v{i}", bound=64) for i in range(nvars)]
+    vals = {f"v{i}": rng.randrange(64) for i in range(nvars)}
+    cfg = Config(DRAM_BYTES=1 << 17)
+    out = 4 * NX
+    from opentpu.compiler import DevVar
+
+    @ol.jit
+    def k():
+        b = current()
+        X = Tensor(Affine(0), (NX,), (1,))
+        acc = ol.zeros([4])
+        if words:
+            w = ol.empty([max(nvars, 1)])
+            for i in range(nvars):
+                w[i:i + 1].set(float(vals[f"v{i}"]))
+            b.run_words = {f"v{i}": w.base + i for i in range(nvars)}
+        ivs, dvs = {}, {}
+
+        def emit(items):
+            for it in items:
+                if it[0] == "rel":
+                    ol.release(vars_[it[1]])
+                elif it[0] == "loop":
+                    for i in ol.range(it[2]):
+                        ivs[it[1]] = i
+                        emit(it[3])
+                elif it[0] == "guard":
+                    r = b.scratch()
+                    b.rld(r, ol.full([1], float(it[1])))
+                    g = b.begin_loop(0, rcount=r)
+                    if it[2]:
+                        b.unscratch(r)                  # the count is read at the start
+                    emit(it[3])
+                    b.end_loop(g)
+                    if not it[2]:
+                        b.unscratch(r)
+                elif it[0] == "dv":
+                    r = b.scratch()
+                    b.rld(r, ol.full([1], float(it[2])))
+                    dvs[it[1]] = DevVar(f"d{it[1]}", r)
+                    emit(it[3])
+                    b.unscratch(r)
+                elif it[0] == "scr":
+                    r = b.scratch()
+                    emit(it[1])
+                    b.unscratch(r)
+                else:
+                    _, c, terms, run, m = it
+                    a = Affine(c)
+                    for l, co in terms.items():
+                        a = a + ivs[l] * co
+                    T = X
+                    if run is not None and run[0] == "var":
+                        a = a + vars_[run[1]] * run[2]
+                    elif run is not None:                   # a byte address term
+                        T = Tensor(Affine(0) + dvs[run[1]], (NX,), (1,))
+                    acc.set(acc + ol.load(T[a:a + 4]) * m)
+        emit(tree)
+        ol.store(Tensor(Affine(out), (4,), (1,)), acc)
+
+    try:
+        b = k.trace(cfg, 0, {})
+        prog = b.finish()
+    except CompileError as e:
+        if "registers" in str(e) or "argument" in str(e):
+            return None                     # out of registers: a program too big to test
+        raise
+    xs = np.random.default_rng(seed).integers(0, 16, NX).astype(np.float32)
+    acc = np.zeros(4, np.float64)
+
+    def ref(items, ivs, dvs):
+        nonlocal acc
+        for it in items:
+            if it[0] == "loop":
+                for i in range(it[2]):
+                    ref(it[3], {**ivs, it[1]: i}, dvs)
+            elif it[0] == "guard":
+                for _ in range(it[1]):
+                    ref(it[3], ivs, dvs)
+            elif it[0] == "dv":
+                ref(it[3], ivs, {**dvs, it[1]: it[2]})
+            elif it[0] == "scr":
+                ref(it[1], ivs, dvs)
+            elif it[0] == "ld":
+                _, c, terms, run, m = it
+                a = c + sum(ivs[l] * co for l, co in terms.items())
+                if run is not None:
+                    a += vals[f"v{run[1]}"] * run[2] if run[0] == "var" else dvs[run[1]] // 4
+                acc = acc + xs[a:a + 4] * m
+    ref(tree, {}, {})
+    got = _run_out(cfg, b, prog, xs, vals, out)
+    return np.array_equal(got, acc.astype(np.float32))
+
+
+def test_register_allocation_fuzz():
+    """Random kernels (_fuzz_tree) against a Python model of their loads: address registers
+    reused across loops, guards, device values, scratch registers and released run-time
+    values give the model's sums exactly."""
+    bad = [s for s in range(600) if _fuzz_one(s) is False]
+    assert not bad, f"seeds {bad[:10]}"
