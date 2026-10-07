@@ -1,3 +1,4 @@
+import collections
 import os
 import time
 
@@ -34,6 +35,25 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "slow" in item.keywords:
             item.add_marker(skip)
+
+
+def skip_reasons(reports) -> list[tuple[int, str]]:
+    """The skipped tests' reasons with their counts, the most frequent first."""
+    n = collections.Counter()
+    for r in reports:
+        why = r.longrepr[2] if isinstance(r.longrepr, tuple) else str(r.longrepr)
+        n[why.removeprefix("Skipped: ")] += 1
+    return sorted(((k, why) for why, k in n.items()), key=lambda x: (-x[0], x[1]))
+
+
+def pytest_terminal_summary(terminalreporter):
+    """A gate's skips by reason (a missing checkpoint, no Verilator, a slow test, ...): its "N
+    skipped" alone does not say which coverage the run did not have."""
+    skipped = terminalreporter.stats.get("skipped", [])
+    if skipped:
+        terminalreporter.write_sep("-", f"{len(skipped)} skipped, by reason")
+        for k, why in skip_reasons(skipped):
+            terminalreporter.write_line(f"{k:5d}  {why}")
 
 
 def rel(a, b):

@@ -1296,25 +1296,13 @@ def test_otpu_lens_passthrough(capsys):
     assert "qwen-tiny" in capsys.readouterr().out
 
 
-def _board_model_has_trace() -> bool:
-    import shutil
-    if shutil.which("verilator") is None:
-        return False
-    try:
-        import opentpu.hwtrace  # noqa: F401
-    except ImportError:
-        return False
+def test_otpu_lens_record_on_board_model(tmp_path, capsys, have_verilator):
+    """otpu-lens record --sim: the hardware trace of a kernel on the board model gives a full
+    profile (the RTL side: the trace buffer in tb_board, register map 2, and opentpu.hwtrace;
+    the tree has both, so a board model without them fails instead of skipping)."""
     from opentpu.host.board import SimTransport
     i = Board(SimTransport(ch_bytes=1 << 20), check=False).info()
-    return i["regmap"] >= 2 and bool(i["caps"] and i["caps"]["trace"])
-
-
-def test_otpu_lens_record_on_board_model(tmp_path, capsys):
-    """otpu-lens record --sim: the hardware trace of a kernel on the board model gives a full
-    profile (needs the RTL side: the trace buffer in tb_board and opentpu.hwtrace)."""
-    if not _board_model_has_trace():
-        pytest.skip("board model without the trace buffer (register map 1) or no "
-                    "opentpu.hwtrace / verilator")
+    assert i["regmap"] >= 2 and i["caps"] and i["caps"]["trace"], i
     from opentpu import lens as L
     from opentpu.host import hwlens
     out = tmp_path / "hw.otpuprof"

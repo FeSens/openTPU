@@ -394,8 +394,9 @@ def test_moe_on_board_model(tiny, have_verilator):
     _, W, spec = tiny
     cfg = board_config(DRAM_BYTES=1 << 24)
     tr = SimTransport(ch_bytes=cfg.DRAM_BYTES // 2, stall=20, seed=5)
-    if not Board(tr).info()["caps"].get("waitw"):
-        pytest.skip("the RTL has no WAITW (CAPS bit31)")
+    # the tree's RTL has WAITW (otpu_ctrl.sv's CAPS): a board model without it is a regression,
+    # not a reason to skip
+    assert Board(tr).info()["caps"].get("waitw"), "the board model has no WAITW (CAPS bit31)"
     isa = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True)
     brd = Engine(spec, W, cap=256, cfg=cfg, rows=1, resident=True,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr))
