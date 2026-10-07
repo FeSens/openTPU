@@ -238,24 +238,44 @@ module otpu_se_comp
     logic [MW-1:0]    m;
   } cm_t;
 
+  // RSQRT's op 0 multiplier: h = x * 0.5 on the scaled x (otpu_fp's rsq_lo / rsq_hi: 16x or
+  // x/16), i.e. x * 8 or x * (1/32), exact
+  function automatic f32_t rsq_h(input f32_t x);
+    f32_t xz;
+    xz = ftz(x);
+    return rsq_lo(xz) ? 32'h4100_0000 : rsq_hi(xz) ? 32'h3D00_0000 : F_HALF;
+  endfunction
+
   // pass 0's state from x (the chains' boundary 0). Fields a function does not read before
   // writing them are don't-cares: RECIP and RSQRT share one seed subtractor, and k1 and ii
-  // are computed whatever the function.
+  // are computed whatever the function. RECIP and RSQRT run on a scaled x out of range
+  // (otpu_fp's rcp_sc, rsq_lo, rsq_hi; the seed's constant takes the scaling) and carry the
+  // result's exponent adjustment in ii, which finish adds as EXP2's i.
   function automatic cst_t setup(input logic [2:0] c, input f32_t x);
     cst_t t;
-    f32_t xz, ax, sd;
-    logic ge, z, rcp;
+    f32_t xz, ax, sd, mg;
+    logic ge, z, rcp, rsc, lo, hi;
     xz = ftz(x);
     ax = {1'b0, xz[30:0]};
     ge = (xz[22:0] >= LOG2_SQRT2);
     z  = (xz[30:0] == 0);
     rcp = (c == CC_RCP);
-    sd = (rcp ? RECIP_MAGIC : RSQRT_MAGIC) - (rcp ? ax : (xz >> 1));
+    rsc = rcp_sc(ax);
+    lo = rsq_lo(xz);
+    hi = rsq_hi(xz);
+    mg = rcp ? (rsc ? RECIP_MAGIC + 32'h0200_0000 : RECIP_MAGIC)     // on |x| / 16
+             : (lo ? RSQRT_MAGIC - 32'h0100_0000 :                    // on 16x
+                hi ? RSQRT_MAGIC + 32'h0100_0000 : RSQRT_MAGIC);      // on x / 16
+    sd = mg - (rcp ? ax : (xz >> 1));
     t = '0;
     t.k2 = rcp ? ftz(sd) : sd;                                        // the seed
     t.k1 = (c == CC_LOG) ? {1'b0, ge ? 8'd126 : 8'd127, xz[22:0]}    // m in [sqrt(1/2), sqrt(2))
-                         : {1'b1, ax[30:0]};                          // -|x|
-    t.ii = 9'(xz[30:23]) - 9'd127 + 9'(ge);                           // LOG2's e
+                         : {1'b1, ax[30:0] - (rsc ? 31'h0200_0000 : 31'd0)};   // -|x| (RECIP)
+    case (c)
+      CC_RCP:  t.ii = rsc ? -9'sd4 : 9'd0;                            // y / 16
+      CC_RSQ:  t.ii = lo ? 9'sd2 : hi ? -9'sd2 : 9'd0;                // y * 4, y / 4
+      default: t.ii = 9'(xz[30:23]) - 9'd127 + 9'(ge);                // LOG2's e
+    endcase
     case (c)
       CC_RCP: t.f = {xz[31], (ax >= 32'h7E80_0000), (ax == 0)};
       CC_RSQ: t.f = {2'b00, (xz[31] || z || xz == F_INF)};
@@ -279,11 +299,13 @@ module otpu_se_comp
     return x[31] ? -(9'(ip) + 9'(fr)) : 9'(ip);
   endfunction
 
-  // i2f of a 9-bit integer of magnitude <= 255: exact, so equal to i2f
+  // i2f of a 9-bit integer: exact, so equal to i2f (-256, outside RR's use, is a case of its own:
+  // its magnitude does not fit the 8-bit m)
   function automatic f32_t i2f9(input logic [8:0] n);
     logic [7:0]  m;
     logic [2:0]  p;
     logic [30:0] sh;
+    if (n == 9'h100) return 32'hC380_0000;
     m = n[8] ? 8'(-n) : n[7:0];
     if (m == 0) return F_ZERO;
     p = 3'd0;
@@ -292,12 +314,15 @@ module otpu_se_comp
     return {n[8], 8'd127 + 8'(p), sh[22:0]};
   endfunction
 
+  // EXP2's i, and RECIP's and RSQRT's scaling (setup), added to the exponent field: one adder
   function automatic f32_t finish(input logic [2:0] c, input cst_t t);
+    f32_t ve;
+    ve = t.v + {t.ii, 23'd0};
     case (c)
-      CC_EXP, CC_EXS: return t.f[0] ? F_ZERO : t.f[1] ? F_INF : (t.v + {t.ii, 23'd0});
+      CC_EXP, CC_EXS: return t.f[0] ? F_ZERO : t.f[1] ? F_INF : ve;
       CC_RCP:         return t.f[0] ? F_ZERO : t.f[1] ? {t.f[2], 31'd0} :
-                             (t.f[2] ? fneg(t.v) : t.v);
-      CC_RSQ:         return t.f[0] ? F_ZERO : t.v;
+                             (t.f[2] ? fneg(ve) : ve);
+      CC_RSQ:         return t.f[0] ? F_ZERO : ve;
       CC_LOG:         return t.f[0] ? F_NINF : t.f[2] ? F_NAN : t.f[1] ? F_INF : t.v;
       default:        return F_ZERO;
     endcase
@@ -433,7 +458,8 @@ module otpu_se_comp
         case (uci[s].bs)
           B_K1:    b = BU[B_K1] ? t.k1 : uci[s].kb;
           B_K2:    b = BU[B_K2] ? t.k2 : uci[s].kb;
-          default: b = uci[s].kb;
+          // RSQRT's op 0 (pass 0, at S0): h's factor per lane (rsq_h; the ROM's is 0.5)
+          default: b = (s == 0 && !ret && in_c == CC_RSQ) ? rsq_h(in_a[l]) : uci[s].kb;
         endcase
         case (uci[s].cs)
           C_K2:    c = CU[C_K2] ? t.k2 : uci[s].kc;

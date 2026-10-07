@@ -199,6 +199,26 @@ def test_argmax_on_rtl(have_verilator):
              I.st(0x40000, 8000, 512), I.halt()], data)
 
 
+@pytest.mark.parametrize("lanes", [8, 16])
+def test_argmax_ties_inside_a_chunk_on_rtl(have_verilator, lanes):
+    """ARGMAX ties at the row's maximum inside one chunk of lanes go to the first column (the
+    chunk's tree once kept the left element at every level: after level 0 that may hold the
+    higher lane, e.g. lanes 1 and 2 tied gave 2). Every pair of tied lanes, in the row's first
+    chunk and in a later one, and random rows over {0, 1, 2}."""
+    rng = np.random.default_rng(6)
+    pairs = [(p, q) for p in range(lanes) for q in range(p + 1, lanes)]
+    t = np.full((2 * len(pairs), 2 * lanes), -1.0, np.float32)
+    for k, (p, q) in enumerate(pairs):
+        t[k, [p, q]] = 5.0                                   # in the first chunk
+        t[len(pairs) + k, [lanes + p, lanes + q]] = 5.0      # in the second
+    r = rng.integers(0, 3, (64, lanes)).astype(np.float32)
+    data = np.concatenate([t.reshape(-1), r.reshape(-1)])
+    o = len(data) + 64
+    _on_rtl([I.argmax(o, 0, t.shape[0], t.shape[1], 2, t.shape[1]),
+             I.argmax(o + 2 * t.shape[0], t.size, 64, lanes, 2, lanes), I.halt()], data,
+            cfg=Config(S=1, LANES=lanes, MCOLS=8, DRAM_BYTES=1 << 20))
+
+
 def test_rld_on_rtl(have_verilator):
     """RLD on the RTL: truncation, the bounds, inf / NaN, RAW, R0, register-relative reads, a
     read right after the VOP that writes the word, the value driving a LOOP count, an address

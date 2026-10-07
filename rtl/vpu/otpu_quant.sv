@@ -61,16 +61,22 @@ module otpu_qscale
     amax_q <= amax; iv_q <= iv; itag_q <= itag;
   end
   // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_fmul
-  // result or +0, so it is already flushed: no ftz)
-  f32_t ax, y0;
-  logic zero, big;
+  // result or +0, so it is already flushed: no ftz). amax >= 2^123 runs on amax / 16 (otpu_fp's
+  // rcp_sc: the seed's constant and k1 take the scaling) and inv = (127/16) * y, which is
+  // 127 * (y / 16) bit for bit (y >= 2^-122: y / 16 is exact and normal).
+  f32_t ax, y0, kx;
+  logic zero, big, rsc;
   always_ff @(posedge clk) if (en) begin
     f32_t a;
+    logic s;
     a = {1'b0, amax_q[30:0]};
+    s = rcp_sc(a);
     ax <= a;
+    kx <= {1'b1, a[30:0] - (s ? 31'h0200_0000 : 31'd0)};
     zero <= (a == 0);
     big <= (a >= 32'h7E80_0000);
-    y0 <= ftz(RECIP_MAGIC - a);
+    rsc <= s;
+    y0 <= ftz((s ? RECIP_MAGIC + 32'h0200_0000 : RECIP_MAGIC) - a);
   end
   // recip(ax): y = y * (2 - ax*y), three times, from the magic seed; the delay lines into the
   // multiplier operands end in a flip-flop with a reset (otpu_qdly). The ISA's y*t + (-0) is
@@ -79,7 +85,7 @@ module otpu_qscale
   // their DSPs), and k1 is delayed by the step's SL + LM to meet it.
   f32_t y [4], t [3], k1 [4], yd [3];
   assign y[0] = y0;
-  assign k1[0] = {1'b1, ax[30:0]};
+  assign k1[0] = kx;
   for (genvar i = 0; i < 3; i++) begin : g_it
     otpu_fmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
     otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
@@ -88,9 +94,9 @@ module otpu_qscale
   end
   // big: 127 * (+0) = +0, forced on the product (bd delayed beside zd) instead of on the operand
   f32_t invm, scm, scd;
-  logic zd, bd, zd2, bd2;
-  otpu_qdly #(.W(2), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big}), .q({zd, bd}));
-  otpu_fmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .y(invm));
+  logic zd, bd, scd3, zd2, bd2;
+  otpu_qdly #(.W(3), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big, rsc}), .q({zd, bd, scd3}));
+  otpu_fmul #(.LAT(LM)) u_inv (.clk, .en, .a(scd3 ? 32'h40FE_0000 : F_127), .b(y[3]), .y(invm));
   otpu_fmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
   otpu_delay #(.W(32), .N(3 * P)) u_scd (.clk, .en, .d(scm), .q(scd));
   otpu_delay #(.W(2), .N(LM)) u_z2 (.clk, .en, .d({zd, bd}), .q({zd2, bd2}));
@@ -403,6 +409,7 @@ module otpu_quant
   // q8_s1 with the shift (and its guard bit k = sh - 1) decoded from e by a table, not computed
   // as 150 - e: no carry chain between e and ip/g/st (the e compares feed only zero/sat). No
   // ftz: it changes only m, and only when e == 0, where zero makes q8_s2 return 0 anyway.
+  // A NaN product (0 * inf: a zero beside a tiny amax, whose inv is +inf) quantizes to 0.
   function automatic q8_mid_t qq8_s1(input f32_t x_in);
     q8_mid_t q;
     f32_t x;
@@ -414,7 +421,7 @@ module otpu_quant
     m = {1'b1, x[22:0]};
     q = '0;
     q.s = x[31];
-    q.zero = (e < 8'd126);
+    q.zero = (e < 8'd126) || is_nan(x);
     q.sat = (e >= 8'd134);
     sh = 5'd17; k = 5'd16;                      // zero or sat (as q8_s1)
     for (int c = 126; c < 134; c++)

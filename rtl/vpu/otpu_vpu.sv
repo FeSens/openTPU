@@ -455,11 +455,12 @@ module otpu_vpu
   } lst_t;
 
   // Lane state fields live across slot s's delay line: read by a later slot or by the end tap
-  // (EXP2 9: f v ii, RECIP 6: f k2, RSQRT 10: f k2, LOG2 10: f v) before being rewritten.
+  // (EXP2 9: f v ii, RECIP 6: f k2 ii, RSQRT 10: f k2 ii, LOG2 10: f v) before being rewritten.
   // Derived from the slot programs in g_slot -- recheck when editing one. v is never live:
   // every slot followed by a read of v writes v itself. f is always live; dead fields are not
   // carried. LOG2 keeps t in k1 (slots 1..9), i2f(e) in k2 (slot 1's input stages to slot 9)
-  // and e in ii (boundary 0 to slot 1's input stages).
+  // and e in ii (boundary 0 to slot 1's input stages). RECIP and RSQRT keep their result's
+  // exponent adjustment (the range scaling, otpu_fp's rcp_sc / rsq_lo / rsq_hi) in ii.
   function automatic logic k1_live(input int s);
     return s <= 8;
   endfunction
@@ -467,7 +468,7 @@ module otpu_vpu
     return s <= 8;
   endfunction
   function automatic logic ii_live(input int s);
-    return s <= 8;
+    return s <= 9;
   endfunction
 
   mt_t   mtap [NSX + 1];
@@ -564,13 +565,21 @@ module otpu_vpu
         m0d.fh[V_COPY]:  st[0].v = xz;
         m0d.fh[V_ABS]:   st[0].v = fabs(x);
         m0d.fh[V_FILL]:  st[0].v = ftz(y);
-        m0d.fh[V_RECIP]: begin
-          st[0].k1 = {1'b1, ax[30:0]};                       // -|x|
-          st[0].k2 = ftz(RECIP_MAGIC - ax);                  // seed
+        m0d.fh[V_RECIP]: begin                               // |x| >= 2^123: on |x| / 16
+          logic sc;
+          sc = rcp_sc(ax);
+          st[0].k1 = {1'b1, ax[30:0] - (sc ? 31'h0200_0000 : 31'd0)};   // -|x|
+          st[0].k2 = ftz((sc ? RECIP_MAGIC + 32'h0200_0000 : RECIP_MAGIC) - ax);   // seed
+          st[0].ii = sc ? -9'sd4 : 9'd0;                     // y / 16
           st[0].f  = {xz[31], (ax >= 32'h7E80_0000), (ax == 0)};
         end
-        m0d.fh[V_RSQRT]: begin
-          st[0].k2 = RSQRT_MAGIC - (xz >> 1);
+        m0d.fh[V_RSQRT]: begin                               // on 16x / x / 16 (rsq_lo / hi)
+          logic lo, hi;
+          lo = rsq_lo(xz);
+          hi = rsq_hi(xz);
+          st[0].k2 = (lo ? RSQRT_MAGIC - 32'h0100_0000 : hi ? RSQRT_MAGIC + 32'h0100_0000
+                         : RSQRT_MAGIC) - (xz >> 1);
+          st[0].ii = lo ? 9'sd2 : hi ? -9'sd2 : 9'd0;         // y * 4, y / 4
           st[0].f  = {2'b00, (xz[31] || xz[30:0] == 0 || xz == F_INF)};
         end
         m0d.fh[V_LOG2]: begin                                // m in [sqrt(1/2), sqrt(2)), e
@@ -665,7 +674,10 @@ module otpu_vpu
             else begin ia = t.k2; ib = t.v; dest = 2'd3; end                              // y = y*t
           end
           sf[V_RSQRT]: begin
-            if (s == 0) begin ia = F_HALF; ib = ftz(x); dest = 2'd2; negd = 1'b1; end     // -h
+            if (s == 0) begin                                                             // -h
+              ia = rsq_lo(ftz(x)) ? 32'h4100_0000 : rsq_hi(ftz(x)) ? 32'h3D00_0000 : F_HALF;
+              ib = ftz(x); dest = 2'd2; negd = 1'b1;           // (x 8, x / 32: h of the scaled x)
+            end
             else if ((s - 1) % 3 == 0) begin ia = t.k2; ib = t.k2; dest = 2'd1; end       // y*y
             else if ((s - 1) % 3 == 1) begin ia = t.k1; ib = t.v; ic_ = F_1P5; dest = 2'd1; end
             else begin ia = t.k2; ib = t.v; dest = 2'd3; end                              // y*c
@@ -754,8 +766,12 @@ module otpu_vpu
     assign tc = st[T_RC];
     assign ts = st[T_RS];
     assign ex_r = te.f[0] ? F_ZERO : te.f[1] ? F_INF : (te.v + {te.ii, 23'd0});
-    assign rc_r = tc.f[0] ? F_ZERO : tc.f[1] ? {tc.f[2], 31'd0} : (tc.f[2] ? fneg(tc.k2) : tc.k2);
-    assign rs_r = ts.f[0] ? F_ZERO : ts.k2;
+    // RECIP's and RSQRT's results scaled back (ii: their exponent adjustment)
+    f32_t rc_y, rs_y;
+    assign rc_y = tc.k2 + {tc.ii, 23'd0};
+    assign rs_y = ts.k2 + {ts.ii, 23'd0};
+    assign rc_r = tc.f[0] ? F_ZERO : tc.f[1] ? {tc.f[2], 31'd0} : (tc.f[2] ? fneg(rc_y) : rc_y);
+    assign rs_r = ts.f[0] ? F_ZERO : rs_y;
     assign lg_r = ts.f[0] ? F_NINF : ts.f[2] ? F_NAN : ts.f[1] ? F_INF : ts.v;
     assign lres[l] = hit[T_EX] ? ex_r : hit[T_RC] ? rc_r :
                      hit[T_RS] ? ((mtap[T_RS].cls == C_LOG) ? lg_r : rs_r) :
@@ -850,6 +866,9 @@ module otpu_vpu
   // ------------------------------------------------------------------ RMAX
   // pairwise max tree over the lanes of the chunk (masked lanes drop out), one registered
   // stage per level: stage 0 from the TMEM read data (LANES -> HL), stage j halves HL >> (j-1)
+  // Every level pairs neighbours (2l, 2l + 1), so the left element always covers the lower
+  // lanes and keeping it on a tie keeps the lowest lane (pairing l with l + HL/2^j does not:
+  // after level 0 element l may hold lane l + HL, above its partner's).
   localparam int HL = LANES / 2;
   localparam int ML = $clog2(HL);             // levels after the first
   // (ARGMAX: each value's lane, mxh_i, ties to the lower lane; the chunk's column along, mxh_c)
@@ -872,20 +891,20 @@ module otpu_vpu
       h[l] = m0.mask[l];
     end
     for (int l = 0; l < HL; l++) begin
-      up = !h[l] || (h[l + HL] && fp_gt(v[l + HL], v[l]));
-      mxh_v[0][l] <= up ? v[l + HL] : v[l];
-      mxh_h[0][l] <= h[l] || h[l + HL];
-      mxh_i[0][l] <= up ? LW'(l + HL) : LW'(l);
+      up = !h[2*l] || (h[2*l + 1] && fp_gt(v[2*l + 1], v[2*l]));
+      mxh_v[0][l] <= up ? v[2*l + 1] : v[2*l];
+      mxh_h[0][l] <= h[2*l] || h[2*l + 1];
+      mxh_i[0][l] <= up ? LW'(2*l + 1) : LW'(2*l);
     end
     mxh_m[0] <= m0r;
     mxh_c[0] <= m0.col;
     for (int j = 1; j <= ML; j++) begin
       for (int l = 0; l < (HL >> j); l++) begin
-        up = !mxh_h[j-1][l] || (mxh_h[j-1][l + (HL >> j)] &&
-                                fp_gt(mxh_v[j-1][l + (HL >> j)], mxh_v[j-1][l]));
-        mxh_v[j][l] <= up ? mxh_v[j-1][l + (HL >> j)] : mxh_v[j-1][l];
-        mxh_h[j][l] <= mxh_h[j-1][l] || mxh_h[j-1][l + (HL >> j)];
-        mxh_i[j][l] <= up ? mxh_i[j-1][l + (HL >> j)] : mxh_i[j-1][l];
+        up = !mxh_h[j-1][2*l] || (mxh_h[j-1][2*l + 1] &&
+                                  fp_gt(mxh_v[j-1][2*l + 1], mxh_v[j-1][2*l]));
+        mxh_v[j][l] <= up ? mxh_v[j-1][2*l + 1] : mxh_v[j-1][2*l];
+        mxh_h[j][l] <= mxh_h[j-1][2*l] || mxh_h[j-1][2*l + 1];
+        mxh_i[j][l] <= up ? mxh_i[j-1][2*l + 1] : mxh_i[j-1][2*l];
       end
       mxh_m[j] <= mxh_m[j-1];
       mxh_c[j] <= mxh_c[j-1];

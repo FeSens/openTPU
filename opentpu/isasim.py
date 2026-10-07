@@ -168,7 +168,7 @@ class Slice:
         v = int(self.m32[self._widx(np.int64(a))])
         if not I.waitw_holds(v, self.reg(ins.rc) + ins.w[2], ins.flags & 3, ins.w[3]):
             return False
-        self.tmem[self._tidx(np.int64(self.reg(ins.rb) + ins.w[1]))] = v
+        self.tmem[self._tidx(np.int64((self.reg(ins.rb) + ins.w[1]) & 0xFFFFFFFF))] = v
         return True
 
     def advance(self) -> None:
@@ -471,7 +471,8 @@ class Slice:
             if od.shape[2] < ev.shape[2]:
                 od = np.concatenate([od, np.zeros((M, N, 1), np.float32)], axis=2)
             t = F.add(ev, od)
-        acc = F.interleaved_sum(t.reshape(M * N, t.shape[2]), F.MM_PARTIALS).reshape(M, N)
+        acc = F.interleaved_sum(t.reshape(M * N, t.shape[2]), F.MM_PARTIALS,
+                                pad=-0.0).reshape(M, N)                 # MM: no pad terms
         idx = out + np.arange(M)[:, None] * ors + np.arange(N)[None, :]
         if ins.flags & I.F_ASCALE:                 # y = old * alpha[j] + acc
             if not (unit and accf):
@@ -575,7 +576,8 @@ class Slice:
             self._check_hazard(didx, [aidx.reshape(-1)], wpos=ends)
             c = np.argmax(F._key(A), axis=1)
             base = w7 - (1 << 32) if w7 >> 31 else w7
-            self.tput(didx, np.stack([F.chain_max(A), F.i2f(c + base)], axis=1).reshape(-1))
+            ci = ((c + base) & 0xFFFFFFFF).astype(np.uint32).view(np.int32)   # int32, as i2f's
+            self.tput(didx, np.stack([F.chain_max(A), F.i2f(ci)], axis=1).reshape(-1))
             return
         if func in I.REDUCE:
             didx = dst + np.arange(rows) * drs

@@ -291,6 +291,10 @@ def quantize_w4(W: np.ndarray, fmt: str, D: int = 128, search: bool = True):
     code = code.reshape(N, K)
     word = bf16_bits(S) | sum(m[..., b].astype(np.uint32) << np.uint32(16 + 4 * b)
                               for b in range(NSUB))
+    # a block whose stored scale is an fp32 denormal is all zeros on the MXU (its multiplier
+    # flushes the scale), as dequantize_w4 says
+    dead = np.abs(S) < np.float32(2.0 ** -126)                       # [N, K/D]
+    deq = np.where(np.repeat(dead, D, axis=1), 0, deq).astype(deq.dtype)
     return pack4(code), word.astype(np.uint32), deq
 
 
@@ -299,6 +303,7 @@ def dequantize_w4(data: np.ndarray, words: np.ndarray, fmt: str, D: int = 128) -
     N = data.shape[0]
     w = DEC[fmt][unpack4(data)].astype(np.float64).reshape(N, -1, NSUB, D // NSUB)
     S = (np.asarray(words, np.uint32) << 16).view(np.float32).astype(np.float64)
+    S = np.where(np.abs(S) < 2.0 ** -126, 0.0, S)                    # the MXU flushes it
     m = np.stack([(words >> (16 + 4 * b)) & 15 for b in range(NSUB)], -1).astype(np.float64)
     return (w * (S[..., None] * m)[..., None]).reshape(N, -1)
 
