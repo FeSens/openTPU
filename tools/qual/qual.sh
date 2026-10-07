@@ -223,7 +223,9 @@ finish() {
 trap finish EXIT
 trap 'exit 143' TERM HUP INT    # killed: finish too (the references' job, REST, the summary)
 
-echo "################ $NAME, $PROFILE profile, host tree $(git -C "$H" rev-parse --short HEAD) $(date +%T)"
+# (a staged copy of the tree has no .git: its COMMIT file, as the deploy kits write it, if any)
+HC=$(git -C "$H" rev-parse --short HEAD 2>/dev/null || head -c 7 "$H/COMMIT" 2>/dev/null)
+echo "################ $NAME, $PROFILE profile, host tree ${HC:-unknown} $(date +%T)"
 phase "load + selftest"
 EXPECT=${EXPECT:-$(hexid "$NAME")}
 [ -n "$EXPECT" ] || stop "no build id to expect: set EXPECT ($NAME does not end in _<8 hex digits>)"
