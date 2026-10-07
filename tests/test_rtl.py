@@ -373,6 +373,83 @@ def test_scoreboard_stress_two_slices(have_verilator, seed):
         assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
 
 
+# A DRAM range ending exactly at 2^32 (the board's DRAM is 4 GiB) wrapped its end to 0 and
+# overlapped nothing. An ST into the last 256 bytes waits for a long VOP; a younger LD of those
+# words (ready at once on the DMA) or a WAITW on the last word (all of DRAM) must wait for it.
+# The RTL's 1 MiB DRAM is the 4 GiB space's top MiB (it decodes the low address bits); the ISA
+# simulator has the whole space (sparse).
+@pytest.mark.parametrize("young", ["ld", "waitw"])
+def test_dram_range_ending_at_4gib(have_verilator, young):
+    TOP, END = (1 << 32) - (1 << 20), 1 << 32
+    rng = np.random.default_rng(3100)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    img[:4 * 4096] = rng.standard_normal(4096).astype(np.float32).view(np.uint8)
+    prog = [I.ld(TOP, 0, 4096),
+            I.vop(I.V_FILL, 8192, 0, 0, 64, 256, 256, 0, 0, I.B_SCALAR, 2.5),   # ~2K cycles
+            I.st(END - 256, 8192 + 64 * 256 - 64, 64)]
+    if young == "ld":
+        prog.append(I.ld(END - 256, 30000, 64))
+    else:
+        prog.append(I.waitw(END - 4, 30000, I.f32bits(2.5), I.C_EQ, timeout=100_000))
+    prog.append(I.halt())
+    m = Machine(Config(S=1, DRAM_BYTES=1 << 32), [prog], [None])
+    m.slices[0].dram[TOP:] = img
+    m.run()
+    drams, tmems, _ = rtlsim.run(Config(S=1), [prog], [img.copy()])
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert np.array_equal(drams[0], m.slices[0].dram[TOP:])
+
+
+# Only the fields docs/isa.md writes R[x] + w are register-relative; the counts, shapes and
+# strides beside them are immediates. The sequencer added R[rb] to every w2 and R[rc] to every
+# w3, so LD/ST's n, QACT's (rows, ab, KB) and srs and GATHER's (rows, cols) moved with registers
+# the instructions do not name (the assembler encodes 0 there; these set them).
+@pytest.mark.parametrize("op", ["ld", "st", "qact", "gather"])
+def test_count_fields_are_immediates(have_verilator, op):
+    cfg = Config(S=2)
+    D = cfg.D
+    rng = np.random.default_rng(3200)
+    imgs = _images(rng, 2)
+    prog = [I.li(3, 5), I.li(4, 0x100), I.ld(DATA, 0, 4096)]
+    if op == "ld":
+        prog.append(I.Instr(I.LD, rc=3, w=I._w(DATA + 4096, 5000, 64)))
+    elif op == "st":
+        prog.append(I.Instr(I.ST, rc=3, w=I._w(SCRATCH, 0, 64)))
+    elif op == "qact":
+        # rows 2, ab 0, KB 2, srs 2D (R4 would make ab 1, R3 move row 1); the MM reads them
+        prog += [I.Instr(I.QACT, rb=4, rc=3, w=I._w(0, 2 | 2 << 16, 2 * D)),
+                 I.mm(INT8, SCALES, 5000, 16, 2, 2 * D, 16, 2, 0, 8)]
+    else:
+        prog.append(I.Instr(I.GATHER, rc=3, w=I._w(0, 5000, 2 | 16 << 16, 32, 16, 64)))
+    prog.append(I.halt())
+    m = Machine(cfg, [prog, prog], [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog, prog], [i.copy() for i in imgs])
+    for s in range(2):
+        assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
+        assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
+
+
+# GATHER's dst is R[rb] + w2 and every slice names the same one (otpu_coll writes at slice 0's),
+# here through different registers; slices that name different ones stop the simulation, as
+# they raise in the ISA simulator.
+def test_gather_dst_through_registers(have_verilator):
+    cfg = Config(S=2)
+    rng = np.random.default_rng(3300)
+    imgs = _images(rng, 2)
+    progs = [[I.ld(DATA, 0, 4096), I.gather(0, 5000, 2, 16, 32, 16, 64), I.halt()],
+             [I.li(6, 40), I.ld(DATA, 0, 4096), I.gather(0, 4960, 2, 16, 32, 16, 64, rb=6),
+              I.halt()]]
+    m = Machine(cfg, progs, [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, progs, [i.copy() for i in imgs])
+    for s in range(2):
+        assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
+    progs[1][0] = I.li(6, 48)
+    with pytest.raises(SimError, match="disagree"):
+        Machine(cfg, progs, [i.copy() for i in imgs]).run()
+    with pytest.raises(RuntimeError, match="otpu_coll"):
+        rtlsim.run(cfg, progs, [i.copy() for i in imgs])
+
+
 # ------------------------------------------------------------------ the board's memory path
 # The AXI adapter (two interleaved DDR3 channels) in front of an AXI memory model that stalls
 # every handshake and delays every response at random, with the program booted from DRAM by
@@ -697,6 +774,42 @@ def test_axi_vt_append_throughput(have_verilator):
     # ~7.7K
     per = (cyc[1] - cyc[0]) / 3
     assert per < 5300, cyc
+
+
+# A partial SW beat is read, merged and written whole (above), so a DMA write to the beat's other
+# bytes between that read and the write would be lost. A QST's footprint was its byte hull: the
+# words of its first and last beats outside it (and of its scales' beats) were free for an ST.
+# The footprint now covers its beats' words, so the scoreboard orders the two either way round.
+# Each QST writes bytes 32..159 of a 256-byte block (two partial beats) and scale word 1 of a
+# beat; STs write words 8..15 of the block's third beat and word 0 of the scale's beat. The LD
+# of the QST's row starts it; an LD on the DMA (a read latency, 400 cycles) delays the STs until
+# the QST's fill reads are out.
+@pytest.mark.parametrize("order", ["qst_first", "st_first"])
+@pytest.mark.parametrize("stall,seed", [(0, 1), (30, 2), (60, 3)])
+def test_axi_sw_partial_beat_beside_dma_writes(have_verilator, order, stall, seed):
+    cfg = Config(S=1, D=128, ACT_BLOCKS=16)
+    D = cfg.D
+    rng = np.random.default_rng(8350 + seed)
+    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    REG, SC, T, N = 0x40000, 0x48000, 1024, 12
+    img[:4 * D * N] = rng.standard_normal(D * N).astype(np.float32).view(np.uint8)
+    prog = [I.ld(0x10000, T, 9 * N)]
+    for i in range(N):
+        blk, sc, src = REG + 256 * i, SC + 64 * i, 2048 + D * i
+        qst = I.qst(src, blk + 32, sc + 4, 1, 1, D, D, 1)
+        sts = [I.ld(0x60000 + 512 * i, 4096 + 128 * i, int(rng.integers(1, 128))),
+               I.st(blk + 160, T + 9 * i, 8), I.st(sc, T + 9 * i + 8, 1)]
+        prog.append(I.ld(4 * D * i, src, D))
+        prog += [qst] + sts if order == "qst_first" else sts + [qst]
+    prog += [I.ld(REG, 8192, 64 * N), I.ld(SC, 8192 + 64 * N, 16 * N), I.halt()]
+    m = Machine(cfg, [prog], [img.copy()]).run()
+    drams, tmems, st = rtlsim.run(cfg, [prog], [img.copy()], axi=True, boot=True, stall=stall,
+                                  seed=seed, lat=400, uarch=rtlsim.BOARD_UARCH,
+                                  plusargs=["+axi_dram=1"])
+    bad = np.nonzero(drams[0] != m.slices[0].dram)[0]
+    assert len(bad) == 0, f"{len(bad)} DRAM bytes differ, first at {[hex(a) for a in bad[:8]]}"
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+    assert sum(d["rmw_a"] for d in st["axi_detail"]) == 0, st["axi_detail"]
 
 
 # The MXU's scale stream (port A, one word per chunk) goes out as runs of beats (a read reuses

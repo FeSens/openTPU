@@ -420,6 +420,8 @@ class Slice:
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
         pair = bool(ins.flags & I.F_PAIR)
         R = 2 * M if pair else M                          # ACT rows read
+        if not N or not KB:
+            raise SimError("MM: N and KB must be at least 1")
         if not (0 < R <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
         if M > cfg.MCOLS and ins.flags & (I.F_RMAX | I.F_ASCALE):
@@ -757,8 +759,10 @@ class Machine:
 
     def _gather(self) -> None:
         sl = self.slices
-        key = [((s.reg(s.waiting.rb) + s.waiting.w[1]) & 0xFFFFFFFF,) + tuple(
-            s.waiting.w[i] for i in (2, 4, 5)) for s in sl]     # dst = R[rb] + w2, resolved
+        key = []                 # dst resolved: the RTL writes every slice at slice 0's
+        for s in sl:
+            w = s.waiting.w
+            key.append(((s.reg(s.waiting.rb) + w[1]) & 0xFFFFFFFF, w[2], w[4], w[5]))
         if any(k != key[0] for k in key):
             raise SimError("GATHER: slices disagree on dst/rows/cols/drs/seg")
         vals = []
