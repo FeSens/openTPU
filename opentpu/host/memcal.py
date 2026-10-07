@@ -41,7 +41,7 @@ from pathlib import Path
 from . import ddrcal
 from . import regs as R
 from . import selfcal
-from .runstate import run_dir
+from .runstate import ensure_run_dir, read_shared, run_dir, write_shared
 
 DATA = Path(__file__).with_name("litedram")
 CALIB = (R.ST_CALIB0, R.ST_CALIB1)
@@ -138,16 +138,15 @@ def _path(t) -> Path:
 
 def _save(t, out: dict) -> None:
     try:
-        p = _path(t)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(out, indent=1))
-    except OSError:
+        ensure_run_dir()
+        write_shared(_path(t), json.dumps(out, indent=1))
+    except (OSError, RuntimeError):
         pass                        # the result is also in the log
 
 
 def last(t) -> dict | None:
     try:
-        return json.loads(_path(t).read_text())
+        return json.loads(read_shared(_path(t)))
     except (OSError, ValueError):
         return None
 

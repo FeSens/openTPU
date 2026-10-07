@@ -942,6 +942,30 @@ and writes its pid there. A second runner fails at once with `xdma0 is in use by
 (<command>)`. The lock belongs to the open device (Boards on the same transport share it) and
 goes away with the process, however it ends. Monitors (`otpu-smi`) never lock.
 
+**otpu-lock and its command.** `otpu-lock -- CMD` holds the lock in its own process and runs CMD
+with `OTPU_LOCK_HELD=<dev>:<its pid>`. It exits after CMD, never before: SIGTERM, SIGHUP and
+SIGINT sent to it go on to CMD (to CMD's process group, its own unless otpu-lock is the
+terminal's foreground job, so a script's tools get them too; in the foreground the terminal
+signals CMD itself), and it waits for CMD. A signal ignored where it started stays ignored
+(`nohup`). On Linux CMD is sent SIGTERM if otpu-lock dies (SIGKILL: `PR_SET_PDEATHSIG`). A tool
+trusts `OTPU_LOCK_HELD` only when the pid it names is its ancestor, the lock file names it and
+the lock is held (a name alone is ignored: the tool takes the lock itself), and checks before
+each DRAM write and each run that otpu-lock still runs: under a dead one it raises `LockLost`
+before touching the card (a leftover background job, or a script's tool after SIGKILL). Before,
+killing otpu-lock freed the lock while CMD went on "locked", and a second runner drove the card
+beside it.
+
+**The shared directory.** `/tmp/otpu` is made mode 1777 (shared by users, sticky) and belongs to
+whoever makes it first. Its files are opened without following a symbolic link and must be
+plain files of one link (`runstate.open_shared`), status and cache files are replaced by
+renaming a new file of the writer's over them (`write_shared`), so neither the directory's
+owner nor an entry someone planted makes another user's tool, or a sudo'd one, truncate or
+write a file elsewhere. A symbolic link at `/tmp/otpu` itself is followed only when it is the
+user's or root's. Lock files are mode 0666 whatever the umask; one left unwritable by another
+user is locked read-only (flock works on either), so a second user gets DeviceBusy or waits,
+not PermissionError. A status file another user left cannot be replaced: the runner says so
+once and goes on without one.
+
 **Status file.** The runner publishes `/tmp/otpu/<dev>.json`, replaced atomically after every
 token (`BoardBackend`: at most every 0.25 s, with a timer writing the last tokens) and removed
 at exit: `pid`, `argv`, `start`, `dev`, `model`, `core_khz`, `dram` (bytes:

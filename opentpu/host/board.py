@@ -44,7 +44,7 @@ from .regs import *  # noqa: F401,F403  (the v1 names stay importable from here)
 from .regs import (CTRL_CLEAR, CTRL_LOAD, CTRL_RUN, ID_OTPU, R_CTRL, R_CYCLES, R_CYCLES_HI,
                    R_ICOUNT, R_ID, R_PROG_ADDR, R_PROG_N, R_STATUS, ST_AXI_ERR, ST_CALIB0,
                    ST_CALIB1, ST_ERROR, ST_HALTED, ST_LOADING, ST_RUN)
-from .runstate import DeviceLock, RunnerStatus, run_dir
+from .runstate import DeviceLock, LockLost, RunnerStatus, ensure_run_dir, open_shared
 
 BEAT = 64                       # bytes per interleave beat
 BASE = (0x0000_0000, 0x8000_0000)
@@ -174,9 +174,7 @@ class _DmaLock:
         if self.flock and not self._depth:
             try:
                 if self._pid != os.getpid():           # a forked child opens its own description
-                    d = run_dir()
-                    d.mkdir(parents=True, exist_ok=True)
-                    self._fd = os.open(d / f"{self.name}.dma", os.O_RDWR | os.O_CREAT, 0o666)
+                    self._fd = open_shared(ensure_run_dir() / f"{self.name}.dma")
                     self._pid = os.getpid()
                 fcntl.flock(self._fd, fcntl.LOCK_EX)
             except BaseException:

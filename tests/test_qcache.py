@@ -187,12 +187,13 @@ def test_otpu_lock_prebuilds_before_the_lock(tmp_path, monkeypatch):
     monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
     calls = []
     monkeypatch.setattr(subprocess, "call", lambda cmd, env=None: calls.append((cmd, env)) or 0)
+    monkeypatch.setattr(runstate, "_run", lambda cmd, env: calls.append((cmd, env)) or 0)
     assert runstate.hold_main(["--dev", "/dev/fake9", "--wait", "0", "--prebuild", "m:fp4:int8",
                                "--prebuild-cfg", "c.pkl", "--", "true", "x"]) == 0
     (pre, _), (cmd, env) = calls
     assert pre[:3] == ["nice", "-n", "19"] and pre[4:] == ["-m", "opentpu.host.prebuild", "--cfg",
                                                            "c.pkl", "m:fp4:int8"]
-    assert cmd == ["true", "x"] and env["OTPU_LOCK_HELD"] == "fake9"
+    assert cmd == ["true", "x"] and env["OTPU_LOCK_HELD"] == f"fake9:{os.getpid()}"
     calls.clear()
     assert runstate.hold_main(["--dev", "/dev/fake9", "--", "true"]) == 0
     assert [c for c, _ in calls] == [["true"]]
