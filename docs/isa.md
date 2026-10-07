@@ -150,9 +150,10 @@ is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + acc[j]` -- the flash-a
 correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed weights' format (below;
 0 = int8), bit6 `PAIR` (4-bit weights at full rate, "Column reuse"). The streamed rows are
 D-byte aligned (`sa` and `rs` are multiples of D): the MXU streams whole D-byte DRAM chunks.
-`0 < M <= ACT_ROWS`; RMAX, ASCALE and PAIR need `M <= MCOLS` (PAIR: `2*M <= MCOLS`), and an MM
-with `M > MCOLS` needs its streamed row to fit the MXU's chunk FIFO (`KB` chunks for int8,
-`ceil(KB/2)` for 4-bit; the board: 1024; a replayed row stays in the FIFO until its last group).
+`N >= 1`, `KB >= 1` and `0 < M <= ACT_ROWS`; RMAX, ASCALE and PAIR need `M <= MCOLS` (PAIR:
+`2*M <= MCOLS`), and an MM with `M > MCOLS` needs its streamed row to fit the MXU's chunk FIFO
+(`KB` chunks for int8, `ceil(KB/2)` for 4-bit; the board: 1024; a replayed row stays in the FIFO
+until its last group).
 
 ```
 for n in 0..N-1:

@@ -102,3 +102,13 @@ def test_gather_two_slices():
     for sl in m.slices:
         got = sl.tget(100 + np.arange(12)).reshape(2, 6)
         assert np.array_equal(got, np.array([[1, 1, 1, 2, 2, 2]] * 2, np.float32))
+
+
+def test_mm_needs_n_and_kb():
+    # N = 0 or KB = 0 is not an MM (docs/isa.md): the RTL's MXU skips it, which wrote nothing
+    # where the simulator wrote +0 (KB = 0) or failed on RMAX's empty rows (N = 0)
+    for n, kb in ((1, 0), (0, 1)):
+        ins = I.Instr(I.MM, flags=I.F_UNIT | I.F_RMAX,
+                      w=I._w(0, 0, 0, n | kb << 16, 32, 1 | 1 << 16))
+        with pytest.raises(SimError, match="MM: N and KB"):
+            run1([ins, I.halt()])

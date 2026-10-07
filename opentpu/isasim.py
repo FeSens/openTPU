@@ -418,6 +418,8 @@ class Slice:
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
         pair = bool(ins.flags & I.F_PAIR)
         R = 2 * M if pair else M                          # ACT rows read
+        if not N or not KB:
+            raise SimError("MM: N and KB must be at least 1")
         if not (0 < R <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
             raise SimError("MM: M or ACT RAM range out of bounds")
         if M > cfg.MCOLS and ins.flags & (I.F_RMAX | I.F_ASCALE):
