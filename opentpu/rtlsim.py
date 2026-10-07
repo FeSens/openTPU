@@ -204,7 +204,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         axi: bool | None = None, boot: bool | None = None, stall: int | None = None,
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
         plusargs: list | None = None, args=None, ldc: int | None = None,
-        pokes: dict | None = None, again: list | None = None, reload: bool = False):
+        pokes: dict | None = None, again: list | None = None, reload: bool = False,
+        error_ok: bool = False):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
     run's arguments (R8..R15 at the start, as isasim.Machine). ldc: MEMORY's LDC for this run
     (the core at MEMORY's LDC_MHZ unless `plusargs` set +ldc_ratio: ldc_plusargs). pokes:
@@ -214,7 +215,9 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     (the memory path is not reset between them; tb_top +runs), each {"args": its arguments
     (default: the run before's), "pokes": {slice: [(DRAM byte address, uint32 word)]}, the
     host's writes before it (the native memory model only)}; reload: the programs loaded again
-    before each (boot only). The result is the state after the last run."""
+    before each (boot only). error_ok: a run that stops with an error (an illegal instruction,
+    a WAITW timeout) returns its state too, stats["error"] set. The result is the state after
+    the last run."""
     from . import isa as I
     run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
@@ -286,7 +289,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     if not m:
         raise RuntimeError(f"RTL simulation failed:\n{out[-3000:]}")
     cycles, halted, err = (int(x) for x in m.groups())
-    if not halted or err:
+    if not halted or (err and not error_ok):
         raise RuntimeError(f"RTL did not halt cleanly (halted={halted} error={err}):\n{out[-2000:]}")
     icounts = [int(x) for x in re.findall(r"SLICE \d+ icount=(\d+)", out)]
     drams = [np.fromfile(tmp / f"dram_out_{s}.bin", dtype=np.uint8) for s in range(cfg.S)]
@@ -300,6 +303,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
             drams[s][at:at + 4 * len(progs[s])] = 0
     tmems = [_read_hex(tmp / f"tmem_{s}.hex", cfg.TMEM_WORDS) for s in range(cfg.S)]
     stats = {"cycles": cycles, "instructions": icounts}
+    if error_ok:
+        stats["error"] = bool(err)
     if axi:
         # per channel: the model's reads, writes, row opens and partial writes, and the adapter's
         # counters; reads and writes as (commands, beats) (a native command is one beat), ar_a:

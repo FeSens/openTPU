@@ -35,7 +35,9 @@ module otpu_seq
   parameter int SID        = 0,
   parameter int S          = 1,
   parameter int D          = 32,
-  parameter int WIN        = 16
+  parameter int WIN        = 16,
+  parameter bit STREAMS    = 1'b1     // the stream engine (otpu_slice HAS_SS); 0: DSTEP and STREAM
+                                      //   are illegal instructions (ERROR), not a wait for SE
 ) (
   input  logic                clk,
   input  logic                rst,
@@ -293,7 +295,7 @@ module otpu_seq
     dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
   end
   int dunit;
-  always_comb dunit = unit_of(op);
+  always_comb dunit = (!STREAMS && (op == OP_DSTEP || op == OP_STREAM)) ? -1 : unit_of(op);
 
   // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
   // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,

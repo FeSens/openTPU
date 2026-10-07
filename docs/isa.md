@@ -311,7 +311,8 @@ written; `o` is written last. The scoreboard footprint: DRAM `[dram, dram + 4 ro
 TMEM `[qk, qk + 2 cols)`, `[v, v + rows)` and `{g, g + gs}` read, `[o, o + rows)` written.
 A bitstream without it leaves CAPS bit6 clear; the compiler then emits the VOP sequence
 (`Config.DSTEP = False`, the default of `board_config`; the host takes it from CAPS through
-`device_config`).
+`device_config`). Its slice takes DSTEP and STREAM as illegal instructions: the run stops with
+ERROR (otpu_seq STREAMS; before fix-board the DMA waited for the missing stream engine forever).
 
 On the board DSTEP runs on the stream engine (`docs/stream.md`): the DMA moves the state, and
 the VPU's slot-0 partial loop and tree plus the tail (`rtl/vpu/otpu_se_tail.sv`) compute. It
@@ -402,10 +403,16 @@ still does not hold is the timeout (SimError).
 
 In the RTL (otpu_dma, CAPS bit31) it is an LD of one word whose TMEM write waits for the
 compare: the chunk is read, the word taken, compared a cycle later and written through lane 0,
-or, if it does not hold, read again after `w5` cycles. At the timeout the slice stops: STATUS
-shows HALTED, ERROR and WAIT_TO (bit8; the first WAITW bitstream, be824d5, shows HALTED and ERROR
-only), until RUN falls. The scoreboard sees all of DRAM as written (older DRAM readers and
-writers complete first, younger ones wait) and the TMEM word.
+or, if it does not hold, read again after `w5` cycles. The timeout is taken between two reads:
+a read in flight when `w6` cycles have passed still completes the WAITW if its word holds, so a
+WAITW either completes (the word written, younger instructions go on) or times out (nothing
+written). At the timeout the slice stops: the sequencer and the units are held in reset (no
+instruction starts or ends after it; TMEM, the DRAM and ICOUNT stay as they were), and STATUS
+shows HALTED (once the units are stopped and WR_IDLE holds), ERROR and WAIT_TO (bit8; the first
+WAITW bitstream, be824d5, shows HALTED and ERROR only), until RUN falls. Bitstreams before
+fix-board showed HALTED at once while the other units went on, and a read in flight at the
+timeout could still complete the WAITW after ERROR rose. The scoreboard sees all of DRAM as
+written (older DRAM readers and writers complete first, younger ones wait) and the TMEM word.
 
 On the card, `tools/qual/waitw.py` (qual.sh, and otpu-diag's `waitw-host` group) checks that
 order (opentpu/host/checks.py `waitw_host`). In each round the host:

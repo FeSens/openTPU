@@ -242,6 +242,64 @@ def test_pattern_and_address_lines_on_board_model(have_verilator):
         assert ok, msg
 
 
+# ------------------------------------------------------------------------------ stops and resets
+@pytest.mark.parametrize("native", [True, "ld"])
+@pytest.mark.parametrize("after", [600, 2500])
+def test_run_dropped_then_load_and_run_at_once(have_verilator, native, after):
+    """CTRL = 0 in the middle of a run that streams reads and writes, then at once (without the
+    wait for WR_IDLE, docs/observability.md "Stopping a run") a LOAD of another program and its
+    RUN: the loader takes none of the dropped run's read data still in flight (it starts once the
+    memory adapter's reads are all back), the run starts once its writes are answered, and the
+    second program's results and instruction count are the ISA simulator's. Before, the loader
+    wrote the dropped run's late read data into IMEM as the new program."""
+    import dataclasses
+    from opentpu import isa as I
+    from opentpu.host.checks import PROG_AT, ZERO_AT, demo_image, demo_program
+    from opentpu.isasim import Machine
+    a_out = 0x300000                                    # the dropped run's stores (not compared)
+    prog_a = [I.loop(2, 1 << 20), I.ld(0, 0, 16384), I.st(a_out, 0, 16384), I.halt()]
+    prog_b = [I.ld(ZERO_AT, 0, CFG.TMEM_WORDS)] + demo_program()
+    img = demo_image()
+    ref = np.zeros(CFG.DRAM_BYTES, np.uint8)
+    ref[:len(img)] = img
+    sl = Machine(dataclasses.replace(CFG, DRAM_BYTES=len(ref)), [prog_b], [ref]).run().slices[0]
+    t = SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, stall=50, seed=after, native=native,
+                     plusargs=["+max_cycles=4000000"])
+    b = Board(t, check=False)
+    b.write(0, img)
+    words = [np.asarray(I.assemble(p), np.uint32) for p in (prog_a, prog_b)]
+    at = [PROG_AT, PROG_AT + 0x10000]
+    for a, w in zip(at, words):
+        b.write(a, w.view(np.uint8))
+
+    def load(a, w):
+        t.reg_write(R.R_CTRL, 0)
+        t.reg_write(R.R_PROG_ADDR, a)
+        t.reg_write(R.R_PROG_N, len(w) // 8)
+        t.reg_write(R.R_CTRL, R.CTRL_LOAD)
+        t.poll(R.R_STATUS, R.ST_LOADING, 0)
+    load(at[0], words[0])
+    t.reg_write(R.R_CTRL, R.CTRL_CLEAR)
+    t.reg_write(R.R_CTRL, R.CTRL_RUN)
+    t.wait_cycles(after)
+    load(at[1], words[1])                               # (its CTRL = 0 drops the run)
+    st = b.run(timeout=10.0)
+    assert st["instructions"][0] == sl.icount
+    assert np.array_equal(b.read(0, a_out), sl.dram[:a_out])
+
+
+def test_stream_without_the_stream_engine_is_an_error(have_verilator):
+    """On a bitstream without the stream engine (DSTEP = 0, CAPS bit6 clear) a DSTEP or STREAM
+    stops the run with ERROR, an illegal instruction (the sequencer had sent it to a unit that
+    is not there, and the run hung)."""
+    import dataclasses
+    from opentpu.host.checks import stream_program
+    b = Board(SimTransport(ch_bytes=CFG.DRAM_BYTES // 2, params={"DSTEP": 0},
+                           plusargs=["+max_cycles=400000"]))
+    with pytest.raises(RuntimeError, match="illegal instruction"):
+        run_demo(b, dataclasses.replace(CFG, DSTEP=True, STREAM=True), stream_program())
+
+
 # ------------------------------------------------------------------------------ Qwen3
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")

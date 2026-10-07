@@ -110,7 +110,7 @@ module otpu_board #(
   end
 
   // ---- control
-  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle, a_inval;
+  logic run, ld_start, ld_busy, halted, error, wait_to, wr_idle, rd_idle, a_inval;
   logic [31:0] ld_addr, ld_n, icount;
   logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag, b_rdy;
@@ -166,9 +166,16 @@ module otpu_board #(
 
   // ---- the slice (held in reset while RUN is 0) and the collective unit (one slice).
   // core_rst reaches ~15k flip-flops across the die: synthesis replicates it (a single copy's
-  // net took 9.6 ns, the worst core_clk path at 100 MHz)
+  // net took 9.6 ns, the worst core_clk path at 100 MHz). A run starts from a quiet memory
+  // adapter (go_ok: no read in flight, every write taken, sampled while RUN is 0 and until the
+  // run starts): the adapter does not reset with RUN, so a run the host stopped leaves its reads
+  // and writes going, and the next run's units would take the old reads' data
   (* max_fanout = 256 *) logic core_rst;
-  always_ff @(posedge clk) core_rst <= rst || !run;
+  logic go_ok;
+  always_ff @(posedge clk) begin
+    go_ok <= !rst && ((run && go_ok) || (rd_idle && wr_idle));
+    core_rst <= rst || !run || !go_ok;
+  end
 
   logic         coll_req, coll_ack, coll_gl;
   cmd_t         coll_cmd;
@@ -183,7 +190,7 @@ module otpu_board #(
                .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
                .HAS_DSTEP(DSTEP)) u_slice (
     .clk, .sys_rst(rst), .rst(core_rst), .rinit(arg), .ld_start, .ld_addr, .ld_n, .ld_busy,
-    .a_rdy, .b_rdy, .sw_rdy, .wr_idle,
+    .a_rdy, .b_rdy, .sw_rdy, .wr_idle, .rd_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata, .a_rdata2,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
@@ -214,7 +221,7 @@ module otpu_board #(
         .a_be_x(a_be), .a_rvalid, .a_rdata, .a_rdata2,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
-    .b_rdata, .wr_idle,
+    .b_rdata, .wr_idle, .rd_idle,
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
     .n_rvalid, .n_rdata, .n_wdone);
 

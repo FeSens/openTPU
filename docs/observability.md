@@ -53,6 +53,27 @@ and `otpu-diag` show it too. The board model (`sim/verilator/tb_board.sv`) repor
 100000, BUILD_ID 0x0B0A4D00, TEMP code 0xA1A (45 °C) and no DDR_MTS (parameter 0, CAPS bit3
 clear).
 
+### Stopping a run
+
+CTRL RUN 1 -> 0 before HALTED (a host abort: a timeout, a crashed process's next open) holds
+the slice in reset at once, but the board's DRAM adapter (`otpu_native_dram`) does not reset
+with RUN: the writes the slice gave it still go to the controllers, and its reads still come
+back. The host's sequence:
+
+1. write CTRL = 0;
+2. poll STATUS until WR_IDLE (bit3) is 1: every write of the stopped run is then taken by the
+   DDR3 controllers, and a host DMA write to the same DRAM lands after it (before, it could land
+   first and be overwritten);
+3. then write the DRAM, LOAD, run.
+
+The hardware itself keeps the stopped run's reads out of what follows (fix-board; bitstreams
+before it took them): a LOAD starts reading the program only once no read is in flight (it
+took an old read's data for its first rows), and RUN releases the slice only once no read is
+in flight and every write is taken (the units of the new run took the old reads' data). A
+HALT CHAIN reload that the abort interrupts stops; a LOAD written meanwhile restarts the
+loader. A WAITW timeout stops the slice the same way (sequencer and units held in reset, TMEM
+and the DRAM kept), and HALTED rises once the units are stopped and WR_IDLE holds.
+
 ### Free-running counters
 
 These are never cleared by CLEAR, only by the core reset (the bitstream load; the core reset

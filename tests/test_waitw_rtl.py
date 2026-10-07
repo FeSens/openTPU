@@ -76,6 +76,35 @@ def test_waitw_times_out(have_verilator):
         rtlsim.run(cfg, [prog], [_dram(cfg)], max_cycles=100000)
 
 
+def test_waitw_completes_or_times_out_never_both(have_verilator):
+    """The flag lands around the timeout (the host's write swept across it; reads back to back,
+    so one is in flight at the timeout): the WAITW either completes (its word in TMEM, the store
+    after it done, no error; as on the ISA simulator) or stops the slice with the error (nothing
+    written, the store not done, HALTED once the units stopped) -- never both. The DMA takes the
+    timeout between reads only: a read in flight at the timeout still ends it if its word holds
+    (otpu_dma ww_late; before, the error came at the timeout, and that read's word was written
+    and the program ran on with HALTED and ERROR already up)."""
+    from opentpu import rtlsim
+    cfg = Config(S=1, DRAM_BYTES=1 << 20)
+    to = 300
+    prog = [I.waitw(FLAG, 32, 0x40, I.C_EQ, interval=0, timeout=to), I.st(OUT, 32, 8), I.halt()]
+    m = Machine(cfg, [prog], [_dram(cfg)])
+    m.host = lambda mach: mach.slices[0].m32.__setitem__(FLAG // 4, np.uint32(0x40))
+    m.run()
+    seen = set()
+    for c in range(to - 40, to + 30, 3):
+        drams, tmems, st = rtlsim.run(cfg, [prog], [_dram(cfg)], pokes={0: [(c, FLAG, 0x40)]},
+                                      error_ok=True, max_cycles=20000)
+        word, out = int(tmems[0][32]), int(drams[0][OUT:OUT + 4].view("<u4")[0])
+        if st["error"]:
+            assert (word, out) == (0, 0), f"the flag at cycle {c}: the error, and the word written"
+        else:
+            assert np.array_equal(drams[0], m.slices[0].dram), f"the flag at cycle {c}"
+            assert np.array_equal(tmems[0], m.slices[0].tmem), f"the flag at cycle {c}"
+        seen.add(st["error"])
+    assert seen == {False, True}                    # the sweep crosses the timeout
+
+
 def test_waitw_after_a_store_on_the_board_memory_path(have_verilator):
     """On the board's configuration and memory path: an older store to the word lands before
     WAITW's first read (EQ holds at once), and a younger store waits for it."""
