@@ -209,10 +209,10 @@ python3 tools/validate.py --model lfm2 --backend rtl --against isa --tokens 3 "T
 # the card against the ISA simulator, bit for bit, on the card host
 otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --against isa
 
-# or the simulator's half first on a build host, to keep the card session short
-# (cfg.pkl: the card's configuration, from tools/qual/refs.py cfg)
-python3 tools/validate.py --model qwen3 --cfg cfg.pkl --save isa.npz
-otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --against isa.npz
+# or only the card's run under the lock, and the rest on another host: the ISA simulator then
+# runs in the configuration the card ran in
+otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --no-golden --save card.npz
+python3 tools/validate.py --model qwen3 --against card.npz
 ```
 
 Each prompt (eight by default, 16 tokens each) prints the device's continuation and the

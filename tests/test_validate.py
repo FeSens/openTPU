@@ -206,3 +206,30 @@ def test_the_card_path_on_a_fake_card():
     isa, c2 = V.run_device("isa", spec, None, 256, PROMPTS, a, card=(factory, cfg), W=W)
     assert V.arch(c) == V.arch(c2)
     assert V.agreement(runs, isa)["pass"] and sum(len(r["tokens"]) for r in runs) == 12
+
+
+def test_the_command_line_on_a_tiny_checkpoint(tmp_path, capsys):
+    """main() end to end on a tiny Qwen3 checkpoint (and a word-level tokenizer) on disk: the
+    ISA run saved without the golden, then a run against it with the golden: PASS, exit 0, the
+    two runs bit for bit, --json written; a saved run of other prompts is refused."""
+    import json
+
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    m, _, _ = _tiny("qwen3")
+    m.config.eos_token_id = 999
+    m.save_pretrained(tmp_path)
+    tk = Tokenizer(models.WordLevel({f"t{i}": i for i in range(1000)}, unk_token="t0"))
+    tk.pre_tokenizer = pre_tokenizers.Whitespace()
+    transformers.PreTrainedTokenizerFast(tokenizer_object=tk).save_pretrained(tmp_path)
+    prompts = [" ".join(f"t{t}" for t in p) for p in PROMPTS]
+    run = str(tmp_path / "isa.npz")
+    base = ["--model", str(tmp_path), "--tokens", "6"]
+    assert V.main(base + ["--no-golden", "--save", run] + prompts) == 0
+    assert V.main(base + ["--against", run, "--json", str(tmp_path / "r.json")] + prompts) == 0
+    out = capsys.readouterr().out
+    assert "logits bit-exact in 2/2" in out and out.rstrip().endswith("PASS")
+    res = json.loads((tmp_path / "r.json").read_text())
+    assert res["pass"] and res["against"]["pass"] and res["goldens"]["quant"]["top1"] == 1.0
+    assert res["prompts"][1]["ids"] == PROMPTS[1]
+    with pytest.raises(SystemExit):
+        V.main(base + ["--against", run] + prompts[:1])

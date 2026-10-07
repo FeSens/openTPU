@@ -6,9 +6,9 @@ CPU with openTPU's quantization, and (--against) next to a second device.
                               [--head-format int8|int4|fp4] [--formats SPEC]
                               [--backend isa|rtl|board] [--against isa|rtl|board|RUN.npz]
                               [--cfg board|design|CFG.pkl] [--resident] [--tokens 16] [--chat]
-                              [--weights-only] [--no-fp32] [--min-top1 F] [--kl-ratio R]
-                              [--max-kl NATS]
-                              [--save RUN.npz] [--json OUT.json] [prompt ...]
+                              [--weights-only] [--no-fp32] [--no-golden] [--min-top1 F]
+                              [--kl-ratio R] [--max-kl NATS] [--save RUN.npz] [--json OUT.json]
+                              [prompt ...]
 
 The golden ("W+A"): the Hugging Face model with every matmul weight the device streams replaced
 by the values the device multiplies (the model image's quantize_mxu in the format the image
@@ -36,8 +36,9 @@ only the top-1 bound holds.
 --against runs a second device on the same prompts, or reads a run saved with --save: the
 tokens must be the same and the logits bit-exact (the card and the simulators run the same
 programs on the same arithmetic), else the run fails; it reports the largest difference in
-ulps and the first step that differs. A saved run lets the ISA side run on a build host
-(--cfg the card's configuration, tools/qual/refs.py cfg) and keeps the card session short.
+ulps and the first step that differs. A card session can be the card's run alone (--backend
+board --no-golden --save CARD.npz, seconds of the card); --against CARD.npz on a build host
+then runs the ISA simulator in the configuration the card ran in, and the golden.
 
 Devices: isa, the ISA simulator in --cfg's configuration (default isasim.board_config, with
 OTPU_MCOLS etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
@@ -46,7 +47,7 @@ LFM2.5-230M); board, the card through the host driver as otpu-chat --backend boa
 under otpu-lock on the card host; a simulator then takes the card's configuration from its
 registers). The device runs first and is freed before Hugging Face loads (Qwen3.5-0.8B's ISA
 run peaks near 9 GB). Gemma 4 and the MoE models are not supported (unsupported()). Exit
-status 0: PASS, 1: FAIL.
+status 0: PASS, 1: FAIL, 3: the card is in use (otpu-chat's).
 """
 from __future__ import annotations
 
@@ -57,7 +58,7 @@ import json
 import os
 import pickle
 import sys
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import numpy as np
@@ -293,14 +294,15 @@ def device_runs(eng, prompts, n: int, eos) -> list:
 
 
 def sim_cfg(spec, cap: int, a, card=None):
-    """The simulators' configuration: the card's (`card`, from its registers), else --cfg's
-    ("board": isasim.board_config; a pickled Config; "design": None, the Engine's default),
-    with the DRAM cut to what the model needs (host.board.sim_config, as tools/qual/refs.py)."""
+    """The simulators' configuration: the card's (`card`: from its registers, or the one a saved
+    card run ran in), else --cfg's ("board" or none: isasim.board_config; a pickled Config;
+    "design": None, the Engine's default), with the DRAM cut to what the model needs
+    (host.board.sim_config, as tools/qual/refs.py)."""
     from opentpu.host.board import sim_config
     from opentpu.isasim import board_config
     if card is None and a.cfg == "design":
         return None
-    base = card or (board_config() if a.cfg == "board" else
+    base = card or (board_config() if a.cfg in (None, "board") else
                     pickle.loads(Path(a.cfg).read_bytes()))
     return sim_config(spec, cap, base, lookup=a.resident, wformat=a.wformat,
                       head_format=a.head_format)
@@ -482,20 +484,21 @@ HEAD = f"{'top-1':>7s}  {'KL mean':>9s}  {'KL max':>9s}  {'max|dl|':>8s}  {'min 
 
 
 def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limits) -> dict:
-    """Prints the comparison; returns it (the --json document) with "pass"."""
+    """Prints the comparison; returns it (the --json document) with "pass". modes: the goldens
+    in `gold` (none: the device and --against only)."""
     dec = (lambda t: tok.decode(t)) if tok else str
-    g0 = GOLDENS[modes[0]]
+    g0 = GOLDENS[modes[0]] if modes else None
     rows = [(f"device vs {GOLDENS[m]}", lambda e, m=m: e["goldens"][m]) for m in modes]
     pairs = [(f"{g0} vs fp32", "fp32", "its quantization's error"),
              (f"{g0}~ vs {g0}", "floor", "1-ulp input noise: the floor")]
-    pairs = [p for p in pairs if p[1] in gold[0]["pairs"]]
-    w = max(len(r[0]) for r in rows + pairs) + 3
+    pairs = [p for p in pairs if gold and p[1] in gold[0]["pairs"]]
+    w = max([len(r[0]) for r in rows + pairs] + [len(f"vs {other}") - 3, 14]) + 3
     res = {"prompts": [], "goldens": {}, "pairs": {}}
     for i, (text, ids, r) in enumerate(zip(texts, prompts, runs)):
         print(f"\n{text!r} ({len(ids)} tokens)")
         print(f"   {'device':{w - 3}s}: {dec(r['tokens'])!r}  {r['tokens']}")
         e = {"prompt": text, "ids": list(map(int, ids)), "device": r["tokens"], "goldens": {},
-             "pairs": gold[i]["pairs"]}
+             "pairs": gold[i]["pairs"] if gold else {}}
         for m in modes:
             g = gold[i]["goldens"][m]
             k = g["first_diff"]
@@ -504,7 +507,8 @@ def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limit
                 f"device's {dec(r['tokens'][k:k + 1])!r}; {dec(g['tokens'])!r}  {g['tokens']}"
             print(f"   {'golden ' + GOLDENS[m]:{w - 3}s}: {same}")
             e["goldens"][m] = g
-        print(f"   {'teacher forced':{w}s}{HEAD}")
+        if modes:
+            print(f"   {'teacher forced':{w}s}{HEAD}")
         for lab, get in rows:
             print(f"   {lab:{w}s}{fmt_div(summary([get(gold[i])]))}")
         if agree:
@@ -517,9 +521,11 @@ def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limit
                 f"|d| {p['max_abs']:.3g}"))
         res["prompts"].append(e)
     steps = sum(len(r["tokens"]) for r in runs)
-    print(f"\nall {len(runs)} prompts, {steps} tokens from {dev_name}, teacher forced on the "
-          f"device's sequences:")
-    print(f"   {'':{w}s}{HEAD}")
+    ok, lines = True, []
+    if modes:
+        print(f"\nall {len(runs)} prompts, {steps} tokens from {dev_name}, teacher forced on the "
+              f"device's sequences:")
+        print(f"   {'':{w}s}{HEAD}")
     for m in modes:
         s = summary([g["goldens"][m] for g in gold])
         same = sum(g["goldens"][m]["first_diff"] is None for g in gold)
@@ -530,20 +536,21 @@ def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limit
         s = summary([g["pairs"][key] for g in gold])
         print(f"   {lab:{w}s}{fmt_div(s)}   ({what})")
         res["pairs"][key] = s
-    first = res["goldens"][modes[0]]
-    min_top1, ratio, max_kl = limits
-    ok = first["top1"] >= min_top1
-    line = f"device vs golden {g0}: top-1 {100 * first['top1']:.1f}% (at least " \
-        f"{100 * min_top1:g}%), KL mean {first['kl_mean']:.2e} "
-    if modes[0] == "quant":                 # the floor: what rounding alone does to the golden
-        fl = res["pairs"]["floor"]["kl_mean"]
-        cap = max(max_kl, ratio * fl)
-        ok = ok and first["kl_mean"] <= cap
-        line += (f"= {first['kl_mean'] / fl:.2f}x the floor's {fl:.2e}" if fl > 0 else
-                 "(the floor 0)") + f" (at most {cap:.2e})"
-    else:                                   # (the device rounds activations; this golden not)
-        line += "(no KL bound without the activations' rounding)"
-    lines = [line + f": {'ok' if ok else 'FAIL'}"]
+    if modes:
+        first = res["goldens"][modes[0]]
+        min_top1, ratio, max_kl = limits
+        ok = first["top1"] >= min_top1
+        line = f"device vs golden {g0}: top-1 {100 * first['top1']:.1f}% (at least " \
+            f"{100 * min_top1:g}%), KL mean {first['kl_mean']:.2e} "
+        if modes[0] == "quant":             # the floor: what rounding alone does to the golden
+            fl = res["pairs"]["floor"]["kl_mean"]
+            cap = max(max_kl, ratio * fl)
+            ok = ok and first["kl_mean"] <= cap
+            line += (f"= {first['kl_mean'] / fl:.2f}x the floor's {fl:.2e}" if fl > 0 else
+                     "(the floor 0)") + f" (at most {cap:.2e})"
+        else:                               # (the device rounds activations; this golden not)
+            line += "(no KL bound without the activations' rounding)"
+        lines.append(line + f": {'ok' if ok else 'FAIL'}")
     if agree:
         res["against"] = {"device": other, **agree}
         a = agree
@@ -551,6 +558,8 @@ def report(tok, texts, prompts, runs, gold, modes, dev_name, other, agree, limit
                      f" prompts, logits bit-exact in {a['bit_exact']}/{len(runs)} ({a['steps']} "
                      f"steps, max {a['max_ulp']} ulp): {'ok' if a['pass'] else 'FAIL'}")
         ok = ok and a["pass"]
+    if not lines:
+        lines.append(f"{steps} tokens from {dev_name}; nothing to compare (--no-golden)")
     print("\n" + "\n".join(lines))
     print("PASS" if ok else "FAIL")
     res["pass"] = ok
@@ -577,9 +586,9 @@ def _main(argv=None) -> int:
     ap.add_argument("--backend", default="isa", choices=["isa", "rtl", "board"])
     ap.add_argument("--against", help="a second device (isa, rtl, board) or a run saved with "
                     "--save: tokens and logits must be identical")
-    ap.add_argument("--cfg", default="board", help="the simulators' configuration: board "
-                    "(isasim.board_config), design, or a pickled Config (tools/qual/refs.py "
-                    "cfg); with the card, its own")
+    ap.add_argument("--cfg", help="the simulators' configuration: board (the default, "
+                    "isasim.board_config), design, or a pickled Config (tools/qual/refs.py cfg);"
+                    " with the card, or --against a saved card run, the card's")
     ap.add_argument("--dev", default="/dev/xdma0", help="the card's XDMA device")
     ap.add_argument("--resident", action="store_true", help="the resident decode program")
     ap.add_argument("--tokens", type=int, default=16, help="greedy tokens per prompt")
@@ -588,6 +597,8 @@ def _main(argv=None) -> int:
     ap.add_argument("--weights-only", action="store_true", help="the golden quantizes the "
                     "weights only (fp32 activations)")
     ap.add_argument("--no-fp32", action="store_true", help="no fp32 golden")
+    ap.add_argument("--no-golden", action="store_true", help="no golden: the device's run "
+                    "(--save) and --against only (a card session's part)")
     ap.add_argument("--min-top1", type=float, default=MIN_TOP1,
                     help="the device's top-1 agreement with the golden, at least")
     ap.add_argument("--kl-ratio", type=float, default=KL_RATIO,
@@ -620,35 +631,41 @@ def _main(argv=None) -> int:
     meta = {"model": path.name, "wformat": a.wformat, "head_format": a.head_format,
             "formats": os.environ.get("OTPU_FORMATS"), "tokens": a.tokens,
             "prompts": len(prompts), "resident": a.resident}
-    saved = a.against and a.against not in ("isa", "rtl", "board")
     card = open_card(spec, path, cap, a.dev) if "board" in (a.backend, a.against) else None
+    other = name = None
+    if a.against and a.against not in ("isa", "rtl", "board"):     # a saved run
+        other, m = load_run(a.against, meta, prompts)
+        name = f"{m.get('backend', 'saved')} ({Path(a.against).name})"
+        if card is None and a.cfg is None and m.get("backend") == "board":
+            from opentpu.isasim import Config         # the simulators in the card's configuration
+            card = (None, Config(**m["config"]))
     runs, cfg = run_device(a.backend, spec, path, cap, prompts, a, card)
     if a.save:
         save_run(a.save, runs, {**meta, "backend": a.backend, "cfg": repr(cfg),
-                                "arch": arch(cfg)}, prompts)
+                                "arch": arch(cfg), "config": asdict(cfg)}, prompts)
         print(f"saved the {a.backend} run in {a.save}")
-    agree = name = None
-    if a.against:
-        if saved:
-            other, m = load_run(a.against, meta, prompts)
-            if m.get("arch") != arch(cfg):          # (the DRAM size aside)
-                print(f"note: {a.against} ran in {m.get('cfg')}, this device in {cfg}: other "
-                      f"programs, bit-exact logits not expected")
-            name = f"{m.get('backend', 'saved')} ({Path(a.against).name})"
-        else:
-            other, _ = run_device(a.against, spec, path, cap, prompts, a, card)
-            name = a.against
+    agree = None
+    if other is not None:
+        if m.get("arch") != arch(cfg):              # (the DRAM size aside)
+            print(f"note: {a.against} ran in {m.get('cfg')}, this device in {cfg}: other "
+                  f"programs, bit-exact logits not expected")
+    elif a.against:
+        other, _ = run_device(a.against, spec, path, cap, prompts, a, card)
+        name = a.against
+    if other is not None:
         agree = agreement(runs, other)
-    # Hugging Face after the device (freed): fp32 on the CPU
-    torch.set_grad_enabled(False)
-    hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32)
-    golden = Golden(hf, spec, a.wformat, a.head_format)
-    modes = ["weights" if a.weights_only else "quant"] + ([] if a.no_fp32 else ["fp32"])
-    gold = against_golden(golden, prompts, runs, modes, a.tokens, spec.eos)
+    gold, modes, formats = None, [], None
+    if not a.no_golden:             # Hugging Face after the devices (freed): fp32 on the CPU
+        torch.set_grad_enabled(False)
+        hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32)
+        golden = Golden(hf, spec, a.wformat, a.head_format)
+        modes = ["weights" if a.weights_only else "quant"] + ([] if a.no_fp32 else ["fp32"])
+        gold = against_golden(golden, prompts, runs, modes, a.tokens, spec.eos)
+        formats = golden.formats
     res = report(tok, a.prompts, prompts, runs, gold, modes, a.backend, name, agree,
                  (a.min_top1, a.kl_ratio, a.max_kl))
     if a.json:
-        res.update(meta=meta, cfg=repr(cfg), backend=a.backend, formats=golden.formats)
+        res.update(meta=meta, cfg=repr(cfg), backend=a.backend, formats=formats)
         Path(a.json).write_text(json.dumps(res, indent=1))
     return 0 if res["pass"] else 1
 
