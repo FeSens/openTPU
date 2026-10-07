@@ -187,6 +187,74 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 | `otpu-lens` | record a run and open it in the profiler |
 | `otpu-selftest`, `otpu-diag` | check that the card works |
 
+## Validating against Hugging Face
+
+`tools/validate.py` checks a device's greedy tokens and logits against a CPU golden: the same
+checkpoint in Hugging Face transformers, fp32 on the CPU, with openTPU's quantization. The
+golden's weights are the values the matrix unit multiplies (the model image's own quantizer,
+in the formats you pick), and its activations are rounded to int8 per 128 values wherever the
+device's quantizer rounds them: every matmul input, and in attention the query, K, V and the
+softmax weights. The device is the ISA simulator, the RTL (Verilator) or the card, and
+`--against` adds a second device that must give the same tokens and bit-identical logits. It
+is measured on Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B; Gemma 4 and the MoE models are not
+supported.
+
+```sh
+python3 tools/validate.py --model qwen3                                    # ISA simulator, int8
+python3 tools/validate.py --model lfm2 --wformat fp4 --head-format int8   # 4-bit layers
+
+# the RTL against the ISA simulator: minutes a token, so one prompt and a few tokens
+python3 tools/validate.py --model lfm2 --backend rtl --against isa --tokens 3 "The capital of France is"
+
+# the card against the ISA simulator, bit for bit, on the card host
+otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --against isa
+
+# or the simulator's half first on a build host, to keep the card session short
+# (cfg.pkl: the card's configuration, from tools/qual/refs.py cfg)
+python3 tools/validate.py --model qwen3 --cfg cfg.pkl --save isa.npz
+otpu-lock -- python3 tools/validate.py --model qwen3 --backend board --against isa.npz
+```
+
+Each prompt (eight by default, 16 tokens each) prints the device's continuation and the
+goldens'. Then the device's own tokens are fed to the golden, so that every step compares the
+same context, and the tool prints the top-1 agreement, the mean and largest KL divergence, the
+largest logit difference and the lowest cosine. The summary has four rows:
+
+| Row | What it is |
+|:--|:--|
+| device vs W+A | the device against the quantized golden: the check |
+| device vs fp32 | the device against the plain checkpoint |
+| W+A vs fp32 | what the quantization alone costs |
+| W+A~ vs W+A | the golden against itself with its inputs nudged by one fp32 ulp: the floor |
+
+The golden cannot round exactly as the device does: its sums, norms and exponentials differ in
+the last bits. Once one int8 value rounds the other way, the difference spreads through the
+layers after it. So on a real model the device sits about as far from the quantized golden as
+the golden sits from itself after a one-ulp nudge, and a healthy device is near that floor.
+With 4-bit weights the floor is far below the fp32 rows. Measured on the ISA simulator, with
+the eight default prompts and 16 tokens each:
+
+| Model | Weights | device vs W+A: top-1, KL | floor KL | device vs fp32: top-1, KL | W+A vs fp32 KL |
+|:--|:--|--:|--:|--:|--:|
+| LFM2.5-230M | int8 | 96.2%, 0.0038 | 0.0039 | 96.2%, 0.0055 | 0.0050 |
+| LFM2.5-230M | 4-bit, int8 head | 94.6%, 0.0045 | 0.0041 | 80.6%, 0.152 | 0.157 |
+| Qwen3-0.6B | int8 | 99.2%, 0.0147 | 0.0131 | 92.2%, 0.052 | 0.042 |
+| Qwen3-0.6B | 4-bit, int8 head | 97.7%, 0.0155 | 0.0185 | 85.2%, 0.166 | 0.166 |
+| Qwen3.5-0.8B | int8 | 96.1%, 0.0020 | 0.0017 | 97.7%, 0.0033 | 0.0029 |
+| Qwen3.5-0.8B | 4-bit, int8 head | 96.9%, 0.0020 | 0.0021 | 88.3%, 0.076 | 0.077 |
+
+KL is the mean KL(golden || device) in nats per token. The device's KL from the quantized
+golden is 0.84 to 1.16 times the floor's, and its distance from fp32 is what the quantization
+alone predicts. A run takes 2 to 14 minutes on a 16-core host and peaks at 2.5 GB (LFM2) to
+8.6 GB (Qwen3.5).
+
+A run passes when the device agrees with the quantized golden on at least 80% of the top-1
+tokens and its mean KL is at most three times the floor's (`--min-top1`, `--kl-ratio`), and,
+with `--against`, when both devices give the same tokens and bit-identical logits. The exit
+status is 0 for PASS and 1 for FAIL, and `--json` writes every step for scripts.
+`--weights-only` drops the activation rounding from the golden (then only the top-1 bound
+holds), and `--no-fp32` skips the fp32 rows.
+
 ## Where to start reading
 
 1. [docs/isa.md](docs/isa.md): the instruction set. Everything else is built on it.

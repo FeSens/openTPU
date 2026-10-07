@@ -158,7 +158,7 @@ def test_a_device_off_the_golden_fails(qwen3_int8, capsys):
     golden = V.Golden(m, spec)
     gold = V.against_golden(golden, PROMPTS, runs, ["quant"], 8, spec.eos)
     res = V.report(None, ["a", "b"], PROMPTS, runs, gold, ["quant"], "isa", None, None,
-                   (V.MIN_TOP1, V.MAX_KL))
+                   (V.MIN_TOP1, V.KL_RATIO, V.MAX_KL))
     assert res["pass"] and "PASS" in capsys.readouterr().out
     bad = [dict(r, logits=r["logits"].copy()) for r in runs]
     for st in range(4):
@@ -166,7 +166,7 @@ def test_a_device_off_the_golden_fails(qwen3_int8, capsys):
         lg[(np.argmax(lg) + 1) % len(lg)] += 4 * np.ptp(lg)
     gold = V.against_golden(golden, PROMPTS, bad, ["quant"], 8, spec.eos)
     res = V.report(None, ["a", "b"], PROMPTS, bad, gold, ["quant"], "isa", None, None,
-                   (V.MIN_TOP1, V.MAX_KL))
+                   (V.MIN_TOP1, V.KL_RATIO, V.MAX_KL))
     assert not res["pass"] and res["goldens"]["quant"]["top1"] < V.MIN_TOP1
 
 
@@ -182,3 +182,27 @@ def test_saved_runs_read_back(qwen3_int8, tmp_path):
         V.load_run(f, meta, [PROMPTS[0], PROMPTS[1][:-1]])
     with pytest.raises(SystemExit):
         V.load_run(f, {**meta, "wformat": "fp4"}, PROMPTS)
+
+
+def test_the_card_path_on_a_fake_card():
+    """run_device's board path (an Engine on BoardBackend; prefill runs and streamed step
+    logits) on a fake card that computes with the ISA simulator, against run_device's isa path
+    in the card's configuration (--backend board --against isa): bit for bit."""
+    from argparse import Namespace
+
+    from conftest import IsaCard
+    from opentpu.host.board import BoardBackend, sim_config
+    from opentpu.llm.qwen3 import HEAD_CHUNK, PREFILL_ROWS
+    _, W, spec = _tiny("qwen3")
+    cfg = sim_config(spec, 256)
+    card = IsaCard(cfg, None, 4 * min(HEAD_CHUNK, cfg.TMEM_WORDS // 8))
+    # the logits show late, in pieces (IsaCard; whole 128-byte beats: a piece is padded to them)
+    card.late = (spec.image(cfg, 256, 1, PREFILL_ROWS).io["logits"], 4 * spec.vocab // 128 * 128)
+
+    def factory(c, imgs):
+        return BoardBackend(c, imgs, transport=card, model="tiny")
+    a = Namespace(wformat="int8", head_format=None, resident=False, tokens=6, cfg="board")
+    runs, c = V.run_device("board", spec, None, 256, PROMPTS, a, card=(factory, cfg), W=W)
+    isa, c2 = V.run_device("isa", spec, None, 256, PROMPTS, a, card=(factory, cfg), W=W)
+    assert V.arch(c) == V.arch(c2)
+    assert V.agreement(runs, isa)["pass"] and sum(len(r["tokens"]) for r in runs) == 12
