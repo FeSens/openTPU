@@ -32,18 +32,15 @@ def _cos(a, b):
     return (a * b).sum(-1) / np.linalg.norm(a, axis=-1) / np.linalg.norm(b, axis=-1)
 
 
-@pytest.fixture(scope="module")
-def tiny(tmp_path_factory):
-    """head_dim 128 (sliding) and 256 (global, 32 rotated pairs), 8 query heads on 1 KV head
-    (two parts of 4 on the board's MXU), a double-wide MLP in the shared layers, a 128-wide
-    per-layer input. k_norm near the real model's 0.13 (attention is not scaled by 1/sqrt(d):
-    with k_norm ~1 the scores are ~10x larger and int8 K dominates the error)."""
+def _model(d, kinds=KINDS, shared=3):
+    """A tiny random Gemma 4 of these layer kinds, the last `shared` reading earlier layers'
+    K / V: (HF model, weights, Spec), its config.json in d."""
     torch.manual_seed(0)
     hc = transformers.Gemma4TextConfig(
-        hidden_size=256, num_hidden_layers=len(KINDS), num_attention_heads=8,
+        hidden_size=256, num_hidden_layers=len(kinds), num_attention_heads=8,
         num_key_value_heads=1, head_dim=128, global_head_dim=256, intermediate_size=512,
         vocab_size=1000, vocab_size_per_layer_input=1000, hidden_size_per_layer_input=128,
-        layer_types=list(KINDS), num_kv_shared_layers=3, use_double_wide_mlp=True,
+        layer_types=list(kinds), num_kv_shared_layers=shared, use_double_wide_mlp=True,
         sliding_window=512, final_logit_softcapping=30.0, max_position_embeddings=4096)
     hc._attn_implementation = "eager"
     m = transformers.models.gemma4.modeling_gemma4.Gemma4ForCausalLM(hc).float().eval()
@@ -56,9 +53,17 @@ def tiny(tmp_path_factory):
             if n.endswith("layer_scalar"):
                 b.copy_(0.5 + torch.rand_like(b))
     W = {k: v.float().numpy() for k, v in m.state_dict().items()}
-    d = tmp_path_factory.mktemp("gemma4")
     (d / "config.json").write_text(json.dumps(hc.to_dict()))
     return m, W, G.Spec.from_hf(d)
+
+
+@pytest.fixture(scope="module")
+def tiny(tmp_path_factory):
+    """head_dim 128 (sliding) and 256 (global, 32 rotated pairs), 8 query heads on 1 KV head
+    (two parts of 4 on the board's MXU), a double-wide MLP in the shared layers, a 128-wide
+    per-layer input. k_norm near the real model's 0.13 (attention is not scaled by 1/sqrt(d):
+    with k_norm ~1 the scores are ~10x larger and int8 K dominates the error)."""
+    return _model(tmp_path_factory.mktemp("gemma4"))
 
 
 def _cfg():
@@ -94,6 +99,29 @@ def test_tiny_matches_hf_and_emulation(tiny):
     assert _cos(dev, hf).min() > 0.985          # int8 noise of a random model (emulation 0.991)
     emu = G.softcap(spec, G.emulated_logits(spec, W, toks[:12]))
     assert _cos(dev[:12], emu).min() > 0.99
+
+
+def test_emulation_rounds_ties_as_the_device(tmp_path):
+    """A 4-bit LM head's rows (the embedding rows) quantize to int8 with exact ties (fp4 codes
+    3 and 6 make 63.5), at the input of the PLE projection: _fake_q rounds a tie as the
+    device's quantizer does, so every row's int8 values are fp32.quantize's. On one global
+    layer with per-layer inputs, in fp4, emulated_logits is then the ISA simulator's logits to
+    fp32 rounding at every position (with the ties rounded half to even, 6 of the 12 positions
+    were 0.5 to 1% off; Hugging Face's forward with the device's weights, PLE records and
+    quantizer agrees with the device)."""
+    from opentpu import fp32 as F
+    from opentpu.llm.qwen3 import _fake_q, _fake_w
+    _, W, spec = _model(tmp_path, (F_,), 0)
+    xb = (_fake_w(W["model.embed_tokens.weight"], 128, "fp4") * 16).reshape(1000, -1, 128)
+    s = np.maximum(np.abs(xb).max(-1, keepdims=True), 1e-30) / 127     # (token 0's row: 0)
+    r = xb / s
+    assert (np.abs(r - np.rint(r)) > 0.5 - 1e-9).sum() > 10000
+    assert np.array_equal(np.rint(_fake_q(xb) / s), F.quantize(xb.astype(np.float32))[0])
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
+    eng = Engine(spec, W, cap=1024, cfg=_cfg(), wformat="fp4")
+    dev = np.array([eng.step(t) for t in toks])
+    emu = G.emulated_logits(spec, W, toks, wformat="fp4")
+    assert np.abs(dev - emu).max() < 1e-5 * np.abs(emu).max()
 
 
 MIX = "attn@0-2=fp4,down@3-5=fp4,gateup@6-8=fp4,ple@6-8=fp4"

@@ -576,15 +576,21 @@ def reference_logits(spec: Spec, W: dict, tokens) -> np.ndarray:
 
 def _fake_q(x, D: int = 128):
     """int8 quantize-dequantize per (row, D-block) of the last axis (numerics of QACT/QST). A
-    value within 2^-31 of a rounding tie is the tie, rounded half to even: an exact tie is not
-    left to float64 noise (the attention output of a flash block is an integer vector times a
-    scalar, _pv: its ties are exact), so that two summation orders agree."""
+    value within 2^-31 of a rounding tie rounds as the device's quantizer rounds it in fp32
+    (fp32.quantize: x * 127 recip(amax)), not as float64 noise has it: a block whose values
+    have exact ratios has exact ties (a 4-bit row: codes 3 and 6 make 63.5; a flash block's
+    attention output is an integer vector times a scalar, _pv)."""
     sh = x.shape
     xb = x.reshape(*sh[:-1], sh[-1] // D, D)
     a = np.abs(xb).max(-1, keepdims=True)
     s = np.where(a == 0, 1, a / 127)
-    r = np.rint(xb / s * 2.0 ** 30) * 2.0 ** -30
-    return (np.clip(np.rint(r), -127, 127) * s).reshape(sh)
+    r = xb / s
+    q = np.rint(r)
+    tie = np.abs(r - q) > 0.5 - 2.0 ** -31
+    if tie.any():
+        b = tie.any(-1)
+        q[b] = np.where(tie[b], F.quantize(xb[b].astype(np.float32), axis=-1)[0], q[b])
+    return (np.clip(q, -127, 127) * s).reshape(sh)
 
 
 def _v_parts(v):

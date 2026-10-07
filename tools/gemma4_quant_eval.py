@@ -11,7 +11,8 @@ switched one at a time and per-kind weight formats (docs/gemma4.md, "Long contex
         position into OUT.npz (nll, top1)
     python tools/gemma4_quant_eval.py check TINY_DIR
         the batched emulation against emulated_logits (40 tokens, window 16; equal to float64
-        rounding: _fake_q rounds a tie of exactly .5 half to even whatever the summation order)
+        rounding: _fake_q rounds a tie of exactly .5 as the device's quantizer does, whatever
+        the summation order)
 
 WF / HEAD: int8, fp4, int4 or none (float weights). The whole sequence runs at once: 900 tokens of
 E2B take about 1 min in float, 10 min with fp4 layers (the 4-bit quantization's search).
