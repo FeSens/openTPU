@@ -280,11 +280,12 @@ status is 0 for PASS and 1 for FAIL, and `--json` writes every step for scripts.
 `--weights-only` drops the activation rounding from the golden (then only the top-1 bound
 holds), and `--no-fp32` skips the fp32 rows.
 
-On the card (build 84989047, 2026-10-07, before K smoothing: `--no-golden --save` under the
-lock, `--against` on a build host), all six runs of Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B,
-in int8 and in 4-bit with an int8 head, gave the ISA simulator's tokens and bit-identical
-logits on every prompt (0 ulp over 93 to 128 steps a run). The card's mean KL from the quantized
-golden was 0.95 to 1.25 times the floor, with 95.3% to 99.2% top-1 agreement.
+On the card (build 1025907f, 2026-10-07: `--no-golden --save` under the lock, `--against` on a
+build host), all six runs of Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B, in int8 and in 4-bit
+with an int8 head, gave the ISA simulator's tokens and bit-identical logits on every prompt
+(0 ulp over 103 to 128 steps a run). The card's mean KL from the quantized golden was 0.94 to
+1.39 times the floor, with 94.5% to 97.7% top-1 agreement. Qwen3-0.6B int8's KL from fp32 on
+the card went from 0.052 (build 84989047, before K smoothing) to 0.012.
 
 ## Where to start reading
 
