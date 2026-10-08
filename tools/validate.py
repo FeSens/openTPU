@@ -209,7 +209,8 @@ class Golden:
     4's from the device's image (`image`: image_formats). Gemma 4's embedding rows are its LM
     head's in the head's format (the device gathers them from the head), and its per-layer
     embeddings the device's PLE records (_per_layer; `ple_rows(ids)`: the checkpoint's rows,
-    default the model's table)."""
+    default the model's table). Qwen3's q_norm and k_norm gains are the device's too
+    (qwen3.qk_gains: K's channels smoothed into them), the checkpoint's in fp32."""
 
     def __init__(self, model, spec, wformat: str = "int8", head_format: str | None = None,
                  D: int = 128, image: dict | None = None, ple_rows=None):
@@ -232,6 +233,17 @@ class Golden:
             wf, formats = FM.named(spec, wformat, None)
             res = FM.resolver(formats, port.KINDS, spec.formats, wf, head_format)
             fmt = lambda n: res(*port.weight_kind(n))                   # noqa: E731
+        self._qk = []                       # (q / k norm, the checkpoint's gain, the device's)
+        if not self.gemma and getattr(spec, "qk_norm", False) and \
+                getattr(spec, "qk_smooth", False):          # (from the checkpoint's weights)
+            for m in model.modules():
+                if not (hasattr(m, "q_norm") and hasattr(m, "k_proj")):
+                    continue
+                w = {f"self_attn.{k}.weight": getattr(m, k).weight.detach().float().numpy()
+                     for k in ("q_norm", "k_norm", "q_proj", "k_proj")}
+                for norm, g in zip((m.q_norm, m.k_norm), port.qk_gains(spec, w, "")):
+                    self._qk.append((norm, norm.weight,
+                                     torch.nn.Parameter(torch.from_numpy(g), False)))
         emb = model.get_input_embeddings()
         ck = {id(emb.weight): _compact(emb.weight)}     # (a tied LM head: the same tensor)
         self.formats = {}                   # checkpoint weight -> its format
@@ -282,7 +294,7 @@ class Golden:
         self.set("fp32")
 
     def set(self, mode: str) -> None:
-        for m, w32, wd in self._lin:
+        for m, w32, wd in self._lin + self._qk:
             m.weight = w32 if mode == "fp32" else wd
         emb, w32, wd = self._emb
         emb.weight = w32 if mode == "fp32" else wd

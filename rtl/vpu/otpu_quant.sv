@@ -3,8 +3,8 @@
 // optional RSCALE/CSCALE factors), s = amax/127, inv = 127*recip(amax), q = q8(x*inv).
 //
 // Pipelined for the FPGA clock:
-//   read | prescale: (x*r)*c (2 multipliers) | amax tree | scale unit (recip: 3 Newton steps
-//   on multiply-add slots, then *127 and *1/127) | quantize: x*inv, q8 | write
+//   read | prescale: (x*r)*c (2 multipliers) | amax tree | scale unit (recip: 2 Newton steps
+//   and the correction on multiply-add slots, then *127 and *1/127) | quantize: x*inv, q8 | write
 // Per-block QACT (the common case) streams: each block is read once into one of NB block
 // buffers while its amax folds; the scale unit takes one amax per cycle, and the writer
 // quantizes the buffers in order. ROW-mode QACT and QST read each group twice (pass 0 finds
@@ -52,7 +52,7 @@ module otpu_qscale
 );
   localparam int SL = LM + LA;
   localparam int P = SL + LM;               // one Newton step: u_t, then u_y
-  localparam int LAT = 3 * P + LM;
+  localparam int LAT = 2 * P + 2 * SL + LM; // two Newton steps, the correction (u_e, u_y3), u_inv
   // input register (the amax selection in front of the unit is its own pipeline stage)
   f32_t          amax_q;
   logic          iv_q;
@@ -60,48 +60,54 @@ module otpu_qscale
   always_ff @(posedge clk) if (en) begin
     amax_q <= amax; iv_q <= iv; itag_q <= itag;
   end
-  // seed stage: |amax|, its flags and the reciprocal seed, registered (amax is an otpu_fmul
-  // result or +0, so it is already flushed: no ftz). amax >= 2^123 runs on amax / 16 (otpu_fp's
-  // rcp_sc: the seed's constant and k1 take the scaling) and inv = (127/16) * y, which is
-  // 127 * (y / 16) bit for bit (y >= 2^-122: y / 16 is exact and normal).
+  // seed stage: |amax|, its flags, -a (a = amax's significand, in [1, 2)), the reciprocal seed
+  // and the result's exponent adjustment (otpu_fp's rcp_ek), registered (amax is an otpu_fmul
+  // result or +0, so it is already flushed: no ftz)
   f32_t ax, y0, kx;
-  logic zero, big, rsc;
+  logic zero, big;
+  logic [8:0] ek;
   always_ff @(posedge clk) if (en) begin
     f32_t a;
-    logic s;
     a = {1'b0, amax_q[30:0]};
-    s = rcp_sc(a);
     ax <= a;
-    kx <= {1'b1, a[30:0] - (s ? 31'h0200_0000 : 31'd0)};
+    kx <= {9'h17F, a[22:0]};
     zero <= (a == 0);
     big <= (a >= 32'h7E80_0000);
-    rsc <= s;
-    y0 <= ftz((s ? RECIP_MAGIC + 32'h0200_0000 : RECIP_MAGIC) - a);
+    ek <= rcp_ek(a);
+    y0 <= RECIP_MAGIC - {9'h07F, a[22:0]};
   end
-  // recip(ax): y = y * (2 - ax*y), three times, from the magic seed; the delay lines into the
-  // multiplier operands end in a flip-flop with a reset (otpu_qdly). The ISA's y*t + (-0) is
-  // y*t for every product (no fp_mul result is changed by adding -0), so u_y is a plain multiply,
-  // not padded: its output register feeds the next multipliers directly (no SRL in front of
-  // their DSPs), and k1 is delayed by the step's SL + LM to meet it.
-  f32_t y [4], t [3], k1 [4], yd [3];
+  // recip(a): y = y * (2 - a*y), twice, from the magic seed, then e = 1 - a*y, y = y*e + y; the
+  // delay lines into the multiplier operands end in a flip-flop with a reset (otpu_qdly). The
+  // ISA's y*t + (-0) is y*t for every product (no fp_mul result is changed by adding -0), so u_y
+  // is a plain multiply, not padded: its output register feeds the next multipliers directly (no
+  // SRL in front of their DSPs), and k1 is delayed by the step's SL + LM to meet it.
+  f32_t y [4], t [2], k1 [3], yd [3], e;
   assign y[0] = y0;
   assign k1[0] = kx;
-  for (genvar i = 0; i < 3; i++) begin : g_it
+  for (genvar i = 0; i < 2; i++) begin : g_it
     otpu_fmadd #(.LM(LM), .LA(LA)) u_t (.clk, .en, .a(k1[i]), .b(y[i]), .c(F_TWO), .y(t[i]));
     otpu_qdly #(.W(32), .N(SL)) u_yd (.clk, .rst, .en, .d(y[i]), .q(yd[i]));
     otpu_qdly #(.W(32), .N(P)) u_k (.clk, .rst, .en, .d(k1[i]), .q(k1[i + 1]));
     otpu_fmul #(.LAT(LM)) u_y (.clk, .en, .a(yd[i]), .b(t[i]), .y(y[i + 1]));
   end
-  // big: 127 * (+0) = +0, forced on the product (bd delayed beside zd) instead of on the operand
+  otpu_fmadd #(.LM(LM), .LA(LA)) u_e (.clk, .en, .a(k1[2]), .b(y[2]), .c(F_ONE), .y(e));
+  otpu_qdly #(.W(32), .N(SL)) u_yd2 (.clk, .rst, .en, .d(y[2]), .q(yd[2]));
+  otpu_fmadd #(.LM(LM), .LA(LA)) u_y3 (.clk, .en, .a(yd[2]), .b(e), .c(yd[2]), .y(y[3]));
+  // inv = 127 * (y * 2^ek) (y in [0.5, 1]) is (127 * y) * 2^ek bit for bit: 127 * y is in
+  // [63.5, 127] and the product is normal, so its rounding does not change with the scaling,
+  // except that it overflows to +inf where the field passes 254. big: 127 * (+0) = +0, forced
+  // on the product (bd delayed beside zd) instead of on the operand.
   f32_t invm, scm, scd;
-  logic zd, bd, scd3, zd2, bd2;
-  otpu_qdly #(.W(3), .N(3 * P)) u_f (.clk, .rst, .en, .d({zero, big, rsc}), .q({zd, bd, scd3}));
-  otpu_fmul #(.LAT(LM)) u_inv (.clk, .en, .a(scd3 ? 32'h40FE_0000 : F_127), .b(y[3]), .y(invm));
+  logic zd, bd, zd2, bd2;
+  logic [8:0] ekd, ek2, fe;
+  otpu_qdly #(.W(11), .N(LAT - LM)) u_f (.clk, .rst, .en, .d({zero, big, ek}), .q({zd, bd, ekd}));
+  otpu_fmul #(.LAT(LM)) u_inv (.clk, .en, .a(F_127), .b(y[3]), .y(invm));
   otpu_fmul #(.LAT(LM)) u_sc (.clk, .en, .a(ax), .b(F_INV127), .y(scm));
-  otpu_delay #(.W(32), .N(3 * P)) u_scd (.clk, .en, .d(scm), .q(scd));
-  otpu_delay #(.W(2), .N(LM)) u_z2 (.clk, .en, .d({zd, bd}), .q({zd2, bd2}));
+  otpu_delay #(.W(32), .N(LAT - LM)) u_scd (.clk, .en, .d(scm), .q(scd));
+  otpu_delay #(.W(11), .N(LM)) u_z2 (.clk, .en, .d({zd, bd, ekd}), .q({zd2, bd2, ek2}));
   otpu_delay #(.W(1 + TW), .N(LAT + 1)) u_v (.clk, .en, .d({iv_q, itag_q}), .q({ov, otag}));
-  assign inv = (zd2 || bd2) ? F_ZERO : invm;
+  assign fe = {1'b0, invm[30:23]} + ek2;     // 7..259
+  assign inv = (zd2 || bd2) ? F_ZERO : (fe >= 9'd255) ? F_INF : {1'b0, fe[7:0], invm[22:0]};
   assign sc = zd2 ? F_ZERO : scd;
 endmodule
 

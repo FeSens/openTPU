@@ -121,42 +121,185 @@ def qwen3_int8():
     return m, W, spec, eng, runs
 
 
+def _top1_where_clear(golden, runs, noise):
+    """Per prompt, teacher forced on the device's tokens against the quantized golden: the steps
+    whose top-1 leads its runner-up by more than `noise`, and whether the device's top-1 is the
+    golden's at each step."""
+    golden.set("quant")
+    res = []
+    for ids, r in zip(PROMPTS, runs):
+        gl = golden.logits(list(ids) + r["tokens"][:-1])[len(ids) - 1:]
+        v = min(gl.shape[1], r["logits"].shape[1])
+        gl, dl = gl[:, :v], golden.device_logits(r["logits"][:, :v])
+        top2 = np.sort(gl, -1)[:, -2:]
+        res.append((top2[:, 1] - top2[:, 0] > noise, dl.argmax(-1) == gl.argmax(-1)))
+    return res
+
+
 @pytest.mark.parametrize("name,wformat", [("qwen3", "int8"), ("qwen3", "fp4"),
                                           ("lfm2", "fp4"), ("qwen35", "fp4"),
                                           ("gemma4", "int8"), ("gemma4", "fp4")])
 def test_quantized_golden_follows_the_isa_simulator(name, wformat):
     """The ISA simulator's greedy run against the goldens, teacher forced: the quantized golden
-    (W+A) agrees on every top-1 and is at least 5x closer in KL than fp32 (about 150x with int8
-    weights here, over 1000x with fp4; a rounding difference that flips an int8 value is what
-    is left, e.g. the tiny Qwen3.5's int8 run: 9x); its greedy tokens are the device's. Gemma
-    4 (sliding and global layers, KV-shared ones, per-layer inputs): its embedding rows the
-    head's, its PLE rows the device's records, its formats the device image's."""
+    (W+A) agrees on every top-1 but near ties and is at least 5x closer in KL than fp32 (about
+    150x with int8 weights here, over 1000x with fp4; a rounding difference that flips an int8
+    value is what is left, e.g. the tiny Qwen3.5's int8 run: 9x). A near tie is a step whose
+    top two logits are closer than the most the golden's own 1-ulp noise moves a logit (the
+    floor's max |difference|): it may go either way (the tiny Gemma 4 has steps 4e-4 apart),
+    and so may the greedy continuation from it (the golden's tokens part from the device's
+    only at a top-1 that differs on the same context). Gemma 4 (sliding and global
+    layers, KV-shared ones, per-layer inputs): its embedding rows the head's, its PLE rows the
+    device's records, its formats the device image's."""
     m, W, spec = _tiny(name)
     eng, runs = _runs(spec, W, wformat)
-    gold = V.against_golden(V.Golden(m, spec, wformat, image=V.image_formats(eng.image)),
-                            PROMPTS, runs, ["quant", "fp32"], 8, spec.eos)
+    golden = V.Golden(m, spec, wformat, image=V.image_formats(eng.image))
+    gold = V.against_golden(golden, PROMPTS, runs, ["quant", "fp32"], 8, spec.eos)
     q = V.summary([g["goldens"]["quant"] for g in gold])
     f = V.summary([g["goldens"]["fp32"] for g in gold])
-    assert q["top1"] == 1.0 and q["min_cos"] > 0.999
+    noise = V.summary([g["pairs"]["floor"] for g in gold])["max_abs"]
+    for clear, same in _top1_where_clear(golden, runs, noise):
+        assert same[clear].all()
+    assert q["top1"] >= V.MIN_TOP1 and q["min_cos"] > 0.999
     assert q["kl_mean"] * 5 < f["kl_mean"]
-    assert all(g["goldens"]["quant"]["first_diff"] is None for g in gold)
     assert V.summary([g["pairs"]["fp32"] for g in gold])["kl_mean"] > q["kl_mean"]
 
 
+class _DeviceCodes:
+    """The int8 groups of a device run (every fp32.quantize call: the ISA simulator's QACT / QST
+    and the image's host-side ones), each as r = x * 127 / amax and its codes, found again by
+    content: the place of the largest |r|, then the smallest max |r - r_device| (under 0.25; a
+    group the device did not quantize is 25 or more away)."""
+
+    def __init__(self):
+        self.parts, self.unmatched = [], 0
+
+    def record(self, x, axis, q):
+        x = np.moveaxis(np.asarray(x, np.float32), axis, -1)
+        n = x.shape[-1]
+        x = x.reshape(-1, n).astype(np.float64)
+        a = np.abs(x).max(-1, keepdims=True)
+        self.parts.append((x * 127 / np.where(a == 0, 1, a),
+                           np.moveaxis(q, axis, -1).reshape(-1, n)))
+
+    def index(self):
+        self.R, self.Q, self.at = {}, {}, {}
+        for n in {r.shape[1] for r, _ in self.parts}:
+            self.R[n] = np.concatenate([r for r, _ in self.parts if r.shape[1] == n])
+            self.Q[n] = np.concatenate([q for r, q in self.parts if r.shape[1] == n])
+            k = np.abs(self.R[n]).argmax(-1)
+            self.at[n] = {int(i): np.nonzero(k == i)[0] for i in np.unique(k)}
+
+    def find(self, r):
+        """(max |r - r_device|, the device's codes) of the group r [n] (a longer device group:
+        its first n), or (inf, None)."""
+        k = int(np.abs(r).argmax())
+        for every in (False, True):           # the same largest place, else every group
+            best = (0.25, None)
+            for m, R in self.R.items():
+                if m < len(r):
+                    continue
+                rows = np.arange(len(R)) if every else self.at[m].get(k, np.arange(0))
+                if len(rows):
+                    d = np.abs(R[rows, :len(r)] - r).max(-1)
+                    i = int(np.argmin(d))
+                    if d[i] < best[0]:
+                        best = (d[i], self.Q[m][rows[i], :len(r)])
+            if best[1] is not None:
+                return best
+        return np.inf, None
+
+    def force(self, r, q):
+        """q, the emulation's codes of the groups r [g, n], with the device's where r is within
+        its group's distance from the device's (+ 1e-3: r_device is recomputed in float64) of a
+        rounding tie, the only places the two can round apart."""
+        q = q.copy()
+        for g in np.nonzero(np.abs(r).max(-1) > 0)[0]:
+            d, qd = self.find(r[g])
+            if qd is None:
+                self.unmatched += 1
+                continue
+            near = np.abs(r[g] - np.rint(r[g])) > 0.5 - d - 1e-3
+            q[g, near] = qd[near]
+        return q
+
+
+def _teacher_forced(mp, mod, dev):
+    """The emulation's int8 points (opentpu.llm.qwen3's _fake_q and _v_parts, which its _pv and
+    _fake_w call, and the port module's imports of them) with the device's codes near ties:
+    their own results but a forced code's value (code * scale)."""
+    from opentpu.llm import qwen3 as Q3
+    fake_q, v_parts = Q3._fake_q, Q3._v_parts
+
+    def fq(x, D=128):
+        out = np.asarray(fake_q(x, D), np.float64)
+        xb = np.asarray(x, np.float64).reshape(-1, D)
+        a = np.abs(xb).max(-1, keepdims=True)
+        s = np.where(a == 0, 1, a / 127)
+        q = np.rint(out.reshape(-1, D) / s)
+        return out + ((dev.force(xb / s, q) - q) * s).reshape(out.shape)
+
+    def vp(v):
+        q, sc = v_parts(v)
+        a = np.abs(v).max(-1, keepdims=True)
+        r = (v / np.where(a == 0, 1, a / 127)).reshape(-1, v.shape[-1])
+        return dev.force(r, q.reshape(r.shape)).reshape(q.shape), sc
+    for m in {Q3, mod}:
+        mp.setattr(m, "_fake_q", fq)
+        mp.setattr(m, "_v_parts", vp)
+
+
+def _unfolded_pv(pp, Vq, vs, D: int = 128):
+    """P.V with V's per-token scales applied after P is quantized (a wrong emulation)."""
+    from opentpu.llm import qwen3 as Q3
+    ppad = np.zeros(-(-len(pp) // D) * D)
+    ppad[:len(pp)] = pp
+    return (Q3._fake_q(ppad, D)[:len(pp)] * vs) @ Vq
+
+
 @pytest.mark.parametrize("name", ["qwen3", "lfm2", "qwen35"])
-def test_emulated_logits_follow_the_isa_simulator(name):
+def test_emulated_logits_follow_the_isa_simulator(name, monkeypatch):
     """The ports' emulated_logits (float64, the device's quantization points) are the ISA
-    simulator's logits to fp32 rounding with fp4 weights on these tiny models (no int8 value
-    rounds the other way): P.V as the device takes it, V's per-token scales folded into P before
-    P is quantized (QACT CSCALE). Without the fold the emulation is about 1% off."""
+    simulator's logits to fp32 rounding with fp4 weights on these tiny models: P.V as the device
+    takes it, V's per-token scales folded into P before P is quantized (QACT CSCALE). Without
+    the fold the emulation is about 1% off, which the test asserts too. Teacher forced at the
+    rounding ties: an int8 value whose float64 and fp32 sides lie across a tie takes the
+    device's code; unforced, it rounds the other way now and then and the steps after it stray
+    by 0.1 - 2.5% (on main 7 / 13 / 16 of 32 prompts over 16 model seeds of qwen3 / lfm2 /
+    qwen35, which ones depending on the host's float64 summation order). Forced, every prompt
+    of 16 seeds is within 4e-7 on the Mac and omarchy, and a 1% error in K or in V's scales,
+    or K or V left unrounded, is 0.7 - 2.3% off. Every int8 group finds its device group but the
+    head's inputs at the prompts' earlier positions (the device takes no logits there)."""
     import importlib
+    from opentpu import fp32 as F
+    from opentpu.llm import qwen3 as Q3
     _, W, spec = _tiny(name)
-    _, runs = _runs(spec, W, "fp4")
-    emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
-    for p, r in zip(PROMPTS, runs):
-        seq = list(p) + list(r["tokens"][:-1])
-        emu = emulated_logits(spec, W, seq, wformat="fp4")[len(p) - 1:]
-        assert np.abs(r["logits"] - emu).max() < 1e-5 * np.abs(emu).max()
+    dev, quantize = _DeviceCodes(), F.quantize
+
+    def recorded(x, axis=-1):
+        q, s = quantize(x, axis)
+        dev.record(x, axis, q)
+        return q, s
+    with monkeypatch.context() as mp:
+        mp.setattr(F, "quantize", recorded)
+        _, runs = _runs(spec, W, "fp4")
+    dev.index()
+    mod = importlib.import_module(type(spec).__module__)
+    _teacher_forced(monkeypatch, mod, dev)
+
+    def errors():
+        err = []
+        for p, r in zip(PROMPTS, runs):
+            seq = list(p) + list(r["tokens"][:-1])
+            emu = mod.emulated_logits(spec, W, seq, wformat="fp4")[len(p) - 1:]
+            err.append(np.abs(r["logits"] - emu).max() / np.abs(emu).max())
+        return np.array(err)
+    err = errors()
+    assert (err < 1e-5).all(), err
+    assert dev.unmatched <= sum(len(p) - 1 for p in PROMPTS) * spec.hidden // 128, dev.unmatched
+    for m in {Q3, mod}:
+        monkeypatch.setattr(m, "_pv", _unfolded_pv)
+    err = errors()
+    assert (err > 1e-3).all(), err
 
 
 @pytest.mark.parametrize("fmt", ["int8", "fp4"])
@@ -179,6 +322,43 @@ def test_golden_weights_are_the_images(fmt):
     got = V.device_weight(W["model.embed_tokens.weight"], fmt, D)
     assert np.array_equal(got, want)
     assert V.Golden(m, spec, "int8", fmt).formats["lm_head.weight"] == fmt
+
+
+def test_golden_takes_the_devices_k_smoothing():
+    """Qwen3's K outliers planted (k_norm gains 60 on two RoPE pairs, their q gains 0.01, as
+    test_qwen3's): the device smooths K's channels into the q_norm / k_norm gains
+    (qwen3.qk_gains) and stays near the fp32 golden (KL 3e-5; 1.1e-3 unsmoothed), and the
+    quantized golden smooths them too: it follows the ISA simulator as on the plain model (KL
+    1e-14 here; a golden that did not smooth K would be 1e-3 away). The weights mode takes the
+    device's gains, bit-identical to the checkpoint's there (sigma, a power of two, changes
+    only how K rounds); fp32 is the checkpoint (the fp32 reference)."""
+    from dataclasses import replace
+
+    from opentpu.llm.qwen3 import reference_logits
+
+    def planted():
+        m, _, spec = _tiny("qwen3")
+        with torch.no_grad():
+            for n, p in m.named_parameters():
+                if n.endswith(("q_norm.weight", "k_norm.weight")):
+                    p[[5, 69, 30, 94]] = 0.01 if "q_norm" in n else 60.0
+        return m, spec
+    m, spec = planted()
+    W = {k: v.float().numpy().copy() for k, v in m.state_dict().items()}
+    eng, runs = _runs(spec, W)
+    g = V.Golden(m, spec, "int8", image=V.image_formats(eng.image))
+    gold = V.against_golden(g, PROMPTS, runs, ["quant", "fp32"], 8, spec.eos)
+    q = V.summary([x["goldens"]["quant"] for x in gold])
+    assert q["top1"] >= V.MIN_TOP1 and q["min_cos"] > 0.999 and q["kl_mean"] < 1e-6
+    assert V.summary([x["goldens"]["fp32"] for x in gold])["kl_mean"] < 1e-4
+    g.set("weights")
+    smooth = g.logits(PROMPTS[1])
+    g.set("fp32")
+    assert np.abs(g.logits(PROMPTS[1]) - reference_logits(spec, W, PROMPTS[1])).max() < 1e-4
+    plain = V.Golden(planted()[0], replace(spec, qk_smooth=False), "int8")
+    plain.set("weights")
+    assert np.array_equal(smooth, plain.logits(PROMPTS[1]))
+
 
 
 def test_two_devices_must_agree_bit_for_bit(qwen3_int8):
@@ -291,7 +471,8 @@ def test_the_command_line_on_a_tiny_checkpoint(tmp_path, capsys):
 def test_the_command_line_on_a_tiny_gemma4(tmp_path):
     """main() on a tiny Gemma 4 checkpoint (text-only, as Hugging Face saves it) with fp4
     weights: the device image's formats reach the golden (--json's image), Hugging Face loads
-    without its PLE table (the golden reads the rows it needs from the checkpoint): PASS."""
+    without its PLE table (the golden reads the rows it needs from the checkpoint): PASS (top-1
+    agreement at least MIN_TOP1, KL near the floor; a near tie may flip, see above)."""
     import json
     prompts = _checkpoint("gemma4", tmp_path)
     assert V.main(["--model", str(tmp_path), "--tokens", "6", "--wformat", "fp4", "--json",
@@ -299,4 +480,4 @@ def test_the_command_line_on_a_tiny_gemma4(tmp_path):
     res = json.loads((tmp_path / "r.json").read_text())
     assert res["image"]["head"] == "fp4" and res["image"]["ple_table"] == "int8"
     assert res["formats"]["model.per_layer_model_projection.weight"] == "fp4"
-    assert res["pass"] and res["goldens"]["quant"]["top1"] == 1.0
+    assert res["pass"]

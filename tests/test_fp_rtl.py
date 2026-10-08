@@ -1,13 +1,14 @@
 """The fp32 corners on the RTL against the ISA simulator, through the units that compute them:
 the VPU's composite functions on their scaled ranges and on NaN words (the long lanes' slot
 programs and SE's otpu_se_comp), the quantizer's recip on a huge amax and its 0 * inf on a tiny
-one (QST: the bytes and scales land in DRAM), and an MM whose partial sums flush to -0 (no pad
-terms in the MXU's isum_4). Each runs the same program on both and compares DRAM and TMEM."""
+one (QST: the bytes and scales land in DRAM), an MM whose partial sums flush to -0 (no pad
+terms in the MXU's isum_4), and VOP ADD / SUB / RSUB on the zero-sign cases (x - x = +0). Each runs the same program on both and compares DRAM and TMEM."""
 import numpy as np
 import pytest
 
 from opentpu import Config, fp32 as F, isa as I, rtlsim
 from opentpu.isasim import Machine
+from test_fp import _zero_sign_cases
 
 
 def _both(cfg, prog, dram):
@@ -22,16 +23,28 @@ def _both(cfg, prog, dram):
 
 
 def _corner_words(rng, n):
-    """Words from recip's and rsqrt's scaled ranges (exponent fields 0..5 and 246..255, both
-    signs), NaNs, and normals."""
-    e = rng.choice(list(range(6)) + list(range(246, 255)), n).astype(np.uint32)
+    """n words: rsqrt's scaled ranges (exponent fields 0..5 and 246..255, both signs), random
+    words of every field, every power of two and its neighbours (recip's significand edges,
+    rsqrt's powers of four), exp2 near its range limits and where x + 1 rounds to 1, NaNs."""
+    p = np.arange(1, 255, dtype=np.int64) << 23
+    p = np.concatenate([p, p - 1, p + 1])
+    k = np.float32([-127, -126, -125, -1, 0, 1, 126, 127, 128])
+    t = np.exp2(-np.arange(20, 31))
+    ex = np.concatenate([np.nextafter(k, np.float32(-np.inf)), np.nextafter(k, np.float32(np.inf)),
+                         -t, t]).astype(np.float32)
+    extra = np.concatenate([
+        np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001, 0xFFBFFFFF, 0x7F800000, 0xFF800000,
+                   0x7E800000, 0x7E7311C3, 0x7E7311C4, 0x7E7FFFFF, 0x00800000, 0x00FFFFFF,
+                   0x3F800000]),
+        np.concatenate([p, p | (1 << 31)]).astype(np.uint32), ex.view(np.uint32)])
+    n = n - len(extra)
+    e = np.where(rng.random(n) < 0.5, rng.choice(list(range(6)) + list(range(246, 255)), n),
+                 rng.integers(1, 255, n)).astype(np.uint32)
     m = rng.integers(0, 1 << 23, n, dtype=np.uint32)
     m[rng.random(n) < 0.1] = 0
     m[rng.random(n) < 0.1] = 0x7FFFFF
     s = rng.integers(0, 2, n, dtype=np.uint32)
     w = (s << 31) | (e << 23) | m
-    extra = np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001, 0xFFBFFFFF, 0x7F800000, 0xFF800000,
-                       0x7E800000, 0x7E7311C3, 0x7E7311C4, 0x00800000, 0x00FFFFFF, 0x3F800000])
     return F.from_bits(np.concatenate([w, extra])).copy()
 
 
@@ -42,7 +55,7 @@ def test_composites_on_their_scaled_ranges_rtl(have_verilator, lanes, dstep):
     cfg = Config(S=1, LANES=lanes, MCOLS=min(8, lanes), DSTEP=dstep, DRAM_BYTES=1 << 20)
     rng = np.random.default_rng(11 + lanes)
     cols = 64
-    x = _corner_words(rng, 6 * cols - 12)
+    x = _corner_words(rng, 40 * cols)
     n = len(x)
     rows = n // cols
     dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
@@ -60,9 +73,9 @@ def test_composites_on_their_scaled_ranges_rtl(have_verilator, lanes, dstep):
 
 
 def test_quantizer_huge_and_tiny_amax_rtl(have_verilator):
-    """QST (row groups and blocks): an amax in [2^123, 2^126) (recip on amax / 16), at 2^126
-    (inv = 0), tiny ones (inv = 127 * recip(amax) is +inf: the zeros give 0 * inf = NaN, q 0)
-    and an inf element (inf * 0)."""
+    """QST (row groups and blocks): an amax in [2^123, 2^126) (once recip's scaled range), at
+    2^126 (inv = 0), tiny ones (inv = 127 * recip(amax) is +inf: the zeros give 0 * inf = NaN,
+    q 0) and an inf element (inf * 0)."""
     cfg = Config(S=1, DRAM_BYTES=1 << 20)
     D, KB = cfg.D, 2
     rng = np.random.default_rng(3)
@@ -82,6 +95,33 @@ def test_quantizer_huge_and_tiny_amax_rtl(have_verilator):
     prog = [I.ld(0, 0, x.size),
             I.qst(0, 0x40000, 0x48000, R, KB, KB * D, KB * D, 1),                 # blocks
             I.qst(0, 0x50000, 0x58000, R, KB, KB * D, KB * D, 1, row=True),       # rows
+            I.halt()]
+    _both(cfg, prog, dram)
+
+
+def test_quantizer_recip_every_exponent_rtl(have_verilator):
+    """QST (blocks and rows): an amax at every power of two (recip on the significand 1.0, the
+    result's exponent field 127 - field away), its neighbours, random ones of every field, the
+    largest below 2^126, and amax across the point where inv = 127 * recip(amax) overflows to
+    +inf (otpu_qscale scales 127 * y after the multiply and saturates the field there)."""
+    cfg = Config(S=1, DRAM_BYTES=1 << 20)
+    D, KB = cfg.D, 2
+    rng = np.random.default_rng(4)
+    p = np.arange(1, 253, dtype=np.int64) << 23
+    am = np.concatenate([p, p[1:] - 1, p + 1, p | rng.integers(0, 1 << 23, len(p)),
+                         (5 << 23) + np.arange(8257526, 8257546), [0x7E7FFFFF, 0x7E800000]])
+    am = F.from_bits(am.astype(np.uint32))
+    am = np.resize(am, -(-len(am) // KB) * KB)
+    R = len(am) // KB
+    r = (rng.standard_normal((R * KB, D)) * 0.3).astype(np.float32) * am[:, None]
+    r[rng.random(r.shape) < 0.3] = 0.0
+    r[:, 0] = am
+    x = r.reshape(R, KB * D)
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    dram[:4 * x.size] = x.view(np.uint8).reshape(-1)
+    prog = [I.ld(0, 0, x.size),
+            I.qst(0, 0x40000, 0x60000, R, KB, KB * D, KB * D, 1),                 # blocks
+            I.qst(0, 0x70000, 0x90000, R, KB, KB * D, KB * D, 1, row=True),       # rows
             I.halt()]
     _both(cfg, prog, dram)
 
@@ -111,3 +151,39 @@ def test_mm_partials_flushed_to_minus_zero_rtl(have_verilator):
     m = _both(cfg, [I.ld(0, 0, KB * D), I.qact(0, 1, 0, KB, KB * D),
                     I.mm(0x10000, 0x20000, out, 1, KB, KB * D, 1, 1, 0, 4 * KB), I.halt()], dram)
     assert int(m.slices[0].tmem[out].view(np.uint32)) == 0x80000000
+
+
+def test_add_sub_zero_signs_rtl(have_verilator):
+    """VOP ADD / SUB / RSUB on the board's configuration (8 lanes, DSTEP) over test_fp's zero-sign
+    cases: the RTL's TMEM equals the ISA simulator's, and every result equals the host's IEEE 754
+    roundTiesToEven sum with the ISA's flush to zero (NaN aside: inf - inf); A - B with A == B
+    is +0."""
+    cfg = Config(S=1, LANES=8, MCOLS=8, DSTEP=True, DRAM_BYTES=1 << 20)
+    a = np.concatenate([x for op, x, y in _zero_sign_cases()])     # every pair under all three
+    b = np.concatenate([y for op, x, y in _zero_sign_cases()])
+    cols = 64
+    n = len(a)
+    rows = -(-n // cols)
+    N = rows * cols
+    av, bv = (np.concatenate([v, np.zeros(N - n, np.float32)]) for v in (a, b))
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    dram[:4 * N] = av.view(np.uint8)
+    dram[4 * N:8 * N] = bv.view(np.uint8)
+    prog = [I.ld(0, 0, N), I.ld(4 * N, N, N)]
+    funcs = (I.V_ADD, I.V_SUB, I.V_RSUB)
+    for i, func in enumerate(funcs):
+        prog.append(I.vop(func, (2 + i) * N, 0, N, rows, cols, cols, cols, cols))
+    prog.append(I.halt())
+    m = _both(cfg, prog, dram)
+    t = m.slices[0].tmem
+    fa, fb = F.ftz(av), F.ftz(bv)                   # denormal operands are signed zeros
+    with np.errstate(all="ignore"):
+        want = (fa + fb, fa - fb, fb - fa)
+    for i, w in enumerate(want):
+        den = (np.abs(w) < F.MIN_NORMAL) & (w != 0)
+        w = np.where(den, np.copysign(np.float32(0), w), w).astype(np.float32)
+        got = t[(2 + i) * N:(3 + i) * N].astype(np.uint32)
+        ok = ~np.isnan(w)
+        assert np.array_equal(got[ok], F.bits(w)[ok]), funcs[i]
+    eq = (av == bv) & (av != 0) & np.isfinite(av)
+    assert eq.sum() > 1000 and np.all(t[3 * N:4 * N][eq] == 0)            # SUB: A - A = +0

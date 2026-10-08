@@ -152,10 +152,12 @@ module otpu_se_comp
       end
       CC_RCP:
         if (k < 6) begin
-          if (k % 2 == 0) begin                                      // t = 2 - |x| y
-            u.as = A_K1; u.bs = B_K2; u.kc = F_TWO;
-          end else begin                                             // y = t y (the last
-            u.bs = B_K2; u.dst = (k == 5) ? D_V : D_K2;               // into v)
+          if (k % 2 == 0) begin                                      // t = 2 - a y; e = 1 - a y
+            u.as = A_K1; u.bs = B_K2; u.kc = (k == 4) ? F_ONE : F_TWO;
+          end else if (k < 5) begin                                  // y = t y
+            u.bs = B_K2; u.dst = D_K2;
+          end else begin                                             // y e + y, into v
+            u.bs = B_K2; u.cs = C_K2;
           end
         end
       CC_RSQ:
@@ -164,10 +166,12 @@ module otpu_se_comp
         end else if (k < 10) begin
           if ((k - 1) % 3 == 0) begin                                // y y
             u.as = A_K2; u.bs = B_K2;
-          end else if ((k - 1) % 3 == 1) begin                       // 1.5 - (y y) h
-            u.bs = B_K1; u.kc = F_1P5;
-          end else begin                                             // y = t y (the last
-            u.bs = B_K2; u.dst = (k == 9) ? D_V : D_K2;               // into v)
+          end else if ((k - 1) % 3 == 1) begin                       // 1.5 - (y y) h; e =
+            u.bs = B_K1; u.kc = (k == 8) ? F_HALF : F_1P5;            // 0.5 - (y y) h
+          end else if (k < 9) begin                                  // y = t y
+            u.bs = B_K2; u.dst = D_K2;
+          end else begin                                             // y e + y, into v
+            u.bs = B_K2; u.cs = C_K2;
           end
         end
       CC_LOG:
@@ -184,8 +188,8 @@ module otpu_se_comp
   endfunction
 
   // What stage s's ops use, over every function and pass (elaboration time): the operand and
-  // destination muxes keep only those inputs. At NS = 3, e.g., Q's c is always a constant and
-  // Q never writes k1.
+  // destination muxes keep only those inputs. At NS = 3, e.g., Q's c is a constant or k2 (RECIP's
+  // y*e + y) and Q never writes k1.
   function automatic logic [3:0] st_use(input int s, input int w);   // w: 0 a, 1 b, 2 c, 3 dst
     logic [3:0] m;
     uc_t u;
@@ -248,31 +252,31 @@ module otpu_se_comp
 
   // pass 0's state from x (the chains' boundary 0). Fields a function does not read before
   // writing them are don't-cares: RECIP and RSQRT share one seed subtractor, and k1 and ii
-  // are computed whatever the function. RECIP and RSQRT run on a scaled x out of range
-  // (otpu_fp's rcp_sc, rsq_lo, rsq_hi; the seed's constant takes the scaling) and carry the
-  // result's exponent adjustment in ii, which finish adds as EXP2's i.
+  // are computed whatever the function. RECIP runs on the significand a (x's fraction with
+  // exponent field 127) and RSQRT on a scaled x out of range (otpu_fp's rsq_lo, rsq_hi; the
+  // seed's constant takes the scaling); both carry the result's exponent adjustment in ii
+  // (RECIP's rcp_ek), which finish adds as EXP2's i.
   function automatic cst_t setup(input logic [2:0] c, input f32_t x);
     cst_t t;
     f32_t xz, ax, sd, mg;
-    logic ge, z, rcp, rsc, lo, hi;
+    logic ge, z, rcp, lo, hi;
     xz = ftz(x);
     ax = {1'b0, xz[30:0]};
     ge = (xz[22:0] >= LOG2_SQRT2);
     z  = (xz[30:0] == 0);
     rcp = (c == CC_RCP);
-    rsc = rcp_sc(ax);
     lo = rsq_lo(xz);
     hi = rsq_hi(xz);
-    mg = rcp ? (rsc ? RECIP_MAGIC + 32'h0200_0000 : RECIP_MAGIC)     // on |x| / 16
+    mg = rcp ? RECIP_MAGIC
              : (lo ? RSQRT_MAGIC - 32'h0100_0000 :                    // on 16x
                 hi ? RSQRT_MAGIC + 32'h0100_0000 : RSQRT_MAGIC);      // on x / 16
-    sd = mg - (rcp ? ax : (xz >> 1));
+    sd = mg - (rcp ? {9'h07F, xz[22:0]} : (xz >> 1));
     t = '0;
-    t.k2 = rcp ? ftz(sd) : sd;                                        // the seed
+    t.k2 = sd;                                                        // the seed
     t.k1 = (c == CC_LOG) ? {1'b0, ge ? 8'd126 : 8'd127, xz[22:0]}    // m in [sqrt(1/2), sqrt(2))
-                         : {1'b1, ax[30:0] - (rsc ? 31'h0200_0000 : 31'd0)};   // -|x| (RECIP)
+                         : {9'h17F, xz[22:0]};                        // -a (RECIP)
     case (c)
-      CC_RCP:  t.ii = rsc ? -9'sd4 : 9'd0;                            // y / 16
+      CC_RCP:  t.ii = rcp_ek(xz);                                     // y * 2^(127 - field)
       CC_RSQ:  t.ii = lo ? 9'sd2 : hi ? -9'sd2 : 9'd0;                // y * 4, y / 4
       default: t.ii = 9'(xz[30:23]) - 9'd127 + 9'(ge);                // LOG2's e
     endcase
@@ -314,7 +318,8 @@ module otpu_se_comp
     return {n[8], 8'd127 + 8'(p), sh[22:0]};
   endfunction
 
-  // EXP2's i, and RECIP's and RSQRT's scaling (setup), added to the exponent field: one adder
+  // EXP2's i, RECIP's 127 - field and RSQRT's scaling (setup), added to the exponent field: one
+  // adder
   function automatic f32_t finish(input logic [2:0] c, input cst_t t);
     f32_t ve;
     ve = t.v + {t.ii, 23'd0};

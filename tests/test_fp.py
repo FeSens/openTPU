@@ -93,6 +93,20 @@ def _vectors(n=20000):
     scx = F.from_bits(sc)
     add(6, scx, scx, F.bits(F.recip(scx)))
     add(7, scx, scx, F.bits(F.rsqrt(scx)))
+    # where the definitions are exact or turn: every power of two and its neighbours (recip's
+    # significand edges, rsqrt's powers of four), the largest |x| below 2^126, and exp2 around
+    # every integer, near its range limits and where x + 1 rounds to 1 (f = 1)
+    p = np.arange(1, 255, dtype=np.int64) << 23
+    p = np.concatenate([p, p - 1, p + 1, [0x7E7FFFFF, 0x7E800000]])
+    p = F.from_bits(np.concatenate([p, p | (1 << 31)]).astype(np.uint32))
+    add(6, p, p, F.bits(F.recip(p)))
+    add(7, p, p, F.bits(F.rsqrt(p)))
+    k = np.arange(-130, 131).astype(np.float32)
+    up, dn = np.nextafter(k, np.float32(np.inf)), np.nextafter(k, np.float32(-np.inf))
+    ex = np.concatenate([k, up, dn, F.from_bits(0x43000000 - np.arange(1, 200, dtype=np.uint32)),
+                         F.from_bits(0xC2FC0000 + np.arange(-100, 100).astype(np.uint32)),
+                         -np.exp2(-np.arange(1, 40)).astype(np.float32)]).astype(np.float32)
+    add(5, ex, ex, F.bits(F.exp2(ex)))
     # q8 of a NaN (quantize's 0 * inf) is 0
     qn = F.from_bits(np.uint32([0x7FC00000, 0xFFC00000, 0x7F800001]))
     add(9, qn, qn, F.q8(qn).view(np.uint8).astype(np.uint32))
@@ -109,7 +123,28 @@ def _vectors(n=20000):
     nx = F.from_bits(nans)
     for op, fn in ((5, F.exp2), (6, F.recip), (7, F.rsqrt), (11, F.fabs), (12, F.log2)):
         add(op, nx, nx, F.bits(fn(nx)))
+    # the sign of a zero sum (IEEE 754 roundTiesToEven: x - x = x + (-x) = +0, (-0) + (-0) = -0)
+    for op, x, y in _zero_sign_cases():
+        add(op, x, y, F.bits((F.add if op == 0 else F.sub)(x, y)))
     return np.concatenate(rows)
+
+
+def _zero_sign_cases():
+    """(op, a, b) with op 0 add, 1 sub, whose exact result is a zero or flushes to one: x - x,
+    -x - -x, x + -x and -x + x at every exponent field with edge mantissas, every pair of signed
+    zeros and subnormals (flushed: signed zeros) under add and sub, differences of normals near
+    2^-126 that are subnormal (flushed to a zero with the difference's sign), and the infinite
+    ones (inf - inf: NaN)."""
+    e = np.arange(1, 255, dtype=np.uint32) << 23
+    x = F.from_bits(np.concatenate([e, e | 1, e | 0x400000, e | 0x7FFFFF])).copy()
+    z = F.from_bits(np.uint32([0, 0x80000000, 1, 0x80000001, 0x7FFFFF, 0x807FFFFF])).copy()
+    za, zb = (v.ravel() for v in np.meshgrid(z, z))
+    m = F.from_bits(np.uint32(0x00800000) + np.arange(8, dtype=np.uint32)).copy()
+    ma, mb = (v.ravel() for v in np.meshgrid(m, m))
+    big = F.f32([np.finfo(np.float32).max, np.inf, -np.inf])
+    return [(1, x, x), (1, -x, -x), (0, x, -x), (0, -x, x), (0, za, zb), (1, za, zb),
+            (1, ma, mb), (1, -ma, -mb), (0, ma, -mb), (0, big, big), (1, big, big),
+            (0, big, -big)]
 
 
 def _full(n):
@@ -121,6 +156,29 @@ def _full(n):
     m = np.where(e == 255, 0, m).astype(np.uint32)
     s = rng.integers(0, 2, n, dtype=np.uint32)
     return F.from_bits((s << 31) | (e << 23) | m).copy()
+
+
+def test_add_sub_zero_signs_follow_ieee():
+    """add / sub against the host's IEEE 754 binary32 adder (roundTiesToEven) with the ISA's flush to
+    zero (denormal operands are signed zeros, a denormal result a zero with its sign): bit for bit
+    on every zero-sign case, and the rules themselves: x - x = x + (-x) = +0, (-0) + (-0) = -0,
+    (-0) - (+0) = -0, (+0) + (-0) = (-0) - (-0) = +0, x + (-0) = x."""
+    def ieee(op, a, b):
+        a, b = F.ftz(a), F.ftz(b)
+        with np.errstate(all="ignore"):
+            r = ((a + b) if op == 0 else (a - b)).astype(np.float32)
+        den = (np.abs(r) < F.MIN_NORMAL) & (r != 0)
+        return F._canon(np.where(den, np.copysign(np.float32(0), r), r).astype(np.float32))
+    for op, a, b in _zero_sign_cases():
+        got = (F.add if op == 0 else F.sub)(a, b)
+        assert np.array_equal(F.bits(got), F.bits(ieee(op, a, b))), (op, a, b)
+    x = F.from_bits(np.arange(1, 255, dtype=np.uint32) << 23 | np.uint32(0x2AAAAA)).copy()
+    for v in (x, -x):
+        assert np.all(F.bits(F.sub(v, v)) == 0) and np.all(F.bits(F.add(v, -v)) == 0)
+        assert np.array_equal(F.bits(F.add(v, F.f32(-0.0))), F.bits(v))
+    pz, nz = F.f32(0.0), F.f32(-0.0)
+    assert F.bits(F.add(nz, nz)) == 0x80000000 and F.bits(F.sub(nz, pz)) == 0x80000000
+    assert F.bits(F.add(pz, nz)) == 0 and F.bits(F.sub(nz, nz)) == 0 and F.bits(F.add(nz, pz)) == 0
 
 
 def test_mul_rounds_on_the_subnormal_grid_before_the_flush():
@@ -186,6 +244,89 @@ def test_model_accuracy():
     assert np.max(np.abs(F.rsqrt(p) * np.sqrt(p.astype(np.float64)) - 1)) < 1e-6
     q, s = F.quantize(F.f32(rng.standard_normal((16, 32))), axis=1)
     assert np.all(np.abs(q) <= 127) and np.all(s > 0)
+
+
+def _ulps(y, ref):
+    """|y - ref| in ulps of the binade of ref (float64, normal)."""
+    e = np.floor(np.log2(np.abs(ref)))
+    return np.abs(y.astype(np.float64) - ref) / np.exp2(np.maximum(e, -126) - 23)
+
+
+def _binade(e0, sign=0):
+    """Every fp32 in [2^e0, 2^(e0+1)), with the sign bit `sign`."""
+    return F.from_bits(np.uint32(sign << 31) | np.uint32((e0 + 127) << 23)
+                       | np.arange(1 << 23, dtype=np.uint32)).copy()
+
+
+def test_exp2_error_bound():
+    """exp2 (docs/isa.md: minimax coefficients) within 1.3 ulp where f = x - floor(x) is exact
+    (every fp32 in [0.5, 1) and (-1, -0.5]) and 1.65 ulp where x + 1 rounds to f (every fp32 in
+    (-0.5, -0.25] and (-2^-8, -2^-10]: the worst binades), and on samples of [-126, 128). The
+    Taylor coefficients were 13 ulp off near f = 1."""
+    r = np.random.default_rng(5)
+    for x, bound in ((_binade(-1), 1.3), (_binade(-1, 1), 1.3),
+                     (_binade(-2, 1), 1.65), (_binade(-9, 1), 1.65), (_binade(-10, 1), 1.65),
+                     (F.f32(r.uniform(-126, 128, 1 << 22)), 1.65)):
+        u = _ulps(F.exp2(x), np.exp2(x.astype(np.float64)))
+        assert u.max() < bound, (u.max(), x[np.argmax(u)])
+
+
+def test_exp2_exact_at_integers_and_monotone():
+    """exp2(i) = 2^i for every integer in [-126, 127] (C0 = 1); non-decreasing over every fp32 in
+    [0.25, 1), around every integer and on [-2^-22, 0] (p(f) <= 2 as f reaches 1, also where x + 1
+    rounds to 1), and on a sorted sample of [-126, 128)."""
+    i = np.arange(-126, 128)
+    assert np.array_equal(F.exp2(i.astype(np.float32)), np.exp2(i).astype(np.float32))
+    x = np.concatenate([_binade(-2), _binade(-1)])
+    assert np.all(np.diff(F.exp2(x).astype(np.float64)) >= 0)
+    k = np.arange(-125, 128).astype(np.float32)[:, None]
+    x = np.concatenate([np.nextafter(k, np.float32(-np.inf)), k,
+                        np.nextafter(k, np.float32(np.inf))], axis=1).astype(np.float32)
+    assert np.all(np.diff(F.exp2(x).astype(np.float64), axis=1) >= 0)
+    x = np.concatenate([-_binade(-23)[::-1], -_binade(-24)[::-1], -_binade(-25)[::-1], F.f32([0])])
+    y = F.exp2(x)
+    assert np.all(np.diff(y.astype(np.float64)) >= 0) and y[-1] == 1.0
+    r = np.random.default_rng(6)
+    x = np.sort(F.f32(r.uniform(-126, 128, 1 << 21)))
+    assert np.all(np.diff(F.exp2(x).astype(np.float64)) >= 0)
+
+
+def test_recip_error_bound():
+    """recip (docs/isa.md: on the significand, two Newton steps and a correction step) within
+    1.2 ulp: every fp32 in [1, 2) of both signs, and samples of every exponent field 1..252 (the
+    result's field is 127 - field away). Exact at every power of two (the plain Newton step's
+    fixed point is 1 ulp low: recip(1) was 0.99999994)."""
+    for s in (0, 1):
+        x = _binade(0, s)
+        u = _ulps(F.recip(x), 1 / x.astype(np.float64))
+        assert u.max() < 1.2, (u.max(), x[np.argmax(u)])
+    r = np.random.default_rng(7)
+    e = np.repeat(np.arange(1, 253, dtype=np.uint32), 4096)
+    x = F.from_bits((r.integers(0, 2, len(e)).astype(np.uint32) << np.uint32(31))
+                    | (e << np.uint32(23)) | r.integers(0, 1 << 23, len(e)).astype(np.uint32))
+    ref = 1 / x.astype(np.float64)
+    ok = np.abs(ref) >= 2.0 ** -126
+    u = _ulps(F.recip(x)[ok], ref[ok])
+    assert u.max() < 1.2, (u.max(), x[ok][np.argmax(u)])
+    p = np.exp2(np.arange(-126, 126)).astype(np.float32)
+    for s in (1, -1):
+        assert np.array_equal(F.recip(s * p), (s / p.astype(np.float64)).astype(np.float32))
+
+
+def test_rsqrt_error_bound():
+    """rsqrt (docs/isa.md: two Newton steps and a correction step) within 1.05 ulp: every fp32 in
+    [1, 4), and samples of every exponent field (the scaled ranges, fields 1..2 and 250..254,
+    included). Exact at every power of four (rsqrt(1) was 0.99999994)."""
+    x = np.concatenate([_binade(0), _binade(1)])
+    u = _ulps(F.rsqrt(x), 1 / np.sqrt(x.astype(np.float64)))
+    assert u.max() < 1.05, (u.max(), x[np.argmax(u)])
+    r = np.random.default_rng(8)
+    e = np.repeat(np.arange(1, 255, dtype=np.uint32), 4096)
+    x = F.from_bits((e << np.uint32(23)) | r.integers(0, 1 << 23, len(e)).astype(np.uint32))
+    u = _ulps(F.rsqrt(x), 1 / np.sqrt(x.astype(np.float64)))
+    assert u.max() < 1.05, (u.max(), x[np.argmax(u)])
+    p = np.exp2(np.arange(-126, 128, 2)).astype(np.float32)
+    assert np.array_equal(F.rsqrt(p), (1 / np.sqrt(p.astype(np.float64))).astype(np.float32))
 
 
 def test_rtl_fp_bit_exact(tmp_path):

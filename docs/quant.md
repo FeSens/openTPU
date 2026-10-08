@@ -30,8 +30,10 @@ In short:
   0.007).
   Keeping the LM head or the attention projections in int8 recovers part of it (below).
 
-Everything here is measured in simulation or in synthesis (yosys, Vivado). Nothing has run on
-the card.
+The accuracy, speed and area numbers below were measured in simulation or in synthesis (yosys,
+Vivado) while the format was built. 4-bit weights have run on the card since: the README's
+results table has the card's speeds, and tools/validate.py's card runs give the ISA simulator's
+tokens and logits bit for bit (README, "Validating against Hugging Face").
 
 ## Formats
 
@@ -202,8 +204,44 @@ What the tables say:
   per kind and layer range, and the recommended mixes: `docs/formats.md`).
 
 Recommendation: `e2m1k-s`, called `fp4` in the code: nearly NVFP4's accuracy at MXFP4's size,
-and (next section) the cheapest of the accurate formats to build. It is what `wformat="fp4"`
-builds. Whether to keep the LM head in int8 is a speed/quality choice per model.
+and (Hardware options, below) the cheapest of the accurate formats to build. It is what
+`wformat="fp4"` builds. Whether to keep the LM head in int8 is a speed/quality choice per model.
+
+## K smoothing (Qwen3)
+
+The activations, the KV cache and the softmax weights are int8, with one scale per 128 values (K:
+per token, head and 128-block). On most models that costs little next to the weights. Qwen3 is
+the exception: its k_norm gains have outlier channels (Qwen3-0.6B: up to 42 times their layer's
+median) where its q_norm gains are near 0. K's scale follows the outliers, and the channels the
+attention scores depend on round to a few levels. Rounding K alone, everything else in fp32,
+cost Qwen3-0.6B a KL of 0.048 nats per token (its int8 weights alone: 0.0023). On the other
+models K's rounding costs at most 0.0009 (SmolLM3-3B; Phi-4-mini 0.0008, LFM2 0.0002-0.0003,
+Gemma 4 E2B 0.0002, Qwen3.5 below 0.0001), so they are left as they are.
+
+The image moves the outliers from K into q, from the weights alone (SmoothQuant's balance between
+the two operands): `qwen3.qk_gains` multiplies each layer's q_norm gain by sigma and divides its
+k_norm gain by it. Per channel, sigma = sqrt(kmag / qmag), where a channel's magnitude is its
+gain times its projection row's norm over its head's RMS row norm, the largest over the heads
+(they share the gains). sigma is the same in both channels of a RoPE pair, so it commutes with
+RoPE, and a power of two, so q . K is unchanged exactly and only how q and K round moves. The
+programs, the formats and the cycles are the same; only the two gain vectors of each layer
+change in the image. emulated_logits and tools/validate.py's quantized golden take the same
+gains, and the fp32 golden stays the checkpoint. It is on for qwen3.py's models with qk_norm
+(Qwen3; `Spec.qk_smooth`); the Llama-likes have no q_norm / k_norm.
+
+Qwen3-0.6B, mean KL in nats per token, before -> after:
+
+| measured on | int8 | 4-bit, int8 head |
+|:--|--:|--:|
+| the W+A golden vs fp32, two fixed texts (docs/isa.md, *Pride and Prejudice*), 2,046 positions | 0.059 -> 0.015 (-75%, paired SE 7%) | 0.221 -> 0.179 (-19%, SE 2%) |
+| the ISA simulator vs fp32, the first 256 tokens of each text, 512 positions | 0.064 -> 0.019 (-71%, SE 7%) | 0.228 -> 0.195 (-14%, SE 5%) |
+| tools/validate.py (8 prompts, 16 greedy tokens): the device vs fp32 | 0.052 -> 0.011 | 0.166 -> 0.193 |
+| tools/validate.py: W+A vs fp32 | 0.042 -> 0.012 | 0.166 -> 0.195 |
+| tools/validate.py: the device vs W+A (W+A's floor) | 0.0147 (0.0131) -> 0.0088 (0.0109) | 0.0155 (0.0185) -> 0.0123 (0.0163) |
+
+The paired rows are the measure: validate.py's runs are each on their own greedy tokens, and its
+4-bit run's 128 positions are dominated by a few (KL max 2.5). In both formats the device stays
+at its golden's floor.
 
 ## Hardware options
 
@@ -236,7 +274,8 @@ bytes streamed, not simulations.
   (|sum| < 2^22). Then i2f, x scale, x activation scale and the accumulation are unchanged. The
   issuer requests a chunk every second block and a scale word every block; the scale FIFO is
   twice as deep (two words per chunk in flight). The logic depth grows from 4.39 to 4.67 ns (the
-  sub-block sum in front of its multiplier; est. 133 -> 126 MHz, the board runs at 100). The MXU
+  sub-block sum in front of its multiplier; yosys's estimate was 133 -> 126 MHz, when the board
+  ran at 100 MHz; the card's core runs at 133.33 MHz today). The MXU
   pipeline is two stages longer, also for int8. That is lost in the noise of a two-layer Qwen3
   token (1,901,860 cycles against 1,901,880 before, bw 80%), and costs 64 cycles (0.25%) on the
   small MLP kernels of tests/test_perf.py.
@@ -340,8 +379,11 @@ per second at an assumed 100 MHz, without host time.
 | 100% | 4,977,860 (20.09 tok/s) | 4,887,335 (20.46 tok/s, 1.02x) | 4,930,877 (20.28 tok/s, 1.01x) |
 
 At 25% the 4-bit token is DRAM-bound (97% of the DRAM roofline); at 80% and 100% it runs at the
-MXU's one block per cycle (95% of that bound). On the card, where the int8 token takes 20.7 M
-cycles, we expect about the 25% column; this is a projection until it runs there.
+MXU's one block per cycle (95% of that bound). When this was measured, the card took 20.7 M
+cycles for an int8 token, about the 25% column. 4-bit weights have run on the card since, and
+the card's DRAM path has become faster: today (133.33 MHz, the DRAM at 82-84% of its peak while
+decoding) Qwen3-0.6B decodes 21.6 tokens/s in int8 and 31.3 with 4-bit layers and an int8 head
+(the README's results table).
 
 ## Tests
 
@@ -362,7 +404,6 @@ cycles, we expect about the 25% column; this is a projection until it runs there
 
 ## Not done
 
-- No run on the card; the speeds above are simulated.
 - The MXU's DSP cascade variant (`IMPL = 1`, a timing study option) does not support 4-bit
   weights; the simulation stops if it meets one.
 - Column reuse needs a free column: MMs of more than MCOLS/2 rows (prefill chunks, batched

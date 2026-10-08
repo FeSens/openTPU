@@ -240,17 +240,29 @@ the eight default prompts and 16 tokens each:
 |:--|:--|--:|--:|--:|--:|
 | LFM2.5-230M | int8 | 96.2%, 0.0038 | 0.0039 | 96.2%, 0.0055 | 0.0050 |
 | LFM2.5-230M | 4-bit, int8 head | 94.6%, 0.0045 | 0.0041 | 80.6%, 0.152 | 0.157 |
-| Qwen3-0.6B | int8 | 99.2%, 0.0147 | 0.0131 | 92.2%, 0.052 | 0.042 |
-| Qwen3-0.6B | 4-bit, int8 head | 97.7%, 0.0155 | 0.0185 | 85.2%, 0.166 | 0.166 |
+| Qwen3-0.6B | int8 | 96.1%, 0.0088 | 0.0109 | 96.1%, 0.011 | 0.012 |
+| Qwen3-0.6B | 4-bit, int8 head | 96.9%, 0.0123 | 0.0163 | 85.9%, 0.193 | 0.195 |
 | Qwen3.5-0.8B | int8 | 96.1%, 0.0020 | 0.0017 | 97.7%, 0.0033 | 0.0029 |
 | Qwen3.5-0.8B | 4-bit, int8 head | 96.9%, 0.0020 | 0.0021 | 88.3%, 0.076 | 0.077 |
 | Gemma 4 E2B | int8, 4-bit PLE table | 100.0%, 0.0036 | 0.0035 | 99.2%, 0.015 | 0.017 |
 | Gemma 4 E2B | 4-bit, int8 head and PLE table | 99.2%, 0.0029 | 0.0036 | 96.9%, 0.045 | 0.043 |
 
 KL is the mean KL(golden || device) in nats per token. The device's KL from the quantized
-golden is 0.82 to 1.16 times the floor's, and its distance from fp32 is what the quantization
+golden is 0.75 to 1.16 times the floor's, and its distance from fp32 is what the quantization
 alone predicts. A run takes 2 to 14 minutes on a 16-core host (Gemma 4 E2B: 16 and 26, the
 host shared with other jobs) and peaks at 2.5 GB (LFM2) to 16 GB (Gemma 4 E2B).
+
+Qwen3's activation rounding costs more than the other models': its k_norm gains have outlier
+channels (Qwen3-0.6B: up to 42 times their median), and K is rounded to int8 with one scale per
+token, head and 128 values, so the other channels, the ones the attention scores depend on, were
+left with a few levels. Its int8 W+A golden was 0.042 from fp32, against 0.0050 for LFM2.5-230M
+and 0.0029 for Qwen3.5-0.8B. The image now moves the outliers' magnitude from K into q (a power
+of two per channel in the q_norm and k_norm gains, which leaves q . K unchanged; docs/quant.md,
+"K smoothing"): 0.012 in the table. On two fixed texts (2,046 positions, paired) it takes the
+int8 W+A golden's KL from 0.059 to 0.015 and the 4-bit one's from 0.221 to 0.179, and the ISA
+simulator's on 512 of them from 0.064 to 0.019 (int8) and from 0.228 to 0.195 (4-bit, int8
+head). The 4-bit row's 128 greedy positions are too few to show that drop (each run is on its
+own tokens, and a few positions dominate).
 
 Gemma 4 runs in its image's formats, which follow the card's fit (E2B's int8 image keeps its
 per-layer-embedding table in 4-bit). The golden takes its embedding rows from the LM head, as
@@ -268,11 +280,12 @@ status is 0 for PASS and 1 for FAIL, and `--json` writes every step for scripts.
 `--weights-only` drops the activation rounding from the golden (then only the top-1 bound
 holds), and `--no-fp32` skips the fp32 rows.
 
-On the card (build 84989047, 2026-10-07: `--no-golden --save` under the lock, `--against` on a
+On the card (build 1025907f, 2026-10-07: `--no-golden --save` under the lock, `--against` on a
 build host), all six runs of Qwen3-0.6B, LFM2.5-230M and Qwen3.5-0.8B, in int8 and in 4-bit
 with an int8 head, gave the ISA simulator's tokens and bit-identical logits on every prompt
-(0 ulp over 93 to 128 steps a run). The card's mean KL from the quantized golden was 0.95 to
-1.25 times the floor, with 95.3% to 99.2% top-1 agreement.
+(0 ulp over 103 to 128 steps a run). The card's mean KL from the quantized golden was 0.94 to
+1.39 times the floor, with 94.5% to 97.7% top-1 agreement. Qwen3-0.6B int8's KL from fp32 on
+the card went from 0.052 (build 84989047, before K smoothing) to 0.012.
 
 ## Where to start reading
 

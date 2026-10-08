@@ -589,13 +589,13 @@ Otherwise v1 (both 0) builds ~07:00.
 | function | ops | pass 0 (S0, U, Q) | later passes | P | latency |
 |---|---|---|---|---|---|
 | EXP2 / EXP2SUB | 9 | x·1 + (-0 or -y); RR; f = xf·1 - i2f(i); C7·f + C6 | the 6 Horner steps C5 .. C0 | 3 | 75 |
-| RECIP | 6 | 2 - \|x\|y; t·y; 2 - \|x\|y | t·y; 2 - \|x\|y; t·y → v | 2 | 50 |
-| RSQRT | 10 | -(x·0.5); y·y; 1.5 - (y·y)h | two Newton steps, then t·y → v | 4 | 100 |
+| RECIP | 6 | 2 - ay; t·y; 2 - ay (a: x's significand) | t·y; e = 1 - ay; y·e + y → v | 2 | 50 |
+| RSQRT | 10 | -(x·0.5); y·y; 1.5 - (y·y)h | t·y; a Newton step; y·y; e = 0.5 - (y·y)h; y·e + y → v | 4 | 100 |
 | LOG2 | 10 | m·1 - 1; RR (i2f(e)); C9·t + C8; q·t + C7 | C6 .. C1, then q·t + i2f(e) | 4 | 100 |
 
   - The first Horner coefficient (C7 or C9) is written into v by the op before it.
   - At elaboration, each stage keeps only the mux inputs its ops use (`st_use`). At NS = 3,
-    Q's c is always a constant and Q writes only v.
+    Q's c is a constant except in RECIP's last op (y·e + y: k2), and Q writes only v.
   - RR's floor is ffloor on its domain (|x| < 128). Its i2f is a 9-bit exact one.
   - EXP2's range flags don't clamp x. A flagged result is +0 or +inf whatever the steps
     compute.

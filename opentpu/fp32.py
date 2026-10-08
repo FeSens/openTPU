@@ -10,15 +10,15 @@ compares order raw sign-magnitude bits (a NaN with the sign set is below -inf).
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 
 F32 = np.float32
 MIN_NORMAL = F32(2.0 ** -126)
 
-# 2^f = e^(f ln2) Taylor coefficients, degree 7, rounded to fp32 (Horner from C7 down to C0).
-EXP2_COEFFS = [F32(math.log(2.0) ** k / math.factorial(k)) for k in range(8)]
+# 2^f ~ C0 + f*(C1 + ... + f*C7) on [0, 1]: a minimax fit of the relative error (degree 7) with
+# C0 = 1, rounded to fp32, then searched in fp32 for the smallest error through the Horner steps.
+EXP2_COEFFS = [np.uint32(b).view(np.float32) for b in (
+    0x3F800000, 0x3F317218, 0x3E75FDE9, 0x3D63593E, 0x3C1D8534, 0x3AAFE2F6, 0x3916C07C, 0x37B3C7D6)]
 # log2(1+t) ~ t*(C1 + t*(C2 + ... + t*C9)) on [sqrt(1/2)-1, sqrt(2)-1]: a minimax fit of the
 # relative error (degree 8 in t), rounded to fp32. Horner from C9 down to C1.
 LOG2_COEFFS = [np.uint32(b).view(np.float32) for b in (
@@ -228,29 +228,32 @@ def _exp_add(x, k):
 
 
 def recip(x):
-    """docs/isa.md recip: |x| with exponent field >= 250 runs on |x|/16, then the result /16
-    (the Newton steps are exact under that scaling; unscaled, the seed flushes for
-    |x| > 0x7E7311C3). |x| >= 2^126 (and inf / NaN bits) returns a zero with x's sign."""
+    """docs/isa.md recip: on the significand a (x's fraction bits with exponent field 127, so a in
+    [1, 2)): the seed, two Newton steps y = y*(2 - a*y), then e = 1 - a*y, y = y*e + y (the plain
+    step's fixed point is an ulp low; this one lands on 1/a), and y (in [0.5, 1]) gets 127 - (x's
+    field) added to its exponent field. |x| >= 2^126 (and inf / NaN bits) returns a zero with x's
+    sign."""
     x = ftz(x)
     xb = bits(x)
     ab = xb & np.uint32(0x7FFFFFFF)
     zero = ab == 0
     big = ab >= np.uint32(0x7E800000)                     # 1/|x| <= 2^-126 flushes (incl. inf)
-    sc = (ab >= np.uint32(250 << 23)) & ~big
-    ax = _exp_add(from_bits(np.where(zero, bits(F32(1)), ab)), np.where(sc, -4, 0))
-    seed = (np.uint64(RECIP_MAGIC) - bits(ax).astype(np.uint64)) & np.uint64(0xFFFFFFFF)
-    y = ftz(from_bits(seed.astype(np.uint32)))
-    for _ in range(3):
-        y = mul(y, sub(F32(2), mul(ax, y)))
-    y = np.where(big, F32(0), _exp_add(y, np.where(sc & ~big, -4, 0)))
+    a = from_bits(np.uint32(127 << 23) | (ab & np.uint32(0x7FFFFF)))
+    y = from_bits(np.uint32(RECIP_MAGIC) - bits(a)).copy()
+    for _ in range(2):
+        y = mul(y, sub(F32(2), mul(a, y)))
+    y = add(mul(y, sub(F32(1), mul(a, y))), y)
+    k = np.where(big | zero, 0, 127 - (ab >> np.uint32(23)).astype(np.int64))
+    y = np.where(big, F32(0), _exp_add(y, k))
     y = from_bits(bits(y) | (xb & np.uint32(0x80000000)))  # x's sign (also on a NaN's zero)
     return np.where(zero, F32(0), y).astype(np.float32)
 
 
 def rsqrt(x):
-    """docs/isa.md rsqrt: x <= 0 (any sign bit), +0 and +inf return +0. Exponent field <= 2 runs
-    on 16x, then the result * 4; field 250..254 on x/16, then / 4 (unscaled, h = x/2 flushes
-    at field 1 and y*y at field >= 252; the steps are exact under the scaling)."""
+    """docs/isa.md rsqrt: x <= 0 (any sign bit), +0 and +inf return +0. The seed, two Newton steps
+    y = y*(1.5 - h*(y*y)), then e = 0.5 - h*(y*y), y = y*e + y. Exponent field <= 2 runs on 16x,
+    then the result * 4; field 250..254 on x/16, then / 4 (unscaled, h = x/2 flushes at field 1
+    and y*y at field >= 252; the steps are exact under the scaling)."""
     x = ftz(x)
     b = bits(x)
     f = (b >> np.uint32(23)) & np.uint32(0xFF)
@@ -259,8 +262,9 @@ def rsqrt(x):
     xs = np.where(bad, F32(1), _exp_add(x, k)).astype(np.float32)
     y = from_bits(np.uint32(RSQRT_MAGIC) - (bits(xs) >> np.uint32(1))).copy()
     h = mul(F32(0.5), xs)
-    for _ in range(3):
+    for _ in range(2):
         y = mul(y, sub(F32(1.5), mul(h, mul(y, y))))
+    y = add(mul(y, sub(F32(0.5), mul(h, mul(y, y)))), y)
     return np.where(bad, F32(0), _exp_add(y, k // 2)).astype(np.float32)
 
 

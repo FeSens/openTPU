@@ -1102,7 +1102,7 @@ function tipData(key) {
       return {
         title: `VPU composite lane ${arg}`,
         what: "A lane that can compute exp2, reciprocal and reciprocal square root.",
-        how: "10 chained fp32 multiply-add slots (each: 1 input stage + fmul 2 + fadd 4 = 7 cycles). exp2 uses 9 slots (range reduction + 7-term polynomial), recip 6 (3 Newton steps), rsqrt 10. Bit-exact with the ISA definition.",
+        how: "10 chained fp32 multiply-add slots (each: 1 input stage + fmul 2 + fadd 4 = 7 cycles). exp2 uses 9 slots (range reduction + 7-term polynomial), recip 6 (2 Newton steps and a correction step), rsqrt 10. Bit-exact with the ISA definition.",
         live: v ? (/exp2|recip|rsqrt/.test(v.name) ? insBlock(v, snap.t) : `Running the simple op ${esc(v.name)} (as lane ${arg} of ${L}).`) : "<span class='muted'>Idle.</span>",
         why: `Only ${CL} lanes are composite (area): exp2-heavy softmax runs ${L / CL}× slower than an add. Fine for decode; long contexts make softmax matter.`,
       };

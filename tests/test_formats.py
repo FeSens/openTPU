@@ -20,8 +20,12 @@ def test_rules_and_pick(monkeypatch):
     assert FM.plain(FM.rules(None, KINDS, "mlp=fp4")) == {"mlp": "fp4"}
 
 
-@pytest.mark.parametrize("bad", ["ple=fp4", "mlp=fp8", "mlp@a-2=fp4", "head@0-1=fp4", "mlp"])
+@pytest.mark.parametrize("bad", ["ple=fp4", "mlp=fp8", "mlp@a-2=fp4", "head@0-1=fp4", "mlp",
+                                 "mlp@20-10=fp4", "mlp@3-=fp4", "mlp@-5=fp4", "mlp@=fp4",
+                                 "mlp@1-2-3=fp4"])
 def test_rules_reject(bad):
+    """Malformed items are refused, and so are ranges that would cover nothing or other layers
+    than written (a reversed a-b, an open end): never ignored."""
     with pytest.raises(ValueError, match="weight format"):
         FM.rules(bad, KINDS)
 

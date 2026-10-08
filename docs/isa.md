@@ -54,10 +54,20 @@ eight in all) needs them from bucket 6 on.
 
 ## Arithmetic (fp32)
 
-IEEE-754 binary32, round to nearest even, **flush to zero**: denormal inputs are treated as
-signed zero and denormal results are replaced by signed zero. A result is denormal if IEEE
+IEEE-754 binary32 values; `add`, `sub` and `mul` round as IEEE 754's roundTiesToEven, with
+**flush to zero**: denormal inputs are treated as signed zero and denormal results are replaced by
+signed zero. A result is denormal if IEEE
 rounding (to the subnormal grid) gives a denormal: a product rounding up to `2^-126` is kept
-(`0.5 * 0x00FFFFFF = 2^-126`; the multiplier must not round at 24 bits first). No NaN inputs are expected;
+(`0.5 * 0x00FFFFFF = 2^-126`; the multiplier must not round at 24 bits first). A zero sum has
+IEEE's sign under roundTiesToEven: an exact cancellation is `+0` (`x - x`, `x + (-x)`,
+`(+0) + (-0)`), `(-0) + (-0) = (-0) - (+0) = -0`, so `x + (-0) = x` for every `x` (the units use
+`v*1 + -0` as the identity); a sum that flushes is a zero with the sign of the exact sum
+(tests/test_fp.py and test_fp_rtl.py check these on the RTL against the host's IEEE adder).
+This is not a conforming IEEE 754 implementation, by design: roundTiesToEven is the only rounding
+direction (no roundTowardZero / Positive / Negative, no rounding-mode register), denormals flush,
+there are no exception flags (an overflow is `+-inf`, an invalid operation the canonical NaN),
+and divide, square root and the other functions are the approximations below, not correctly
+rounded operations. No NaN inputs are expected;
 any NaN produced is the canonical `0x7FC00000` (a final sign flip, as in `recip`, may set its sign).
 NaN operands are defined all the same (the hardware's behaviour, which opentpu/fp32.py models): `add`
 and `mul` give the canonical NaN; flushing, max / min, abs, COPY and FILL keep a NaN's bits; the
@@ -68,21 +78,36 @@ compares order raw sign-magnitude bits (a NaN with the sign set is below `-inf`)
 
 - `i2f(i)`: int32 to fp32, RNE.
 - `exp2(x)`: if `x < -126` return `+0`; if `x >= 128` return `+inf`. `i = floor(x)`,
-  `f = x - i2f(i)`, `p = C0 + f*(C1 + f*(C2 + ... + f*C7))` (Horner, fp32, Taylor coefficients
-  `ln2^k/k!` rounded to fp32), result = `p` with `i` added to its exponent field.
+  `f = x - i2f(i)`, `p = C7`, then `p = p*f + Ck` for k = 6, 5, ..., 0 (each a rounded `mul`
+  then a rounded `add`), result = `p` with `i` added to its exponent field. `C0..C7` are a
+  minimax fit of `2^f` on [0, 1] (relative error, degree 7) with `C0 = 1`, rounded to fp32 and
+  then searched in fp32 for the smallest error through these steps, as fp32 bits: `3F800000
+  3F317218 3E75FDE9 3D63593E 3C1D8534 3AAFE2F6 3916C07C 37B3C7D6`. The result is within
+  1.26 ulp of the exact value where `f` is exact (`x >= 0` and `x <= -0.5`) and within 1.61 ulp
+  where `x + 1` rounds (`-0.5 < x < 0`), measured over every fp32 `f` in [0, 1] and every fp32
+  `x` in (-0.5, 0); it is exact at every integer and non-decreasing in `x` (`p` is
+  non-decreasing over every fp32 `f` in [0, 1], and `p(1) = 2`): `tests/test_fp.py`. (Taylor
+  coefficients `ln2^k/k!` were up to 13 ulp off near `f = 1`.)
 - `recip(x)`: `x == 0` returns `+0`; `|x| >= 2^126` (including infinity) returns a zero with
-  the sign of `x` (the result would be subnormal and flush). Otherwise on `a = |x|`:
-  `y = bits(0x7EF311C3 - bits(a))`, three times `y = y * (2 - a*y)`; the sign of `x` is
-  applied at the end. If `|x| >= 2^123` (exponent field >= 250), `a = |x|/16` (the field minus
-  4) and the result is `y/16` (y's field minus 4; y >= 2^-122 there, so it stays normal):
-  unscaled, the seed flushes for `|x| > 0x7E7311C3`. This keeps `silu(x) = x * recip(1 + exp2(-x*log2e))` exact at `-0` for
-  very negative `x`, where `exp2` overflows to infinity.
+  the sign of `x` (the result would be subnormal and flush). Otherwise, with `ex` the exponent
+  field of `x`, on its significand `a = bits(127 << 23 | (bits(x) & 0x7FFFFF))` (in [1, 2)):
+  `y = bits(0x7EF311C3 - bits(a))`, twice `y = y * (2 - a*y)`, then `e = 1 - a*y` and
+  `y = y*e + y` (a rounded `mul` then a rounded `add`); the result is `y` (in [0.5, 1]) with
+  `127 - ex` added to its exponent field (it stays in 1..254) and the sign of `x`. The last
+  step is in correction form because `y * (2 - a*y)` without a fused multiply-add has a fixed
+  point an ulp below `1/a` (`recip(1)` was `0.99999994`). The result is within 1.16 ulp of the
+  exact value (every fp32 in [1, 2), and samples of every exponent) and exact at every power of
+  two: `tests/test_fp.py`. Returning a zero for `|x| >= 2^126` keeps
+  `silu(x) = x * recip(1 + exp2(-x*log2e))` exact at `-0` for very negative `x`, where `exp2`
+  overflows to infinity.
 - `rsqrt(x)`: `x <= 0` (any sign bit set) and `x = +inf` return `+0`. With `x'` = `16x` if x's
   exponent field is <= 2, `x/16` if it is 250..254, else `x` (a change of the field by 4):
-  `y = bits(0x5F3759DF - (bits(x') >> 1))`, `h = 0.5*x'`, three times `y = y * (1.5 - h*(y*y))`;
-  the result is `4y`, `y/4` or `y` (y's field plus 2, minus 2, unchanged). Unscaled, `h`
-  flushes at field 1 and `y*y` at fields >= 252 (NaN or errors up to 4x). The steps are exact
-  under the scaling, so every other input gives the unscaled bits.
+  `y = bits(0x5F3759DF - (bits(x') >> 1))`, `h = 0.5*x'`, twice `y = y * (1.5 - h*(y*y))`,
+  then `e = 0.5 - h*(y*y)` and `y = y*e + y`; the result is `4y`, `y/4` or `y` (y's field plus
+  2, minus 2, unchanged). Unscaled, `h` flushes at field 1 and `y*y` at fields >= 252 (NaN or
+  errors up to 4x). The steps are exact under the scaling, so every other input gives the
+  unscaled bits. The result is within 1.03 ulp of the exact value (every fp32 in [1, 4), and
+  samples of every exponent) and exact at every power of four: `tests/test_fp.py`.
 - `log2(x)`: `x = +-0` returns `-inf`, `x < 0` (and NaN) the canonical NaN, `x = +inf` `+inf`.
   Otherwise, with `f` the 23 fraction bits of `x` and `ex` its exponent field: `ge = f >= 0x3504F3`
   (the mantissa is at least sqrt(2)), `e = ex - 127 + ge`, `m = bits((ge ? 126 : 127) << 23 | f)`

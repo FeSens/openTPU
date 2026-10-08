@@ -156,7 +156,8 @@ def zeros(shape) -> Tile:
 
 # ---- elementwise / reductions
 def exp2(x) -> Tile:
-    """2**x. `exp2(a - b)` on an unnamed temporary fuses into one EXP2SUB pass."""
+    """2**x (VOP EXP2, within 1.61 ulp). `exp2(a - b)` on an unnamed temporary fuses into one
+    EXP2SUB pass."""
     temp = unnamed(sys.getrefcount(x), TEMP_RC_FN, x)     # measured before x is passed on
     return current().unop(I.V_EXP2, x, temp=temp)
 
@@ -167,10 +168,12 @@ def log2(x) -> Tile:
 
 
 def recip(x) -> Tile:
+    """1/x (VOP RECIP, within 1.16 ulp, exact at powers of two); a zero for |x| >= 2^126."""
     return current().unop(I.V_RECIP, x)
 
 
 def rsqrt(x) -> Tile:
+    """1/sqrt(x) (VOP RSQRT, within 1.03 ulp, exact at powers of four); +0 for x <= 0, +inf."""
     return current().unop(I.V_RSQRT, x)
 
 
