@@ -1128,6 +1128,12 @@ def test_smi_caps_csv_and_watch(tmp_path, capsys, monkeypatch):
     assert smi.sparkline([0.5, 0.5, 0.5]) == "▄▄▄"
     s = smi.sparkline([0.0, 0.5, 1.0])
     assert len(s) == 3 and s[0] == "▁" and s[-1] == "█"
+    # the card's bitstream (1025907f) sets every bit: 94 characters, wrapped, none cut
+    full = {k: True for k, _ in smi._CAP_FLAGS} | {"trace": True, "trace_depth": 16384}
+    rows = smi.caps_rows(full)
+    assert len(rows) == 2 and "  ".join(rows) == smi.caps_text(full)
+    assert all(r in smi._kv("Caps", r) and len(r) <= smi.W - 15 for r in rows)
+    assert smi.caps_rows(None) == ["n/a"]
 
     card = FakeTransport(devname="fake6", stream=True, gen=True, args=True, ddr_mts=1066)
     csvp = tmp_path / "util.csv"

@@ -281,6 +281,18 @@ def caps_text(caps: dict | None) -> str:
     return "  ".join(bits) if bits else "none"
 
 
+def caps_rows(caps: dict | None, width: int = W - 15) -> list[str]:
+    """caps_text() in lines of at most `width` characters (the table's value column): a
+    bitstream with every CAPS bit set does not fit one row."""
+    rows = [""]
+    for c in caps_text(caps).split("  "):
+        if rows[-1] and len(rows[-1]) + 2 + len(c) > width:
+            rows.append(c)
+        else:
+            rows[-1] = f"{rows[-1]}  {c}" if rows[-1] else c
+    return rows
+
+
 def sparkline(values, width: int = 24) -> str:
     """Unicode bars of the last `width` samples. A constant series is a mid-height line."""
     xs = [float(v) for v in values if v is not None][-width:]
@@ -342,7 +354,8 @@ def table(devs: list[dict], history: dict | None = None) -> str:
         mhz = f"{bs['core_mhz']:.0f} MHz" if bs["core_mhz"] else "clock n/a"
         out.append(_kv("Bitstream", f"D={bs['D']} MCOLS={bs['MCOLS']} LANES={bs['LANES']}",
                        f"{bid}   {mhz}", f"regmap v{d['regmap']}"))
-        out.append(_kv("Caps", caps_text(d.get("caps"))))
+        for i, row in enumerate(caps_rows(d.get("caps"))):
+            out.append(_kv("Caps" if i == 0 else "", row))
         temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f} °C"
         out.append(_kv("Link", _gen(d.get("pcie")),
                        f"{ddr_name(bs.get('ddr_mts'))} ch0 {'ok' if c0 else 'FAIL'}  "
