@@ -183,7 +183,7 @@ it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 | Command | What it does |
 |:--|:--|
 | `otpu-chat` | chat with Qwen3-0.6B, LFM2.5-230M (`--model lfm2`), Qwen3.5-0.8B (`--model qwen35`), LFM2-2.6B (`lfm2-2.6b`), SmolLM3-3B (`smollm3`), Phi-4-mini (`phi4-mini`) or Qwen3.5-2B / 4B (`qwen35-2b`, `qwen35-4b`) |
-| `otpu-smi` | temperature, power, DRAM bandwidth and per-unit utilization |
+| `otpu-smi` | temperature, power, DRAM bandwidth and per-unit utilization; `-l --csv` logs a time series |
 | `otpu-lens` | record a run and open it in the profiler |
 | `otpu-selftest`, `otpu-diag` | check that the card works |
 
