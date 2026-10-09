@@ -140,3 +140,149 @@ def test_cli_info(tmp_path, rtl_prof, capsys):
     lens.main(["info", str(f)])
     out = capsys.readouterr().out
     assert "openTPU-profile v1" in out and rtl_prof["name"] in out
+
+
+def test_cli_summary_isa(tmp_path, capsys):
+    """ISA mlp-small: the terminal overview names the run, the roofline, units and classes."""
+    d = lens.record("mlp-small", isa=True)
+    f = lens.save([d], tmp_path / "isa.otpuprof")
+    lens.main(["summary", str(f)])
+    out = capsys.readouterr().out
+    assert d["name"] in out and "[isa]" in out
+    assert "Roofline" in out and "of DRAM-bound minimum" in out
+    assert "Unit utilisation" in out and "MXU" in out
+    assert "By instruction class" in out and "MM" in out
+    assert "Findings" in out
+    m = lens.summary_data(d)
+    assert m["cycles"] == d["cycles"] and m["kind"] == "isa"
+    assert m["causes"] is None                    # ISA profiles have no P/Q buckets
+    assert m["n_instr"] == sum(1 for r in d["instrs"] if r[0] == 0)
+    assert any(r["name"] == "MM" and r["n"] > 0 for r in m["classes"])
+    lens.main(["summary", str(f), "--json"])
+    (j,) = json.loads(capsys.readouterr().out)
+    assert j["name"] == d["name"] and j["roofline"]["bound"] == d["roofline"]["bound"]
+    from opentpu.host import hwlens
+    assert hwlens.main(["summary", str(f)]) == 0
+    assert "Roofline" in capsys.readouterr().out
+
+
+def _bucket_prof(n=100, bm=50, bd=10, bs=12, ms=8, mb=4, fm=2):
+    """Minimal RTL-shaped profile: P/Q buckets only, for the terminal cause table."""
+    return {
+        "kind": "rtl", "name": "synth-mlp", "cycles": n, "clock_mhz": 100,
+        "config": {"S": 1, "D": 64, "MCOLS": 2, "LANES": 8},
+        "roofline": {"bound": bm + bd, "efficiency": (bm + bd) / n},
+        "macs": 0, "peak_macs": 128, "bytes": 0,
+        "units": ["DMA", "MXU", "QUANT", "VPU", "COLL"],
+        "instrs": [
+            [0, 0, 0, 1, "MM", "", 0, 0, 0, 0, 80, -1, {}, 80, bm, 0],
+            [0, 1, 1, 0, "LD", "", 0, 0, -1, 0, 20, -1, {}, 20, bd, 0],
+        ],
+        "slices": [{"ports": {"bmxu": bm, "bdma": bd}, "busy": {"MXU": 80, "DMA": 20},
+                    "lose": {"MXU drain": fm},
+                    "buckets": {"c": [n - 1], "n": [n], "bm": [bm], "bd": [bd], "bs": [bs],
+                                "ms": [ms], "mb": [mb], "fm": [fm], "mx": [40],
+                                "fq": [0], "fv": [0], "fc": [0], "as": [0]}}],
+        "sources": [], "notes": [{"level": "warn", "text": "Near the roofline."}],
+    }
+
+
+def test_cli_summary_port_b_causes(tmp_path, capsys):
+    """Every DRAM port-B cycle is streaming or an idle cause (same order as the app)."""
+    d = _bucket_prof()
+    f = lens.save([d], tmp_path / "rtl.otpuprof")
+    lens.main(["summary", str(f)])
+    out = capsys.readouterr().out
+    assert "Where the cycles went" in out and "DRAM port B streaming" in out
+    assert "MXU starved" in out and "Biggest losses:" in out
+    tot = lens.port_b_causes(d)
+    assert tot and tot["busy"] == 60
+    n = sum(d["slices"][0]["buckets"]["n"])
+    assert abs(sum(tot.values()) - n) < 1e-6
+
+
+def test_cli_summary_rejects_slice_past_the_profile(tmp_path, capsys):
+    """--slice past the profile's slices is an error that names the valid range."""
+    d = _bucket_prof()
+    wider = _bucket_prof()
+    wider["name"] = "two-slice"
+    wider["slices"] = wider["slices"] * 2
+    f = lens.save([d, wider], tmp_path / "rtl.otpuprof")
+    lens.main(["summary", str(f), "--slice", "0"])
+    out = capsys.readouterr().out
+    assert "slice 0" in out and "2 instructions" in out
+    with pytest.raises(SystemExit, match=r"'synth-mlp' \(valid range: 0\.\.0\)"):
+        lens.main(["summary", str(f), "--slice", "1"])
+    assert capsys.readouterr().out == ""
+    with pytest.raises(SystemExit, match=r"valid range: 0\.\.0"):
+        lens.main(["summary", str(f), "--json", "--slice", "1"])
+    only = lens.save([wider], tmp_path / "wide.otpuprof")
+    lens.main(["summary", str(only), "--slice", "1"])
+    shown = capsys.readouterr().out
+    assert "slice 1" in shown and "0 instructions" in shown
+    with pytest.raises(SystemExit, match=r"'two-slice' \(valid range: 0\.\.1\)"):
+        lens.main(["summary", str(only), "--slice", "2"])
+    with pytest.raises(SystemExit, match=r"valid range: 0\.\.1"):
+        lens.main(["summary", str(only), "--slice", "-1"])
+    empty = _bucket_prof()
+    empty["slices"] = []
+    with pytest.raises(SystemExit, match=r"valid range: none"):
+        lens.render_summary(empty)
+
+
+def _fields(line: str, widths: list[int], lead: int = 2) -> list[str]:
+    out, i = [], lead
+    for w in widths:
+        out.append(line[i:i + w])
+        i += w + 1
+    return out
+
+
+def test_summary_class_column_fits_vop_exp2sub():
+    """The class column grows past 10 so VOP.exp2sub stays aligned with the header."""
+    d = _bucket_prof()
+    short = lens.render_summary(d)
+    hdr = next(ln for ln in short.splitlines() if ln.strip().startswith("class"))
+    assert hdr.index("n") == 17                          # glyph of a 10-wide class column
+    d["instrs"].append([0, 2, 2, 3, "VOP.exp2sub", "", 0, 0, -1, 0, 10, -1, {}, 10, 0, 0])
+    lines = lens.render_summary(d).splitlines()
+    hdr = next(ln for ln in lines if ln.strip().startswith("class"))
+    widths = [len("VOP.exp2sub"), 5, 8, 8, 7, 7, 6]
+    hdr_f = _fields(hdr, widths)
+    assert [c.strip() for c in hdr_f] == ["class", "n", "busy", "work", "dep", "unit", "DRAM"]
+    rows = [ln for ln in lines if ln.strip().split()[0] in ("MM", "LD", "VOP.exp2sub")]
+    assert [ln.strip().split()[0] for ln in rows] == ["MM", "LD", "VOP.exp2sub"]
+    for ln in rows:
+        got = _fields(ln, widths)
+        assert got[0] == f"{ln.strip().split()[0]:<{widths[0]}}"
+        assert all(c == f"{c.strip():>{w}}" for c, w in zip(got[1:], widths[1:]))
+
+
+def test_summary_board_lists_print_as_numbers():
+    d = _bucket_prof()
+    d["board"] = {"cycles": 200, "instructions": [11077], "ecc_ded": False,
+                  "per_slice": [11077, 42]}
+    text = lens.render_summary(d)
+    assert "[11077]" not in text
+
+    def val(key):
+        line = next(ln for ln in text.splitlines() if ln.strip().startswith(key))
+        return line.strip().split(None, 1)[1]
+
+    assert val("instructions") == "11077"
+    assert val("per_slice") == "11077, 42"
+    assert val("cycles") == "200"
+    assert val("ecc_ded") == "False"
+
+
+def test_summary_json_default_uses_item_or_typeerror():
+    """numpy floats stay floats; a non-scalar is a TypeError, not a circular reference."""
+    import numpy as np
+    assert lens._json_default(np.float64(1.9)) == 1.9
+    assert type(lens._json_default(np.float64(1.9))) is float
+    assert lens._json_default(np.int64(3)) == 3
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        lens._json_default(object())
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        json.dumps({"a": np.arange(2)}, default=lens._json_default)
+    assert json.loads(json.dumps({"a": np.float64(1.9)}, default=lens._json_default))["a"] == 1.9

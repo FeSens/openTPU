@@ -3,7 +3,7 @@
     otpu-lens record --dev /dev/xdma0 --model models/Qwen3-0.6B --prompt "Hi" --tokens 2 \\
                      [--pos P] [--keep first|last] -o card.otpuprof
     otpu-lens record --sim [--workload mlp-small | qwen-tiny] [--pos P] -o sim.otpuprof
-    otpu-lens open|html|info|list ...          # passed to opentpu.lens (python -m opentpu.lens)
+    otpu-lens open|html|info|summary|list ...  # passed to opentpu.lens (python -m opentpu.lens)
 
 record runs Qwen3 decode steps on the card (the prompt's tokens, then greedy tokens); the steps
 at positions P .. P+N-1 (default P: the prompt's last token, whose step yields the first new
@@ -263,7 +263,7 @@ def record_sim(a) -> list:
 
 
 # ------------------------------------------------------------------------------ CLI
-PASS = ("open", "html", "info", "list")
+PASS = ("open", "html", "info", "summary", "list")
 
 
 @busy_exits
@@ -274,7 +274,7 @@ def main(argv=None) -> int:
         return 0
     ap = argparse.ArgumentParser(prog="otpu-lens", description="openTPU Lens on the card: "
                                  "record profiles from the hardware trace buffer. Also: "
-                                 "otpu-lens open|html|info|list (opentpu.lens).")
+                                 "otpu-lens open|html|info|summary|list (opentpu.lens).")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("record", help="run Qwen3 steps on the card (or a workload on the board "
                        "model) with the trace buffer on; write a profile file")

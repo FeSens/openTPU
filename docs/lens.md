@@ -13,9 +13,17 @@ python3 -m opentpu.lens record qwen-tiny --board --axi --pos 64 -o qwen.otpuprof
 python3 -m opentpu.lens open run.otpuprof                      # opens the app in the browser
 python3 -m opentpu.lens html run.otpuprof -o run.html          # one standalone page
 python3 -m opentpu.lens info run.otpuprof
+python3 -m opentpu.lens summary run.otpuprof                   # terminal overview
 ```
 
-With the package installed (`pip install -e .`) the same commands are available as `lens`.
+With the package installed (`pip install -e .`) the same commands are available as `lens`
+(and as `otpu-lens` for `open`, `html`, `info`, `summary` and `list`).
+
+`summary` prints the overview on the terminal: cycles and time at the profile's clock, the
+DRAM-roofline fraction, unit utilisation bars, the findings (`notes`), and a per-instruction-class
+table. On RTL and hardware traces it also attributes every cycle of DRAM port B — streaming or
+idle, and why it idled — with the same cause order as the app. `--json` writes the same numbers
+as JSON; `--slice N` selects a slice. `info` stays the one-line facts.
 
 `record` options:
 
@@ -152,7 +160,7 @@ otpu-lens record --dev /dev/xdma0 --model models/Qwen3-0.6B --prompt "Why is the
 otpu-lens record --dev /dev/xdma0 --pos 300 --tokens 1 -o late.otpuprof   # a long context
 otpu-lens record --sim -o sim.otpuprof                       # mlp-small on the board model
 otpu-lens record --sim --workload qwen-tiny --pos 8 -o q.otpuprof
-otpu-lens open card.otpuprof                                 # open / html / info / list: as lens
+otpu-lens open card.otpuprof                                 # open / html / info / summary / list
 ```
 
 `record` feeds the prompt (chat template; `--prompt-ids 1,2,3` skips the tokenizer), then
