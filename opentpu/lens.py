@@ -26,6 +26,7 @@ Command line (also installed as `lens`):
     python -m opentpu.lens open q.otpuprof                     # the app in the browser
     python -m opentpu.lens html q.otpuprof -o q.html           # standalone page
     python -m opentpu.lens info q.otpuprof
+    python -m opentpu.lens summary q.otpuprof                  # terminal overview (roofline, units)
     python -m opentpu.lens list                                # workloads
 
 The app (lens_app.html) has an overview (roofline, where the cycles went, utilisation), a
@@ -593,6 +594,274 @@ def _mem(d: dict, cfg, axi) -> dict:
     return d
 
 
+# ============================================================================ terminal summary
+# Same idle-cause order as lens_app.html (bucketCauses / allCauses): every cycle of DRAM
+# port B is either streaming or attributed to one reason it sat idle.
+CAUSES = [
+    ("busy", "DRAM port B streaming"),
+    ("dram", "DRAM not ready (backpressure)"),
+    ("starve", "MXU starved: chunk FIFO empty (latency)"),
+    ("blocked", "MXU not consuming (drain / row credits)"),
+    ("arb", "TMEM bank arbitration"),
+    ("mxu", "MXU computing, not streaming"),
+    ("w3", "waiting on VPU work"),
+    ("w2", "waiting on quantizer work"),
+    ("w4", "waiting on collectives"),
+    ("w0", "waiting on DMA work"),
+    ("none", "nothing in flight (dispatch / program order)"),
+]
+
+
+def _bar(x: float, n: int = 20) -> str:
+    x = 0.0 if x != x else max(0.0, min(1.0, float(x)))
+    k = max(0, min(n, round(x * n)))
+    return "█" * k + "░" * (n - k)
+
+
+def _fmt_n(n) -> str:
+    try:
+        return f"{int(n):,}"
+    except (TypeError, ValueError):
+        return str(n)
+
+
+def _time_at(cycles: float, mhz: float) -> str:
+    if not mhz:
+        return "n/a"
+    us = cycles / mhz
+    return f"{us / 1000:.2f} ms" if us >= 1000 else f"{us:.1f} µs"
+
+
+def _slice(d: dict, s: int) -> dict:
+    sl = d.get("slices") or []
+    return sl[s] if 0 <= s < len(sl) else {}
+
+
+def _unit_coverage(d: dict, s: int):
+    """Per-bucket union of in-flight intervals, matching lens_app.html `build`."""
+    units = d.get("units") or UNITS
+    B = _slice(d, s).get("buckets") or {}
+    cyc = B.get("c") or []
+    nb = len(cyc)
+    if not nb:
+        return None, B
+    bn = B.get("n") or [0] * nb
+    bend = [cyc[k] + 1 for k in range(nb)]
+    bstart = [bend[k] - int(bn[k]) for k in range(nb)]
+    ins = [r for r in (d.get("instrs") or []) if r[0] == s]
+    cov = [[0.0] * nb for _ in units]
+    for u in range(len(units)):
+        iv = []
+        for r in ins:
+            start, end, rel = r[9], r[10], r[8]
+            if r[3] != u or start < 0 or end <= start:
+                continue
+            a = min(rel, end) if u == 1 and rel > start else start
+            iv.append((a, end))
+        iv.sort()
+        merged = []
+        for a, b in iv:
+            if merged and a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        k = 0
+        for a, b in merged:
+            while k < nb and bend[k] <= a:
+                k += 1
+            j = k
+            while j < nb and bstart[j] < b:
+                cov[u][j] += max(0.0, min(b, bend[j]) - max(a, bstart[j]))
+                j += 1
+    return cov, B
+
+
+def _bucket_causes(B: dict, cov, k: int) -> dict:
+    def g(key):
+        row = B.get(key) or []
+        return int(row[k]) if k < len(row) else 0
+    n = g("n")
+    busy = min(n, g("bm") + g("bd"))
+    out = {"busy": float(busy)}
+    r = float(n - busy)
+
+    def take(key, v):
+        nonlocal r
+        t = max(0.0, min(r, float(v)))
+        out[key] = out.get(key, 0.0) + t
+        r -= t
+
+    take("dram", g("bs"))
+    take("starve", g("ms"))
+    take("blocked", g("mb"))
+    take("arb", g("fm"))
+    if r > 0 and cov is not None and len(cov) > 1:
+        take("mxu", cov[1][k] - busy)
+    if r > 0 and cov is not None:
+        others = [(u, cov[u][k]) for u in (3, 2, 4, 0) if u < len(cov) and cov[u][k] > 0]
+        tot = sum(c for _, c in others)
+        if tot > 0:
+            rr = r
+            for u, c in others:
+                take("w" + str(u), rr * c / tot)
+    if r > 0:
+        take("none", r)
+    return out
+
+
+def port_b_causes(d: dict, s: int = 0) -> dict | None:
+    """Totals of DRAM port-B streaming vs idle causes, or None without P/Q buckets."""
+    cov, B = _unit_coverage(d, s)
+    nb = len(B.get("c") or [])
+    if not nb:
+        return None
+    tot = {}
+    for k in range(nb):
+        for key, v in _bucket_causes(B, cov, k).items():
+            tot[key] = tot.get(key, 0.0) + v
+    return tot
+
+
+def class_rows(d: dict, s: int = 0) -> list:
+    """Per-opcode busy / wait / DRAM, busiest first (same columns as the app's class table)."""
+    rows = {}
+    for r in d.get("instrs") or []:
+        if r[0] != s:
+            continue
+        name, unit = r[4], r[3]
+        disp, ready, start, end = r[6], r[7], r[9], r[10]
+        work = r[13] if len(r) > 13 else 0
+        pb = r[14] if len(r) > 14 else 0
+        a = rows.setdefault(name, {"name": name, "unit": unit, "n": 0, "busy": 0,
+                                   "dep": 0, "unitw": 0, "work": 0, "pb": 0})
+        a["n"] += 1
+        if start >= 0 and end >= 0:
+            a["busy"] += end - start
+        a["dep"] += max(0, ready - disp)
+        a["unitw"] += max(0, start - ready)
+        a["work"] += work or 0
+        a["pb"] += pb or 0
+    return sorted(rows.values(), key=lambda a: -a["busy"])
+
+
+def summary_data(d: dict, s: int = 0) -> dict:
+    """Structured overview of one profile (the terminal `summary` command, and --json)."""
+    sl = _slice(d, s)
+    cyc = d.get("cycles") or 0
+    busy = sl.get("busy") or {}
+    return {
+        "name": d.get("name"), "kind": d.get("kind"), "cycles": cyc,
+        "clock_mhz": d.get("clock_mhz"), "config": d.get("config") or {},
+        "roofline": d.get("roofline") or {}, "macs": d.get("macs") or 0,
+        "peak_macs": d.get("peak_macs") or 0, "bytes": d.get("bytes") or 0,
+        "slice": s, "busy": busy, "lose": sl.get("lose") or {},
+        "causes": port_b_causes(d, s), "classes": class_rows(d, s),
+        "notes": d.get("notes") or [], "board": d.get("board"),
+        "n_instr": sum(1 for r in (d.get("instrs") or []) if r[0] == s),
+    }
+
+
+def render_summary(d: dict, s: int = 0) -> str:
+    """ASCII dashboard of one profile: KPIs, port-B causes, unit bars, findings, classes."""
+    m = summary_data(d, s)
+    cfg = m["config"]
+    rl = m["roofline"]
+    cyc = m["cycles"] or 1
+    eff = rl.get("efficiency") or 0.0
+    bound = rl.get("bound") or 0
+    mhz = m["clock_mhz"] or CLOCK_MHZ
+    cfg_bits = " ".join(f"{k}={cfg[k]}" for k in ("S", "D", "MCOLS", "LANES") if k in cfg)
+    lines = [
+        f"{m['name']}  [{m['kind']}]  slice {s}  {cfg_bits}",
+        f"  {_fmt_n(m['cycles'])} cycles   {_time_at(m['cycles'], mhz)} at {mhz:g} MHz   "
+        f"{m['n_instr']} instructions",
+        f"  Roofline {_bar(eff)} {_pct(eff)} of DRAM-bound minimum "
+        f"(bound {_fmt_n(bound)} cycles)",
+    ]
+    if m["macs"]:
+        lines.append(f"  MACs/cycle {m['macs'] / cyc:.0f}  (peak {m['peak_macs']})")
+    ports = _slice(d, s).get("ports") or {}
+    if ports:
+        pb = (ports.get("bmxu", 0) or 0) + (ports.get("bdma", 0) or 0)
+        extra = ""
+        if ports.get("bmxu") is not None:
+            extra = f"  (MXU {ports.get('bmxu', 0)}, DMA {ports.get('bdma', 0)})"
+        lines.append(f"  DRAM port B busy {_pct(pb / cyc)}{extra}")
+    causes = m["causes"]
+    if causes:
+        total = sum(causes.values()) or cyc
+        lines.append("Where the cycles went  (DRAM port B, streaming or idle)")
+        for key, label in CAUSES:
+            v = causes.get(key) or 0
+            if v <= 0:
+                continue
+            lines.append(f"  {_bar(v / total, 12)} {_pct(v / total):>6}  {label}")
+        losses = sorted(((k, causes.get(k, 0)) for k, _ in CAUSES if k != "busy"),
+                        key=lambda x: -x[1])
+        top = [(k, v) for k, v in losses if v > 0][:3]
+        if top:
+            lab = dict(CAUSES)
+            bits = ", ".join(f"{lab[k]} ({_pct(v / cyc)})" for k, v in top)
+            lines.append(f"  Biggest losses: {bits}.")
+    units = d.get("units") or UNITS
+    busy = m["busy"]
+    if busy:
+        lines.append("Unit utilisation  (cycles with an instruction in flight)")
+        for u in units:
+            v = (busy.get(u) or 0) / cyc
+            lines.append(f"  {u:<6} {_bar(v, 12)} {_pct(v):>6}")
+    lose = m["lose"]
+    if any(lose.values()):
+        lines.append("TMEM arbitration losses")
+        for k, v in lose.items():
+            if v:
+                lines.append(f"  {k:<12} {_bar(v / cyc, 12)} {_pct(v / cyc):>6}")
+    notes = m["notes"]
+    if notes:
+        lines.append("Findings")
+        for n in notes:
+            lines.append(f"  [{n.get('level', 'info')}] {n.get('text', '')}")
+    rows = m["classes"][:8]
+    if rows:
+        lines.append("By instruction class  (busy = start→end; wait deps / unit)")
+        lines.append(f"  {'class':<10} {'n':>5} {'busy':>8} {'work':>8} {'dep':>7} {'unit':>7} "
+                     f"{'DRAM':>6}")
+        for a in rows:
+            un = units[a["unit"]] if isinstance(a["unit"], int) and a["unit"] < len(units) else ""
+            lines.append(f"  {a['name']:<10} {a['n']:>5} {_fmt_n(a['busy']):>8} "
+                         f"{_fmt_n(a['work']):>8} {_fmt_n(a['dep']):>7} {_fmt_n(a['unitw']):>7} "
+                         f"{_fmt_n(a['pb']):>6}  {un}")
+    srcs, counts = d.get("sources") or [], {}
+    for r in d.get("instrs") or []:
+        if r[0] != s:
+            continue
+        sid = r[11] if len(r) > 11 else -1
+        if isinstance(sid, int) and sid >= 0:
+            counts[sid] = counts.get(sid, 0) + 1
+    if counts and srcs:
+        lines.append("Hot source lines")
+        for sid, n in sorted(counts.items(), key=lambda x: -x[1])[:5]:
+            if sid >= len(srcs):
+                continue
+            src = srcs[sid]
+            loc = f"{os.path.basename(src.get('file', ''))}:{src.get('line', '?')} in {src.get('func', '?')}"
+            text = (src.get("text") or "")[:60]
+            lines.append(f"  {n:>4}×  {loc}  {text}")
+    board = m["board"]
+    if board:
+        lines.append("Board counters")
+        for k, v in board.items():
+            if isinstance(v, dict):
+                continue
+            lines.append(f"  {k:<16} {v}")
+    return "\n".join(lines)
+
+
+def render_file_summary(doc: dict, s: int = 0) -> str:
+    parts = [render_summary(d, s) for d in doc.get("profiles") or []]
+    return "\n\n".join(parts) if parts else "(no profiles)"
+
+
 # ============================================================================ CLI
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="lens", description="openTPU Lens: record and explore "
@@ -616,8 +885,12 @@ def main(argv=None) -> None:
     h = sub.add_parser("html", help="write a standalone HTML page with the profiles embedded")
     h.add_argument("file")
     h.add_argument("-o", "--out", required=True)
-    i = sub.add_parser("info", help="summarize a profile file")
+    i = sub.add_parser("info", help="one-line facts about a profile file")
     i.add_argument("file")
+    su = sub.add_parser("summary", help="terminal overview: roofline, where cycles went, units")
+    su.add_argument("file")
+    su.add_argument("--slice", type=int, default=0, help="slice to report (default 0)")
+    su.add_argument("--json", action="store_true", help="structured JSON instead of the table")
     sub.add_parser("list", help="list the workloads")
     a = ap.parse_args(argv)
 
@@ -657,6 +930,14 @@ def main(argv=None) -> None:
                   f"{d['roofline']['bound']} ({100 * d['roofline']['efficiency']:.1f}%), "
                   f"{len(d['instrs'])} instructions, S={c['S']} D={c['D']} MCOLS={c['MCOLS']} "
                   f"LANES={c['LANES']}")
+        return
+    if a.cmd == "summary":
+        doc = load(a.file)
+        if a.json:
+            out = [summary_data(d, a.slice) for d in doc["profiles"]]
+            print(json.dumps(out, indent=1, default=lambda o: int(o) if hasattr(o, "item") else o))
+        else:
+            print(render_file_summary(doc, a.slice))
         return
 
 

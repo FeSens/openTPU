@@ -140,3 +140,62 @@ def test_cli_info(tmp_path, rtl_prof, capsys):
     lens.main(["info", str(f)])
     out = capsys.readouterr().out
     assert "openTPU-profile v1" in out and rtl_prof["name"] in out
+
+
+def test_cli_summary_isa(tmp_path, capsys):
+    """ISA mlp-small: the terminal overview names the run, the roofline, units and classes."""
+    d = lens.record("mlp-small", isa=True)
+    f = lens.save([d], tmp_path / "isa.otpuprof")
+    lens.main(["summary", str(f)])
+    out = capsys.readouterr().out
+    assert d["name"] in out and "[isa]" in out
+    assert "Roofline" in out and "of DRAM-bound minimum" in out
+    assert "Unit utilisation" in out and "MXU" in out
+    assert "By instruction class" in out and "MM" in out
+    assert "Findings" in out
+    m = lens.summary_data(d)
+    assert m["cycles"] == d["cycles"] and m["kind"] == "isa"
+    assert m["causes"] is None                    # ISA profiles have no P/Q buckets
+    assert m["n_instr"] == sum(1 for r in d["instrs"] if r[0] == 0)
+    assert any(r["name"] == "MM" and r["n"] > 0 for r in m["classes"])
+    lens.main(["summary", str(f), "--json"])
+    (j,) = json.loads(capsys.readouterr().out)
+    assert j["name"] == d["name"] and j["roofline"]["bound"] == d["roofline"]["bound"]
+    from opentpu.host import hwlens
+    assert hwlens.main(["summary", str(f)]) == 0
+    assert "Roofline" in capsys.readouterr().out
+
+
+def _bucket_prof(n=100, bm=50, bd=10, bs=12, ms=8, mb=4, fm=2):
+    """Minimal RTL-shaped profile: P/Q buckets only, for the terminal cause table."""
+    return {
+        "kind": "rtl", "name": "synth-mlp", "cycles": n, "clock_mhz": 100,
+        "config": {"S": 1, "D": 64, "MCOLS": 2, "LANES": 8},
+        "roofline": {"bound": bm + bd, "efficiency": (bm + bd) / n},
+        "macs": 0, "peak_macs": 128, "bytes": 0,
+        "units": ["DMA", "MXU", "QUANT", "VPU", "COLL"],
+        "instrs": [
+            [0, 0, 0, 1, "MM", "", 0, 0, 0, 0, 80, -1, {}, 80, bm, 0],
+            [0, 1, 1, 0, "LD", "", 0, 0, -1, 0, 20, -1, {}, 20, bd, 0],
+        ],
+        "slices": [{"ports": {"bmxu": bm, "bdma": bd}, "busy": {"MXU": 80, "DMA": 20},
+                    "lose": {"MXU drain": fm},
+                    "buckets": {"c": [n - 1], "n": [n], "bm": [bm], "bd": [bd], "bs": [bs],
+                                "ms": [ms], "mb": [mb], "fm": [fm], "mx": [40],
+                                "fq": [0], "fv": [0], "fc": [0], "as": [0]}}],
+        "sources": [], "notes": [{"level": "warn", "text": "Near the roofline."}],
+    }
+
+
+def test_cli_summary_port_b_causes(tmp_path, capsys):
+    """Every DRAM port-B cycle is streaming or an idle cause (same order as the app)."""
+    d = _bucket_prof()
+    f = lens.save([d], tmp_path / "rtl.otpuprof")
+    lens.main(["summary", str(f)])
+    out = capsys.readouterr().out
+    assert "Where the cycles went" in out and "DRAM port B streaming" in out
+    assert "MXU starved" in out and "Biggest losses:" in out
+    tot = lens.port_b_causes(d)
+    assert tot and tot["busy"] == 60
+    n = sum(d["slices"][0]["buckets"]["n"])
+    assert abs(sum(tot.values()) - n) < 1e-6
