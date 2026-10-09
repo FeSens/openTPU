@@ -10,6 +10,11 @@
     otpu-smi --sim                the Verilator board model: counters over one run of the
                                   bring-up demo program (both samples in one simulation)
     otpu-smi --fake               an in-memory card with synthetic counters (demo, tests)
+    otpu-smi -l 0.5 --samples 20 --csv util.csv
+                                  loop, stop after 20 samples, append each to a CSV
+
+The default table names the bitstream's capability bits (CAPS) and, in -l mode, a sparkline
+of MAC / DRAM / RUN over the last samples.
 
 A monitor: it only reads registers (and writes SNAP, which latches the free-running counters
 into their shadows without disturbing anything), never takes the device lock, and reads the
@@ -25,6 +30,7 @@ the estimate from Vivado's power report, marked "~ ... estimate". --no-i2c skips
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as _dt
 import glob
 import json
@@ -37,7 +43,7 @@ from . import regs as R
 from .board import Board, rates
 from .runstate import devname, read_status
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 ROOT = Path(__file__).resolve().parents[2]
 POWER_JSON = ROOT / "build" / "vivado" / "reports" / "power.json"
 
@@ -248,7 +254,79 @@ def ddr_name(mts: int | None) -> str:
     return f"DDR3-{mts}" if mts else "DDR3"
 
 
-def table(devs: list[dict]) -> str:
+# capability bits shown in the default table (docs/observability.md CAPS); order is the
+# features a reader looks for first, not the bit numbers
+_CAP_FLAGS = (("w4", "w4"), ("stream", "stream"), ("gen", "gen"), ("args", "args"),
+              ("pair", "pair"), ("dstep", "dstep"), ("chash", "chash"), ("waitw", "waitw"),
+              ("hostcal", "hostcal"), ("i2c", "i2c"), ("ddr", "ddr"), ("act_rows", "act-rows"),
+              ("temp", "temp"))
+_SPARK = "▁▂▃▄▅▆▇█"
+CSV_FIELDS = ["time", "iso", "device", "ok", "running", "dram_gbs", "dram_rd_gbs",
+              "dram_wr_gbs", "temp_c", "ipc"] + [k for k, _ in UNITS] + [
+              "DRAM", "MXU_STARVE", "TMEM_DENY", "DRAM_WAIT",
+              "tok_s_device", "tok_s_wall", "tokens", "build_id"]
+
+
+def caps_text(caps: dict | None) -> str:
+    """One line of capability names from Board.info()['caps'] / regs.caps()."""
+    if not caps:
+        return "n/a"
+    bits = []
+    if caps.get("trace"):
+        d = int(caps.get("trace_depth") or 0)
+        bits.append(f"trace·{d // 1024}K" if d >= 1024 else (f"trace·{d}" if d else "trace"))
+    for key, lab in _CAP_FLAGS:
+        if caps.get(key):
+            bits.append(lab)
+    return "  ".join(bits) if bits else "none"
+
+
+def sparkline(values, width: int = 24) -> str:
+    """Unicode bars of the last `width` samples. A constant series is a mid-height line."""
+    xs = [float(v) for v in values if v is not None][-width:]
+    if not xs:
+        return ""
+    lo, hi = min(xs), max(xs)
+    if hi <= lo:
+        return "▄" * len(xs)
+    n = len(_SPARK) - 1
+    return "".join(_SPARK[min(n, int(round((v - lo) / (hi - lo) * n)))] for v in xs)
+
+
+def _csv_num(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, float):
+        return f"{v:.6g}"
+    return str(v)
+
+
+def csv_row(d: dict) -> dict:
+    """One CSV record of a query() result (missing util / process: empty cells)."""
+    u, smp, p = d.get("util") or {}, d.get("sample") or {}, d.get("process") or {}
+    bs = d.get("bitstream") or {}
+    ts = d.get("time") or 0.0
+    iso = _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    bid = bs.get("build_id")
+    row = {"time": f"{ts:.3f}", "iso": iso, "device": d.get("device") or "",
+           "ok": _csv_num(bool(d.get("ok"))), "running": _csv_num(bool(d.get("running"))),
+           "dram_gbs": _csv_num(d.get("dram_gbs")), "dram_rd_gbs": _csv_num(d.get("dram_rd_gbs")),
+           "dram_wr_gbs": _csv_num(d.get("dram_wr_gbs")), "temp_c": _csv_num(d.get("temp_c")),
+           "ipc": _csv_num(smp.get("ipc")),
+           "tok_s_device": _csv_num(p.get("tok_s_device") if p and not p.get("stale") else None),
+           "tok_s_wall": _csv_num(p.get("tok_s_wall") if p and not p.get("stale") else None),
+           "tokens": _csv_num(p.get("tokens") if p and not p.get("stale") else None),
+           "build_id": f"{bid:08x}" if isinstance(bid, int) else ""}
+    for k, _ in UNITS:
+        row[k] = _csv_num(u.get(k))
+    for k in ("DRAM", "MXU_STARVE", "TMEM_DENY", "DRAM_WAIT"):
+        row[k] = _csv_num(u.get(k))
+    return row
+
+
+def table(devs: list[dict], history: dict | None = None) -> str:
     now = _dt.datetime.now().strftime("%a %b %d %H:%M:%S %Y")
     out = [_lr(f"otpu-smi {VERSION}", now, W)]
     for n, d in enumerate(devs):
@@ -264,6 +342,7 @@ def table(devs: list[dict]) -> str:
         mhz = f"{bs['core_mhz']:.0f} MHz" if bs["core_mhz"] else "clock n/a"
         out.append(_kv("Bitstream", f"D={bs['D']} MCOLS={bs['MCOLS']} LANES={bs['LANES']}",
                        f"{bid}   {mhz}", f"regmap v{d['regmap']}"))
+        out.append(_kv("Caps", caps_text(d.get("caps"))))
         temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f} °C"
         out.append(_kv("Link", _gen(d.get("pcie")),
                        f"{ddr_name(bs.get('ddr_mts'))} ch0 {'ok' if c0 else 'FAIL'}  "
@@ -307,6 +386,13 @@ def table(devs: list[dict]) -> str:
                              f"TMEM-deny {_pct(u['TMEM_DENY'])}   "
                              f"DRAM-req-wait {_pct(u['DRAM_WAIT'])}"))
             out.append(_line(f"IPC     {smp['ipc']:.2e}"))
+            hist = (history or {}).get(d["device"]) or []
+            if len(hist) >= 2:
+                mac = [h.get("MXU_MAC") for h in hist]
+                dram = [h.get("DRAM") for h in hist]
+                run = [h.get("RUNNING") for h in hist]
+                out.append(_line(f"Watch  MAC {sparkline(mac, 16)}  DRAM {sparkline(dram, 16)}  "
+                                 f"RUN {sparkline(run, 16)}"))
         else:
             out.append(_head("Utilization"))
             out.append(_line("n/a (register map 1 bitstream: no free-running counters)"))
@@ -388,19 +474,29 @@ def main(argv=None, open_transport=None) -> int:
                     help="do not read the board's I2C sensors (measured power, board temperature)")
     ap.add_argument("--fake", action="store_true",
                     help="an in-memory card with synthetic counters (demo)")
+    ap.add_argument("--csv", metavar="FILE",
+                    help="append one CSV row per sample (header on the first write)")
+    ap.add_argument("--samples", type=int, metavar="N",
+                    help="stop after N samples (with -l; a CSV log without an infinite loop)")
     a = ap.parse_args(argv)
 
-    def emit(devs):
+    def emit(devs, hist=None):
         if a.json:
             print(json.dumps(_jsonable(devs), indent=1))
         elif a.query:
             print("\n\n".join(details(d) for d in devs))
         else:
-            print(table(devs))
+            print(table(devs, hist))
         sys.stdout.flush()
 
     if a.sim:
-        emit([query_sim(a.sim_idle)])
+        d = query_sim(a.sim_idle)
+        emit([d])
+        if a.csv:
+            with open(a.csv, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+                w.writeheader()
+                w.writerow(csv_row(d))
         return 0
     if a.fake:
         from .fake import FakeTransport
@@ -423,23 +519,46 @@ def main(argv=None, open_transport=None) -> int:
 
 
 def _loop(a, devs, open_transport, emit) -> int:
-    ts, prev = {}, {}
+    ts, prev, hist = {}, {}, {}
     rc = 0
-    while True:
-        out = []
-        for dev in devs:
-            try:
-                t = ts.get(dev) or ts.setdefault(dev, open_transport(dev))
-                d = query(t, dev, a.interval, prev.get(dev), a.power_json, i2c=not a.no_i2c)
-                prev[dev] = d.get("counters")
-            except OSError as e:
-                d = {"device": dev, "ok": False, "link": f"cannot open ({e.strerror or e})"}
-                rc = 1
-            out.append(d)
-        emit(out)
-        if not a.loop:
-            return rc
-        time.sleep(a.loop)
+    csvf = writer = None
+    if a.csv:
+        csvf = open(a.csv, "w", newline="")
+        writer = csv.DictWriter(csvf, fieldnames=CSV_FIELDS)
+        writer.writeheader()
+        csvf.flush()
+    n = 0
+    try:
+        while True:
+            out = []
+            for dev in devs:
+                try:
+                    t = ts.get(dev) or ts.setdefault(dev, open_transport(dev))
+                    d = query(t, dev, a.interval, prev.get(dev), a.power_json, i2c=not a.no_i2c)
+                    prev[dev] = d.get("counters")
+                except OSError as e:
+                    d = {"device": dev, "ok": False, "link": f"cannot open ({e.strerror or e})"}
+                    rc = 1
+                out.append(d)
+            for d in out:
+                if d.get("ok") and d.get("util"):
+                    h = hist.setdefault(d["device"], [])
+                    h.append(d["util"])
+                    del h[:-48]
+            emit(out, hist)
+            if writer:
+                for d in out:
+                    writer.writerow(csv_row(d))
+                csvf.flush()
+            n += 1
+            if a.samples is not None and n >= a.samples:
+                return rc
+            if not a.loop:
+                return rc
+            time.sleep(a.loop)
+    finally:
+        if csvf:
+            csvf.close()
 
 
 if __name__ == "__main__":

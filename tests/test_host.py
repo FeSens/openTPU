@@ -1119,6 +1119,45 @@ def test_smi_no_device(capsys):
     assert "cannot open" in capsys.readouterr().out
 
 
+def test_smi_caps_csv_and_watch(tmp_path, capsys, monkeypatch):
+    """Default table names CAPS; --csv records samples; -l --samples draws a Watch sparkline."""
+    assert "trace·4K" in smi.caps_text(
+        {"trace": True, "trace_depth": 4096, "w4": True, "temp": True, "stream": False})
+    assert "stream" in smi.caps_text({"trace": False, "stream": True, "gen": True})
+    assert smi.caps_text(None) == "n/a"
+    assert smi.sparkline([0.5, 0.5, 0.5]) == "▄▄▄"
+    s = smi.sparkline([0.0, 0.5, 1.0])
+    assert len(s) == 3 and s[0] == "▁" and s[-1] == "█"
+
+    card = FakeTransport(devname="fake6", stream=True, gen=True, args=True, ddr_mts=1066)
+    csvp = tmp_path / "util.csv"
+    sleeps = []
+    monkeypatch.setattr(smi.time, "sleep", lambda s: sleeps.append(s))
+    rc = smi.main(["--fake", "--dev", "/dev/fake6", "-l", "0.05", "--samples", "3",
+                   "--csv", str(csvp), "-i", "0", "--no-i2c"],
+                  open_transport=lambda dev: card)
+    assert rc == 0 and sleeps == [0.05, 0.05]          # three samples, two waits
+    out = capsys.readouterr().out
+    assert "Caps" in out and "trace·4K" in out and "stream" in out and "gen" in out
+    assert "args" in out and "Watch" in out and "MAC" in out
+    text = csvp.read_text()
+    rows = text.strip().splitlines()
+    assert rows[0].startswith("time,iso,device") and "MXU_MAC" in rows[0]
+    assert len(rows) == 4                               # header + 3 samples
+    parsed = list(__import__("csv").DictReader(text.splitlines()))
+    assert parsed[0]["device"] == "/dev/fake6" and parsed[0]["ok"] == "1"
+    assert float(parsed[0]["dram_gbs"]) == pytest.approx(4.608)
+    assert float(parsed[0]["MXU_MAC"]) == pytest.approx(0.5)
+
+    # one shot still writes a CSV with a header and one data row, no Watch line
+    one = tmp_path / "one.csv"
+    smi.main(["--fake", "--dev", "/dev/fake6", "--csv", str(one), "-i", "0", "--no-i2c"],
+             open_transport=lambda dev: FakeTransport(devname="fake6"))
+    tab = capsys.readouterr().out
+    assert "Watch" not in tab and "Caps" in tab
+    assert len(one.read_text().strip().splitlines()) == 2
+
+
 # ------------------------------------------------------------------------------ pipelining
 def test_pipelining_gives_identical_tokens():
     """The Engine compiles the next run (a prefill chunk, or position p + 1) while the backend

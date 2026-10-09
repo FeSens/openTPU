@@ -1052,13 +1052,19 @@ otpu-smi 0.1.0                                                       2026-09-24 
 
 | Option | |
 |---|---|
-| `-l SEC` | repeat every SEC seconds; utilization over each period |
+| `-l SEC` | repeat every SEC seconds; utilization over each period. After two samples the table adds a Watch line (MAC / DRAM / RUN sparklines) |
+| `--samples N` | with `-l`, stop after N samples |
+| `--csv FILE` | one CSV row per sample (time, util, DRAM GB/s, tokens/s when a process is running) |
 | `--json` | one object per device (every field below, raw counters included) |
 | `-q` | every detail as `key value` lines |
 | `--dev /dev/xdma0` | one device (repeatable); default every `/dev/xdma*_user` |
 | `-i SEC` | the sampling interval of a single report (default 0.2 s) |
 | `--power-json FILE` | default `build/vivado/reports/power.json` |
 | `--sim` | the board model (below); `--fake`: an in-memory card with synthetic counters |
+
+The Caps row names the bits of CAPS that are set (trace depth, 4-bit weights, stream engine,
+decode loop, arguments, …; [observability.md](observability.md)). They were already in `--json`
+and `-q`.
 
 Fields: the bitstream (VERSION, CORE_KHZ, BUILD_ID, REGMAP), the link (ID register; the PCIe
 speed and width from sysfs), DDR3 speed and calibration (DDR_MTS when CAPS bit3 is set, else plain
