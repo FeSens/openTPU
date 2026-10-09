@@ -625,6 +625,23 @@ def _fmt_n(n) -> str:
         return str(n)
 
 
+def _fmt_board(v):
+    if isinstance(v, list) and v and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                                         for x in v):
+        return ", ".join(str(x) if isinstance(x, int) else f"{x:g}" for x in v)
+    return str(v)
+
+
+def _json_default(o):
+    item = getattr(o, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except (TypeError, ValueError):
+            pass
+    raise TypeError(f"{type(o).__name__} is not JSON serializable")
+
+
 def _time_at(cycles: float, mhz: float) -> str:
     if not mhz:
         return "n/a"
@@ -634,7 +651,11 @@ def _time_at(cycles: float, mhz: float) -> str:
 
 def _slice(d: dict, s: int) -> dict:
     sl = d.get("slices") or []
-    return sl[s] if 0 <= s < len(sl) else {}
+    if 0 <= s < len(sl):
+        return sl[s]
+    span = f"0..{len(sl) - 1}" if sl else "none"
+    raise SystemExit(f"--slice {s} is outside {(d.get('name') or '?')!r} "
+                     f"(valid range: {span})")
 
 
 def _unit_coverage(d: dict, s: int):
@@ -823,12 +844,13 @@ def render_summary(d: dict, s: int = 0) -> str:
             lines.append(f"  [{n.get('level', 'info')}] {n.get('text', '')}")
     rows = m["classes"][:8]
     if rows:
+        w = max(10, max(len(a["name"]) for a in rows))
         lines.append("By instruction class  (busy = start→end; wait deps / unit)")
-        lines.append(f"  {'class':<10} {'n':>5} {'busy':>8} {'work':>8} {'dep':>7} {'unit':>7} "
+        lines.append(f"  {'class':<{w}} {'n':>5} {'busy':>8} {'work':>8} {'dep':>7} {'unit':>7} "
                      f"{'DRAM':>6}")
         for a in rows:
             un = units[a["unit"]] if isinstance(a["unit"], int) and a["unit"] < len(units) else ""
-            lines.append(f"  {a['name']:<10} {a['n']:>5} {_fmt_n(a['busy']):>8} "
+            lines.append(f"  {a['name']:<{w}} {a['n']:>5} {_fmt_n(a['busy']):>8} "
                          f"{_fmt_n(a['work']):>8} {_fmt_n(a['dep']):>7} {_fmt_n(a['unitw']):>7} "
                          f"{_fmt_n(a['pb']):>6}  {un}")
     srcs, counts = d.get("sources") or [], {}
@@ -853,7 +875,7 @@ def render_summary(d: dict, s: int = 0) -> str:
         for k, v in board.items():
             if isinstance(v, dict):
                 continue
-            lines.append(f"  {k:<16} {v}")
+            lines.append(f"  {k:<16} {_fmt_board(v)}")
     return "\n".join(lines)
 
 
@@ -935,7 +957,7 @@ def main(argv=None) -> None:
         doc = load(a.file)
         if a.json:
             out = [summary_data(d, a.slice) for d in doc["profiles"]]
-            print(json.dumps(out, indent=1, default=lambda o: int(o) if hasattr(o, "item") else o))
+            print(json.dumps(out, indent=1, default=_json_default))
         else:
             print(render_file_summary(doc, a.slice))
         return

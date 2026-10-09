@@ -199,3 +199,90 @@ def test_cli_summary_port_b_causes(tmp_path, capsys):
     assert tot and tot["busy"] == 60
     n = sum(d["slices"][0]["buckets"]["n"])
     assert abs(sum(tot.values()) - n) < 1e-6
+
+
+def test_cli_summary_rejects_slice_past_the_profile(tmp_path, capsys):
+    """--slice past the profile's slices is an error that names the valid range."""
+    d = _bucket_prof()
+    wider = _bucket_prof()
+    wider["name"] = "two-slice"
+    wider["slices"] = wider["slices"] * 2
+    f = lens.save([d, wider], tmp_path / "rtl.otpuprof")
+    lens.main(["summary", str(f), "--slice", "0"])
+    out = capsys.readouterr().out
+    assert "slice 0" in out and "2 instructions" in out
+    with pytest.raises(SystemExit, match=r"'synth-mlp' \(valid range: 0\.\.0\)"):
+        lens.main(["summary", str(f), "--slice", "1"])
+    assert capsys.readouterr().out == ""
+    with pytest.raises(SystemExit, match=r"valid range: 0\.\.0"):
+        lens.main(["summary", str(f), "--json", "--slice", "1"])
+    only = lens.save([wider], tmp_path / "wide.otpuprof")
+    lens.main(["summary", str(only), "--slice", "1"])
+    shown = capsys.readouterr().out
+    assert "slice 1" in shown and "0 instructions" in shown
+    with pytest.raises(SystemExit, match=r"'two-slice' \(valid range: 0\.\.1\)"):
+        lens.main(["summary", str(only), "--slice", "2"])
+    with pytest.raises(SystemExit, match=r"valid range: 0\.\.1"):
+        lens.main(["summary", str(only), "--slice", "-1"])
+    empty = _bucket_prof()
+    empty["slices"] = []
+    with pytest.raises(SystemExit, match=r"valid range: none"):
+        lens.render_summary(empty)
+
+
+def _fields(line: str, widths: list[int], lead: int = 2) -> list[str]:
+    out, i = [], lead
+    for w in widths:
+        out.append(line[i:i + w])
+        i += w + 1
+    return out
+
+
+def test_summary_class_column_fits_vop_exp2sub():
+    """The class column grows past 10 so VOP.exp2sub stays aligned with the header."""
+    d = _bucket_prof()
+    short = lens.render_summary(d)
+    hdr = next(ln for ln in short.splitlines() if ln.strip().startswith("class"))
+    assert hdr.index("n") == 17                          # glyph of a 10-wide class column
+    d["instrs"].append([0, 2, 2, 3, "VOP.exp2sub", "", 0, 0, -1, 0, 10, -1, {}, 10, 0, 0])
+    lines = lens.render_summary(d).splitlines()
+    hdr = next(ln for ln in lines if ln.strip().startswith("class"))
+    widths = [len("VOP.exp2sub"), 5, 8, 8, 7, 7, 6]
+    hdr_f = _fields(hdr, widths)
+    assert [c.strip() for c in hdr_f] == ["class", "n", "busy", "work", "dep", "unit", "DRAM"]
+    rows = [ln for ln in lines if ln.strip().split()[0] in ("MM", "LD", "VOP.exp2sub")]
+    assert [ln.strip().split()[0] for ln in rows] == ["MM", "LD", "VOP.exp2sub"]
+    for ln in rows:
+        got = _fields(ln, widths)
+        assert got[0] == f"{ln.strip().split()[0]:<{widths[0]}}"
+        assert all(c == f"{c.strip():>{w}}" for c, w in zip(got[1:], widths[1:]))
+
+
+def test_summary_board_lists_print_as_numbers():
+    d = _bucket_prof()
+    d["board"] = {"cycles": 200, "instructions": [11077], "ecc_ded": False,
+                  "per_slice": [11077, 42]}
+    text = lens.render_summary(d)
+    assert "[11077]" not in text
+
+    def val(key):
+        line = next(ln for ln in text.splitlines() if ln.strip().startswith(key))
+        return line.strip().split(None, 1)[1]
+
+    assert val("instructions") == "11077"
+    assert val("per_slice") == "11077, 42"
+    assert val("cycles") == "200"
+    assert val("ecc_ded") == "False"
+
+
+def test_summary_json_default_uses_item_or_typeerror():
+    """numpy floats stay floats; a non-scalar is a TypeError, not a circular reference."""
+    import numpy as np
+    assert lens._json_default(np.float64(1.9)) == 1.9
+    assert type(lens._json_default(np.float64(1.9))) is float
+    assert lens._json_default(np.int64(3)) == 3
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        lens._json_default(object())
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        json.dumps({"a": np.arange(2)}, default=lens._json_default)
+    assert json.loads(json.dumps({"a": np.float64(1.9)}, default=lens._json_default))["a"] == 1.9
