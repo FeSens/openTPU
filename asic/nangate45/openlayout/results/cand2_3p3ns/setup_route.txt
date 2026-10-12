@@ -1,0 +1,2084 @@
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[42]$_SDFFCE_PN0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     2    4.13    0.02    0.35    4.03 v _0946075_/ZN (OR2_X2)
+     1    1.58    0.02    0.03    4.06 ^ _0949983_/ZN (OAI21_X1)
+                  0.02    0.00    4.06 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[42]$_SDFFCE_PN0N_/D (DFF_X2)
+                                  4.06   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[42]$_SDFFCE_PN0N_/CK (DFF_X2)
+                         -0.03    4.22   library setup time
+                                  4.22   data required time
+-----------------------------------------------------------------------------
+                                  4.22   data required time
+                                 -4.06   data arrival time
+-----------------------------------------------------------------------------
+                                  0.16   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[15]$_SDFFCE_PP0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     2    4.13    0.02    0.35    4.03 v _0946075_/ZN (OR2_X2)
+     1    1.44    0.02    0.03    4.06 ^ _0946076_/ZN (OAI21_X1)
+                  0.02    0.00    4.06 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[15]$_SDFFCE_PP0N_/D (DFF_X2)
+                                  4.06   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[15]$_SDFFCE_PP0N_/CK (DFF_X2)
+                         -0.03    4.22   library setup time
+                                  4.22   data required time
+-----------------------------------------------------------------------------
+                                  4.22   data required time
+                                 -4.06   data arrival time
+-----------------------------------------------------------------------------
+                                  0.16   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[3]$_SDFFCE_PP0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     2    4.07    0.02    0.35    4.03 v _0929993_/ZN (OR2_X1)
+     1    1.45    0.02    0.03    4.06 ^ _0930348_/ZN (OAI21_X1)
+                  0.02    0.00    4.06 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[3]$_SDFFCE_PP0N_/D (DFF_X1)
+                                  4.06   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[3]$_SDFFCE_PP0N_/CK (DFF_X1)
+                         -0.03    4.22   library setup time
+                                  4.22   data required time
+-----------------------------------------------------------------------------
+                                  4.22   data required time
+                                 -4.06   data arrival time
+-----------------------------------------------------------------------------
+                                  0.16   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[6]$_SDFFCE_PP0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     2    3.96    0.02    0.35    4.03 v _0929990_/ZN (OR2_X1)
+     1    1.30    0.02    0.03    4.06 ^ _0930346_/ZN (OAI21_X1)
+                  0.02    0.00    4.06 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[6]$_SDFFCE_PP0N_/D (DFF_X1)
+                                  4.06   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[6]$_SDFFCE_PP0N_/CK (DFF_X1)
+                         -0.03    4.22   library setup time
+                                  4.22   data required time
+-----------------------------------------------------------------------------
+                                  4.22   data required time
+                                 -4.06   data arrival time
+-----------------------------------------------------------------------------
+                                  0.16   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[30]$_SDFFCE_PN0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     2    4.07    0.02    0.35    4.03 v _0929993_/ZN (OR2_X1)
+     1    1.36    0.02    0.03    4.06 ^ _0929994_/ZN (OAI21_X1)
+                  0.02    0.00    4.06 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[30]$_SDFFCE_PN0N_/D (DFF_X2)
+                                  4.06   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[30]$_SDFFCE_PN0N_/CK (DFF_X2)
+                         -0.03    4.22   library setup time
+                                  4.22   data required time
+-----------------------------------------------------------------------------
+                                  4.22   data required time
+                                 -4.06   data arrival time
+-----------------------------------------------------------------------------
+                                  0.16   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[33]$_SDFFCE_PN0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     2    3.96    0.02    0.35    4.03 v _0929990_/ZN (OR2_X1)
+     1    1.34    0.02    0.03    4.06 ^ _0929991_/ZN (OAI21_X1)
+                  0.02    0.00    4.06 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[33]$_SDFFCE_PN0N_/D (DFF_X2)
+                                  4.06   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[33]$_SDFFCE_PN0N_/CK (DFF_X2)
+                         -0.03    4.22   library setup time
+                                  4.22   data required time
+-----------------------------------------------------------------------------
+                                  4.22   data required time
+                                 -4.06   data arrival time
+-----------------------------------------------------------------------------
+                                  0.16   slack (MET)
+
+
+Startpoint: u_slice.u_vpu.ic[2]$_DFFE_PN_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_quant.u_sc.g_it[0].u_t.u_a.s1[23]$_SDFFCE_PP0P_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_vpu.ic[2]$_DFFE_PN_/CK (DFF_X2)
+     4    8.80    0.01    0.12    1.08 ^ u_slice.u_vpu.ic[2]$_DFFE_PN_/Q (DFF_X2)
+     2    4.10    0.01    0.04    1.11 ^ _0989595_/CO (HA_X1)
+     2    5.02    0.01    0.03    1.14 ^ rebuffer15039/Z (BUF_X2)
+     1    4.16    0.01    0.02    1.16 ^ rebuffer15034/Z (BUF_X4)
+     4   12.29    0.01    0.04    1.20 ^ _0594817_/ZN (AND3_X4)
+     5   19.79    0.02    0.03    1.23 v _0594915_/ZN (NAND3_X4)
+     3    9.25    0.02    0.04    1.27 ^ _0595741_/ZN (NOR2_X4)
+     1    6.32    0.01    0.02    1.29 ^ rebuffer15038/Z (BUF_X4)
+     1    4.70    0.01    0.01    1.31 v _0823794_/ZN (NAND2_X4)
+     1    4.23    0.01    0.04    1.34 v _0823795_/ZN (XNOR2_X2)
+     3    4.90    0.01    0.06    1.41 v _0984652_/S (HA_X1)
+     1    2.08    0.02    0.03    1.44 ^ _0649818_/ZN (AOI21_X1)
+     1    3.64    0.01    0.01    1.45 v _0649819_/ZN (INV_X1)
+     1    3.80    0.04    0.07    1.52 ^ _0649821_/ZN (AOI221_X2)
+     2    8.54    0.01    0.02    1.54 v _0649822_/ZN (NOR2_X2)
+     2    8.42    0.01    0.07    1.61 v _0649823_/ZN (OR3_X4)
+     2   10.00    0.06    0.10    1.71 ^ _0653544_/ZN (AOI221_X2)
+     5   17.90    0.01    0.04    1.75 ^ rebuffer14983/Z (BUF_X4)
+     1    4.64    0.02    0.03    1.78 v _0653554_/ZN (AOI221_X2)
+     1   32.80    0.01    0.04    1.82 v wire12308/Z (BUF_X4)
+     1    2.54    0.00    0.03    1.85 v wire1301/Z (BUF_X4)
+     1    2.07    0.06    0.07    1.92 ^ _0653556_/ZN (OAI33_X1)
+     2    8.89    0.01    0.04    1.95 ^ rebuffer14987/Z (BUF_X2)
+     1    4.64    0.01    0.03    1.98 ^ _0653572_/ZN (OR4_X4)
+     1    3.41    0.02    0.02    1.99 v _0653573_/ZN (AOI221_X2)
+     2   24.41    0.01    0.03    2.03 v rebuffer14974/Z (BUF_X4)
+     4   44.55    0.01    0.03    2.06 v rebuffer10828/Z (BUF_X16)
+     6  106.19    0.01    0.04    2.10 v max_cap844/Z (BUF_X32)
+     6  102.99    0.01    0.05    2.15 v max_cap843/Z (BUF_X32)
+     5   48.09    0.01    0.07    2.22 v max_cap827/Z (BUF_X32)
+     7   50.90    0.01    0.04    2.26 v max_cap826/Z (BUF_X32)
+     6   49.49    0.01    0.02    2.29 v max_cap825/Z (BUF_X32)
+     5   45.50    0.01    0.03    2.32 v max_cap824/Z (BUF_X32)
+     5   36.81    0.00    0.03    2.34 v max_cap823/Z (BUF_X32)
+     8   55.61    0.00    0.03    2.37 v wire822/Z (BUF_X32)
+     5   47.63    0.00    0.04    2.41 v max_cap743/Z (BUF_X32)
+     6   51.55    0.01    0.04    2.45 v max_cap741/Z (BUF_X32)
+     7   50.64    0.01    0.03    2.47 v wire740/Z (BUF_X32)
+     7   47.46    0.01    0.03    2.50 v wire738/Z (BUF_X32)
+     6   61.70    0.01    0.03    2.53 v max_cap737/Z (BUF_X32)
+     6   51.81    0.00    0.02    2.56 v max_cap736/Z (BUF_X32)
+     7   52.18    0.01    0.05    2.61 v max_cap735/Z (BUF_X32)
+     5   43.71    0.01    0.02    2.63 v max_cap734/Z (BUF_X32)
+     1   54.73    0.00    0.03    2.66 v wire733/Z (BUF_X32)
+     1   57.57    0.00    0.04    2.71 v wire732/Z (BUF_X32)
+     5   64.49    0.01    0.05    2.76 v wire12227/Z (BUF_X32)
+     7   56.67    0.01    0.08    2.84 v max_cap731/Z (BUF_X32)
+     6   39.94    0.01    0.04    2.88 v max_cap700/Z (BUF_X32)
+     8   43.88    0.01    0.02    2.90 v max_cap695/Z (BUF_X32)
+     8   43.20    0.00    0.03    2.93 v max_cap694/Z (BUF_X32)
+     6   49.07    0.01    0.03    2.96 v max_cap690/Z (BUF_X32)
+     6   55.72    0.01    0.03    2.99 v max_cap689/Z (BUF_X32)
+     7   49.89    0.01    0.04    3.03 v max_cap688/Z (BUF_X32)
+     5   56.65    0.00    0.03    3.06 v max_cap686/Z (BUF_X32)
+     5   48.13    0.01    0.05    3.10 v max_cap685/Z (BUF_X32)
+     5   35.49    0.00    0.03    3.13 v max_cap681/Z (BUF_X32)
+     8   57.40    0.01    0.02    3.16 v max_cap680/Z (BUF_X32)
+     5   48.21    0.00    0.03    3.18 v max_cap679/Z (BUF_X32)
+     5   36.99    0.00    0.04    3.22 v max_cap678/Z (BUF_X32)
+     5   39.69    0.01    0.03    3.25 v max_cap677/Z (BUF_X32)
+     4   52.50    0.01    0.02    3.28 v max_cap676/Z (BUF_X32)
+     6   51.86    0.01    0.03    3.31 v max_cap675/Z (BUF_X32)
+     5   45.64    0.01    0.03    3.34 v max_cap653/Z (BUF_X32)
+     6   49.23    0.01    0.03    3.37 v max_cap650/Z (BUF_X32)
+     5   48.76    0.00    0.02    3.39 v max_cap649/Z (BUF_X32)
+     6   43.33    0.01    0.04    3.43 v max_cap644/Z (BUF_X32)
+     7   51.59    0.00    0.03    3.46 v max_cap643/Z (BUF_X32)
+     6   44.21    0.01    0.04    3.50 v max_cap642/Z (BUF_X32)
+     6   50.67    0.00    0.02    3.52 v max_cap641/Z (BUF_X32)
+     6   43.07    0.00    0.04    3.56 v max_cap640/Z (BUF_X32)
+     7   42.92    0.01    0.04    3.60 v max_cap629/Z (BUF_X32)
+     8   51.90    0.01    0.03    3.63 v wire626/Z (BUF_X32)
+     5   38.95    0.00    0.03    3.65 v wire625/Z (BUF_X32)
+     7   45.85    0.01    0.03    3.69 v max_cap624/Z (BUF_X32)
+     5   46.46    0.01    0.02    3.71 v max_cap623/Z (BUF_X32)
+     5   67.69    0.01    0.03    3.74 v max_cap622/Z (BUF_X32)
+     6   41.97    0.00    0.03    3.77 v wire617/Z (BUF_X32)
+     7   52.09    0.01    0.03    3.80 v max_cap616/Z (BUF_X32)
+     5   44.48    0.01    0.03    3.83 v max_cap615/Z (BUF_X32)
+     6   49.18    0.00    0.03    3.85 v wire614/Z (BUF_X32)
+     8   47.78    0.01    0.03    3.89 v max_cap611/Z (BUF_X32)
+     8   48.66    0.01    0.02    3.91 v max_cap609/Z (BUF_X32)
+     8   48.36    0.01    0.03    3.94 v max_cap608/Z (BUF_X32)
+     8   46.64    0.01    0.03    3.97 v max_cap607/Z (BUF_X32)
+     5   29.85    0.00    0.02    3.99 v max_cap606/Z (BUF_X32)
+     1    1.97    0.02    0.02    4.01 ^ _0831629_/ZN (NAND3_X1)
+     1    1.69    0.01    0.02    4.03 v _0831631_/ZN (OAI21_X1)
+                  0.01    0.00    4.03 v u_slice.u_quant.u_sc.g_it[0].u_t.u_a.s1[23]$_SDFFCE_PP0P_/D (DFF_X2)
+                                  4.03   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_quant.u_sc.g_it[0].u_t.u_a.s1[23]$_SDFFCE_PP0P_/CK (DFF_X2)
+                         -0.04    4.21   library setup time
+                                  4.21   data required time
+-----------------------------------------------------------------------------
+                                  4.21   data required time
+                                 -4.03   data arrival time
+-----------------------------------------------------------------------------
+                                  0.18   slack (MET)
+
+
+Startpoint: u_slice.u_vpu.ic[2]$_DFFE_PN_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_quant.u_sc.g_it[0].u_t.u_a.s1[50]$_SDFFCE_PN0P_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_vpu.ic[2]$_DFFE_PN_/CK (DFF_X2)
+     4    8.80    0.01    0.12    1.08 ^ u_slice.u_vpu.ic[2]$_DFFE_PN_/Q (DFF_X2)
+     2    4.10    0.01    0.04    1.11 ^ _0989595_/CO (HA_X1)
+     2    5.02    0.01    0.03    1.14 ^ rebuffer15039/Z (BUF_X2)
+     1    4.16    0.01    0.02    1.16 ^ rebuffer15034/Z (BUF_X4)
+     4   12.29    0.01    0.04    1.20 ^ _0594817_/ZN (AND3_X4)
+     5   19.79    0.02    0.03    1.23 v _0594915_/ZN (NAND3_X4)
+     3    9.25    0.02    0.04    1.27 ^ _0595741_/ZN (NOR2_X4)
+     1    6.32    0.01    0.02    1.29 ^ rebuffer15038/Z (BUF_X4)
+     1    4.70    0.01    0.01    1.31 v _0823794_/ZN (NAND2_X4)
+     1    4.23    0.01    0.04    1.34 v _0823795_/ZN (XNOR2_X2)
+     3    4.90    0.01    0.06    1.41 v _0984652_/S (HA_X1)
+     1    2.08    0.02    0.03    1.44 ^ _0649818_/ZN (AOI21_X1)
+     1    3.64    0.01    0.01    1.45 v _0649819_/ZN (INV_X1)
+     1    3.80    0.04    0.07    1.52 ^ _0649821_/ZN (AOI221_X2)
+     2    8.54    0.01    0.02    1.54 v _0649822_/ZN (NOR2_X2)
+     2    8.42    0.01    0.07    1.61 v _0649823_/ZN (OR3_X4)
+     2   10.00    0.06    0.10    1.71 ^ _0653544_/ZN (AOI221_X2)
+     5   17.90    0.01    0.04    1.75 ^ rebuffer14983/Z (BUF_X4)
+     1    4.64    0.02    0.03    1.78 v _0653554_/ZN (AOI221_X2)
+     1   32.80    0.01    0.04    1.82 v wire12308/Z (BUF_X4)
+     1    2.54    0.00    0.03    1.85 v wire1301/Z (BUF_X4)
+     1    2.07    0.06    0.07    1.92 ^ _0653556_/ZN (OAI33_X1)
+     2    8.89    0.01    0.04    1.95 ^ rebuffer14987/Z (BUF_X2)
+     1    4.64    0.01    0.03    1.98 ^ _0653572_/ZN (OR4_X4)
+     1    3.41    0.02    0.02    1.99 v _0653573_/ZN (AOI221_X2)
+     2   24.41    0.01    0.03    2.03 v rebuffer14974/Z (BUF_X4)
+     4   44.55    0.01    0.03    2.06 v rebuffer10828/Z (BUF_X16)
+     6  106.19    0.01    0.04    2.10 v max_cap844/Z (BUF_X32)
+     6  102.99    0.01    0.05    2.15 v max_cap843/Z (BUF_X32)
+     5   48.09    0.01    0.07    2.22 v max_cap827/Z (BUF_X32)
+     7   50.90    0.01    0.04    2.26 v max_cap826/Z (BUF_X32)
+     6   49.49    0.01    0.02    2.29 v max_cap825/Z (BUF_X32)
+     5   45.50    0.01    0.03    2.32 v max_cap824/Z (BUF_X32)
+     5   36.81    0.00    0.03    2.34 v max_cap823/Z (BUF_X32)
+     8   55.61    0.00    0.03    2.37 v wire822/Z (BUF_X32)
+     5   47.63    0.00    0.04    2.41 v max_cap743/Z (BUF_X32)
+     6   51.55    0.01    0.04    2.45 v max_cap741/Z (BUF_X32)
+     7   50.64    0.01    0.03    2.47 v wire740/Z (BUF_X32)
+     7   47.46    0.01    0.03    2.50 v wire738/Z (BUF_X32)
+     6   61.70    0.01    0.03    2.53 v max_cap737/Z (BUF_X32)
+     6   51.81    0.00    0.02    2.56 v max_cap736/Z (BUF_X32)
+     7   52.18    0.01    0.05    2.61 v max_cap735/Z (BUF_X32)
+     5   43.71    0.01    0.02    2.63 v max_cap734/Z (BUF_X32)
+     1   54.73    0.00    0.03    2.66 v wire733/Z (BUF_X32)
+     1   57.57    0.00    0.04    2.71 v wire732/Z (BUF_X32)
+     5   64.49    0.01    0.05    2.76 v wire12227/Z (BUF_X32)
+     7   56.67    0.01    0.08    2.84 v max_cap731/Z (BUF_X32)
+     6   39.94    0.01    0.04    2.88 v max_cap700/Z (BUF_X32)
+     8   43.88    0.01    0.02    2.90 v max_cap695/Z (BUF_X32)
+     8   43.20    0.00    0.03    2.93 v max_cap694/Z (BUF_X32)
+     6   49.07    0.01    0.03    2.96 v max_cap690/Z (BUF_X32)
+     6   55.72    0.01    0.03    2.99 v max_cap689/Z (BUF_X32)
+     7   49.89    0.01    0.04    3.03 v max_cap688/Z (BUF_X32)
+     5   56.65    0.00    0.03    3.06 v max_cap686/Z (BUF_X32)
+     5   48.13    0.01    0.05    3.10 v max_cap685/Z (BUF_X32)
+     5   35.49    0.00    0.03    3.13 v max_cap681/Z (BUF_X32)
+     8   57.40    0.01    0.02    3.16 v max_cap680/Z (BUF_X32)
+     5   48.21    0.00    0.03    3.18 v max_cap679/Z (BUF_X32)
+     5   36.99    0.00    0.04    3.22 v max_cap678/Z (BUF_X32)
+     5   39.69    0.01    0.03    3.25 v max_cap677/Z (BUF_X32)
+     4   52.50    0.01    0.02    3.28 v max_cap676/Z (BUF_X32)
+     6   51.86    0.01    0.03    3.31 v max_cap675/Z (BUF_X32)
+     5   45.64    0.01    0.03    3.34 v max_cap653/Z (BUF_X32)
+     6   49.23    0.01    0.03    3.37 v max_cap650/Z (BUF_X32)
+     5   48.76    0.00    0.02    3.39 v max_cap649/Z (BUF_X32)
+     6   43.33    0.01    0.04    3.43 v max_cap644/Z (BUF_X32)
+     7   51.59    0.00    0.03    3.46 v max_cap643/Z (BUF_X32)
+     6   44.21    0.01    0.04    3.50 v max_cap642/Z (BUF_X32)
+     6   50.67    0.00    0.02    3.52 v max_cap641/Z (BUF_X32)
+     6   43.07    0.00    0.04    3.56 v max_cap640/Z (BUF_X32)
+     7   42.92    0.01    0.04    3.60 v max_cap629/Z (BUF_X32)
+     8   51.90    0.01    0.03    3.63 v wire626/Z (BUF_X32)
+     5   38.95    0.00    0.03    3.65 v wire625/Z (BUF_X32)
+     7   45.85    0.01    0.03    3.69 v max_cap624/Z (BUF_X32)
+     5   46.46    0.01    0.02    3.71 v max_cap623/Z (BUF_X32)
+     5   67.69    0.01    0.03    3.74 v max_cap622/Z (BUF_X32)
+     6   41.97    0.00    0.03    3.77 v wire617/Z (BUF_X32)
+     7   52.09    0.01    0.03    3.80 v max_cap616/Z (BUF_X32)
+     5   44.48    0.01    0.03    3.83 v max_cap615/Z (BUF_X32)
+     6   49.18    0.00    0.03    3.85 v wire614/Z (BUF_X32)
+     8   47.78    0.01    0.03    3.89 v max_cap611/Z (BUF_X32)
+     8   48.66    0.01    0.02    3.91 v max_cap609/Z (BUF_X32)
+     8   48.36    0.01    0.03    3.94 v max_cap608/Z (BUF_X32)
+     8   46.64    0.01    0.03    3.97 v max_cap607/Z (BUF_X32)
+     5   29.85    0.00    0.02    3.99 v max_cap606/Z (BUF_X32)
+     1    6.17    0.02    0.02    4.01 ^ _0831400_/ZN (NAND3_X4)
+     1    1.50    0.01    0.02    4.03 v _0831402_/ZN (OAI21_X2)
+                  0.01    0.00    4.03 v u_slice.u_quant.u_sc.g_it[0].u_t.u_a.s1[50]$_SDFFCE_PN0P_/D (DFF_X2)
+                                  4.03   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_quant.u_sc.g_it[0].u_t.u_a.s1[50]$_SDFFCE_PN0P_/CK (DFF_X2)
+                         -0.04    4.21   library setup time
+                                  4.21   data required time
+-----------------------------------------------------------------------------
+                                  4.21   data required time
+                                 -4.03   data arrival time
+-----------------------------------------------------------------------------
+                                  0.18   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.qr[31]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    1.16    0.02    0.34    4.01 v _0947760_/Z (MUX2_X1)
+                  0.02    0.00    4.01 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.qr[31]$_DFFE_PN_/D (DFF_X2)
+                                  4.01   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.94    4.24   clock network delay (propagated)
+                          0.00    4.24   clock reconvergence pessimism
+                                  4.24 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.qr[31]$_DFFE_PN_/CK (DFF_X2)
+                         -0.04    4.20   library setup time
+                                  4.20   data required time
+-----------------------------------------------------------------------------
+                                  4.20   data required time
+                                 -4.01   data arrival time
+-----------------------------------------------------------------------------
+                                  0.18   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.r[0][31]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    1.28    0.02    0.34    4.01 v _0936482_/Z (MUX2_X1)
+                  0.02    0.00    4.01 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.r[0][31]$_DFFE_PN_/D (DFF_X1)
+                                  4.01   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.94    4.24   clock network delay (propagated)
+                          0.00    4.24   clock reconvergence pessimism
+                                  4.24 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.r[0][31]$_DFFE_PN_/CK (DFF_X1)
+                         -0.04    4.20   library setup time
+                                  4.20   data required time
+-----------------------------------------------------------------------------
+                                  4.20   data required time
+                                 -4.01   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.r[0][23]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    1.26    0.02    0.34    4.01 v _0929234_/Z (MUX2_X1)
+                  0.02    0.00    4.01 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.r[0][23]$_DFFE_PN_/D (DFF_X1)
+                                  4.01   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.94    4.24   clock network delay (propagated)
+                          0.00    4.24   clock reconvergence pessimism
+                                  4.24 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_c.g_regs.r[0][23]$_DFFE_PN_/CK (DFF_X1)
+                         -0.04    4.20   library setup time
+                                  4.20   data required time
+-----------------------------------------------------------------------------
+                                  4.20   data required time
+                                 -4.01   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[45]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    2.19    0.05    0.30    3.98 ^ _0930030_/ZN (NAND2_X1)
+     1    1.63    0.05    0.03    4.01 v _0930034_/ZN (OAI21_X1)
+                  0.05    0.00    4.01 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[45]$_DFFE_PN_/D (DFF_X2)
+                                  4.01   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[45]$_DFFE_PN_/CK (DFF_X2)
+                         -0.05    4.19   library setup time
+                                  4.19   data required time
+-----------------------------------------------------------------------------
+                                  4.19   data required time
+                                 -4.01   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[46]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    2.30    0.05    0.30    3.98 ^ _0930026_/ZN (NAND2_X1)
+     1    1.22    0.05    0.02    4.00 v _0930029_/ZN (OAI21_X1)
+                  0.05    0.00    4.00 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[46]$_DFFE_PN_/D (DFF_X2)
+                                  4.00   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[46]$_DFFE_PN_/CK (DFF_X2)
+                         -0.05    4.19   library setup time
+                                  4.19   data required time
+-----------------------------------------------------------------------------
+                                  4.19   data required time
+                                 -4.00   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[43]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    2.14    0.05    0.30    3.98 ^ _0930039_/ZN (NAND2_X1)
+     1    1.39    0.05    0.03    4.00 v _0930042_/ZN (OAI21_X1)
+                  0.05    0.00    4.00 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[43]$_DFFE_PN_/D (DFF_X2)
+                                  4.00   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[43]$_DFFE_PN_/CK (DFF_X2)
+                         -0.05    4.19   library setup time
+                                  4.19   data required time
+-----------------------------------------------------------------------------
+                                  4.19   data required time
+                                 -4.00   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[44]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    2.08    0.05    0.30    3.98 ^ _0930035_/ZN (NAND2_X1)
+     1    1.41    0.05    0.03    4.00 v _0930038_/ZN (OAI21_X1)
+                  0.05    0.00    4.00 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[44]$_DFFE_PN_/D (DFF_X2)
+                                  4.00   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[44]$_DFFE_PN_/CK (DFF_X2)
+                         -0.05    4.19   library setup time
+                                  4.19   data required time
+-----------------------------------------------------------------------------
+                                  4.19   data required time
+                                 -4.00   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[47]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    2.07    0.05    0.30    3.98 ^ _0930022_/ZN (NAND2_X1)
+     1    1.29    0.05    0.02    4.00 v _0930025_/ZN (OAI21_X1)
+                  0.05    0.00    4.00 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[47]$_DFFE_PN_/D (DFF_X2)
+                                  4.00   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[47]$_DFFE_PN_/CK (DFF_X2)
+                         -0.05    4.19   library setup time
+                                  4.19   data required time
+-----------------------------------------------------------------------------
+                                  4.19   data required time
+                                 -4.00   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_mdel[3].g_dn.u_d.g_regs.r[1][23]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    1.48    0.02    0.33    4.01 v _0868861_/Z (MUX2_X1)
+                  0.02    0.00    4.01 v u_slice.u_vpu.g_mdel[3].g_dn.u_d.g_regs.r[1][23]$_DFFE_PN_/D (DFF_X1)
+                                  4.01   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.94    4.24   clock network delay (propagated)
+                          0.00    4.24   clock reconvergence pessimism
+                                  4.24 ^ u_slice.u_vpu.g_mdel[3].g_dn.u_d.g_regs.r[1][23]$_DFFE_PN_/CK (DFF_X1)
+                         -0.04    4.20   library setup time
+                                  4.20   data required time
+-----------------------------------------------------------------------------
+                                  4.20   data required time
+                                 -4.01   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[5].g_ma.u_ma.b[31]$_SDFFCE_PN0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+    76  172.59    0.01    0.17    3.84 v max_cap4022/Z (BUF_X32)
+    77  159.92    0.01    0.07    3.91 v max_cap4021/Z (BUF_X32)
+     1    2.11    0.04    0.11    4.02 ^ _0941467_/ZN (AOI221_X2)
+     1    1.37    0.01    0.02    4.04 v _0941469_/ZN (AOI21_X1)
+                  0.01    0.00    4.04 v u_slice.u_vpu.g_lane[0].g_slot[5].g_ma.u_ma.b[31]$_SDFFCE_PN0N_/D (DFF_X1)
+                                  4.04   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.97    4.27   clock network delay (propagated)
+                          0.00    4.27   clock reconvergence pessimism
+                                  4.27 ^ u_slice.u_vpu.g_lane[0].g_slot[5].g_ma.u_ma.b[31]$_SDFFCE_PN0N_/CK (DFF_X1)
+                         -0.04    4.23   library setup time
+                                  4.23   data required time
+-----------------------------------------------------------------------------
+                                  4.23   data required time
+                                 -4.04   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[49]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    1.75    0.04    0.30    3.97 ^ _0930012_/ZN (NAND2_X1)
+     1    1.56    0.05    0.03    4.00 v _0930016_/ZN (OAI21_X1)
+                  0.05    0.00    4.00 v u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[49]$_DFFE_PN_/D (DFF_X2)
+                                  4.00   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.95    4.25   clock network delay (propagated)
+                          0.00    4.25   clock reconvergence pessimism
+                                  4.25 ^ u_slice.u_vpu.g_lane[0].g_slot[3].g_ma.u_ma.u_a.s1[49]$_DFFE_PN_/CK (DFF_X2)
+                         -0.05    4.19   library setup time
+                                  4.19   data required time
+-----------------------------------------------------------------------------
+                                  4.19   data required time
+                                 -4.00   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.rl_pend$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_vpu.g_mdel[3].g_dn.u_d.g_regs.r[2][23]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.97    0.97   clock network delay (propagated)
+                  0.01    0.00    0.97 ^ u_slice.rl_pend$_SDFFE_PP0P_/CK (DFF_X2)
+     2   35.78    0.04    0.15    1.12 ^ u_slice.rl_pend$_SDFFE_PP0P_/Q (DFF_X2)
+    23  128.29    0.01    0.04    1.16 ^ wire8911/Z (BUF_X16)
+     5   40.91    0.02    0.06    1.22 v _0589806_/ZN (INV_X4)
+    12   78.43    0.02    0.05    1.27 v _0589807_/ZN (AND2_X4)
+     4   11.12    0.03    0.06    1.33 ^ _0589808_/ZN (AOI22_X4)
+     2    4.63    0.02    0.03    1.36 v _0589855_/ZN (AOI221_X2)
+     1    3.27    0.07    0.10    1.46 ^ _0589856_/ZN (OAI33_X1)
+     1    2.19    0.01    0.03    1.48 ^ wire4398/Z (BUF_X2)
+     1    3.84    0.01    0.02    1.51 ^ wire4397/Z (BUF_X2)
+     1   28.32    0.02    0.03    1.54 ^ wire4396/Z (BUF_X4)
+     4   12.03    0.01    0.02    1.56 v _0589887_/ZN (NOR4_X4)
+     2    6.86    0.01    0.03    1.59 v rebuffer15027/Z (BUF_X2)
+     2    8.78    0.02    0.03    1.62 ^ _0589917_/ZN (NAND3_X2)
+     3   12.06    0.02    0.02    1.64 v _0589918_/ZN (AOI21_X4)
+    15  132.25    0.03    0.14    1.78 v _0649572_/ZN (OR4_X4)
+     1   41.62    0.01    0.14    1.91 v wire4035/Z (BUF_X16)
+    20   94.62    0.01    0.05    1.96 v wire12445/Z (BUF_X16)
+    65  215.89    0.01    0.13    2.09 v wire4034/Z (BUF_X32)
+    82  230.23    0.02    0.34    2.43 v max_cap4033/Z (BUF_X32)
+    79  210.40    0.01    0.13    2.56 v max_cap4032/Z (BUF_X32)
+    89  285.30    0.01    0.05    2.60 v max_cap4031/Z (BUF_X32)
+    68  274.63    0.01    0.17    2.77 v max_cap4030/Z (BUF_X32)
+   100  224.09    0.01    0.21    2.98 v max_cap4028/Z (BUF_X32)
+    87  245.42    0.01    0.14    3.12 v max_cap4027/Z (BUF_X32)
+    87  210.96    0.01    0.19    3.32 v max_cap4026/Z (BUF_X32)
+    93  250.21    0.01    0.12    3.43 v max_cap4025/Z (BUF_X32)
+    70  181.07    0.01    0.15    3.58 v max_cap4024/Z (BUF_X32)
+    92  245.89    0.01    0.09    3.68 v max_cap4023/Z (BUF_X32)
+     1    1.35    0.02    0.33    4.00 v _0868889_/Z (MUX2_X1)
+                  0.02    0.00    4.01 v u_slice.u_vpu.g_mdel[3].g_dn.u_d.g_regs.r[2][23]$_DFFE_PN_/D (DFF_X1)
+                                  4.01   data arrival time
+
+                          3.30    3.30   clock core_clock (rise edge)
+                          0.94    4.24   clock network delay (propagated)
+                          0.00    4.24   clock reconvergence pessimism
+                                  4.24 ^ u_slice.u_vpu.g_mdel[3].g_dn.u_d.g_regs.r[2][23]$_DFFE_PN_/CK (DFF_X1)
+                         -0.04    4.20   library setup time
+                                  4.20   data required time
+-----------------------------------------------------------------------------
+                                  4.20   data required time
+                                 -4.01   data arrival time
+-----------------------------------------------------------------------------
+                                  0.19   slack (MET)
+
+
+Startpoint: u_slice.u_vpu.ic[2]$_DFFE_PN_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: sw_req (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_vpu.ic[2]$_DFFE_PN_/CK (DFF_X2)
+     4    8.80    0.01    0.12    1.08 ^ u_slice.u_vpu.ic[2]$_DFFE_PN_/Q (DFF_X2)
+     2    4.10    0.01    0.04    1.11 ^ _0989595_/CO (HA_X1)
+     2    5.02    0.01    0.03    1.14 ^ rebuffer15039/Z (BUF_X2)
+     1    4.16    0.01    0.02    1.16 ^ rebuffer15034/Z (BUF_X4)
+     4   12.29    0.01    0.04    1.20 ^ _0594817_/ZN (AND3_X4)
+     5   19.79    0.02    0.03    1.23 v _0594915_/ZN (NAND3_X4)
+     3    9.25    0.02    0.04    1.27 ^ _0595741_/ZN (NOR2_X4)
+     1    6.32    0.01    0.02    1.29 ^ rebuffer15038/Z (BUF_X4)
+     1    4.70    0.01    0.01    1.31 v _0823794_/ZN (NAND2_X4)
+     1    4.23    0.01    0.04    1.34 v _0823795_/ZN (XNOR2_X2)
+     3    4.90    0.01    0.06    1.41 v _0984652_/S (HA_X1)
+     1    2.08    0.02    0.03    1.44 ^ _0649818_/ZN (AOI21_X1)
+     1    3.64    0.01    0.01    1.45 v _0649819_/ZN (INV_X1)
+     1    3.80    0.04    0.07    1.52 ^ _0649821_/ZN (AOI221_X2)
+     2    8.54    0.01    0.02    1.54 v _0649822_/ZN (NOR2_X2)
+     2    8.42    0.01    0.07    1.61 v _0649823_/ZN (OR3_X4)
+     1    0.96    0.00    0.02    1.64 v rebuffer15062/Z (BUF_X4)
+     1    6.42    0.01    0.03    1.67 v rebuffer15061/Z (BUF_X1)
+     4   31.34    0.05    0.07    1.74 ^ _0649843_/ZN (AOI21_X4)
+     2    6.79    0.02    0.04    1.78 v _0649844_/ZN (AOI22_X4)
+     1   47.12    0.13    0.14    1.92 ^ _0649845_/ZN (OAI221_X2)
+     1    3.22    0.03    0.05    1.97 v _0649904_/ZN (AOI21_X1)
+     2   26.38    0.09    0.10    2.06 ^ _0649905_/ZN (OAI221_X2)
+     2    8.00    0.03    0.06    2.12 v _0653558_/ZN (OAI221_X2)
+     5   27.46    0.03    0.06    2.18 v rebuffer15069/Z (BUF_X1)
+     1    8.10    0.01    0.05    2.23 v max_cap1201/Z (BUF_X4)
+    11  103.72    0.01    0.03    2.26 v wire12246/Z (BUF_X8)
+     7   37.10    0.01    0.03    2.29 v max_cap1199/Z (BUF_X8)
+     5   39.95    0.01    0.04    2.33 v wire1195/Z (BUF_X4)
+    12   70.03    0.01    0.04    2.37 v max_cap1194/Z (BUF_X8)
+    14   48.54    0.01    0.10    2.47 v max_cap1191/Z (BUF_X8)
+    15   52.74    0.01    0.03    2.50 v max_cap1189/Z (BUF_X8)
+    17   53.03    0.01    0.03    2.53 v max_cap1188/Z (BUF_X8)
+    15   45.47    0.01    0.04    2.57 v wire1187/Z (BUF_X8)
+    16   51.30    0.01    0.04    2.61 v max_cap1185/Z (BUF_X8)
+    12   55.95    0.01    0.04    2.65 v max_cap1175/Z (BUF_X8)
+    14   37.28    0.01    0.05    2.70 v max_cap1173/Z (BUF_X8)
+    15   44.35    0.01    0.03    2.73 v max_cap1171/Z (BUF_X8)
+    17   42.01    0.01    0.04    2.77 v wire1168/Z (BUF_X4)
+    12   29.91    0.01    0.03    2.81 v max_cap1167/Z (BUF_X8)
+    17   64.48    0.01    0.03    2.84 v max_cap1166/Z (BUF_X8)
+     1    2.74    0.02    0.04    2.88 ^ _0949195_/ZN (NOR2_X1)
+                  0.02    0.00    2.88 ^ sw_req (out)
+                                  2.88   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.88   data arrival time
+-----------------------------------------------------------------------------
+                                  0.38   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[1] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.35    0.01    0.08    1.51 v _0659596_/Z (MUX2_X1)
+     1    2.01    0.01    0.06    1.57 v _0659597_/Z (MUX2_X1)
+     1    3.07    0.01    0.06    1.64 v _0659601_/Z (MUX2_X1)
+     1    4.74    0.01    0.07    1.70 v _0659602_/Z (MUX2_X1)
+     1    9.01    0.02    0.08    1.78 v _0659603_/Z (MUX2_X1)
+     1    1.89    0.01    0.06    1.84 v _0659635_/Z (MUX2_X1)
+     1   39.90    0.03    0.08    1.92 v _0659636_/Z (MUX2_X2)
+     1   73.20    0.02    0.08    2.00 v _0659637_/ZN (OR2_X4)
+     1   48.00    0.01    0.12    2.12 v wire12464/Z (BUF_X16)
+     1    8.57    0.01    0.08    2.20 v wire4136/Z (BUF_X4)
+                  0.01    0.00    2.20 v b_wmask[1] (out)
+                                  2.20   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.20   data arrival time
+-----------------------------------------------------------------------------
+                                  1.06   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[4] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.61    0.01    0.08    1.51 v _0659185_/Z (MUX2_X1)
+     1    2.38    0.01    0.06    1.58 v _0659186_/Z (MUX2_X1)
+     1    2.52    0.01    0.06    1.64 v _0659191_/Z (MUX2_X1)
+     1    5.11    0.01    0.07    1.70 v _0659192_/Z (MUX2_X1)
+     1    7.05    0.02    0.07    1.78 v _0659193_/Z (MUX2_X1)
+     1    1.86    0.01    0.06    1.84 v _0659225_/Z (MUX2_X1)
+     1   45.74    0.03    0.08    1.92 v _0659226_/Z (MUX2_X2)
+     1   77.31    0.02    0.08    2.01 v _0659227_/ZN (OR2_X4)
+     1   56.15    0.01    0.12    2.13 v wire12467/Z (BUF_X16)
+     1    7.95    0.01    0.07    2.20 v wire4139/Z (BUF_X4)
+                  0.01    0.00    2.20 v b_wmask[4] (out)
+                                  2.20   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.20   data arrival time
+-----------------------------------------------------------------------------
+                                  1.06   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[5] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.43    0.01    0.08    1.51 v _0659048_/Z (MUX2_X1)
+     1    2.68    0.01    0.06    1.57 v _0659049_/Z (MUX2_X1)
+     1    2.07    0.01    0.06    1.63 v _0659054_/Z (MUX2_X1)
+     1    3.77    0.01    0.06    1.70 v _0659055_/Z (MUX2_X1)
+     1    6.41    0.02    0.07    1.77 v _0659056_/Z (MUX2_X1)
+     1    1.93    0.01    0.06    1.83 v _0659089_/Z (MUX2_X1)
+     1   46.70    0.03    0.09    1.92 v _0659090_/Z (MUX2_X2)
+     1   74.33    0.02    0.08    2.00 v _0659091_/ZN (OR2_X4)
+     1   51.00    0.01    0.12    2.11 v wire12468/Z (BUF_X16)
+     1    7.86    0.01    0.08    2.19 v wire4140/Z (BUF_X4)
+                  0.01    0.00    2.20 v b_wmask[5] (out)
+                                  2.20   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.20   data arrival time
+-----------------------------------------------------------------------------
+                                  1.06   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[0] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.40    0.01    0.08    1.51 v _0659729_/Z (MUX2_X1)
+     1    1.71    0.01    0.06    1.57 v _0659730_/Z (MUX2_X1)
+     1    2.66    0.01    0.06    1.63 v _0659734_/Z (MUX2_X1)
+     1    3.92    0.01    0.06    1.70 v _0659735_/Z (MUX2_X1)
+     1   10.20    0.01    0.07    1.76 v _0659736_/Z (MUX2_X2)
+     1    1.78    0.01    0.06    1.82 v _0659768_/Z (MUX2_X1)
+     1   45.76    0.03    0.09    1.91 v _0659769_/Z (MUX2_X2)
+     1   79.10    0.02    0.09    2.00 v _0659770_/ZN (OR2_X4)
+     1   50.41    0.01    0.10    2.10 v wire12463/Z (BUF_X16)
+     1    8.18    0.01    0.08    2.18 v wire4135/Z (BUF_X4)
+                  0.01    0.00    2.18 v b_wmask[0] (out)
+                                  2.18   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.18   data arrival time
+-----------------------------------------------------------------------------
+                                  1.08   slack (MET)
+
+
+Startpoint: b_rdy (input port clocked by vclk)
+Endpoint: b_req (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                  0.00    0.00    0.00   clock vclk (rise edge)
+                          0.62    0.62   clock network delay (ideal)
+                          0.66    1.28 v input external delay
+     1    6.03    0.00    0.00    1.28 v b_rdy (in)
+     1   11.53    0.01    0.02    1.30 v wire10022/Z (BUF_X4)
+     1   41.03    0.01    0.02    1.33 v wire10021/Z (BUF_X16)
+     1   38.24    0.01    0.04    1.37 v wire14558/Z (BUF_X8)
+     2   96.69    0.01    0.05    1.42 v wire14557/Z (BUF_X16)
+     4   78.04    0.01    0.08    1.51 v wire14556/Z (BUF_X8)
+     1    5.74    0.01    0.07    1.58 v _0690308_/ZN (AND2_X1)
+     2   26.12    0.04    0.05    1.63 ^ _0690310_/ZN (AOI21_X4)
+    75  228.03    0.10    0.12    1.74 ^ _0758810_/ZN (OR2_X4)
+     2   14.21    0.03    0.06    1.80 v _0944952_/ZN (NOR2_X2)
+     1   74.07    0.08    0.11    1.91 ^ _0944953_/ZN (OAI21_X4)
+     1   79.05    0.04    0.10    2.02 v _0944954_/ZN (OAI21_X4)
+     1   43.49    0.01    0.09    2.11 v wire12313/Z (BUF_X8)
+     1    7.38    0.01    0.07    2.17 v wire1313/Z (BUF_X4)
+                  0.01    0.00    2.17 v b_req (out)
+                                  2.17   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.17   data arrival time
+-----------------------------------------------------------------------------
+                                  1.09   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[2] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.86    0.01    0.08    1.51 v _0659465_/Z (MUX2_X1)
+     1    1.78    0.01    0.06    1.57 v _0659466_/Z (MUX2_X1)
+     1    2.97    0.01    0.06    1.64 v _0659467_/Z (MUX2_X1)
+     1    3.39    0.01    0.06    1.70 v _0659468_/Z (MUX2_X1)
+     1    7.47    0.01    0.06    1.76 v _0659469_/Z (MUX2_X2)
+     1    1.99    0.01    0.06    1.82 v _0659502_/Z (MUX2_X1)
+     1   41.14    0.03    0.09    1.91 v _0659503_/Z (MUX2_X2)
+     1   75.19    0.02    0.07    1.98 v _0659504_/ZN (OR2_X4)
+     1   50.58    0.01    0.11    2.09 v wire12465/Z (BUF_X16)
+     1    8.46    0.01    0.08    2.17 v wire4137/Z (BUF_X4)
+                  0.01    0.00    2.17 v b_wmask[2] (out)
+                                  2.17   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.17   data arrival time
+-----------------------------------------------------------------------------
+                                  1.09   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[3] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.57    0.01    0.08    1.51 v _0659319_/Z (MUX2_X1)
+     1    2.65    0.01    0.06    1.58 v _0659321_/Z (MUX2_X1)
+     1    2.43    0.01    0.06    1.64 v _0659325_/Z (MUX2_X1)
+     1    2.64    0.01    0.06    1.70 v _0659326_/Z (MUX2_X1)
+     1   11.44    0.01    0.07    1.76 v _0659327_/Z (MUX2_X2)
+     1    1.73    0.01    0.06    1.82 v _0659360_/Z (MUX2_X1)
+     1   43.49    0.03    0.09    1.91 v _0659361_/Z (MUX2_X2)
+     1   79.12    0.02    0.08    1.99 v _0659362_/ZN (OR2_X4)
+     1   49.63    0.01    0.10    2.09 v wire12466/Z (BUF_X16)
+     1    6.57    0.01    0.08    2.17 v wire4138/Z (BUF_X4)
+                  0.01    0.00    2.17 v b_wmask[3] (out)
+                                  2.17   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.17   data arrival time
+-----------------------------------------------------------------------------
+                                  1.09   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[6] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.10    0.01    0.07    1.51 v _0658906_/Z (MUX2_X1)
+     1    1.39    0.01    0.06    1.57 v _0658908_/Z (MUX2_X1)
+     1    3.05    0.01    0.06    1.63 v _0658910_/Z (MUX2_X1)
+     1    2.36    0.01    0.06    1.69 v _0658912_/Z (MUX2_X1)
+     1    6.46    0.02    0.07    1.76 v _0658914_/Z (MUX2_X1)
+     1    2.34    0.01    0.06    1.82 v _0658952_/Z (MUX2_X1)
+     1   46.82    0.03    0.09    1.91 v _0658954_/Z (MUX2_X2)
+     1   84.42    0.02    0.08    1.99 v _0658955_/ZN (OR2_X4)
+     1   58.87    0.01    0.10    2.09 v wire12469/Z (BUF_X16)
+     1    7.60    0.01    0.05    2.14 v wire4141/Z (BUF_X4)
+                  0.01    0.00    2.14 v b_wmask[6] (out)
+                                  2.14   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.14   data arrival time
+-----------------------------------------------------------------------------
+                                  1.12   slack (MET)
+
+
+Startpoint: _1005349_ (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wmask[7] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ _1005349_/CK (DFF_X2)
+    17   75.71    0.08    0.19    1.16 ^ _1005349_/Q (DFF_X2)
+    34  105.60    0.02    0.05    1.21 ^ max_cap8956/Z (BUF_X16)
+    47  124.14    0.01    0.04    1.25 ^ max_cap8950/Z (BUF_X16)
+    35  106.38    0.01    0.07    1.32 ^ max_cap8949/Z (BUF_X16)
+    36  109.80    0.01    0.04    1.35 ^ max_cap8947/Z (BUF_X16)
+    24   68.08    0.01    0.05    1.40 ^ max_cap8946/Z (BUF_X16)
+    35   83.98    0.01    0.03    1.44 ^ max_cap8945/Z (BUF_X16)
+     1    1.72    0.01    0.07    1.50 v _0944291_/Z (MUX2_X1)
+     1    2.68    0.01    0.06    1.56 v _0944292_/Z (MUX2_X1)
+     1    1.19    0.01    0.06    1.62 v _0944296_/Z (MUX2_X1)
+     1    2.64    0.01    0.06    1.68 v _0944304_/Z (MUX2_X1)
+     1    6.37    0.02    0.07    1.75 v _0944305_/Z (MUX2_X1)
+     1    1.77    0.01    0.06    1.81 v _0944337_/Z (MUX2_X1)
+     1   42.39    0.03    0.09    1.90 v _0944338_/Z (MUX2_X2)
+     1   90.08    0.02    0.08    1.98 v _0944339_/ZN (OR2_X4)
+     1   61.91    0.01    0.07    2.05 v wire12457/Z (BUF_X16)
+     1    7.45    0.01    0.05    2.10 v wire4038/Z (BUF_X4)
+                  0.01    0.00    2.10 v b_wmask[7] (out)
+                                  2.10   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -2.10   data arrival time
+-----------------------------------------------------------------------------
+                                  1.16   slack (MET)
+
+
+Startpoint: u_slice.sq_icount[0]$_SDFF_PP0_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: icount[31] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.96    0.96   clock network delay (propagated)
+                  0.01    0.00    0.96 ^ u_slice.sq_icount[0]$_SDFF_PP0_/CK (DFF_X2)
+     2   10.85    0.01    0.10    1.07 v u_slice.sq_icount[0]$_SDFF_PP0_/Q (DFF_X2)
+     1   70.81    0.01    0.03    1.09 v wire8853/Z (BUF_X8)
+     1   48.83    0.01    0.08    1.17 v wire13396/Z (BUF_X8)
+     2    5.27    0.01    0.08    1.25 v _0984731_/CO (HA_X1)
+     1    3.75    0.03    0.04    1.29 ^ _0577289_/ZN (AOI21_X1)
+     3   10.27    0.02    0.03    1.32 v _0577291_/ZN (OAI21_X2)
+     2    5.87    0.03    0.04    1.36 ^ _0577311_/ZN (AOI21_X2)
+     2    5.74    0.02    0.03    1.39 v _0577325_/ZN (OAI22_X2)
+     2    3.45    0.03    0.05    1.43 ^ _0577371_/ZN (OAI211_X1)
+     2    4.61    0.02    0.07    1.50 ^ _0577384_/ZN (AND4_X1)
+     1    3.92    0.01    0.02    1.51 v _0577403_/ZN (NOR3_X1)
+     2    5.25    0.05    0.08    1.59 ^ _0577404_/ZN (AOI221_X2)
+     2    8.12    0.02    0.03    1.63 v _0577418_/ZN (AOI221_X2)
+     2    9.01    0.06    0.07    1.70 ^ _0577429_/ZN (AOI221_X2)
+     2    8.33    0.02    0.04    1.73 v _0577439_/ZN (OAI21_X2)
+     2    5.53    0.03    0.04    1.77 ^ _0577450_/ZN (AOI21_X2)
+     2    5.15    0.02    0.04    1.81 v _0577462_/ZN (OAI221_X2)
+     1    3.12    0.04    0.06    1.87 ^ _0596107_/ZN (OAI221_X2)
+     2    4.85    0.03    0.05    1.92 ^ _0596108_/ZN (XNOR2_X1)
+     1    2.36    0.02    0.05    1.97 ^ _0596109_/Z (XOR2_X1)
+                  0.02    0.00    1.97 ^ icount[31] (out)
+                                  1.97   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.97   data arrival time
+-----------------------------------------------------------------------------
+                                  1.29   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[78] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   44.13    0.01    0.15    1.89 v _0659969_/ZN (AND2_X4)
+     1    8.19    0.01    0.07    1.96 v wire5376/Z (BUF_X4)
+                  0.01    0.00    1.96 v b_wdata[78] (out)
+                                  1.96   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.96   data arrival time
+-----------------------------------------------------------------------------
+                                  1.30   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[168] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   31.89    0.01    0.14    1.89 v _0659869_/ZN (AND2_X4)
+     1   37.52    0.01    0.05    1.93 v wire5493/Z (BUF_X16)
+                  0.03    0.02    1.96 v b_wdata[168] (out)
+                                  1.96   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.96   data arrival time
+-----------------------------------------------------------------------------
+                                  1.30   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[164] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   18.65    0.02    0.15    1.90 v _0659874_/ZN (AND2_X2)
+     1   56.82    0.01    0.03    1.93 v wire5488/Z (BUF_X16)
+                  0.03    0.03    1.95 v b_wdata[164] (out)
+                                  1.95   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.95   data arrival time
+-----------------------------------------------------------------------------
+                                  1.31   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[175] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   29.61    0.01    0.14    1.89 v _0659861_/ZN (AND2_X4)
+     1   42.35    0.01    0.05    1.93 v wire5501/Z (BUF_X16)
+                  0.03    0.02    1.95 v b_wdata[175] (out)
+                                  1.95   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.95   data arrival time
+-----------------------------------------------------------------------------
+                                  1.31   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[106] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   17.62    0.02    0.15    1.90 v _0659938_/ZN (AND2_X2)
+     1   51.08    0.01    0.03    1.93 v wire5407/Z (BUF_X16)
+                  0.03    0.02    1.95 v b_wdata[106] (out)
+                                  1.95   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.95   data arrival time
+-----------------------------------------------------------------------------
+                                  1.31   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[91] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   22.14    0.02    0.15    1.89 v _0659955_/ZN (AND2_X2)
+     1   40.43    0.01    0.04    1.93 v wire5390/Z (BUF_X16)
+                  0.03    0.02    1.95 v b_wdata[91] (out)
+                                  1.95   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.95   data arrival time
+-----------------------------------------------------------------------------
+                                  1.31   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[109] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   12.99    0.01    0.15    1.89 v _0659935_/ZN (AND2_X2)
+     1   60.42    0.01    0.03    1.92 v wire5410/Z (BUF_X16)
+                  0.04    0.03    1.95 v b_wdata[109] (out)
+                                  1.95   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.95   data arrival time
+-----------------------------------------------------------------------------
+                                  1.31   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[160] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   20.55    0.01    0.14    1.89 v _0659878_/ZN (AND2_X4)
+     1   42.06    0.01    0.04    1.92 v wire5482/Z (BUF_X16)
+                  0.03    0.03    1.95 v b_wdata[160] (out)
+                                  1.95   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.95   data arrival time
+-----------------------------------------------------------------------------
+                                  1.31   slack (MET)
+
+
+Startpoint: u_slice.u_dma.ds_wr$_SDFFE_PP0P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: b_wdata[81] (output port clocked by vclk)
+Path Group: vclk
+Path Type: max
+
+Fanout     Cap    Slew   Delay    Time   Description
+-----------------------------------------------------------------------------
+                          0.00    0.00   clock core_clock (rise edge)
+                          0.95    0.95   clock network delay (propagated)
+                  0.01    0.00    0.95 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/CK (DFF_X2)
+     4   37.48    0.04    0.15    1.10 ^ u_slice.u_dma.ds_wr$_SDFFE_PP0P_/Q (DFF_X2)
+    10  141.93    0.01    0.03    1.13 ^ max_cap8828/Z (BUF_X16)
+     2   41.39    0.01    0.05    1.19 v _0659771_/ZN (INV_X32)
+    49  228.30    0.00    0.03    1.21 v max_length13181/Z (BUF_X32)
+    52  195.00    0.01    0.19    1.40 v max_length13179/Z (BUF_X32)
+    65  194.33    0.01    0.14    1.54 v max_length13178/Z (BUF_X32)
+    24  111.86    0.01    0.05    1.59 v wire13177/Z (BUF_X16)
+    21   91.36    0.01    0.15    1.74 v max_length13176/Z (BUF_X16)
+     1   17.66    0.02    0.15    1.90 v _0659966_/ZN (AND2_X2)
+     1   43.08    0.01    0.03    1.93 v wire5379/Z (BUF_X16)
+                  0.02    0.02    1.94 v b_wdata[81] (out)
+                                  1.94   data arrival time
+
+                  0.00    3.30    3.30   clock vclk (rise edge)
+                          0.62    3.92   clock network delay (ideal)
+                          0.00    3.92   clock reconvergence pessimism
+                         -0.66    3.26   output external delay
+                                  3.26   data required time
+-----------------------------------------------------------------------------
+                                  3.26   data required time
+                                 -1.94   data arrival time
+-----------------------------------------------------------------------------
+                                  1.32   slack (MET)
+
+

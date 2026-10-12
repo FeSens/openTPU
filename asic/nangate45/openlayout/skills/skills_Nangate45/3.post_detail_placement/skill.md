@@ -1,0 +1,1 @@
+At this point, just use the template at `skills/skills_Nangate45/4.post_detail_placement/template/cts_route.tcl` (path relative to the repo root) to get the final routed results for macro placement optimization.

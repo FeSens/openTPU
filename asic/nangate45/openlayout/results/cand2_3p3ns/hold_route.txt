@@ -1,0 +1,148 @@
+Startpoint: u_slice.u_mxu.r0[122]$_SDFFE_PP0N_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_mxu.r1[122]$_SDFFE_PP0N_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: min
+
+  Delay    Time   Description
+---------------------------------------------------------
+   0.00    0.00   clock core_clock (rise edge)
+   0.96    0.96   clock network delay (propagated)
+   0.00    0.96 ^ u_slice.u_mxu.r0[122]$_SDFFE_PP0N_/CK (DFF_X1)
+   0.09    1.05 v u_slice.u_mxu.r0[122]$_SDFFE_PP0N_/Q (DFF_X1)
+   0.01    1.06 ^ _0756489_/ZN (NAND2_X1)
+   0.01    1.07 v _0756491_/ZN (AOI21_X1)
+   0.00    1.07 v u_slice.u_mxu.r1[122]$_SDFFE_PP0N_/D (DFF_X1)
+           1.07   data arrival time
+
+   0.00    0.00   clock core_clock (rise edge)
+   1.02    1.02   clock network delay (propagated)
+   0.00    1.02   clock reconvergence pessimism
+           1.02 ^ u_slice.u_mxu.r1[122]$_SDFFE_PP0N_/CK (DFF_X1)
+   0.00    1.02   library hold time
+           1.02   data required time
+---------------------------------------------------------
+           1.02   data required time
+          -1.07   data arrival time
+---------------------------------------------------------
+           0.05   slack (MET)
+
+
+Startpoint: u_slice.u_mxu.g_sys.u_m4.g_regs.r[5][6]$_DFF_P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_mxu.g_sys.u_m4.g_regs.r[6][6]$_DFF_P_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: min
+
+  Delay    Time   Description
+---------------------------------------------------------
+   0.00    0.00   clock core_clock (rise edge)
+   0.93    0.93   clock network delay (propagated)
+   0.00    0.93 ^ u_slice.u_mxu.g_sys.u_m4.g_regs.r[5][6]$_DFF_P_/CK (DFF_X1)
+   0.09    1.02 v u_slice.u_mxu.g_sys.u_m4.g_regs.r[5][6]$_DFF_P_/Q (DFF_X1)
+   0.00    1.02 v u_slice.u_mxu.g_sys.u_m4.g_regs.r[6][6]$_DFF_P_/D (DFF_X2)
+           1.02   data arrival time
+
+   0.00    0.00   clock core_clock (rise edge)
+   0.97    0.97   clock network delay (propagated)
+   0.00    0.97   clock reconvergence pessimism
+           0.97 ^ u_slice.u_mxu.g_sys.u_m4.g_regs.r[6][6]$_DFF_P_/CK (DFF_X2)
+   0.00    0.97   library hold time
+           0.97   data required time
+---------------------------------------------------------
+           0.97   data required time
+          -1.02   data arrival time
+---------------------------------------------------------
+           0.05   slack (MET)
+
+
+Startpoint: u_slice.u_mxu.g_sys.u_m4.g_regs.r[8][0]$_DFF_P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_mxu.g_sys.u_m4.g_regs.r[9][0]$_DFF_P_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: min
+
+  Delay    Time   Description
+---------------------------------------------------------
+   0.00    0.00   clock core_clock (rise edge)
+   0.94    0.94   clock network delay (propagated)
+   0.00    0.94 ^ u_slice.u_mxu.g_sys.u_m4.g_regs.r[8][0]$_DFF_P_/CK (DFF_X1)
+   0.08    1.03 v u_slice.u_mxu.g_sys.u_m4.g_regs.r[8][0]$_DFF_P_/Q (DFF_X1)
+   0.00    1.03 v u_slice.u_mxu.g_sys.u_m4.g_regs.r[9][0]$_DFF_P_/D (DFF_X1)
+           1.03   data arrival time
+
+   0.00    0.00   clock core_clock (rise edge)
+   0.97    0.97   clock network delay (propagated)
+   0.00    0.97   clock reconvergence pessimism
+           0.97 ^ u_slice.u_mxu.g_sys.u_m4.g_regs.r[9][0]$_DFF_P_/CK (DFF_X1)
+   0.00    0.97   library hold time
+           0.97   data required time
+---------------------------------------------------------
+           0.97   data required time
+          -1.03   data arrival time
+---------------------------------------------------------
+           0.05   slack (MET)
+
+
+Startpoint: u_slice.u_mxu.r1[92]$_SDFFE_PP0N_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_mxu.u_rw.g_regs.r[0][92]$_DFFE_PN_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: min
+
+  Delay    Time   Description
+---------------------------------------------------------
+   0.00    0.00   clock core_clock (rise edge)
+   0.97    0.97   clock network delay (propagated)
+   0.00    0.97 ^ u_slice.u_mxu.r1[92]$_SDFFE_PP0N_/CK (DFF_X1)
+   0.09    1.06 ^ u_slice.u_mxu.r1[92]$_SDFFE_PP0N_/Q (DFF_X1)
+   0.04    1.10 ^ _0929639_/Z (MUX2_X1)
+   0.00    1.10 ^ u_slice.u_mxu.u_rw.g_regs.r[0][92]$_DFFE_PN_/D (DFF_X1)
+           1.10   data arrival time
+
+   0.00    0.00   clock core_clock (rise edge)
+   1.03    1.03   clock network delay (propagated)
+   0.00    1.03   clock reconvergence pessimism
+           1.03 ^ u_slice.u_mxu.u_rw.g_regs.r[0][92]$_DFFE_PN_/CK (DFF_X1)
+   0.01    1.04   library hold time
+           1.04   data required time
+---------------------------------------------------------
+           1.04   data required time
+          -1.10   data arrival time
+---------------------------------------------------------
+           0.05   slack (MET)
+
+
+Startpoint: u_slice.u_mxu.g_sys.g_ask[1].g_p[3].u_a.g_regs.r[3][7]$_DFF_P_
+            (rising edge-triggered flip-flop clocked by core_clock)
+Endpoint: u_slice.u_mxu.g_sys.g_ask[1].g_p[3].u_pe.br[7]$_DFF_P_
+          (rising edge-triggered flip-flop clocked by core_clock)
+Path Group: core_clock
+Path Type: min
+
+  Delay    Time   Description
+---------------------------------------------------------
+   0.00    0.00   clock core_clock (rise edge)
+   0.96    0.96   clock network delay (propagated)
+   0.00    0.96 ^ u_slice.u_mxu.g_sys.g_ask[1].g_p[3].u_a.g_regs.r[3][7]$_DFF_P_/CK (DFF_X1)
+   0.08    1.04 v u_slice.u_mxu.g_sys.g_ask[1].g_p[3].u_a.g_regs.r[3][7]$_DFF_P_/Q (DFF_X1)
+   0.00    1.04 v u_slice.u_mxu.g_sys.g_ask[1].g_p[3].u_pe.br[7]$_DFF_P_/D (DFF_X2)
+           1.04   data arrival time
+
+   0.00    0.00   clock core_clock (rise edge)
+   0.99    0.99   clock network delay (propagated)
+   0.00    0.99   clock reconvergence pessimism
+           0.99 ^ u_slice.u_mxu.g_sys.g_ask[1].g_p[3].u_pe.br[7]$_DFF_P_/CK (DFF_X2)
+   0.00    0.99   library hold time
+           0.99   data required time
+---------------------------------------------------------
+           0.99   data required time
+          -1.04   data arrival time
+---------------------------------------------------------
+           0.05   slack (MET)
+
+

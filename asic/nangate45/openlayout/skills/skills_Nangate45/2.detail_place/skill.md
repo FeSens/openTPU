@@ -1,0 +1,1 @@
+At this point, just use the template at `skills/skills_Nangate45/3.detail_place/template/detail_place.tcl` (path relative to the repo root) to get the detail place results for macro placement optimization.
