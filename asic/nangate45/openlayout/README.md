@@ -60,7 +60,7 @@ with yosys-slang and OpenROAD v2.0-17598; placement to routed takes 2.7 to 3.6 h
 - **dataflow**: OpenLayout's RTL-MP clustering of the netlist (`results/opentpu_asic_small_macro_clusters.txt`:
   8 macro clusters: TMEM 12, IMEM 2, DMA 2, ACT 4 + 2, MXU 3 + 1 + 1).
 - **macro**: a candidate's `place_macro` commands on the floorplan, an overlap / core check, and
-  the Gate-A image (`images/opentpu_asic_small_<cand>_macro_place.png`: red bar = a macro's pin side, cyan = I/O).
+  the Gate-A image (`<cand>/images/`: red bar = a macro's pin side, cyan = I/O).
 - **pnr** (`scripts/pnr.tcl`): macros fixed with a 3 um placement halo, PDN (M1 rails, thin M4
   straps, M9 stripes, M9 / M10 ring), global placement, repair, routability placement,
   legalization, repair again (the second placement moves every cell), CTS, setup and hold repair,
@@ -81,10 +81,9 @@ fragments in the standard-cell region; the second passed.
 | cand3 | three corners: one TMEM copy (2 x 2) in the top left, top right and bottom right corner, IMEM between the top blocks, ACT on the bottom right block's back |
 | rtlmp | the baseline: `rtl_macro_placer` with no options |
 
-cand2, the Gate-A image (pin sides in red) and the whole-die snapshot of the macro placement
-(`run.sh snapshot`, OpenLayout's image_snapshot skill):
+cand2, the whole-die snapshot of the macro placement (`run.sh snapshot`, OpenLayout's
+image_snapshot skill):
 
-![cand2, pin sides](images/opentpu_asic_small_cand2_macro_place.png)
 ![cand2, macro placement](images/opentpu_asic_small_cand2_macro_placed_snapshot.png)
 
 ## Results
@@ -107,7 +106,7 @@ This result is the 3.0 ns run's placement and clock tree (below) routed and repa
 made at the routing stage. Timing after detailed routing is on global-route parasitics
 (`estimate_parasitics -global_routing`), not an extraction.
 
-![cand2, routed](results/cand2_3p3ns/routed.png)
+![cand2, routed](images/opentpu_asic_small_cand2_3p3ns_routed_snapshot.png)
 
 The routed database is `results/cand2_3p3ns/otpu_asic_top_routed.odb.xz` (89 MB; 713 MB unpacked,
 written by OpenROAD v2.0-17598), with the SDC written next to it (`otpu_asic_top_routed.sdc`: the
@@ -136,20 +135,6 @@ openroad -no_init -threads 16
 
 `openroad -gui` and `read_db` open it for viewing.
 
-## Images
-
-`images/` has every image the macro-placement loop looked at, per candidate (`cand1`, `cand2`,
-`cand3`, the `rtlmp` baseline):
-
-- `*_iter<N>_raw.png`, `*_iter<N>_pin_side.png`: Gate A's input for the planner's N-th plan, the
-  macros alone and with their pin sides (red) and the I/O pins (cyan) marked
-  (`skills/skills_Nangate45/macro_pin_side`); iteration 1 failed the checker, iteration 2 passed.
-- `*_macro_place.png`: the accepted placement, the image the README's candidates refer to.
-- `opentpu_asic_small_cand2_macro_placed_snapshot.png`,
-  `opentpu_asic_small_cand2_3p3ns_routed_snapshot.png`: the whole die after macro placement and
-  after routing (1600 px, `skills/skills_openroad_flow/image_snapshot`; `results/cand2_3p3ns/
-  routed.png` is a 1200 px copy of the routed one).
-
 **3.0 ns, the four placements** (the same scripts, 3.0 ns asked from synthesis on):
 
 | | cand1 | cand2 | cand3 | rtlmp |
@@ -177,6 +162,17 @@ openroad -no_init -threads 16
   second repair round lowered the endpoint count (219 -> 148), not the worst path. Timing-driven
   placement (`OL_TIMING_DRIVEN=1`) brought cand2 to -0.021 ns (9 endpoints) after global-route
   repair.
+
+## Images
+
+- `images/opentpu_asic_small_cand2_macro_placed_snapshot.png`: cand2's macro placement, the whole
+  die with the I/O pins (`skills/skills_openroad_flow/image_snapshot`).
+- `images/opentpu_asic_small_cand2_3p3ns_routed_snapshot.png`: cand2 routed at 3.3 ns, the same view.
+- `images/opentpu_asic_small_rtlmp_macro_place.png`: the `rtl_macro_placer` baseline with the
+  macros numbered and their pin sides in red (`skills/skills_Nangate45/macro_pin_side`).
+
+`run.sh macro` and `run.sh snapshot` make these images, and the pin-side images of the other
+candidates, under `build/asic/small-openlayout/<cand>/images/`.
 
 ## Open
 
