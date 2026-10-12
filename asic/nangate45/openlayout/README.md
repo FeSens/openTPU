@@ -108,10 +108,11 @@ made at the routing stage. Timing after detailed routing is on global-route para
 
 ![cand2, routed](images/opentpu_asic_small_cand2_3p3ns_routed_snapshot.png)
 
-The routed database is `results/cand2_3p3ns/otpu_asic_top_routed.odb.xz` (89 MB; 713 MB unpacked,
-written by OpenROAD v2.0-17598), with the SDC written next to it (`otpu_asic_top_routed.sdc`: the
-3.3 ns clock and the virtual clock's 0.62 ns latency) and the setup / hold paths the flow reported
-(`setup_route.txt`, `hold_route.txt`).
+`results/cand2_3p3ns/` keeps the routed database's SDC (`otpu_asic_top_routed.sdc`: the 3.3 ns clock
+and the virtual clock's 0.62 ns latency) and the setup / hold paths the flow reported
+(`setup_route.txt`, `hold_route.txt`). The routed database itself (89 MB as .xz, 713 MB unpacked,
+written by OpenROAD v2.0-17598) is not kept in the repository, to keep clones small: `run.sh pnr
+cand2` writes one to `build/asic/small-openlayout/cand2/reports/otpu_asic_top_routed.odb`.
 
 **Extracted timing.** The ODB keeps the detailed routes, not the global-route guides the numbers
 above come from (`estimate_parasitics -global_routing` on the ODB alone misses most nets). With the
@@ -121,9 +122,8 @@ VPU's `u_ma` adder, `u_slice.u_vpu.g_lane[0].g_slot[3]`), hold +0.04 ns with no 
 (the extraction takes about 4 minutes on 16 threads):
 
 ```
-xz -dk asic/nangate45/openlayout/results/cand2_3p3ns/otpu_asic_top_routed.odb.xz
 openroad -no_init -threads 16
-  read_db asic/nangate45/openlayout/results/cand2_3p3ns/otpu_asic_top_routed.odb
+  read_db build/asic/small-openlayout/cand2/reports/otpu_asic_top_routed.odb
   define_corners tt
   read_liberty -corner tt $::env(PLATFORM_DIR)/lib/NangateOpenCellLibrary_typical.lib
   foreach f [glob build/asic/small/macros/*.lib] { read_liberty -corner tt $f }   ;# run.sh prep
