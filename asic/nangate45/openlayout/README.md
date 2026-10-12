@@ -117,14 +117,16 @@ made at the routing stage. Timing after detailed routing is on global-route para
 | hold WNS | +0.049 ns | +0.051 ns | +0.051 ns | +0.052 ns |
 | DRC violations | 0 | 0 | 0 | 16,354 after 20 passes (not converging) |
 | routed wire | 15.42 m | 14.03 m | 13.50 m | |
-| run time (8 threads) | 8 h 17 min | 3 h 35 min | 2 h 42 min | |
+| run time (8 threads) | 8 h 17 min | 3 h 35 min | 2 h 42 min | 10 h 20 min |
 
 - The worst paths are the ones `docs/asic.md` names, and none has a macro on it: VPU `ic` -> the
   arbitration -> the quantizer's fadd stage (45 cells, 33 of them buffers: wire), the slice's
   `rl_pend` -> the VPU's registers, DMA -> quantizer. At 60% the die is 2.05 mm and these cross it.
 - The automatic placement times best and routes worst: it spreads the macros over all four edges
   (the standard cells keep a nearly square region, 1.60 x 1.47 mm, and the shortest wirelength),
-  but its detailed routing stays at 16 K violations. The planned candidates route clean; the top
+  but its detailed routing stays at 16 K violations (shorts, mostly): it abuts macros on a pin
+  side (two MXU FIFOs, two ACT pairs, two TMEM pairs: `results/rtlmp_macro_place.png`, macros 9 / 10,
+  2 / 5, 18 / 22, 19 / 23), and the violations are at those macros' pins. The planned candidates route clean; the top
   band (cand1) squeezes the cells into 1.71 x 1.21 mm and congests.
 - At the routing stage nothing closed 3.0 ns on cand2: resistance-aware routing of the critical
   nets (`global_route -critical_nets_percentage 10`) gave the same timing, a repair margin and a
@@ -138,6 +140,5 @@ made at the routing stage. Timing after detailed routing is on global-route para
   routing).
 - 3.0 ns: timing-driven placement is 21 ps short on cand2; a plan that keeps the cells' region
   square (macros on more edges, each TMEM copy by its reader) is the next candidate.
-- The baseline's DRC violations (where: macros abutted on a pin side are the suspects).
 - The checks were made by reading the images; OpenLayout's agents (Planner / Checker with an LLM)
   would make and judge the candidates themselves.
