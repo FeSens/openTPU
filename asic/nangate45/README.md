@@ -113,6 +113,12 @@ endpoint's worst slack, the stage classes. ORFS's own logs, reports and results 
 `6_finish.rpt` and the routed layout. A run of the same sources and tools should match it within
 the tools' run-to-run noise (a few MHz). `docs/asic.md` has the analysis.
 
+## A denser floorplan with planned macro placement
+
+`asic/nangate45/openlayout/`: the same block at 60% utilization with the macros placed by plan
+(OpenLayout's planner and checker skills) and plain Yosys + OpenROAD scripts: routed, timing met at
+3.3 ns, no DRC violations on a 4.20 mm² die. Its README has the flow, the candidates and the results.
+
 ## Where to start
 
 `docs/asic.md` ("Open problems") lists the known limits: the ports' combinational paths, the

@@ -1,0 +1,13 @@
+design: otpu_asic_top
+stage: route
+die_um: 2048.9 x 2048.9
+macros: 27
+macro_area_um2: 1308347
+std_cells: 523917
+std_cell_area_um2: 1227308
+setup_wns_ns: 0.156
+setup_tns_ns: 0.000
+hold_wns_ns: 0.051
+hold_tns_ns: 0.000
+setup_violating_endpoints: 0
+hold_violating_endpoints: 0

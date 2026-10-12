@@ -1,0 +1,10 @@
+Clock core_clock
+   1.05 source latency u_slice.dma_waddr[1]$_DFF_P_/CK ^
+  -0.92 target latency u_slice.u_vpu.g_lane[0].g_slot[8].g_ma.u_ma.u_a.s1[15]$_SDFFCE_PP0N_/CK ^
+   0.00 CRPR
+--------------
+   0.13 setup skew
+
+Clock vclk
+No launch/capture paths found.
+
