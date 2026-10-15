@@ -174,7 +174,8 @@ clock (`main_s7pciephy_clkout3`, 4 ns) and the core's (7.5 ns at 133.33 MHz):
 | 2df5b89a | FAST | -0.223 ns, ~9 paths | | the fixes of sections 2 and 3 (below) |
 | dbf3dcfc | full (production strategy, 133.33) | -0.531 ns, 2504 endpoints | -0.304 ns, 114 | slices reset with `otpu_pcie_mm` |
 | 72da3027 | full | -0.033 ns, 34 endpoints | +0.011 ns | PHY / AXI-Lite slices, reader retire, pointer fanout, split REG 2, h_avail |
-| f5267ed6 | full, production's RTL (E3) | (pending) | | 2abb37d0's core: both retires, C2H event, second TX stage |
+| f5267ed6 | full, production's RTL (E3) | stopped after placement (WNS -0.568 ns, TNS -611) | | 2abb37d0's core on r2.1's E3 RTL |
+| 955fdd1f | full | **+0.003 ns** | **+0.090 ns** | 2abb37d0's core: both retires, C2H event, second TX stage |
 
 The first build's 1.2 ns came from LitePCIe's completion buffers in block RAM (1.8 ns
 clock-to-out) into the reader's data FIFO, the descriptor tables' 1024-deep LUTRAM write fanout,
@@ -195,7 +196,15 @@ TNS -1614 -> -88 ns. Its last 34 endpoints were the writer's retire and `otpu_dm
 (both 6 levels from the packetizer's ready), the TX slice's valid into the hard block's
 TRNTCFGGNT (3.3 ns of route) and one path in channel 0's host side (main's `otpu_mem_ch`, -0.023
 ns; r2.2's XDMA build had its paths at +0.014): 2abb37d0 registers the first two and puts a second
-valid stage by the hard block.
+valid stage by the hard block. 955fdd1f, with them, meets every clock (WHS +0.013 ns); its core
+clock has more slack than production's E3 (+0.007 ns with XDMA). The same core on r2.1's E3 RTL
+(f5267ed6) placed far worse (post-placement phys_opt WNS -0.568 ns, TNS -611 ns, against E3's own
+-0.174 / -47 ns, which closed at +0.007): main's timing cuts since r2.1 (ports A and B registered,
+the VPU grant's copies) are what leave LitePCIe its room, so the card candidate is main's RTL.
+Its DDR3 paths (worst setup / hold into each channel's OSERDES, from the read bitslip registers,
+into the ECC decoders; r22's card failure was channel 0's): ch0 OSERDES 1.248 / 0.085 ns, ECC
++0.491 ns; ch1 1.017 / 0.068, ECC +1.206, against E3's ch0 0.488 / 0.086, ECC +0.687 and ch1
+0.676 / 0.075, +0.970 (r22: ch0 OSERDES 0.382, ECC +0.317).
 
 **Area** (72da3027, Vivado's hierarchical utilization): LitePCIe's core 12,059 LUTs (2,564 as
 LUTRAM), 11,523 flip-flops, 13.5 RAMB36; with `otpu_pcie_mm` (919 LUTs, 1,404 flip-flops, 4
