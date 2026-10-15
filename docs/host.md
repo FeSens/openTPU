@@ -1,7 +1,9 @@
 # Host PC: driving the openTPU card over PCIe
 
-The YPCB-00338 card runs the accelerator behind a Xilinx XDMA PCIe bridge (Gen2 x8; Gen1 x8 on
-PCIE_GEN=1 bitstreams). This page
+The YPCB-00338 card runs the accelerator behind a PCIe bridge, Gen2 x8: LitePCIe with openTPU's
+driver `otpu_pcie` on LitePCIe bitstreams ([litepcie.md](litepcie.md)), Xilinx's XDMA with its
+driver on XDMA ones (Gen1 x8 on PCIE_GEN=1 bitstreams). The two have different PCI IDs, both
+drivers stay installed, and the tools open whichever has the card. This page
 covers the host side: the PC the card is plugged into, its driver, and the tools that talk to
 the card. Building and loading the bitstream is in [board.md](board.md); the registers,
 counters and trace buffer the tools read are specified in [observability.md](observability.md).
@@ -13,6 +15,12 @@ What the host sees:
 | `/dev/xdma0_user` | BAR0, the AXI-Lite control registers (`rtl/shell/otpu_ctrl.sv`) | start / load / status / counters |
 | `/dev/xdma0_h2c_0` | DMA host -> card; file offset = card AXI address | writing DRAM |
 | `/dev/xdma0_c2h_0` | DMA card -> host; file offset = card AXI address | reading DRAM |
+
+On a LitePCIe bitstream the same three are `/dev/otpu0_user` (a map of BAR0's first 512 KiB),
+`/dev/otpu0_h2c_0` and `/dev/otpu0_c2h_0`, with the same calls; their DMA takes card addresses,
+lengths and host buffers in multiples of 16 bytes (`LitePcieTransport` keeps to that).
+`opentpu/host/board.py`'s `card_transport` picks the driver (`/dev/otpu0` before `/dev/xdma0`;
+a tool's `--dev /dev/xdma0` finds the same card under the other driver).
 
 The card's AXI address map: DDR3 channel 0 at `0x0000_0000`, channel 1 at `0x8000_0000`,
 2 GiB each. The accelerator sees one 4 GiB logical DRAM interleaved over the two channels in
@@ -57,6 +65,10 @@ Without installing, `python3 -m opentpu.host.<smi|selftest|chat|hwlens|i2c>` doe
 `sudo otpu-setup` (the script `opentpu/host/setup_pcie.sh`, shipped in the package) sets up
 the PC once; re-running it is safe, it changes only what differs:
 
+- openTPU's LitePCIe driver `otpu_pcie` (`opentpu/host/pcie/otpu`, [litepcie.md](litepcie.md)
+  section 4): DKMS package `otpu-pcie`, version `1.<a hash of its source>` (a changed source is
+  a new version), source in `/usr/src/otpu-pcie-<version>`; it binds 10ee:5054 by its own ID
+  table and leaves the XDMA bitstreams to:
 - the Xilinx XDMA driver from `dma_ip_drivers` at a pinned commit (b846609, driver version
   2025.2.0) with `opentpu/host/pcie/xdma-otpu.patch`: a Makefile fix for kernels >= 6.13
   (`$(src)` is relative there, and `EXTRA_CFLAGS` is ignored) and an `otpu` module tag that

@@ -2,24 +2,26 @@
 
 The board build: one openTPU slice (D = 128, 4 MXU columns with the systolic MXU, 8 VPU lanes,
 64K-word TMEM) on a Kintex-7 xc7k480t-ffg1156-2, with both DDR3 channels (2 x 2 GiB) behind the
-LiteDRAM core ([litedram.md](litedram.md)), and the host PC over PCIe Gen2 x8 (Xilinx XDMA; Gen1 x8 with
+LiteDRAM core ([litedram.md](litedram.md)), and the host PC over PCIe Gen2 x8 through the LitePCIe
+core ([litepcie.md](litepcie.md); the XDMA builds before it: Xilinx XDMA, Gen1 x8 with
 PCIE_GEN=1). The host compiles each token's
 program, loads it and runs it; `otpu-chat --backend board` chats with Qwen3-0.6B (or LFM2.5-230M,
 or Qwen3.5-0.8B) on it.
 
 ```
- host PC ── PCIe Gen2 x8 ── XDMA ──┬── AXI-Lite (BAR0) ── control registers, LiteDRAM CSRs, XADC
-                                   └── AXI4 128b @250 MHz ── otpu_axi_split2 ──┐ (bit 31: channel)
-                                                                               │
+ host PC ── PCIe Gen2 x8 ── LitePCIe ─┬── AXI-Lite (BAR0) ── control registers, LiteDRAM CSRs, XADC
+                                      └── DMA streams 128b @250 MHz ── otpu_pcie_mm ── otpu_axi_split2 ──┐
+                                                                         (AXI4; bit 31: channel)         │
     otpu_board (core_clk) ── native 512b ch0 ── otpu_mem_ch ── LiteDRAM ch0 ── DDR3 CH0 (2 GiB)
       slice + otpu_native_dram ── ch1 ───────── otpu_mem_ch ── LiteDRAM ch1 ── DDR3 CH1 (2 GiB)
 ```
 
 Files: `rtl/boards/ypcb-00338/` (otpu_fpga_top_ld, otpu_native_sys), `rtl/shell/` (what the
-FPGA boards share: otpu_board, otpu_ctrl, otpu_trace, otpu_mem_ch, otpu_afifo, otpu_axi_split2),
+FPGA boards share: otpu_board, otpu_ctrl, otpu_trace, otpu_mem_ch, otpu_afifo, otpu_axi_split2,
+otpu_pcie_mm),
 `rtl/tech/xilinx7/` (the MXU's DSP48E1 cells), `targets/ypcb-00338.toml` (the build's
-configuration, [targets.md](targets.md)), `boards/ypcb-00338/` (constraints, Vivado Tcl, the generated LiteDRAM core, build and
-program scripts, self-test), `opentpu/host/` (driver and tools, [host.md](host.md)).
+configuration, [targets.md](targets.md)), `boards/ypcb-00338/` (constraints, Vivado Tcl, the generated LiteDRAM and
+LitePCIe cores, build and program scripts, self-test), `opentpu/host/` (drivers and tools, [host.md](host.md)).
 
 The MIG builds (the two MIGs' AXI ports behind a SmartConnect, `otpu_axi_dram`, `bd.tcl`; and
 the parked native-MIG build, `otpu_mig_native`) were the production images until the LiteDRAM
