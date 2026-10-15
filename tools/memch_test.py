@@ -30,14 +30,14 @@ JOBS = os.environ.get("MEMCH_JOBS", "4")      # C++ compile jobs per build
 PAR = int(os.environ.get("MEMCH_PAR", "3"))   # simulations at once
 
 # builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO; xreg: otpu_dma_split's
-# register slices, as at PCIe Gen2)
+# register slices, as on the card: XREG 2)
 BUILDS = {
     "ldn": dict(),
     "cred": dict(ARD=16),
-    "xreg": dict(XREG=1),
+    "xreg": dict(XREG=2),
     # LiteDRAM's own controller (otpu_ldc_ch.v, the production core's settings) for the model
     "ldc": dict(LDC=1),
-    "ldcx": dict(LDC=1, XREG=1),
+    "ldcx": dict(LDC=1, XREG=2),
     # the arbiter without XDMA's batches (otpu_mem_ch XT 0, its FIFOs as before them)
     "ldcn": dict(LDC=1, XQD=16, XT=0, XB=0),
 }

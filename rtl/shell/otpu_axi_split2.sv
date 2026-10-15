@@ -219,12 +219,15 @@ module otpu_axi_slice #(
   end
 endmodule
 
-// XDMA's DMA master onto the two channels' bridges (otpu_native_sys): otpu_axi_split2 and, with
-// REG (PCIe Gen2: xdma_aclk at 250 MHz), a register slice (otpu_axi_slice) on each side of it, at
-// XDMA's and at each bridge's, so no path between XDMA and a bridge, which sits by its DDR3 bank,
-// is combinational at either end (two cycles of latency each way). REG = 0: the split alone.
+// The host's DMA master onto the two channels' bridges (otpu_native_sys): otpu_axi_split2 and, with
+// REG (PCIe Gen2: the master's clock at 250 MHz), a register slice (otpu_axi_slice) on each side
+// of it, at the master's and at each bridge's, so no path between the master and a bridge, which
+// sits by its DDR3 bank, is combinational at either end (two cycles of latency each way). REG = 2:
+// a second slice at each bridge's (three cycles each way): the PCIe block and the DDR3 banks are
+// on opposite sides of the YPCB-00338's xc7k480t, and with the split's slices alone the beats
+// crossed it in one 4 ns cycle through the bridge's first logic. REG = 0: the split alone.
 module otpu_dma_split #(
-  parameter bit REG = 1'b0,
+  parameter int REG = 0,
   parameter int IDW = 4,
   parameter int DW  = 128
 ) (
@@ -299,7 +302,7 @@ module otpu_dma_split #(
   logic [1:0][1:0]      j_bresp, j_rresp;
   logic [1:0][DW-1:0]   j_rdata;
 
-  otpu_axi_slice #(.REG(REG), .IDW(IDW), .DW(DW)) u_xs (.clk, .rst,
+  otpu_axi_slice #(.REG(REG != 0), .IDW(IDW), .DW(DW)) u_xs (.clk, .rst,
     .s_awvalid, .s_awready, .s_awid, .s_awaddr, .s_awlen, .s_wvalid, .s_wready, .s_wdata,
     .s_wstrb, .s_wlast, .s_bvalid, .s_bready, .s_bid, .s_bresp, .s_arvalid, .s_arready, .s_arid,
     .s_araddr, .s_arlen, .s_rvalid, .s_rready, .s_rid, .s_rdata, .s_rresp, .s_rlast,
@@ -322,8 +325,17 @@ module otpu_dma_split #(
     .m_arvalid(j_arvalid), .m_arready(j_arready), .m_rvalid(j_rvalid), .m_rready(j_rready),
     .m_rid(j_rid), .m_rdata(j_rdata), .m_rresp(j_rresp), .m_rlast(j_rlast));
 
+  // each bridge's slices: u_cs, then (REG = 2) u_cb by the bridge; k_*: between them
+  logic [1:0]           k_awvalid, k_awready, k_wvalid, k_wready, k_wlast, k_bvalid, k_bready;
+  logic [1:0]           k_arvalid, k_arready, k_rvalid, k_rready, k_rlast;
+  logic [1:0][IDW-1:0]  k_awid, k_arid, k_bid, k_rid;
+  logic [1:0][31:0]     k_awaddr, k_araddr;
+  logic [1:0][7:0]      k_awlen, k_arlen;
+  logic [1:0][DW-1:0]   k_wdata, k_rdata;
+  logic [1:0][DW/8-1:0] k_wstrb;
+  logic [1:0][1:0]      k_bresp, k_rresp;
   for (genvar c = 0; c < 2; c++) begin : g_cs
-    otpu_axi_slice #(.REG(REG), .IDW(IDW), .DW(DW)) u_cs (.clk, .rst,
+    otpu_axi_slice #(.REG(REG != 0), .IDW(IDW), .DW(DW)) u_cs (.clk, .rst,
       .s_awvalid(j_awvalid[c]), .s_awready(j_awready[c]), .s_awid(i_awid), .s_awaddr(i_awaddr),
       .s_awlen(i_awlen), .s_wvalid(j_wvalid[c]), .s_wready(j_wready[c]), .s_wdata(i_wdata),
       .s_wstrb(i_wstrb), .s_wlast(i_wlast), .s_bvalid(j_bvalid[c]), .s_bready(j_bready[c]),
@@ -331,6 +343,23 @@ module otpu_dma_split #(
       .s_arready(j_arready[c]), .s_arid(i_arid), .s_araddr(i_araddr), .s_arlen(i_arlen),
       .s_rvalid(j_rvalid[c]), .s_rready(j_rready[c]), .s_rid(j_rid[c]), .s_rdata(j_rdata[c]),
       .s_rresp(j_rresp[c]), .s_rlast(j_rlast[c]),
+      .m_awvalid(k_awvalid[c]), .m_awready(k_awready[c]), .m_awid(k_awid[c]),
+      .m_awaddr(k_awaddr[c]), .m_awlen(k_awlen[c]), .m_wvalid(k_wvalid[c]),
+      .m_wready(k_wready[c]), .m_wdata(k_wdata[c]), .m_wstrb(k_wstrb[c]), .m_wlast(k_wlast[c]),
+      .m_bvalid(k_bvalid[c]), .m_bready(k_bready[c]), .m_bid(k_bid[c]), .m_bresp(k_bresp[c]),
+      .m_arvalid(k_arvalid[c]), .m_arready(k_arready[c]), .m_arid(k_arid[c]),
+      .m_araddr(k_araddr[c]), .m_arlen(k_arlen[c]), .m_rvalid(k_rvalid[c]),
+      .m_rready(k_rready[c]), .m_rid(k_rid[c]), .m_rdata(k_rdata[c]), .m_rresp(k_rresp[c]),
+      .m_rlast(k_rlast[c]));
+    otpu_axi_slice #(.REG(REG >= 2), .IDW(IDW), .DW(DW)) u_cb (.clk, .rst,
+      .s_awvalid(k_awvalid[c]), .s_awready(k_awready[c]), .s_awid(k_awid[c]),
+      .s_awaddr(k_awaddr[c]), .s_awlen(k_awlen[c]), .s_wvalid(k_wvalid[c]),
+      .s_wready(k_wready[c]), .s_wdata(k_wdata[c]), .s_wstrb(k_wstrb[c]), .s_wlast(k_wlast[c]),
+      .s_bvalid(k_bvalid[c]), .s_bready(k_bready[c]), .s_bid(k_bid[c]), .s_bresp(k_bresp[c]),
+      .s_arvalid(k_arvalid[c]), .s_arready(k_arready[c]), .s_arid(k_arid[c]),
+      .s_araddr(k_araddr[c]), .s_arlen(k_arlen[c]), .s_rvalid(k_rvalid[c]),
+      .s_rready(k_rready[c]), .s_rid(k_rid[c]), .s_rdata(k_rdata[c]), .s_rresp(k_rresp[c]),
+      .s_rlast(k_rlast[c]),
       .m_awvalid(m_awvalid[c]), .m_awready(m_awready[c]), .m_awid(m_awid[c]),
       .m_awaddr(m_awaddr[c]), .m_awlen(m_awlen[c]), .m_wvalid(m_wvalid[c]),
       .m_wready(m_wready[c]), .m_wdata(m_wdata[c]), .m_wstrb(m_wstrb[c]), .m_wlast(m_wlast[c]),

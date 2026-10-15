@@ -76,6 +76,7 @@ from litex.soc.integration.builder import Builder
 
 from litepcie.common import dma_layout
 from litepcie.core import LitePCIeEndpoint, LitePCIeMSI
+import litepcie.frontend.dma as lpdma
 from litepcie.frontend.dma import LitePCIeDMA
 from litepcie.frontend.wishbone import LitePCIeWishboneMaster
 
@@ -89,6 +90,7 @@ PENDING = 16                  # read requests in flight (16 x 512 B = 8 KiB)
 CMD_DEPTH = 64                # commands per queue
 MSI_DELAY = 32                # cycles a record's MSI waits behind its write (see core_logic)
 LUTRAM_DEPTH = 64             # memories this deep or less: distributed RAM (see lutram)
+PTR_FANOUT = 32               # FIFO pointers' fanout before Vivado replicates them (see fanout)
 # PCI identity: Xilinx's vendor ID as before, the device ID and subsystem new so that neither the
 # xdma driver (device 7028, subsystem 10ee:4f54 by udev rule) nor this one takes the other's card.
 # pcie_7x validates Device_ID as a long written in hex (Vivado 2026.1 refuses 4F54): hex digits
@@ -241,6 +243,52 @@ class OTPUDMA(LiteXModule):
         self.comb += self.irq_off.eq(~enable & (h2c_d | c2h_d))
 
 
+class RetireRegTable(lpdma.LitePCIeDMAScatterGather):
+    """The DMA reader's table with its retire inputs registered. They only step loop_status
+    (software status for LitePCIe's loop mode; the driver runs prog mode and never reads it), and
+    their logic from the reader's request metadata into the 16-bit index's and count's reset and
+    enable was a 250 MHz path (6 levels)."""
+    def __init__(self, depth, address_width=32, with_external_retire=False):
+        super().__init__(depth, address_width, with_external_retire)
+        if with_external_retire:
+            regs = (self.retire, self.retire_first, self.retire_loop)
+            # the reader drives these after the table is built: theirs, registered into the table's
+            self.retire, self.retire_first, self.retire_loop = Signal(), Signal(), Signal()
+            self.sync += [r.eq(d) for r, d in zip(regs, (self.retire, self.retire_first, self.retire_loop))]
+
+
+class RegisteredPHY:
+    """The PHY as the endpoint sees it: its TLP streams through register slices (valid, payload
+    and ready from flip-flops on both sides), every other attribute the PHY's own. With the streams
+    in the PHY's clock domain (cd "pcie") LitePCIe connects the TLP layer straight to the hard
+    block wrapper's AXI interface, whose ready and throttle logic it then drove through 12 levels
+    from the packetizer's buffer (the slices LitePCIe's own clock crossing had are gone with it)."""
+    def __init__(self, soc, phy):
+        self._phy = phy
+        tx = stream.Buffer(phy.sink.description, pipe_valid=True, pipe_ready=True)
+        rx = stream.Buffer(phy.source.description, pipe_valid=True, pipe_ready=True)
+        soc.phy_tx_buf, soc.phy_rx_buf = tx, rx
+        soc.comb += [tx.source.connect(phy.sink), phy.source.connect(rx.sink)]
+        self.sink, self.source = tx.sink, rx.source
+
+    def __getattr__(self, name):
+        return getattr(self._phy, name)
+
+
+def axil_slice(soc, m):
+    """The AXI-Lite master m through a register slice on each channel (valid, payload and ready
+    from flip-flops at both ends; two cycles a way): returns the slice's master side. BAR0's
+    address decode reached the block design's SmartConnect through 9 levels without it."""
+    s = AXILiteInterface(data_width=m.data_width, address_width=m.address_width)
+    for ch, fwd in (("aw", True), ("w", True), ("ar", True), ("b", False), ("r", False)):
+        a, b = getattr(m, ch), getattr(s, ch)
+        buf = stream.Buffer(a.description, pipe_valid=True, pipe_ready=True)
+        setattr(soc, f"user_{ch}_buf", buf)
+        src, dst = (a, b) if fwd else (b, a)
+        soc.comb += [src.connect(buf.sink), buf.source.connect(dst)]
+    return s
+
+
 def pcie_ios(nlanes):
     return [
         ("pcie", 0,
@@ -275,7 +323,12 @@ def core_logic(soc, phy, platform=None, sys_clk_freq=250e6):
     """Everything above the PHY but BAR0's master (shared with sim_core.py, which puts LitePCIe's
     host model in the PHY's place): the endpoint, the DMA, otpu_dma, MSI. Returns the endpoint and
     otpu_pcie_mm's side: the command and data streams, each through a register slice (both ways:
-    otpu_pcie_mm sits apart from the PCIe block, by the memory port), and otpu_dma."""
+    otpu_pcie_mm sits apart from the PCIe block, by the memory port), and otpu_dma. The endpoint
+    and the DMA see the PHY's streams through register slices (RegisteredPHY), the reader's table
+    is RetireRegTable."""
+    phy_msi = phy.msi
+    phy = RegisteredPHY(soc, phy)
+    lpdma.LitePCIeDMAScatterGather = RetireRegTable
     soc.pcie_endpoint = endpoint = LitePCIeEndpoint(phy,
         endianness=phy.endianness, address_width=64, max_pending_requests=PENDING)
     soc.pcie_dma0 = dma = LitePCIeDMA(phy, endpoint, with_table=True, table_depth=TABLE_DEPTH,
@@ -290,7 +343,7 @@ def core_logic(soc, phy, platform=None, sys_clk_freq=250e6):
     soc.comb += [
         msi.irqs[0].eq(rec_irq[-1]),
         msi.irqs[1].eq(od.mm_err),
-        msi.source.connect(phy.msi),
+        msi.source.connect(phy_msi),
     ]
     # the slices reset with otpu_pcie_mm (the driver's recovery: a beat or a command held in one
     # would otherwise lead the next transfer)
@@ -310,7 +363,7 @@ def core_logic(soc, phy, platform=None, sys_clk_freq=250e6):
 
 def bar0_logic(soc, endpoint, phy):
     """BAR0's master (shared with sim_core.py): wishbone, the user window to an AXI-Lite master
-    (returned), LiteX's CSRs above it."""
+    (returned, through axil_slice), LiteX's CSRs above it."""
     soc.pcie_wb = LitePCIeWishboneMaster(endpoint,
         qword_aligned=getattr(phy, "qword_aligned", False))
     soc.bus.add_master(name="pcie", master=soc.pcie_wb.wishbone)
@@ -319,7 +372,7 @@ def bar0_logic(soc, endpoint, phy):
         region=SoCRegion(origin=0, size=USER_SIZE, cached=False))
     axi = AXILiteInterface(data_width=32, address_width=32)
     soc.wb2axi = Wishbone2AXILite(wb, axi)
-    return axi
+    return axil_slice(soc, axi)
 
 
 class OTPULitePCIe(SoCMini):
@@ -401,6 +454,15 @@ def lutram(v):
     return re.sub(r"^(reg \[\d+:0\] storage(?:_\d+)?)\[0:(\d+)\];", attr, v, flags=re.M)
 
 
+def fanout(v):
+    """MAX_FANOUT on the FIFOs' read and write pointers: in LUTRAM each pointer bit drives the
+    address of every RAM of its FIFO (the endpoint's completion buffers are 138 bits wide: 137
+    loads a bit, 3.2 ns of route at 250 MHz in the first full build). Synthesis replicates them
+    (the build keeps equivalent registers), each copy by its RAMs."""
+    return re.sub(r"^(reg\s+\[\d+:0\]\s+\w+_(?:consume|produce) =)",
+                  f'(* max_fanout = {PTR_FANOUT} *)\n\\1', v, flags=re.M)
+
+
 def ip_tcl(platform):
     """The pcie_7x IP's creation (LitePCIe's pre-synthesis commands, without synth_ip: the
     project synthesizes it out of context) and the GTX common's LOC reset."""
@@ -431,7 +493,7 @@ def main():
                       csr_json=os.path.join(a.out, "csr.json"))
     builder.build(build_name="otpu_litepcie", run=False)
     with open(os.path.join(gw, "otpu_litepcie.v")) as f:
-        v = lutram(f.read())
+        v = fanout(lutram(f.read()))
     with open(os.path.join(a.out, "otpu_litepcie.v"), "w") as f:
         f.write(v)
     # the identifier ROM ("openTPU LitePCIe"), which the Verilog $readmemh's by file name

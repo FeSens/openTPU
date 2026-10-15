@@ -128,7 +128,7 @@ module otpu_pcie_mm #(
   logic [HAW:0] h_ram;                            // entries in the RAM
   logic [127:0] hq;
   logic         hq_v, h_room;
-  logic         h_push, h_pop, h_load;
+  logic         h_push, h_pop, h_load, h_push_r;
   assign hs_ready = h_room;
   assign h_push = hs_valid && h_room;
   assign h_load = h_ram != 0 && (!hq_v || h_pop);
@@ -199,7 +199,7 @@ module otpu_pcie_mm #(
       hb_len <= '0; hb_ok <= 1'b0; hb_last <= 1'b0;
       a_awvalid <= 1'b0; a_awaddr <= '0; a_awlen <= '0;
       wq_wp <= '0; wq_rp <= '0; bq_wp <= '0; bq_rp <= '0;
-      w_cnt <= '0; h_avail <= '0; h_out <= '0; h_done_r <= 1'b0;
+      w_cnt <= '0; h_avail <= '0; h_push_r <= 1'b0; h_out <= '0; h_done_r <= 1'b0;
       err_align_h <= 1'b0; err_bresp <= 1'b0;
     end else begin
       h_done_r <= 1'b0;
@@ -242,8 +242,10 @@ module otpu_pcie_mm #(
           w_cnt <= w_cnt + 1'b1;
         end
       end
-      // the FIFO's unpromised beats: up by one a beat pushed, down by a burst's at its AW
-      h_avail <= h_avail + (HAW+2)'(h_push) - ((aw_go && !hc_fill) ? (HAW+2)'(hb_len) : '0);
+      // the FIFO's unpromised beats: up by one a beat pushed (a cycle later: from a flip-flop, not
+      // the slice's valid through the adder), down by a burst's at its AW
+      h_push_r <= h_push;
+      h_avail <= h_avail + (HAW+2)'(h_push_r) - ((aw_go && !hc_fill) ? (HAW+2)'(hb_len) : '0);
       h_out <= h_out + ($clog2(WO+1))'(aw_go) - ($clog2(WO+1))'(a_bvalid && !bq_empty);
       // responses, in burst order (one ID)
       if (a_bvalid && !bq_empty) begin

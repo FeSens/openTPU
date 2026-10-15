@@ -1,7 +1,7 @@
 // Unit test of the memory channel path (rtl/boards/ypcb-00338: otpu_mem_ch, otpu_dma_split,
 // otpu_afifo) in front of the controllers: two random native masters (the accelerator's side,
 // core clock), one per channel, and an XDMA master (128-bit AXI, axi_aclk) through the split onto
-// both channels (XREG: with its register slices, as at PCIe Gen2); each channel's controller is a model of LiteDRAM's two native ports (sys; a
+// both channels (XREG: with its register slices, 2 as on the card); each channel's controller is a model of LiteDRAM's two native ports (sys; a
 // port per bank parity, the ports unordered against each other), which takes whole beats only
 // (otpu_mem_ch's read-modify-write). Three unrelated clocks (+cp= / +up= / +xp=: half periods).
 //
@@ -59,7 +59,7 @@ endpackage
 module tb_memch #(
   parameter int ARD = 64,
   parameter int XRD = 16,
-  parameter bit XREG = 1'b0,
+  parameter int XREG = 0,
   parameter bit LDC = 1'b0,               // the controllers: LiteDRAM's own (otpu_ldc_model), else the model
   parameter int XQD = 32,                 // otpu_mem_ch's XDMA batches (its defaults)
   parameter int XT = 256,

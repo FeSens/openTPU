@@ -1,5 +1,5 @@
 // Unit test of otpu_pcie_mm (rtl/shell: LitePCIe's DMA streams onto the card's memory port) through
-// the real memory path behind it: otpu_dma_split (XREG: its register slices, as on the card), one
+// the real memory path behind it: otpu_dma_split (XREG 2: its register slices, as on the card), one
 // otpu_mem_ch per channel and a model of each channel's LiteDRAM native ports (otpu_ldn_model), at
 // the card's clocks (PCIe user clock 250 MHz, controller and core 133.33 MHz: +xp= / +up= / +cp=,
 // half periods). The accelerator side of the bridges is idle.
@@ -19,7 +19,7 @@
 // C2H beats per xclk cycle (16 bytes a beat: 1.0 = 4 GB/s at 250 MHz).
 // Prints "PASS" or the first mismatches.
 module tb_pcie_mm #(
-  parameter bit XREG = 1'b1
+  parameter int XREG = 2
 );
   int cp = 375, up = 375, xp = 200;
   logic clk = 1'b0, uclk = 1'b0, xclk = 1'b0;

@@ -66,7 +66,7 @@ module otpu_fpga_top_ld #(
   parameter bit DSTEP = 1'b1,               // the DMA's DSTEP datapath (CAPS bit6; 0: left out)
   parameter int PCIE_GEN = 2,               // 2: Gen2 x8, xclk 250 MHz (LitePCIe's PHY here: the
                                             // only setting), slices to the bridges (otpu_native_sys
-                                            // XREG), the LiteDRAM CSRs on core_clk (bd_native.tcl)
+                                            // XREG 2), the LiteDRAM CSRs on core_clk (bd_native.tcl)
   parameter bit SEQ_WC     = 1'b1,    // otpu_seq's wait entries (WAITC v2, docs/seq_vpu.md; CFG_UARCH bit24)
   parameter int PLATFORM = 1,               // targets/ypcb-00338.toml (CFG_PLATFORM)
   parameter logic [31:0] ARCH_HASH = 32'h0, // its arch_hash (CFG_HASH; create_project.tcl)
@@ -342,7 +342,7 @@ module otpu_fpga_top_ld #(
                     .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM),
                     .TMEM_WORDS(TMEM_WORDS),
                     .ULANES(ULANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS),
-                    .DSTEP(DSTEP), .HOSTCAL(1'b1), .XREG(1'b1),
+                    .DSTEP(DSTEP), .HOSTCAL(1'b1), .XREG(2),
                     .SEQ_WC(SEQ_WC), .PLATFORM(PLATFORM), .ARCH_HASH(ARCH_HASH),
                     .TRACE_DEPTH(TRACE_DEPTH), .COLL_GATHER(COLL_GATHER)) u_sys (
     .clk(core_clk), .clk_f, .rst(core_rst), .ctl_mrst(lrs2), .xclk, .xrst,

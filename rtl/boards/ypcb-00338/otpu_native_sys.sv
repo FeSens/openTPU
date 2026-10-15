@@ -11,7 +11,7 @@
 //        in otpu_board). ded: each channel's ECC has counted an uncorrectable word (STATUS
 //        ECC_DED; the same).
 //   XREG: register slices on both sides of the split (otpu_dma_split REG; PCIe Gen2: xclk at 250
-//        MHz, the top's PCIE_GEN). 0: none, as at Gen1.
+//        MHz, the top's PCIE_GEN), 2 with a second one at each bridge. 0: none, as at Gen1.
 module otpu_native_sys #(
   parameter int MCOLS = 2,
   parameter int ACT_ROWS = MCOLS,
@@ -37,7 +37,7 @@ module otpu_native_sys #(
   parameter int DDR_MTS = 0,
   parameter bit DSTEP = 1'b1,
   parameter bit HOSTCAL = 1'b0,
-  parameter bit XREG = 1'b0,
+  parameter int XREG = 0,
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
   parameter int PLATFORM = 0,
   parameter logic [31:0] ARCH_HASH = 32'h0,
