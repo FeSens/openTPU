@@ -2,7 +2,7 @@
 #   make lint       offline: Tcl syntax, XDC ports vs the top, Verilator lint of the build
 #                   (otpu_fpga_top_ld; lint-ld is the same)
 #   make bit        Vivado batch build (TARGET=ypcb-00338:m4|m8, MCOLS=4|8, VPU_CL=2|4, LANES=8|16, CORE_MHZ=133.33|100, FAST=1) -> build/vivado/otpu.bit (VIVADO_DOCKER=image for Docker)
-#                   the LiteDRAM core (DDR3-1066, host calibration), the target's variant (its MCOLS, MXU_E, TMEM_WORDS), the systolic MXU
+#                   the LiteDRAM core (DDR3-1066, host calibration), the LitePCIe core (Gen2 x8), the target's variant (its MCOLS, MXU_E, TMEM_WORDS), the systolic MXU
 #   make impl       rerun implementation only on the existing project (constraint changes)
 #   make program    JTAG load (openFPGALoader; BIT=path, default build/vivado/otpu.bit); make program-vivado with Vivado's hw_server
 #   make flash      write the BPI flash (permanent; MCS=path, default build/vivado/otpu.mcs)
@@ -27,7 +27,7 @@ DDR ?= 1066
 #   target's pick, vivado/tmem_knobs.tcl; pumped on core_clk2x: CORE_MHZ's divider even)
 # TMEM_WORDS: the TMEM's words (default the target variant's: m4 65536, m8 131072)
 # BUILD_ID: the BUILD_ID register (8 hex digits; default: the git commit)
-# PCIE_GEN: 2 (Gen2 x8, xdma_aclk 250 MHz, the default) or 1 (Gen1 x8), from the environment
+# PCIE_GEN: 2 (Gen2 x8, LitePCIe's user clock 250 MHz), the only setting
 ifeq ($(FAST),1)
 CORE_MHZ ?= 100
 else
@@ -45,7 +45,7 @@ RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.s
   top/otpu_coll.sv top/otpu_slice.sv \
   shell/otpu_ctrl.sv shell/otpu_trace.sv shell/otpu_board.sv \
   mem/otpu_native_dram.sv shell/otpu_afifo.sv shell/otpu_mem_ch.sv \
-  shell/otpu_axi_split2.sv boards/ypcb-00338/otpu_native_sys.sv)
+  shell/otpu_axi_split2.sv shell/otpu_pcie_mm.sv boards/ypcb-00338/otpu_native_sys.sv)
 # MXU_IMPL: the MXU create_project.tcl builds (MXU systolic, the default: 2); the systolic cells'
 # DSP48E1 comes from a lint stub
 MXU_IMPL ?= 2
@@ -58,7 +58,8 @@ LINT := verilator --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-U
 lint:
 	python3 scripts/check_offline.py
 	$(LINT) --top-module otpu_fpga_top_ld $(RTL) \
-	  sim/otpu_bd_ld_wrapper_stub.sv sim/otpu_litedram_stub.sv $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
+	  sim/otpu_bd_ld_wrapper_stub.sv sim/otpu_litedram_stub.sv sim/otpu_litepcie_stub.sv \
+	  $(ROOT)/rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
 
 lint-ld: lint
 

@@ -1,4 +1,4 @@
-# PCIe Gen2 (PCIE_GEN 2), on the routed design (build.tcl sources it after open_run impl_1;
+# PCIe Gen2 x8, on the routed design (build.tcl sources it after open_run impl_1;
 # reads $out): the PCIe block's 500 MHz user clock (userclk1) times its paths into its own TX / RX
 # block RAMs, which the IP's XDC places next to PCIE_X0Y0, so they are route only and neither
 # placement nor phys_opt moves them (the FAST probe 81432ad7: -0.045 ns, 0.93 of 1.42 ns route).
@@ -15,7 +15,13 @@ proc otpu_ws {args} {
   if {$p eq ""} { return 1e9 }
   return [get_property SLACK $p]
 }
+# userclk1: the XDMA builds' IP named it; LitePCIe's PHY makes it on its own MMCM, auto-named, so
+# there it is the clock of the hard block's USERCLK pin (PCIE_2_1)
 set uc1 [get_clocks -quiet userclk1]
+if {[llength $uc1] != 1} {
+  set uc1 [get_clocks -quiet -of_objects [get_pins -quiet -of_objects \
+             [get_cells -quiet -hierarchical -filter {REF_NAME == PCIE_2_1}] -filter {REF_PIN_NAME == USERCLK}]]
+}
 # below USERCLK1_MARGIN ns (default 0.05), not only below zero: g2fix 0885d436 closed at +0.010
 set margin [expr {[info exists ::env(USERCLK1_MARGIN)] && $::env(USERCLK1_MARGIN) ne "" ? \
                   $::env(USERCLK1_MARGIN) : 0.05}]
@@ -24,7 +30,7 @@ if {$gen eq "2" && [llength $uc1] == 1} {   ;# (bd_native.tcl's default)
   set bad [get_timing_paths -quiet -setup -to $uc1 -max_paths 100 -nworst 1 \
              -slack_lesser_than $margin]
   if {[llength $bad]} {
-    set others [get_clocks -quiet -filter {NAME != userclk1}]
+    set others [get_clocks -quiet -filter "NAME != [get_property NAME $uc1]"]
     set u0 [otpu_ws -setup -to $uc1]
     set o0 [otpu_ws -setup -to $others]
     set h0 [otpu_ws -hold]

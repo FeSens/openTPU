@@ -40,11 +40,14 @@ puts "---- block design sources, elaboration"
 # the top (global): no IP synthesis runs, its sources elaborated in place.
 set_property synth_checkpoint_mode None [get_files otpu_bd.bd]
 generate_target synthesis [get_files otpu_bd.bd]
+# the PCIe hard block's wrapper (pcie_s7, LitePCIe's PHY's IP) the same way
+set_property generate_synth_checkpoint false [get_files pcie_s7.xci]
+generate_target synthesis [get_ips pcie_s7]
 
 synth_design -rtl -name rtl_1
 
 puts "---- instances"
-set want {u_bd u_sys u_sys/u_split u_sys/u_ch0 u_sys/u_ch1 u_sys/u_board u_ld u_ibuf50 u_bufg50}
+set want {u_bd u_lp u_mm u_sys u_sys/u_split u_sys/u_ch0 u_sys/u_ch1 u_sys/u_board u_ld u_ibuf50 u_bufg50}
 foreach c $want {
   set cell [get_cells -quiet $c]
   if {$cell eq ""} { lappend bad "no instance $c"; puts "$c: MISSING"; continue }
@@ -60,7 +63,7 @@ puts "black boxes: [llength $bb]"
 foreach c [lsort [lrange $bb 0 29]] { puts "  $c ([get_property REF_NAME $c])" }
 foreach c $bb {
   # inside the block design's IP (elaborated in place here; any encrypted parts)
-  if {[string match u_bd/* $c]} { continue }
+  if {[string match u_bd/* $c] || [string match u_lp/pcie_s7/* $c]} { continue }
   lappend bad "black box $c ([get_property REF_NAME $c])"
 }
 
@@ -71,7 +74,7 @@ if {[file exists $logf]} { set fh [open $logf]; set log [read $fh]; close $fh } 
 set n 0
 foreach line [split $log "\n"] {
   if {[regexp {^(CRITICAL WARNING|WARNING|ERROR): \[Synth 8-} $line] &&
-      [regexp {otpu_fpga_top_ld\.sv|otpu_native_sys\.sv|otpu_mem_ch\.sv|otpu_axi_split2\.sv|otpu_afifo\.sv|otpu_native_dram\.sv|otpu_board\.sv|otpu_litedram\.v|otpu_bd_wrapper\.v} $line]} {
+      [regexp {otpu_fpga_top_ld\.sv|otpu_native_sys\.sv|otpu_mem_ch\.sv|otpu_axi_split2\.sv|otpu_afifo\.sv|otpu_native_dram\.sv|otpu_board\.sv|otpu_litedram\.v|otpu_litepcie\.v|otpu_pcie_mm\.sv|otpu_bd_wrapper\.v} $line]} {
     puts "  $line"
     incr n
   }

@@ -23,10 +23,12 @@ set fast [expr {[info exists ::env(OTPU_FAST)] && $::env(OTPU_FAST) eq "1"}]
 if {!$fast && [file exists $here/impl_directives.tcl]} { source $here/impl_directives.tcl }
 
 if {!$impl_only} {
-  # ---- IP (block design) out-of-context runs first
+  # ---- IP (block design, the PCIe block's wrapper) out-of-context runs first
   generate_target all [get_files otpu_bd.bd]
   export_ip_user_files -of_objects [get_files otpu_bd.bd] -no_script -sync -force -quiet
   create_ip_run [get_files otpu_bd.bd]
+  generate_target all [get_ips pcie_s7]
+  create_ip_run [get_ips pcie_s7]
 
   # ---- synthesis
   reset_run synth_1
@@ -75,7 +77,7 @@ if {![regexp {otpu_ddr_phy_place: (\d+ flops|off)} $ilog]} {
 }
 open_run impl_1
 
-# ---- PCIe Gen2: the PCIe block's 500 MHz paths into its own block RAMs (userclk1_reroute.tcl)
+# ---- PCIe Gen2 x8: the PCIe block's 500 MHz paths into its own block RAMs (userclk1_reroute.tcl)
 source $here/userclk1_reroute.tcl
 
 report_timing_summary -max_paths 50 -report_unconstrained -warn_on_violation \

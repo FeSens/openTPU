@@ -1,5 +1,7 @@
 # Create the Vivado project for openTPU on the YPCB-00338: the LiteDRAM core
-# (boards/ypcb-00338/litedram/), each channel behind otpu_mem_ch (bd_native.tcl, otpu_fpga_top_ld).
+# (boards/ypcb-00338/litedram/), each channel behind otpu_mem_ch, and the LitePCIe core
+# (boards/ypcb-00338/litepcie/: its PHY's hard block wrapper, the pcie_7x IP, made here from
+# pcie_s7.tcl) with otpu_pcie_mm (bd_native.tcl, otpu_fpga_top_ld).
 #   vivado -mode batch -source create_project.tcl -tclargs [DDR_SPEED] [OUT_DIR] [MCOLS] [CORE_MHZ] [BUILD_ID] [VPU_CL] [LANES] [ACT_ROWS] [DSTEP] [MXU] [PLATFORM] [ARCH_HASH] [MXU_E] [TMEM_IMPL] [TMEM_RQ] [TMEM_X]
 # The defaults build MCOLS=4 and the systolic MXU.
 # DDR_SPEED: 1066 only (the LiteDRAM core is generated for DDR3-1066: tools/litedram/gen_core.py).
@@ -78,7 +80,7 @@ set CORE_KHZ [expr {round($VCO * 1000.0 / (round(double($VCO) / $CORE_MHZ * 8) /
 puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID, MXU_IMPL $MXU_IMPL, MXU_E $MXU_E, TMEM_IMPL $TMEM_IMPL, TMEM_RQ $TMEM_RQ, PLATFORM $PLATFORM, ARCH_HASH $ARCH_HASH, TRACE_DEPTH $TRACE_DEPTH, COLL_GATHER $COLL_GATHER, TMEM_WORDS $TMEM_WORDS"
 
 create_project -force otpu $out -part xc7k480tffg1156-2
-# The block design's IP synthesis (minutes: xdma above all) in a cache shared by every build on
+# The IP synthesis (minutes: the PCIe block's wrapper above all) in a cache shared by every build on
 # the host (OTPU_IP_CACHE, run_vivado.sh): each build is a fresh project, so the
 # project's own cache never hit. Keyed on the IP's configuration, part and Vivado version.
 if {[info exists ::env(OTPU_IP_CACHE)] && $::env(OTPU_IP_CACHE) ne ""} {
@@ -89,8 +91,8 @@ set_property target_language Verilog [current_project]
 set_property default_lib xil_defaultlib [current_project]
 
 # ---- RTL (SystemVerilog): the accelerator (otpu_board, its DRAM adapter otpu_native_dram), the
-# channels' native ports (one otpu_mem_ch per channel, XDMA's split: otpu_native_sys), the top and
-# the generated LiteDRAM core (Verilog)
+# channels' native ports (one otpu_mem_ch per channel, the host DMA's split: otpu_native_sys), the
+# host DMA's master (otpu_pcie_mm), the top and the generated LiteDRAM and LitePCIe cores (Verilog)
 set rtl [list \
   rtl/vpu/otpu_fp.sv rtl/vpu/otpu_fpipe.sv rtl/top/otpu_pkg.sv \
   rtl/mem/otpu_tmem.sv rtl/mem/otpu_actram.sv \
@@ -101,13 +103,20 @@ set rtl [list \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
   rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
-  rtl/shell/otpu_axi_split2.sv rtl/boards/ypcb-00338/otpu_native_sys.sv \
+  rtl/shell/otpu_axi_split2.sv rtl/shell/otpu_pcie_mm.sv rtl/boards/ypcb-00338/otpu_native_sys.sv \
   rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv]
 add_files -norecurse $root/boards/ypcb-00338/litedram/otpu_litedram.v
 # the core's identifier ROM ("openTPU LiteDRAM"), which the Verilog $readmemh's by file name:
 # synthesis finds it as a project file
 add_files -norecurse $root/boards/ypcb-00338/litedram/otpu_litedram_mem.init
 set_property FILE_TYPE {Memory Initialization Files} [get_files otpu_litedram_mem.init]
+# the LitePCIe core and its identifier ROM ("openTPU LitePCIe"), the same way
+add_files -norecurse $root/boards/ypcb-00338/litepcie/otpu_litepcie.v
+add_files -norecurse $root/boards/ypcb-00338/litepcie/otpu_litepcie_mem.init
+set_property FILE_TYPE {Memory Initialization Files} [get_files otpu_litepcie_mem.init]
+# the PCIe hard block's wrapper the core instantiates (pcie_s7: Gen2 x8, 128 bits, 250 MHz, the
+# card's PCI identity), synthesized out of context by build.tcl
+source $root/boards/ypcb-00338/litepcie/pcie_s7.tcl
 foreach f $rtl {
   add_files -norecurse $root/$f
   set_property file_type SystemVerilog [get_files $root/$f]
@@ -134,8 +143,8 @@ set_property generic "SEQ_WC=1'b$SEQ_WC MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$
 # OTPU_DDR_PHY_PLACE=0 leaves them to the placer)
 set cons $root/boards/ypcb-00338/constraints
 add_files -fileset constrs_1 -norecurse [list $cons/otpu_top_ld.xdc \
-  $root/boards/ypcb-00338/litedram/otpu_litedram.xdc]
-set late [list $cons/otpu_mem_ch.tcl $cons/otpu_top_native.tcl]
+  $root/boards/ypcb-00338/litedram/otpu_litedram.xdc $root/boards/ypcb-00338/litepcie/otpu_litepcie.xdc]
+set late [list $cons/otpu_litepcie_clk.tcl $cons/otpu_mem_ch.tcl $cons/otpu_top_native.tcl]
 if {$CLK2X} { lappend late $cons/otpu_clk2x.tcl }
 lappend late $cons/otpu_mxu_place.tcl $cons/otpu_ddr_phy_place.tcl
 add_files -fileset constrs_1 -norecurse $late

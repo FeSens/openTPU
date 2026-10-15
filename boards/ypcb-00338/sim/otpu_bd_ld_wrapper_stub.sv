@@ -1,14 +1,10 @@
 // Lint-only stand-in for the Vivado-generated block design wrapper of the LiteDRAM build
-// (boards/ypcb-00338/vivado/bd_native.tcl, MEM=litedram): the ports Vivado will generate, no
-// behaviour. Used by `make lint-ld` to check otpu_fpga_top_ld offline; Vivado builds with the
-// real otpu_bd_wrapper.v (and the unisim IBUF, BUFG, IOBUF). M_AXI_DMA is XDMA's M_AXI made
-// external (64-bit address, 4-bit IDs, 128-bit data).
+// (boards/ypcb-00338/vivado/bd_native.tcl): the ports Vivado will generate, no behaviour. Used by
+// `make lint` to check otpu_fpga_top_ld offline; Vivado builds with the real otpu_bd_wrapper.v
+// (and the unisim IBUF, BUFG, IOBUF). S_AXI_CTL is LitePCIe's BAR0 master (AXI-Lite with AxPROT).
 module otpu_bd_wrapper (
-  input  logic        sys_clk_50,
-  input  logic        pcie_refclk_clk_p, pcie_refclk_clk_n, pcie_perstn,
-  input  logic [7:0]  pcie_mgt_rxp, pcie_mgt_rxn,
-  output logic [7:0]  pcie_mgt_txp, pcie_mgt_txn,
-  output logic        pcie_link_up, core_clk, core_clk2x, core_rstn, xdma_aclk, xdma_aresetn,
+  input  logic        sys_clk_50, pcie_perstn, pcie_clk, pcie_rstn,
+  output logic        core_clk, core_clk2x, core_rstn,
   output logic [11:0] device_temp,
 `define STUB_L(P) \
   output logic [31:0] P``_awaddr, P``_araddr, P``_wdata, \
@@ -19,22 +15,15 @@ module otpu_bd_wrapper (
   input  logic [31:0] P``_rdata
   `STUB_L(M_AXI_CTL),
   `STUB_L(M_AXI_MEMCAL),
-  output logic [3:0]   M_AXI_DMA_awid, M_AXI_DMA_arid,
-  output logic [63:0]  M_AXI_DMA_awaddr, M_AXI_DMA_araddr,
-  output logic [7:0]   M_AXI_DMA_awlen, M_AXI_DMA_arlen,
-  output logic [2:0]   M_AXI_DMA_awsize, M_AXI_DMA_arsize, M_AXI_DMA_awprot, M_AXI_DMA_arprot,
-  output logic [1:0]   M_AXI_DMA_awburst, M_AXI_DMA_arburst,
-  output logic         M_AXI_DMA_awlock, M_AXI_DMA_arlock,
-  output logic [3:0]   M_AXI_DMA_awcache, M_AXI_DMA_arcache,
-  output logic         M_AXI_DMA_awvalid, M_AXI_DMA_arvalid, M_AXI_DMA_wvalid, M_AXI_DMA_wlast,
-  output logic         M_AXI_DMA_bready, M_AXI_DMA_rready,
-  output logic [127:0] M_AXI_DMA_wdata,
-  output logic [15:0]  M_AXI_DMA_wstrb,
-  input  logic         M_AXI_DMA_awready, M_AXI_DMA_arready, M_AXI_DMA_wready,
-  input  logic         M_AXI_DMA_bvalid, M_AXI_DMA_rvalid, M_AXI_DMA_rlast,
-  input  logic [3:0]   M_AXI_DMA_bid, M_AXI_DMA_rid,
-  input  logic [1:0]   M_AXI_DMA_bresp, M_AXI_DMA_rresp,
-  input  logic [127:0] M_AXI_DMA_rdata
+  input  logic [31:0] S_AXI_CTL_awaddr, S_AXI_CTL_araddr, S_AXI_CTL_wdata,
+  input  logic [2:0]  S_AXI_CTL_awprot, S_AXI_CTL_arprot,
+  input  logic [3:0]  S_AXI_CTL_wstrb,
+  input  logic        S_AXI_CTL_awvalid, S_AXI_CTL_wvalid, S_AXI_CTL_bready, S_AXI_CTL_arvalid,
+  input  logic        S_AXI_CTL_rready,
+  output logic        S_AXI_CTL_awready, S_AXI_CTL_wready, S_AXI_CTL_bvalid, S_AXI_CTL_arready,
+  output logic        S_AXI_CTL_rvalid,
+  output logic [1:0]  S_AXI_CTL_bresp, S_AXI_CTL_rresp,
+  output logic [31:0] S_AXI_CTL_rdata
 );
 `undef STUB_L
 endmodule
