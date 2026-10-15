@@ -13,9 +13,10 @@ set_param general.maxThreads 2
 set out [file normalize [lindex $argv 0]]
 set logf [file normalize [expr {[llength $argv] > 1 ? [lindex $argv 1] : "vivado.log"}]]
 set bad {}
-# create_project.tcl's arguments as run_vivado.sh passes them by default (DDR3-1066, MCOLS 4,
-# ACT_ROWS 4; the systolic MXU)
-set argv [list 1066 $out 4 100 "" 2 8 4 1 systolic]
+# create_project.tcl's arguments as run_vivado.sh passes them for the target's m4 variant
+# (DDR3-1066, MCOLS 4, ACT_ROWS 16; the systolic MXU; MXU_E 4; one pumped TMEM copy, TMEM_IMPL 3
+# with the target's knobs)
+set argv [list 1066 $out 4 100 "" 2 8 16 1 systolic 1 0 4 3 0 "NSB=2,RPL=1,TDP=1,GST=1,PMP=1"]
 set argc [llength $argv]
 source $root/boards/ypcb-00338/vivado/create_project.tcl
 
