@@ -292,16 +292,18 @@ def core_logic(soc, phy, platform=None, sys_clk_freq=250e6):
         msi.irqs[1].eq(od.mm_err),
         msi.source.connect(phy.msi),
     ]
+    # the slices reset with otpu_pcie_mm (the driver's recovery: a beat or a command held in one
+    # would otherwise lead the next transfer)
     user = {}
     for name, src, layout in (("h2c_cmd", od.h2c_cmd, cmd_layout), ("c2h_cmd", od.c2h_cmd, cmd_layout),
                               ("h2c_dat", dma.source, dma_layout(phy.data_width))):
-        buf = stream.Buffer(layout, pipe_valid=True, pipe_ready=True)
+        buf = ResetInserter()(stream.Buffer(layout, pipe_valid=True, pipe_ready=True))
         setattr(soc, name + "_buf", buf)
-        soc.comb += src.connect(buf.sink)
+        soc.comb += [src.connect(buf.sink), buf.reset.eq(od.mm_rst)]
         user[name] = buf.source
-    buf = stream.Buffer(dma_layout(phy.data_width), pipe_valid=True, pipe_ready=True)
+    buf = ResetInserter()(stream.Buffer(dma_layout(phy.data_width), pipe_valid=True, pipe_ready=True))
     soc.c2h_dat_buf = buf
-    soc.comb += buf.source.connect(dma.sink)
+    soc.comb += [buf.source.connect(dma.sink), buf.reset.eq(od.mm_rst)]
     user["c2h_dat"] = buf.sink
     return endpoint, user, od
 

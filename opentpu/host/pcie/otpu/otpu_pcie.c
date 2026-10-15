@@ -28,8 +28,10 @@
  * looks again every 200 us whatever happens (timer_wakes). A command's pages are released once its
  * count is reached.
  *
- * On a timeout the DMA is reset (LitePCIe's reader and writer, their tables, otpu_pcie_mm and the
- * memory port's host side) and the call fails with EIO.
+ * On a timeout the engines stop at once and every transfer in either direction fails with EIO,
+ * releasing its pages 2 ms after the stop (writes the engines had issued land first); then the
+ * DMA is reset (LitePCIe's reader and writer, their tables, otpu_pcie_mm and the memory port's host
+ * side, the stream slices) under the exclusive lock, which waits for the other transfers to leave.
  */
 #include <linux/module.h>
 #include <linux/version.h>
@@ -109,7 +111,9 @@ struct otpu_dev {
 	struct otpu_rec *rec;
 	dma_addr_t rec_dma;
 	wait_queue_head_t wq;
-	struct mutex reset_lock;
+	struct rw_semaphore xfer;	/* transfers hold it shared, a recovery exclusive */
+	atomic_t broken;		/* a transfer timed out: engines off, every transfer out */
+	ktime_t broken_at;
 	struct otpu_dir h2c, c2h;
 	atomic_t irqs;
 	atomic_t resets;
@@ -281,9 +285,11 @@ static int cmd_wait(struct otpu_dev *d, struct otpu_dir *q, u32 target)
 		seen = atomic_read(&d->irqs);
 		if (rec_reached(d, q, target))
 			break;
-		/* woken by any MSI (either direction's, or an error), or every 200 us */
-		if (!wait_event_hrtimeout(d->wq, rec_reached(d, q, target) || atomic_read(&d->irqs) != seen,
-					  us_to_ktime(200)) && rec_reached(d, q, target))
+		if (atomic_read(&d->broken))
+			return -EIO;
+		/* woken by any MSI (either direction's, or an error), a halt, or every 200 us */
+		if (!wait_event_hrtimeout(d->wq, rec_reached(d, q, target) || atomic_read(&d->irqs) != seen ||
+					  atomic_read(&d->broken), us_to_ktime(200)) && rec_reached(d, q, target))
 			break;
 		if (atomic_read(&d->irqs) != seen) {
 			/* the card writes the record, then raises the MSI (MSI_DELAY cycles later), but
@@ -302,31 +308,53 @@ static int cmd_wait(struct otpu_dev *d, struct otpu_dir *q, u32 target)
 			atomic_inc(&d->timer_wakes);
 			break;
 		}
-		if (ktime_after(ktime_get(), end))
-			return rec_reached(d, q, target) ? 0 : -ETIMEDOUT;
+		if (ktime_after(ktime_get(), end)) {
+			if (rec_reached(d, q, target))
+				break;
+			return -ETIMEDOUT;
+		}
 	}
 done:
 	dma_rmb();	/* the record before the data it vouches for */
 	return 0;
 }
 
-static void otpu_recover(struct otpu_dev *d, struct otpu_dir *q, int err)
+/* A timeout: the engines off at once, then every transfer leaves (cmd_wait sees broken), each
+ * releasing its pages only once writes the engines had issued have landed (drain) */
+static void otpu_halt(struct otpu_dev *d, struct otpu_dir *q)
 {
 	dev_err(&d->pdev->dev,
-		"%s timed out (%d): issued %u, record %u/%u seq %u, counts %u/%u, queue %08x, mm_status %08x, reader table %u, writer table %u, link %08x, irqs %d; resetting the DMA\n",
-		q->h2c ? "H2C" : "C2H", err, q->issued, READ_ONCE(d->rec->h2c), READ_ONCE(d->rec->c2h),
+		"%s timed out: issued %u, record %u/%u seq %u, counts %u/%u, queue %08x, mm_status %08x, reader table %u, writer table %u, link %08x, irqs %d; resetting the DMA\n",
+		q->h2c ? "H2C" : "C2H", q->issued, READ_ONCE(d->rec->h2c), READ_ONCE(d->rec->c2h),
 		READ_ONCE(d->rec->seq), rd(d, CSR_OTPU_DMA_H2C_COUNT_ADDR),
 		rd(d, CSR_OTPU_DMA_C2H_COUNT_ADDR), rd(d, CSR_OTPU_DMA_QUEUE_ADDR),
 		rd(d, CSR_OTPU_DMA_MM_STATUS_ADDR), rd(d, CSR_PCIE_DMA0_READER_TABLE_LEVEL_ADDR),
 		rd(d, CSR_PCIE_DMA0_WRITER_TABLE_LEVEL_ADDR), rd(d, CSR_PCIE_PHY_PHY_LINK_STATUS_ADDR),
 		atomic_read(&d->irqs));
-	mutex_lock(&d->reset_lock);
 	otpu_dma_off(d);
-	msleep(2);	/* writes already issued land before the pages go back */
-	otpu_dma_init(d);
-	wr(d, CSR_PCIE_MSI_ENABLE_ADDR, MSI_REC | MSI_ERR);
-	atomic_inc(&d->resets);
-	mutex_unlock(&d->reset_lock);
+	d->broken_at = ktime_get();
+	smp_wmb();		/* broken_at before broken */
+	atomic_set(&d->broken, 1);
+	wake_up_all(&d->wq);
+}
+
+static void otpu_drain(struct otpu_dev *d)
+{
+	s64 left;
+
+	smp_rmb();
+	left = 2000 - ktime_us_delta(ktime_get(), d->broken_at);
+	if (left > 0)
+		usleep_range(left, left + 100);
+}
+
+static void dir_release_all(struct otpu_dev *d, struct otpu_dir *q)
+{
+	while (q->n) {
+		cmd_release(d, q, &q->cmd[q->head]);
+		q->head = (q->head + 1) % INFLIGHT;
+		q->n--;
+	}
 }
 
 static ssize_t otpu_dma(struct otpu_dev *d, struct otpu_dir *q, unsigned long ubuf, size_t len,
@@ -341,38 +369,62 @@ static ssize_t otpu_dma(struct otpu_dev *d, struct otpu_dir *q, unsigned long ub
 		return -EINVAL;
 	if (mutex_lock_interruptible(&q->lock))
 		return -ERESTARTSYS;
+	down_read(&d->xfer);
+	if (atomic_read(&d->broken)) {	/* between a halt and its recovery */
+		up_read(&d->xfer);
+		mutex_unlock(&q->lock);
+		return -EIO;
+	}
 	while (done < len || q->n) {
-		if (done < len && q->n < INFLIGHT) {
+		if (!ret && done < len && q->n < INFLIGHT) {
 			u32 n = min_t(size_t, len - done, CHUNK);
 			int worst = ((ubuf + done + n - 1) >> PAGE_SHIFT) - ((ubuf + done) >> PAGE_SHIFT) + 2;
 
 			if (q->table + worst <= OTLP_TABLE_DEPTH) {
 				ret = cmd_issue(d, q, ubuf + done, n, (u32)(card + done));
-				if (ret)
-					goto fail;
-				done += n;
-				continue;
+				if (!ret)
+					done += n;
+				else if (!q->n)
+					break;
+				continue;	/* an issue failure: let the queued commands finish first */
 			}
 		}
-		ret = cmd_wait(d, q, q->cmd[q->head].target);
-		if (ret)
-			goto fail;
+		if (!q->n)
+			break;
+		{
+			int w = cmd_wait(d, q, q->cmd[q->head].target);
+
+			if (w) {
+				ret = w;
+				goto fail;
+			}
+		}
 		cmd_release(d, q, &q->cmd[q->head]);
 		q->head = (q->head + 1) % INFLIGHT;
 		q->n--;
 	}
+	up_read(&d->xfer);
 	mutex_unlock(&q->lock);
-	return len;
+	return ret ? ret : (ssize_t)done;
 fail:
-	if (q->n)
-		otpu_recover(d, q, ret);
-	while (q->n) {
-		cmd_release(d, q, &q->cmd[q->head]);
-		q->head = (q->head + 1) % INFLIGHT;
-		q->n--;
+	if (ret == -ETIMEDOUT)
+		otpu_halt(d, q);
+	otpu_drain(d);
+	dir_release_all(d, q);
+	up_read(&d->xfer);
+	if (ret == -ETIMEDOUT) {
+		/* every other transfer has left (down_write waits for them), then the DMA anew */
+		down_write(&d->xfer);
+		if (atomic_read(&d->broken)) {
+			otpu_dma_init(d);
+			wr(d, CSR_PCIE_MSI_ENABLE_ADDR, MSI_REC | MSI_ERR);
+			atomic_inc(&d->resets);
+			atomic_set(&d->broken, 0);
+		}
+		up_write(&d->xfer);
 	}
 	mutex_unlock(&q->lock);
-	return ret == -ETIMEDOUT ? -EIO : ret;
+	return -EIO;
 }
 
 static int otpu_open(struct inode *inode, struct file *f)
@@ -505,7 +557,7 @@ static int otpu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		return -ENOMEM;
 	d->pdev = pdev;
 	init_waitqueue_head(&d->wq);
-	mutex_init(&d->reset_lock);
+	init_rwsem(&d->xfer);
 	dir_init(&d->h2c, true);
 	dir_init(&d->c2h, false);
 	ret = dir_alloc(&pdev->dev, &d->h2c) ?: dir_alloc(&pdev->dev, &d->c2h);

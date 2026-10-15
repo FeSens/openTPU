@@ -148,11 +148,13 @@ window, every H2C command's data in card memory when its count is reached, every
 data in host memory at the cycle its record shows it, H2C and C2H at once, an MSI after every
 record, and three timeouts (a lost `h2c_done`, an H2C stream the card stops taking, a C2H stream
 it stops sending) with the recovery and transfers after each. **Measured** (LiteX fad9b37,
-LitePCIe 586d7a4): the data, ordering and recovery checks all pass. Its first runs found two
-problems the card would have shown as hangs or stalls: LitePCIe's host model splits completions
-at any dword count, which this datapath cannot take and real root complexes never send (the
-bench now splits at 64-byte boundaries); and the record's MSI reaching the host before the
-record, now delayed in the core and covered in the driver.
+LitePCIe 586d7a4): the data, ordering and recovery checks all pass. Its runs turned up one
+artifact of the model and two problems of the design. The model splits read completions at any
+dword count, which real root complexes never do for 16-byte aligned reads (they split at 64-byte
+boundaries; the bench now does). The record's MSI reached the host before the record: it is now
+delayed in the core and covered in the driver. And the timing pass's stream slices held a beat
+across the driver's recovery, so the first transfer after a timeout started with a stale beat:
+they now reset with `otpu_pcie_mm`.
 
 **The driver** builds against the hosts' kernel (7.2.5) with `W=1`, no warnings.
 

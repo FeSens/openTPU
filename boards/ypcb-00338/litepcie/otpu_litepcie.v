@@ -11,7 +11,7 @@
 // Device     : xc7k480tffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-10-15 01:35:10
+// Date       : 2026-10-15 01:50:34
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -3837,6 +3837,10 @@ reg           main_request_tag_litepciewishbonemaster_next_value_ce8 = 1'd0;
 reg     [2:0] main_request_tc = 3'd0;
 reg     [2:0] main_request_tc_litepciewishbonemaster_next_value6 = 3'd0;
 reg           main_request_tc_litepciewishbonemaster_next_value_ce6 = 1'd0;
+wire          main_reset0;
+wire          main_reset1;
+wire          main_reset2;
+wire          main_reset3;
 reg     [1:0] main_reset_storage = 2'd0;
 reg           main_reset_wr_stb = 1'd0;
 wire          main_s7pciephy0;
@@ -4157,6 +4161,7 @@ assign main_buffer0_sink_sink_last = main_otpu_dma_h2c_source_source_last;
 assign main_buffer0_sink_sink_payload_addr = main_otpu_dma_h2c_source_source_payload_addr;
 assign main_buffer0_sink_sink_payload_len = main_otpu_dma_h2c_source_source_payload_len;
 assign main_buffer0_sink_sink_payload_flags = main_otpu_dma_h2c_source_source_payload_flags;
+assign main_reset0 = main_otpu_dma_mm_rst;
 assign main_buffer1_sink_sink_valid = main_otpu_dma_c2h_source_source_valid;
 assign main_otpu_dma_c2h_source_source_ready = main_buffer1_sink_sink_ready;
 assign main_buffer1_sink_sink_first = main_otpu_dma_c2h_source_source_first;
@@ -4164,16 +4169,19 @@ assign main_buffer1_sink_sink_last = main_otpu_dma_c2h_source_source_last;
 assign main_buffer1_sink_sink_payload_addr = main_otpu_dma_c2h_source_source_payload_addr;
 assign main_buffer1_sink_sink_payload_len = main_otpu_dma_c2h_source_source_payload_len;
 assign main_buffer1_sink_sink_payload_flags = main_otpu_dma_c2h_source_source_payload_flags;
+assign main_reset1 = main_otpu_dma_mm_rst;
 assign main_buffer2_sink_sink_valid = main_pcie_dma0_source_valid;
 assign main_pcie_dma0_source_ready = main_buffer2_sink_sink_ready;
 assign main_buffer2_sink_sink_first = main_pcie_dma0_source_first;
 assign main_buffer2_sink_sink_last = main_pcie_dma0_source_last;
 assign main_buffer2_sink_sink_payload_data = main_pcie_dma0_source_payload_data;
+assign main_reset2 = main_otpu_dma_mm_rst;
 assign main_pcie_dma0_sink_valid = main_buffer3_source_source_valid;
 assign main_buffer3_source_source_ready = main_pcie_dma0_sink_ready;
 assign main_pcie_dma0_sink_first = main_buffer3_source_source_first;
 assign main_pcie_dma0_sink_last = main_buffer3_source_source_last;
 assign main_pcie_dma0_sink_payload_data = main_buffer3_source_source_payload_data;
+assign main_reset3 = main_otpu_dma_mm_rst;
 assign mmap_axi_lite_awvalid = main_aw_valid;
 assign mmap_axi_lite_awaddr = main_aw_payload_addr;
 assign mmap_axi_lite_awprot = main_aw_payload_prot;
@@ -11487,6 +11495,12 @@ always @(posedge sys_clk) begin
         main_buffer0_pipe_ready_sink_d_payload_len <= main_buffer0_pipe_ready_sink_payload_len;
         main_buffer0_pipe_ready_sink_d_payload_flags <= main_buffer0_pipe_ready_sink_payload_flags;
     end
+    if (main_reset0) begin
+        main_buffer0_pipe_valid_source_valid <= 1'd0;
+        main_buffer0_pipe_ready_valid <= 1'd0;
+        main_buffer0_pipe_ready_sink_d_valid <= 1'd0;
+        main_buffer0_pipe_ready_sink_d_ready <= 1'd0;
+    end
     if (((~main_buffer1_pipe_valid_source_valid) | main_buffer1_pipe_valid_source_ready)) begin
         main_buffer1_pipe_valid_source_valid <= main_buffer1_pipe_valid_sink_valid;
         main_buffer1_pipe_valid_source_first <= main_buffer1_pipe_valid_sink_first;
@@ -11511,6 +11525,12 @@ always @(posedge sys_clk) begin
         main_buffer1_pipe_ready_sink_d_payload_len <= main_buffer1_pipe_ready_sink_payload_len;
         main_buffer1_pipe_ready_sink_d_payload_flags <= main_buffer1_pipe_ready_sink_payload_flags;
     end
+    if (main_reset1) begin
+        main_buffer1_pipe_valid_source_valid <= 1'd0;
+        main_buffer1_pipe_ready_valid <= 1'd0;
+        main_buffer1_pipe_ready_sink_d_valid <= 1'd0;
+        main_buffer1_pipe_ready_sink_d_ready <= 1'd0;
+    end
     if (((~main_buffer2_pipe_valid_source_valid) | main_buffer2_pipe_valid_source_ready)) begin
         main_buffer2_pipe_valid_source_valid <= main_buffer2_pipe_valid_sink_valid;
         main_buffer2_pipe_valid_source_first <= main_buffer2_pipe_valid_sink_first;
@@ -11531,6 +11551,12 @@ always @(posedge sys_clk) begin
         main_buffer2_pipe_ready_sink_d_last <= main_buffer2_pipe_ready_sink_last;
         main_buffer2_pipe_ready_sink_d_payload_data <= main_buffer2_pipe_ready_sink_payload_data;
     end
+    if (main_reset2) begin
+        main_buffer2_pipe_valid_source_valid <= 1'd0;
+        main_buffer2_pipe_ready_valid <= 1'd0;
+        main_buffer2_pipe_ready_sink_d_valid <= 1'd0;
+        main_buffer2_pipe_ready_sink_d_ready <= 1'd0;
+    end
     if (((~main_buffer3_pipe_valid_source_valid) | main_buffer3_pipe_valid_source_ready)) begin
         main_buffer3_pipe_valid_source_valid <= main_buffer3_pipe_valid_sink_valid;
         main_buffer3_pipe_valid_source_first <= main_buffer3_pipe_valid_sink_first;
@@ -11550,6 +11576,12 @@ always @(posedge sys_clk) begin
         main_buffer3_pipe_ready_sink_d_first <= main_buffer3_pipe_ready_sink_first;
         main_buffer3_pipe_ready_sink_d_last <= main_buffer3_pipe_ready_sink_last;
         main_buffer3_pipe_ready_sink_d_payload_data <= main_buffer3_pipe_ready_sink_payload_data;
+    end
+    if (main_reset3) begin
+        main_buffer3_pipe_valid_source_valid <= 1'd0;
+        main_buffer3_pipe_ready_valid <= 1'd0;
+        main_buffer3_pipe_ready_sink_d_valid <= 1'd0;
+        main_buffer3_pipe_ready_sink_d_ready <= 1'd0;
     end
     if (1'd0) begin
         if (main_source_payload_adr[2]) begin
@@ -13277,5 +13309,5 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-10-15 01:35:10.
+//  Auto-Generated by LiteX on 2026-10-15 01:50:34.
 //------------------------------------------------------------------------------

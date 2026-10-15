@@ -136,10 +136,18 @@ ahead of the card.
   ISA simulator  <======>  RTL          same bits, checked by the tests
   (Python)                 (SystemVerilog)
                             |  Vivado bitstream
-                           FPGA card    Kintex-7 xc7k480t
-                            |  PCIe
+                           FPGA card    Kintex-7 xc7k480t, LiteDRAM (DDR3)
+                            |  PCIe     LitePCIe, Gen2 x8
                            Host         otpu-chat, otpu-smi, otpu-lens
 ```
+
+The card's shell is open source as well. Its two DDR3 channels run on
+[LiteDRAM](https://github.com/enjoy-digital/litedram) controllers, calibrated by a small CPU
+inside the memory core ([docs/litedram.md](docs/litedram.md)), and the host reaches it over PCIe
+Gen2 x8 through [LitePCIe](https://github.com/enjoy-digital/litepcie), with openTPU's own DMA
+front end and Linux driver ([docs/litepcie.md](docs/litepcie.md)). They replace Xilinx's MIG and
+XDMA IP; only the FPGA's hard blocks (the PCIe block, the transceivers, the I/O serializers) are
+still Xilinx's.
 
 The machine is deliberately simple. A sequencer issues one instruction per cycle to a few
 units: DMA moves data, the matrix unit multiplies int8 weights streamed from DRAM, the vector
