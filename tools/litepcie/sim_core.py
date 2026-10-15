@@ -528,7 +528,7 @@ class Bench:
         ident = yield from self.rd(r["CSR_OTPU_DMA_ID_ADDR"])
         caps = yield from self.rd(r["CSR_OTPU_DMA_CAPS_ADDR"])
         self.check(ident == r["OTLP_ID"], f"ID {ident:#x}")
-        self.check(caps & 0xFF == r["OTLP_VERSION"] and (caps >> 8) & 0xFF == 10
+        self.check(caps & 0xFF == r["OTLP_VERSION"] and 1 << ((caps >> 8) & 0xFF) == gc.TABLE_DEPTH
                    and (caps >> 16) & 0xFF == gc.PENDING, f"CAPS {caps:#x}")
         # the user window
         yield from self.wr(0x100, 0x12345678)

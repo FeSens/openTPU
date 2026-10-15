@@ -927,16 +927,17 @@ def load_tokenizer(path):
     return get
 
 
-def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None,
+def make_backend(name: str, spec, cap: int, dev: str | None, model: str | None = None,
                  lookup: bool = False, wformat: str = "int8", head_format: str | None = None):
     """(backend, configuration) for Engine (lookup: room for the resident decode's tables;
-    the weight formats size the board model's DRAM where an int8 image would not fit)."""
+    the weight formats size the board model's DRAM where an int8 image would not fit). dev: the
+    card's device prefix (board.card_dev: None is the card's, under either PCIe driver)."""
     if name == "isa":
         return "isa", None
     if name == "board":
-        from opentpu.host.board import (Board, BoardBackend, XdmaTransport,   # the PCIe driver
+        from opentpu.host.board import (Board, BoardBackend, card_transport,  # the PCIe driver
                                         device_config)
-        tr = XdmaTransport(dev)
+        tr = card_transport(dev)
         cfg = device_config(Board(tr, lock=False).info())     # MCOLS / LANES of the bitstream
         return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "board-sim":
@@ -1004,7 +1005,8 @@ def main(argv=None):
     ap.add_argument("--model", default="qwen3",
                     help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--backend", default="isa", choices=["isa", "board", "board-sim", "rtl"])
-    ap.add_argument("--dev", default="/dev/xdma0", help="XDMA device prefix (--backend board)")
+    ap.add_argument("--dev", help="the card's device prefix (--backend board; default: "
+                    "/dev/otpu0 if present, else /dev/xdma0)")
     ap.add_argument("--clock-mhz", type=float,
                     help="core clock, to turn device cycles into tokens/s (default: the "
                          "bitstream's CORE_KHZ, or 100 on a register map 1 bitstream)")
@@ -1110,7 +1112,8 @@ def main(argv=None):
             wformat, head, formats = ST.defaults(spec)
             a.head_format = a.head_format or head
     print(f"loading {path.name} onto openTPU ({a.backend}) ...", flush=True)
-    from opentpu.host.board import ConfigMismatch
+    from opentpu.host.board import ConfigMismatch, card_dev
+    a.dev = card_dev(a.dev)             # (the one the panel names)
     try:
         backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name,
                                     lookup=not a.per_position, wformat=wformat,

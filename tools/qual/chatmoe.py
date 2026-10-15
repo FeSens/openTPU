@@ -301,7 +301,7 @@ class _FirstPick:
             ph.done = True
 
 
-def run(model, backend: str = "isa", cfg_file: str | None = None, dev: str = "/dev/xdma0",
+def run(model, backend: str = "isa", cfg_file: str | None = None, dev: str | None = None,
         turns=TURNS, max_new: int = 16, cap: int = 2048, pool: str | None = None,
         experts: int = 0, layer_major: int | None = None, sample: bool = False,
         seed: int = 0, create: bool = False, tok=None, em_rows: int | None = None,
@@ -430,7 +430,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("model")
     ap.add_argument("--backend", choices=("isa", "board"), default="isa")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--cfg", help="the card's configuration, pickled (tools/qual/refs.py cfg); "
                                   "on the card it must be the device's")
     ap.add_argument("--turn", action="append", help="a user turn (repeated; default TURNS)")

@@ -1,6 +1,6 @@
 """otpu-lens: openTPU Lens profiles recorded on the card, from its hardware trace buffer.
 
-    otpu-lens record --dev /dev/xdma0 --model models/Qwen3-0.6B --prompt "Hi" --tokens 2 \\
+    otpu-lens record --model models/Qwen3-0.6B --prompt "Hi" --tokens 2 \\
                      [--pos P] [--keep first|last] -o card.otpuprof
     otpu-lens record --sim [--workload mlp-small | qwen-tiny] [--pos P] -o sim.otpuprof
     otpu-lens open|html|info|summary|list ...  # passed to opentpu.lens (python -m opentpu.lens)
@@ -189,7 +189,7 @@ def run_steps(eng, tokens: list[int], pos0: int, n: int, keep: str, prompt_len: 
 def record_card(a) -> list:
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, load_weights
-    from .board import Board, BoardBackend, XdmaTransport, device_config
+    from .board import Board, BoardBackend, card_dev, card_transport, device_config
     model = Path(a.model)
     spec = load_spec(model)
     if a.prompt_ids:
@@ -203,7 +203,8 @@ def record_card(a) -> list:
         ids = list(ids["input_ids"] if hasattr(ids, "keys") else ids)
     pos0 = len(ids) - 1 if a.pos is None else a.pos
     cap = max(256, -(-(pos0 + a.tokens + 1) // 128) * 128)
-    tr = XdmaTransport(a.dev)
+    a.dev = card_dev(a.dev)
+    tr = card_transport(a.dev)
     cfg = device_config(Board(tr, lock=False).info())
     eng = Engine(spec, load_weights(model), cap=cap, cfg=cfg, pipeline="thread",  # programs
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model.name),
@@ -278,7 +279,8 @@ def main(argv=None) -> int:
     r = sub.add_parser("record", help="run Qwen3 steps on the card (or a workload on the board "
                        "model) with the trace buffer on; write a profile file")
     r.add_argument("-o", "--out", required=True)
-    r.add_argument("--dev", default="/dev/xdma0", help="XDMA device prefix")
+    r.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                   "else /dev/xdma0)")
     r.add_argument("--sim", action="store_true", help="the Verilator board model")
     r.add_argument("--model", default=str(ROOT / "models" / "Qwen3-0.6B"))
     r.add_argument("--prompt", default="What is the capital of France?")

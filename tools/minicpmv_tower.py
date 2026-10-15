@@ -294,7 +294,8 @@ def main(argv=None) -> int:
     ap.add_argument("mode", choices=("time", "cosim"))
     ap.add_argument("model")
     ap.add_argument("--backend", choices=("isa", "board"), default="board")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--cfg", help="the card's configuration, pickled (tools/qual/refs.py cfg)")
     ap.add_argument("--pool", help="the expert pool (default: the checkpoint's)")
     ap.add_argument("--cap", type=int, default=2048)

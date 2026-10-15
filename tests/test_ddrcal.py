@@ -262,7 +262,7 @@ def _selftest_to_calib(monkeypatch, tmp_path, card):
     """otpu-selftest on `card`, stopped after its calib stage (the scrub fails)."""
     from opentpu.host import selftest
     monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path))
-    monkeypatch.setattr(selftest, "XdmaTransport", lambda dev: card)
+    monkeypatch.setattr(selftest, "card_transport", lambda dev: card)
     monkeypatch.setattr(selftest.Board, "scrub", lambda self: 1 / 0)
     assert selftest.main([]) == 1
 

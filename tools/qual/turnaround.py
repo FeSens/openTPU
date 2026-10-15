@@ -149,10 +149,11 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--seconds", type=float, default=30.0)
     ap.add_argument("--mb", type=float, default=32.0, help="MB of fp4 weights per run")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     a = ap.parse_args(argv)
-    from opentpu.host.board import Board, XdmaTransport
-    with Board(XdmaTransport(a.dev)) as b:
+    from opentpu.host.board import Board, card_transport
+    with Board(card_transport(a.dev)) as b:
         rows = turnarounds(b, a.seconds, a.mb)
     for name, (ok, msg) in rows:
         print(f"  [{'PASS' if ok else 'FAIL'}] DRAM turnarounds, {name}: {msg}", flush=True)

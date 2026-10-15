@@ -6,7 +6,7 @@ whose partial sums flush to -0, and ARGMAX ties inside a chunk of lanes. Each pr
 card and on the ISA simulator from the same DRAM image; the DRAM below checks.PROG_AT must be
 equal, bit for bit.
 
-    python3 tools/qual/fpcard.py [--dev /dev/xdma0]   the card (run it under otpu-lock)
+    python3 tools/qual/fpcard.py [--dev /dev/otpu0]   the card (run it under otpu-lock)
     python3 tools/qual/fpcard.py --rtl                 the same programs on the RTL (Verilator)
 
 Prints one line per program and "FPCARD PASS" (exit 0) or "FPCARD FAIL" (exit 1)."""
@@ -221,7 +221,8 @@ def rtl_check(cfg, prog, img) -> tuple[bool, str]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--rtl", action="store_true", help="the RTL (Verilator), not the card")
     a = ap.parse_args(argv)
     if a.rtl:
@@ -229,8 +230,8 @@ def main(argv=None) -> int:
         board = None
         print(f"fpcard on the RTL: {cfg}")
     else:
-        from opentpu.host.board import CH_BYTES, Board, XdmaTransport, device_config
-        board = Board(XdmaTransport(a.dev), check=False)
+        from opentpu.host.board import CH_BYTES, Board, card_transport, device_config
+        board = Board(card_transport(a.dev), check=False)
         # the DRAM's ECC check bits once per configuration first (a read of a beat not written
         # since counts as an uncorrectable error): run on a bitstream just loaded, it read some
         board.scrub()

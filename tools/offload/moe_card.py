@@ -11,8 +11,9 @@ Face's.
 The HF run and the simulator run are separate processes: each needs most of a 32 GB host.
 --cfg takes the bitstream's configuration (tools/qual/refs.py cfg): the simulator's run with it
 is the card's reference bit for bit (its prefill logits' sha256 and its tokens); --card runs on
-the card (/dev/xdma0) with the host's server polled while each run is in flight, and adds the
-device's cycles, the tok/s and where the host's time went (pool reads, DRAM writes over PCIe).
+the card (/dev/otpu0 or /dev/xdma0: board.card_transport) with the host's server polled while
+each run is in flight, and adds the device's cycles, the tok/s and where the host's time went
+(pool reads, DRAM writes over PCIe).
 """
 from __future__ import annotations
 
@@ -99,8 +100,8 @@ def card(model: str, ref: dict, n: int, experts: int, cap: int, pool: str | None
     cfg = pickle.loads(Path(cfg_file).read_bytes()) if cfg_file else board_config()
     backend = "isa"
     if on_card:
-        from opentpu.host.board import BoardBackend, XdmaTransport
-        tr = XdmaTransport("/dev/xdma0")
+        from opentpu.host.board import BoardBackend, card_transport
+        tr = card_transport()
         backend = lambda c, imgs: BoardBackend(c, imgs, transport=tr,      # noqa: E731
                                                model=Path(model).name)
     t = time.time()
@@ -420,7 +421,8 @@ def main():
     ap.add_argument("--cfg", help="the configuration, pickled (tools/qual/refs.py cfg: the "
                                   "bitstream's); default isasim.board_config()")
     ap.add_argument("--card", action="store_true",
-                    help="run on the card (/dev/xdma0) instead of the ISA simulator")
+                    help="run on the card (/dev/otpu0 or /dev/xdma0) instead of the ISA "
+                         "simulator")
     ap.add_argument("--policy", choices=("lru", "lfu"), default="lfu",
                     help="the expert slots' replacement (ExpertServer): least recently used, or "
                          "least decayed use")

@@ -1,8 +1,9 @@
 """otpu-smi: the state of openTPU cards, like nvidia-smi.
 
-    otpu-smi                      one table per device (/dev/xdma*): bitstream, link, DDR3
-                                  calibration, temperature, power (measured or estimated),
-                                  DRAM, utilization over a short interval, the owning process
+    otpu-smi                      one table per device (/dev/otpu*, /dev/xdma*): bitstream,
+                                  link, DDR3 calibration, temperature, power (measured or
+                                  estimated), DRAM, utilization over a short interval, the
+                                  owning process
     otpu-smi -l 1                 again every second (utilization over each second)
     otpu-smi --json               the same as JSON (a list, one object per device)
     otpu-smi -q                   every detail, raw counters included
@@ -32,7 +33,6 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
-import glob
 import json
 import sys
 import time
@@ -40,7 +40,7 @@ from pathlib import Path
 
 from . import power as P
 from . import regs as R
-from .board import Board, rates
+from .board import Board, card_dev, card_nodes, card_sysfs, rates
 from .runstate import devname, read_status
 
 VERSION = "0.3.0"
@@ -49,12 +49,14 @@ POWER_JSON = ROOT / "build" / "vivado" / "reports" / "power.json"
 
 
 def find_devices() -> list[str]:
-    return sorted(p[:-len("_user")] for p in glob.glob("/dev/xdma*_user"))
+    """Every card's node prefix, under either PCIe driver (board.card_nodes)."""
+    return card_nodes()
 
 
 def pcie_link(dev: str) -> str | None:
-    """'2.5 GT/s PCIe x8' from sysfs (the XDMA driver's class device), None if unknown."""
-    base = Path(f"/sys/class/xdma/{devname(dev)}_user/device")
+    """'2.5 GT/s PCIe x8' from sysfs (the PCIe driver's class device: XDMA's or LitePCIe's),
+    None if unknown."""
+    base = card_sysfs(dev)
     try:
         sp = (base / "current_link_speed").read_text().strip()
         wd = (base / "current_link_width").read_text().strip()
@@ -243,7 +245,7 @@ def _gen(pcie: str | None) -> str:
 
 
 def bus_id(dev: str) -> str:
-    p = Path(f"/sys/class/xdma/{devname(dev)}_user/device")
+    p = card_sysfs(dev)
     return p.resolve().name if p.exists() else "n/a"
 
 
@@ -467,8 +469,9 @@ def main(argv=None, open_transport=None) -> int:
                                  "link, temperature, power (measured or estimated), DRAM, "
                                  "utilization, "
                                  "process.")
-    ap.add_argument("--dev", action="append", help="XDMA device prefix, e.g. /dev/xdma0 "
-                    "(repeatable; default: every /dev/xdma*_user)")
+    ap.add_argument("--dev", action="append", help="device prefix, e.g. /dev/otpu0 (LitePCIe) "
+                    "or /dev/xdma0 (XDMA) (repeatable; default: every /dev/otpu*_user and "
+                    "/dev/xdma*_user)")
     ap.add_argument("-l", "--loop", type=float, metavar="SEC",
                     help="repeat every SEC seconds (utilization over each period)")
     ap.add_argument("--json", action="store_true", help="JSON output")
@@ -515,14 +518,15 @@ def main(argv=None, open_transport=None) -> int:
         open_transport = open_transport or (lambda dev: fk)
         devs = a.dev or ["/dev/fake0"]
     else:
-        devs = a.dev or find_devices()
+        devs = [card_dev(d) for d in a.dev] if a.dev else find_devices()
     if not devs:
-        print("otpu-smi: no openTPU device (/dev/xdma*_user): is the XDMA driver loaded? "
-              "(docs/host.md; --sim for the board model)", file=sys.stderr)
+        print("otpu-smi: no openTPU device (/dev/otpu*_user, /dev/xdma*_user): is the PCIe "
+              "driver loaded, otpu_pcie or xdma? (otpu-setup --check; docs/host.md; --sim for "
+              "the board model)", file=sys.stderr)
         return 1
     if open_transport is None:
-        from .board import XdmaTransport
-        open_transport = lambda dev: XdmaTransport(dev, dma=False)   # noqa: E731
+        from .board import card_transport
+        open_transport = lambda dev: card_transport(dev, dma=False)   # noqa: E731
     try:
         return _loop(a, devs, open_transport, emit)
     except KeyboardInterrupt:

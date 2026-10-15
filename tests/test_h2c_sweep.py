@@ -77,7 +77,7 @@ class _FileCard:
 
 def test_the_sweep_runs_its_grid_and_writes_its_json(tmp_path, monkeypatch):
     import json
-    monkeypatch.setattr(B, "XdmaTransport", lambda dev: _FileCard(tmp_path / "card"))
+    monkeypatch.setattr(B, "card_transport", lambda dev: _FileCard(tmp_path / "card"))
     assert S.main(["--quick", "--secs", "0.01", "--qd", "1,2", "--json", str(tmp_path / "o.json")]) == 0
     out = json.loads((tmp_path / "o.json").read_text())
     assert out["result"] == "PASS"

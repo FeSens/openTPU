@@ -185,7 +185,11 @@ def host_info(dev: str) -> dict:
         if rd(p / "vendor") == "0x10ee":
             info.update(pci=p.name, link_speed=rd(p / "current_link_speed"),
                         link_width=rd(p / "current_link_width"))
-    info["poll_mode"] = rd("/sys/module/xdma/parameters/poll_mode")
+    mod = B.DRIVERS[B.node_kind(dev)]               # the PCIe driver and its parameters
+    par = Path(f"/sys/module/{mod}/parameters")
+    info["driver"] = mod
+    info["params"] = {p.name: rd(p) for p in sorted(par.glob("*"))} if par.exists() else None
+    info["poll_mode"] = rd("/sys/module/xdma/parameters/poll_mode")     # (XDMA's)
     info["thp"] = rd("/sys/kernel/mm/transparent_hugepage/enabled")
     info["governor"] = rd("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
     info["kernel"] = os.uname().release
@@ -194,7 +198,8 @@ def host_info(dev: str) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--json")
     ap.add_argument("--secs", type=float, default=0.3, help="seconds per point")
     ap.add_argument("--reps", type=int, default=2)
@@ -209,7 +214,8 @@ def main(argv=None) -> int:
     if any(s % B.BEAT or s <= 0 or s > SPAN for s in sizes):
         raise SystemExit(f"sizes must be whole 64-byte beats up to {SPAN}: {sizes}")
 
-    t = B.XdmaTransport(a.dev)
+    a.dev = B.card_dev(a.dev)
+    t = B.card_transport(a.dev)
     out = {"host": host_info(a.dev), "args": vars(a), "points": [], "c2h": [], "bounced": []}
     out["build_id"] = f"{t.reg_read(B.R.R_BUILD_ID):08x}"
     st = t.reg_read(B.R_STATUS)

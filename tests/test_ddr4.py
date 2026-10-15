@@ -160,7 +160,7 @@ def test_selftest_checks_every_channel_of_a_two_slice_card(monkeypatch, capsys):
         return stage(self, name, fn) if name in ("link", "regs", "addr") else None
     monkeypatch.setattr(selftest.Runner, "stage", some)
     monkeypatch.setattr(selftest, "CH_BYTES", 1 << 20)
-    monkeypatch.setattr(selftest, "XdmaTransport",
+    monkeypatch.setattr(selftest, "card_transport",
                         lambda dev: FakeTransport(devname="fakebcu", regmap=4, cfg=_bcu_cfg(),
                                                   ch_bytes=1 << 20))
     selftest.main([])

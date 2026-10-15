@@ -1,6 +1,6 @@
 """otpu-diag: the full hardware diagnostic of the openTPU card (or its board model, --sim).
 
-    otpu-diag                             # every check on /dev/xdma0, about a minute
+    otpu-diag                             # every check on the card, about a minute
     otpu-diag --mem full                  # plus a march C- over all 4 GiB (both channels)
     otpu-diag --soak 20                   # rerun the kernel set 20 times, count intermittents
     otpu-diag --model qwen3               # plus the model check of otpu-selftest
@@ -43,8 +43,8 @@ from . import memcal
 from . import memtest as M
 from . import power as P
 from . import regs as R
-from .board import (CH_BYTES, Board, ConfigMismatch, SimTransport, XdmaTransport, config_summary,
-                    device_config)
+from .board import (CH_BYTES, DRIVERS, Board, ConfigMismatch, SimTransport, XdmaTransport,
+                    card_dev, card_sysfs, card_transport, config_summary, device_config)
 from .checks import (PROG_AT, masked_program, model_check, partial_writes, pattern_test,
                      run_demo, vops_program, waitw_host, waitw_timeout)
 from .opchecks import diag_image, op_checks
@@ -106,8 +106,9 @@ class Diag:
 # ------------------------------------------------------------------------------ platform
 def pcie_link(dev: str) -> tuple:
     """(speed, width, max speed, max width) of the card's link from sysfs, or None. The max is the
-    card's own (its LnkCap: the bitstream's PCIE_GEN, 2.5 GT/s at Gen1 x8, 5.0 GT/s at Gen2 x8)."""
-    base = Path(f"/sys/class/xdma/{Path(dev).name}_user/device")
+    card's own (its LnkCap: the bitstream's PCIE_GEN, 2.5 GT/s at Gen1 x8, 5.0 GT/s at Gen2 x8),
+    through the PCIe driver's class device (XDMA's or LitePCIe's: board.card_sysfs)."""
+    base = card_sysfs(dev)
     try:
         return tuple((base / f).read_text().strip() for f in
                      ("current_link_speed", "current_link_width", "max_link_speed",
@@ -125,14 +126,20 @@ def link_verdict(lk: tuple) -> tuple[bool, str]:
 
 
 def driver_state(dev: str) -> tuple[bool, str]:
+    """The PCIe driver: which of the two (board.DRIVERS: LitePCIe's otpu_pcie, XDMA's xdma) is
+    loaded and bound to the card, and the card's nodes."""
     nodes = [f"{dev}_{n}" for n in ("user", "h2c_0", "c2h_0")]
     missing = [n for n in nodes if not os.path.exists(n)]
     try:
-        loaded = any(line.split()[0] == "xdma" for line in open("/proc/modules"))
+        mods = {line.split()[0] for line in open("/proc/modules")}
+        on = [m for m in DRIVERS.values() if m in mods]
+        mod = " and ".join(on) + " loaded" if on else "neither otpu_pcie nor xdma loaded"
     except OSError:
-        loaded = None
-    mod = {True: "xdma module loaded", False: "xdma module NOT loaded",
-           None: "no /proc/modules"}[loaded]
+        mod = "no /proc/modules"
+    try:                                # the driver of the card's PCI device
+        mod += f", the card bound to {Path(os.readlink(card_sysfs(dev) / 'driver')).name}"
+    except OSError:
+        pass
     return not missing, mod + ("; " + ", ".join(nodes) if not missing
                                else f"; missing {', '.join(missing)}")
 
@@ -261,9 +268,10 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
             hints.append("simple VPU functions fail -> the VPU lanes or the TMEM ports")
         if "waitw-host" in fails and "waitw" not in fails:
             hints.append("WAITW holds on words already in DRAM, but not on the host's writes: "
-                         "old data after the flag -> the order of XDMA's writes through "
-                         "otpu_mem_ch into LiteDRAM against the accelerator's reads; no flag "
-                         "seen (timeout) -> WAITW's re-reads (otpu_dma)")
+                         "old data after the flag -> the order of XDMA's writes (LitePCIe's on "
+                         "a LitePCIe bitstream) through otpu_mem_ch into LiteDRAM against the "
+                         "accelerator's reads; no flag seen (timeout) -> WAITW's re-reads "
+                         "(otpu_dma)")
         if "vpu-edge" in fails and not fails & {"vpu", "vpu-composite"}:
             hints.append("only edge values differ: flush-to-zero / inf / NaN handling in the "
                          "RTL against opentpu/fp32.py")
@@ -278,7 +286,7 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
     bw = [r for r in rows if r.name.endswith("DMA bandwidth") and r.status == FAIL]
     if bw:
         hints.append("slow DMA: LnkSta width / speed, the IOMMU (iommu=pt), or the driver "
-                     "(poll_mode)")
+                     "(XDMA's poll_mode; LitePCIe's otpu_pcie parameters)")
     return hints
 
 
@@ -313,7 +321,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     print("platform", flush=True)
     if not isinstance(t, XdmaTransport):
         d.check("platform", "PCIe link", lambda: (SKIP, "not a PCIe device"))
-        d.check("platform", "XDMA driver", lambda: (SKIP, "not a PCIe device"))
+        d.check("platform", "PCIe driver", lambda: (SKIP, "not a PCIe device"))
     else:
         def pcie():
             lk = pcie_link(dev)
@@ -321,7 +329,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                 return SKIP, "no sysfs link information (lspci -vv: LnkSta)"
             return link_verdict(lk)
         d.check("platform", "PCIe link", pcie)
-        d.check("platform", "XDMA driver", lambda: driver_state(dev))
+        d.check("platform", "PCIe driver", lambda: driver_state(dev))
 
     def ident():
         v = t.reg_read(R.R_ID)
@@ -690,7 +698,8 @@ def soak(b, cfg, img, n: int) -> tuple:
 def main(argv=None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-diag", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--mem", choices=["quick", "full"], default="quick",
                     help="full: also a march C- over every byte of both channels")
     ap.add_argument("--soak", type=int, default=0, metavar="N",
@@ -706,6 +715,7 @@ def main(argv=None, open_transport=None) -> int:
     if a.only and not set(a.only.split(",")) <= set(SECTIONS):
         ap.error(f"--only takes {','.join(SECTIONS)}")
 
+    a.dev = card_dev(a.dev)
     dev = "sim (tb_board)" if a.sim else a.dev
     print(f"otpu-diag on {'the board model' if a.sim else a.dev}", flush=True)
     try:
@@ -714,14 +724,15 @@ def main(argv=None, open_transport=None) -> int:
         elif a.sim:
             t = SimTransport(ch_bytes=1 << 22)
         else:
-            t = XdmaTransport(a.dev)
+            t = card_transport(a.dev)
     except OSError as e:
-        rows = [Row("platform", "XDMA driver", FAIL, driver_state(a.dev)[1]),
+        rows = [Row("platform", "PCIe driver", FAIL, driver_state(a.dev)[1]),
                 Row("platform", "ID register", FAIL, f"cannot open {a.dev}: {e}")]
         for r in rows:
             print(f"  [{r.status}] {r.section:<8} {r.name:<44} {r.msg}")
-        hints = diagnose(rows) + ["no device nodes: load the XDMA driver "
-                                  "(otpu-setup; otpu-setup --check says what is missing)"]
+        hints = diagnose(rows) + ["no device nodes: load the PCIe driver, otpu_pcie for a "
+                                  "LitePCIe bitstream or xdma for an XDMA one (otpu-setup; "
+                                  "otpu-setup --check says what is missing)"]
     else:
         try:
             rows, hints = run(a, t, dev, a.sim)

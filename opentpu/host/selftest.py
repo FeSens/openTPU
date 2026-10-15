@@ -1,6 +1,6 @@
 """otpu-selftest: staged bring-up of the openTPU card (or of its Verilator model with --sim).
 
-    otpu-selftest                         # the card, /dev/xdma0
+    otpu-selftest                         # the card, /dev/otpu0 (LitePCIe) or /dev/xdma0
     otpu-selftest --sim                   # the board model (no hardware)
     otpu-selftest --model qwen3           # also a model-level check (lfm2, qwen35 or a directory)
 
@@ -46,16 +46,17 @@ from opentpu.host import memcal
 from opentpu.host.runstate import busy_exits
 from opentpu.host import regs as R
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
-                                ST_CALIB1, Board, SimTransport, XdmaTransport, config_summary,
-                                device_config)
+                                ST_CALIB1, Board, SimTransport, card_dev, card_transport,
+                                config_summary, device_config)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
                                  model_check, partial_writes, pattern_test, run_demo,
                                  stream_check, vops_check)
 
 HINTS = {
-    "link": "Is the card enumerated (lspci -d 10ee:), the XDMA driver loaded (lsmod | grep "
-            "xdma) and /dev/xdma0_user present? Did the host reboot after programming the "
-            "bitstream (or rescan the PCIe bus)? See docs/host.md.",
+    "link": "Is the card enumerated (lspci -d 10ee:), its PCIe driver loaded (lsmod | grep "
+            "-e otpu_pcie -e xdma: otpu_pcie for a LitePCIe bitstream, xdma for an XDMA one) "
+            "and /dev/otpu0_user or /dev/xdma0_user present (otpu-setup --check)? Did the host "
+            "reboot after programming the bitstream (or rescan the PCIe bus)? See docs/host.md.",
     "config": "The host follows the bitstream's VERSION register: unset OTPU_MCOLS / "
               "OTPU_LANES, or load the bitstream built for them (docs/board.md, which bitstream "
               "to load). D must be 128.",
@@ -66,11 +67,11 @@ HINTS = {
              "LiteDRAM): check the MIG pinout / clocking in the bitstream (docs/board.md). "
              "Either: the memory voltage. STATUS bit5 = channel 0, bit6 = channel 1.",
     "scrub": "Writing the DRAM failed or timed out: DMA host->card is broken (dmesg: XDMA "
-             "errors); try the driver in poll mode (sudo otpu-setup --poll).",
-    "regs": "Register writes do not stick: the AXI-Lite path (XDMA BAR0 -> otpu_ctrl) is "
+             "or otpu_pcie errors); XDMA: try the driver in poll mode (sudo otpu-setup --poll).",
+    "regs": "Register writes do not stick: the AXI-Lite path (BAR0 -> otpu_ctrl) is "
             "broken, or the core clock / reset is not running.",
     "addr": "An address line of that channel is stuck or aliased: DDR3 pinout / the "
-            "controller's address width, or the XDMA address map (channel 1 must be at "
+            "controller's address width, or the PCIe bridge's address map (channel 1 must be at "
             "0x8000_0000).",
     "pattern": "Data errors: if only one channel fails, suspect its byte lanes / calibration; "
                "if errors follow the 64-byte interleave, suspect the host mapping "
@@ -141,7 +142,8 @@ class Runner:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-selftest", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--model",
                     help="qwen3, lfm2, qwen35 or a checkpoint directory: the model stage")
     ap.add_argument("--tokens", type=int, default=8, help="tokens to generate in the model stage")
@@ -157,7 +159,8 @@ def main(argv=None) -> int:
         t = SimTransport(ch_bytes=ch_bytes)
     else:
         ch_bytes = CH_BYTES
-        t = XdmaTransport(a.dev)
+        a.dev = card_dev(a.dev)
+        t = card_transport(a.dev)
     cfg = None                                            # from the bitstream (stage config)
     print(f"openTPU self-test on {'the board model' if a.sim else a.dev}")
     r = Runner()

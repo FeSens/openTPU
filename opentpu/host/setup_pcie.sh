@@ -1,30 +1,44 @@
 #!/usr/bin/env bash
 # Host PC setup for the openTPU card (docs/host.md section 2). `otpu-setup` runs this with sudo.
 #
-#   setup_pcie.sh              install or update the XDMA driver, the udev rules and the driver
-#                              options; then load the driver and read the card's ID register
+#   setup_pcie.sh              install or update both PCIe drivers (XDMA's, for the XDMA
+#                              bitstreams, and openTPU's LitePCIe driver, for the LitePCIe ones),
+#                              the udev rules and the driver options; then load the drivers and
+#                              read the card's ID register
 #   setup_pcie.sh --check      report what is installed and working, change nothing
 #                              (exit 1 when something is missing or wrong)
 #   setup_pcie.sh --rescan     after a JTAG load: remove the card from the bus, rescan, bind the
-#                              driver, wait for /dev/xdma0_user, read the ID register. When the
-#                              card is not back, retrain its upstream port's link first
+#                              driver its bitstream takes, wait for its /dev/xdma0_user or
+#                              /dev/otpu0_user, read the ID register. When the card is not back,
+#                              retrain its upstream port's link first
 #                              (pcie/relink.sh: Retrain Link, Link Disable, secondary bus reset)
 #   setup_pcie.sh --uninstall  remove everything the install put on the system
-#   --poll | --irq             the driver's completion mode (poll_mode=1 | 0), kept in
+#   --poll | --irq             the XDMA driver's completion mode (poll_mode=1 | 0), kept in
 #                              /etc/modprobe.d/otpu-xdma.conf; without either, an existing
 #                              setting stays and a new install takes DEFAULT_POLL
-#   --no-dkms                  install the module for the running kernel only, even with DKMS
-#   --src DIR                  take the driver source from a dma_ip_drivers git clone that has
-#                              the pinned commit, instead of fetching it from GitHub
+#   --no-dkms                  install the modules for the running kernel only, even with DKMS
+#   --src DIR                  take the XDMA driver source from a dma_ip_drivers git clone that
+#                              has the pinned commit, instead of fetching it from GitHub
 #
-# The driver is Xilinx's dma_ip_drivers XDMA at a pinned commit plus pcie/xdma-otpu.patch (a
+# The card's bitstream says which driver it takes, by its PCI ID: an XDMA bitstream is 10ee:7028
+# (or subsystem 10ee:4f54, whatever the device ID), which the udev rule pcie/59-otpu-xdma.rules
+# gives to xdma; a LitePCIe bitstream is 10ee:5054 (subsystem 10ee:4c50), which otpu_pcie binds
+# by its own ID table. Neither takes the other's card, so both stay installed and a JTAG load
+# of either kind needs only --rescan.
+#
+# The XDMA driver is Xilinx's dma_ip_drivers XDMA at a pinned commit plus pcie/xdma-otpu.patch (a
 # Makefile fix for kernels >= 6.13 and an "otpu" module tag this script checks). It goes to
 # /lib/modules/<kernel>/updates, which takes precedence over the kernel's own module of the same
 # name (drivers/dma/xilinx/xdma, AMD's platform driver for Alveo cards, which does not drive
 # this card). With DKMS it is rebuilt at every kernel upgrade; without it, re-run this script
 # after a kernel upgrade (--check says when the module is missing for the running kernel).
 #
-# Linux only. Safe to re-run: every step checks first and changes only what differs. The driver
+# The LitePCIe driver (module otpu_pcie, DKMS package otpu-pcie) is openTPU's own, in pcie/otpu.
+# Its version is <its MODULE_VERSION>.<a hash of its source> (dkms.conf is a template, as XDMA's),
+# so a changed source is a new version; the source goes to /usr/src/otpu-pcie-<version>, then
+# DKMS builds and installs it, or without DKMS it is built into /lib/modules/<kernel>/updates.
+#
+# Linux only. Safe to re-run: every step checks first and changes only what differs. A driver
 # is never unloaded under a running program: a pending reload waits for --rescan or a reboot.
 set -euo pipefail
 
@@ -43,6 +57,37 @@ src_dir="/usr/src/$PKG-$VER"
 cache="/var/cache/otpu/dma_ip_drivers.git"
 rules=(59-otpu-xdma.rules 60-otpu.rules)
 modconf=/etc/modprobe.d/otpu-xdma.conf
+lp_files="$files/otpu"     # the LitePCIe driver's source
+# what a source tree may hold besides the source (lp_find): build products, a copy's marker, and
+# a Mac's file metadata (a tree copied from one: ._*, .DS_Store)
+lp_junk=('*.o' '*.ko' '*.mod' '*.mod.c' '.*.cmd' modules.order Module.symvers .complete '._*' .DS_Store)
+
+lp_conf() {  # a variable of the LitePCIe driver's dkms.conf, unquoted ("" when it has none)
+  sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$lp_files/dkms.conf" 2>/dev/null | head -1 || true
+}
+lp_find() {  # the LitePCIe driver's source files, relative to its directory, in a fixed order
+  local a=() j
+  for j in "${lp_junk[@]}"; do a+=(! -name "$j"); done
+  (cd "$lp_files" 2>/dev/null && find . -type f "${a[@]}" | LC_ALL=C sort) || true
+}
+lp_hash() {  # 8 hex digits of the LitePCIe driver's source: its files' names and contents
+  local f
+  { while read -r f; do echo "$f"; cat "$lp_files/$f"; done < <(lp_find); } \
+    | { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; } | cut -c1-8 || true
+}
+LP_PKG="$(lp_conf PACKAGE_NAME)"; LP_PKG="${LP_PKG:-otpu-pcie}"
+LP_MOD="$(lp_conf 'BUILT_MODULE_NAME\[0\]')"; LP_MOD="${LP_MOD:-otpu_pcie}"
+# The version: dkms.conf's, or for its template (@VERSION@, which the source copy gets filled in)
+# <the driver's MODULE_VERSION>.<the source's hash>, as XDMA's <commit>.<patch level>: a changed
+# source is another version, which DKMS builds anew and the old one's builds give way to.
+LP_VER="$(lp_conf PACKAGE_VERSION)"
+if [[ -z $LP_VER || $LP_VER == @VERSION@ ]]; then
+  LP_VER="$(sed -n 's/^MODULE_VERSION("\([^"]*\)");.*/\1/p' "$lp_files"/*.c 2>/dev/null | head -1 || true)"
+  LP_VER="${LP_VER:-1}.$(lp_hash)"
+fi
+lp_src_dir="/usr/src/$LP_PKG-$LP_VER"
+lp_stamp="$moddir/updates/$LP_MOD.version"   # a module installed without DKMS: its version
+lp_changed=0               # this run installed a new build of the module: load it anew
 
 mode=install poll="" dkms_ok=1 src=""
 args=("$@")
@@ -80,14 +125,24 @@ source "$files/relink.sh"
 
 # ---------------------------------------------------------------- probes (no side effects)
 
-cards() {  # the openTPU cards on the bus: 10ee:7028, or any device with subsystem 10ee:4f54
-  local d
+cards() {  # the openTPU cards on the bus: XDMA bitstreams (10ee:7028, or any device with
+  # subsystem 10ee:4f54) and LitePCIe ones (10ee:5054)
+  local d dev
   for d in "$pci"/devices/*; do
     [[ "$(cat "$d/vendor")" == 0x10ee ]] || continue
-    if [[ "$(cat "$d/device")" == 0x7028 || "$(cat "$d/subsystem_device")" == 0x4f54 ]]; then
+    dev="$(cat "$d/device")"
+    if [[ $dev == 0x7028 || $dev == 0x5054 || "$(cat "$d/subsystem_device")" == 0x4f54 ]]; then
       basename "$d"
     fi
   done
+}
+
+card_driver() {  # the driver a card's bitstream takes: otpu_pcie for LitePCIe's 10ee:5054, else xdma
+  if [[ "$(cat "$pci/devices/$1/device")" == 0x5054 ]]; then echo "$LP_MOD"; else echo xdma; fi
+}
+
+node_class() {  # the sysfs class (and /dev node prefix) of a driver's nodes: xdma, otpu
+  if [[ $1 == xdma ]]; then echo xdma; else echo otpu; fi
 }
 
 describe_class() {
@@ -104,6 +159,11 @@ mod_tag()     { modinfo -k "$kver" -F otpu xdma 2>/dev/null || true; }
 intree()      { find "$moddir/kernel" -name 'xdma.ko*' 2>/dev/null | head -1; }
 loaded()      { [[ -d /sys/module/xdma ]]; }
 loaded_ours() { [[ -e /sys/module/xdma/parameters/poll_mode ]]; }
+lp_mod_path() { modinfo -k "$kver" -n "$LP_MOD" 2>/dev/null || true; }
+lp_loaded()   { [[ -d /sys/module/$LP_MOD ]]; }
+lp_params()   {  # the loaded otpu_pcie's parameters, " name=value" each
+  local f; for f in /sys/module/"$LP_MOD"/parameters/*; do [[ -f $f ]] && printf ' %s=%s' "${f##*/}" "$(cat "$f")"; done; return 0
+}
 have_dkms()   { ((dkms_ok)) && command -v dkms >/dev/null; }
 attr()        { cut -c3- "$1/$2"; }   # a sysfs hex attribute without 0x
 driver_of()   { local l; l="$(readlink "/sys/bus/pci/devices/$1/driver" 2>/dev/null)" || true; echo "${l##*/}"; }
@@ -113,34 +173,57 @@ conf_poll() {  # poll_mode in the installed modprobe.d file ("" when none)
   return 0
 }
 
-users() {  # processes holding /dev/xdma* open or mapped
-  local p f hit
+users() {  # processes holding /dev/xdma* or /dev/otpu* (either driver's nodes) open or mapped
+  local p f l hit
   for p in /proc/[0-9]*; do
     hit=0
-    for f in "$p"/fd/*; do [[ "$(readlink "$f" 2>/dev/null)" == /dev/xdma* ]] && { hit=1; break; }; done
-    grep -qs '/dev/xdma' "$p/maps" && hit=1
+    for f in "$p"/fd/*; do
+      l="$(readlink "$f" 2>/dev/null)" || continue
+      [[ $l == /dev/xdma* || $l == /dev/otpu* ]] && { hit=1; break; }
+    done
+    grep -qsE '/dev/(xdma|otpu)' "$p/maps" && hit=1
     if ((hit)); then
       printf '%s %s\n' "${p#/proc/}" "$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null | cut -c1-100)"
     fi
   done
 }
 
-busy() {  # the driver is loaded and something holds it (an open or mapped /dev/xdma* node)
-  loaded && [[ "$(cat /sys/module/xdma/refcnt 2>/dev/null || echo 0)" != 0 ]]
+busy_mod() {  # module $1 is loaded and something holds it (an open or mapped node of its)
+  [[ -d /sys/module/$1 && "$(cat "/sys/module/$1/refcnt" 2>/dev/null || echo 0)" != 0 ]]
 }
 
-node_of() {  # the xdma node prefix of a card (xdma<N>), from its sysfs device
-  ls "/sys/bus/pci/devices/$1/xdma" 2>/dev/null | sed -n 's/^\(xdma[0-9]*\)_user$/\1/p' | head -1
+busy() { busy_mod xdma || busy_mod "$LP_MOD"; }   # either driver's nodes held
+
+node_of() {  # the node prefix of a card (xdma<N> or otpu<N>), from its driver's class directory
+  # under its sysfs device
+  ls "/sys/bus/pci/devices/$1/xdma" "/sys/bus/pci/devices/$1/otpu" 2>/dev/null \
+    | sed -En 's/^((xdma|otpu)[0-9]+)_user$/\1/p' | head -1
 }
 
-read_id() {  # the ID register (BAR0 offset 0) through /dev/<node>_user, 8 hex digits
-  dd if="/dev/$1_user" bs=4 count=1 2>/dev/null | od -An -tx4 | tr -d ' \n'
+read_id() {  # the ID register (BAR0 offset 0) through /dev/<node>_user, 8 hex digits: a read
+  # (XDMA's node takes one), else a 32-bit load from a mapping of the node (LitePCIe's)
+  local id
+  id="$(dd if="/dev/$1_user" bs=4 count=1 2>/dev/null | od -An -tx4 | tr -d ' \n')"
+  if [[ -z "$id" ]] && command -v python3 >/dev/null; then
+    id="$(python3 -c 'import mmap, os, sys
+m = mmap.mmap(os.open(sys.argv[1], os.O_RDONLY | os.O_SYNC), 4096, mmap.MAP_SHARED, mmap.PROT_READ)
+v = memoryview(m).cast("I")
+print("%08x" % v[0])
+v.release()
+m.close()' "/dev/$1_user" 2>/dev/null)" || id=""
+  fi
+  echo "$id"
+}
+
+drv_state() {  # a card's driver's settings, for the report: XDMA's poll_mode, otpu_pcie's parameters
+  if [[ $1 == xdma ]]; then echo "poll_mode=$(cat /sys/module/xdma/parameters/poll_mode 2>/dev/null)"
+  else echo "$1$(lp_params)"; fi
 }
 
 # ---------------------------------------------------------------- --check
 
 check_card() {
-  local bdf="$1" d="/sys/bus/pci/devices/$1" cls drv node id spd wid msp mwd f miss=""
+  local bdf="$1" d="/sys/bus/pci/devices/$1" cls drv want node id spd wid msp mwd f miss=""
   cls="$(cat "$d/class")"
   say "card $bdf: [$(attr "$d" vendor):$(attr "$d" device)] subsystem \
 $(attr "$d" subsystem_vendor):$(attr "$d" subsystem_device) revision $(attr "$d" revision)"
@@ -154,11 +237,12 @@ $(attr "$d" subsystem_vendor):$(attr "$d" subsystem_device) revision $(attr "$d"
   mwd="${mwd:-8}"
   if [[ -n "$spd" && "$spd" == "$msp" && "$wid" == "$mwd" ]]; then ok "link $spd x$wid (the card's own speed and width)"
   else note "link $spd x$wid: the card can do ${msp:-?} x$mwd (it works; DMA is slower; --rescan or a warm reboot retrains)"; fi
-  drv="$(driver_of "$bdf")"
-  if [[ "$drv" == xdma ]]; then ok "bound to xdma"
-  else bad "bound to '${drv:-nothing}', not xdma (driver_override: $(cat "$d/driver_override"))"; return; fi
+  drv="$(driver_of "$bdf")"; want="$(card_driver "$bdf")"
+  if [[ "$drv" == "$want" ]]; then
+    ok "bound to $want ($([[ $want == xdma ]] && echo "an XDMA" || echo "a LitePCIe") bitstream)"
+  else bad "bound to '${drv:-nothing}', not $want (driver_override: $(cat "$d/driver_override"))"; return; fi
   node="$(node_of "$bdf")"
-  [[ -n "$node" ]] || { bad "no xdma device nodes under $d/xdma"; return; }
+  [[ -n "$node" ]] || { bad "no $want device nodes under $d/$(node_class "$want")"; return; }
   for f in user h2c_0 c2h_0; do [[ -c /dev/${node}_$f ]] || miss+=" ${node}_$f"; done
   [[ -z "$miss" ]] || { bad "missing /dev/:$miss"; return; }
   if [[ -r /dev/${node}_user && -w /dev/${node}_h2c_0 && -r /dev/${node}_c2h_0 ]]; then
@@ -168,6 +252,48 @@ $(attr "$d" subsystem_vendor):$(attr "$d" subsystem_device) revision $(attr "$d"
   if [[ "$id" == "$OTPU_ID" ]]; then ok "ID register 0x$id (OTPU)"
   elif [[ "$id" == ffffffff ]]; then bad "ID register 0xffffffff: the card was reprogrammed after enumeration (--rescan)"
   else bad "ID register 0x${id:-unreadable}, want 0x$OTPU_ID"; fi
+  [[ $want == xdma ]] || lp_dma_state "/sys/class/otpu/${node}_user"
+}
+
+lp_dma_state() {  # otpu_pcie's DMA state, from its attributes on the card's user node ($1)
+  local a=() f v r
+  for f in max_payload max_read_request irqs mm_status; do
+    v="$(cat "$1/$f" 2>/dev/null)" || v="?"
+    [[ $f == mm_status && $v != "?" ]] && v="$(printf '%#x' "$v")"
+    a+=("${f//_/ } $v")
+  done
+  r="$(cat "$1/resets" 2>/dev/null)" || r="?"
+  if [[ $r == 0 ]]; then ok "DMA: ${a[*]/%/,} no resets"
+  else note "DMA: ${a[*]/%/,} resets $r (each after a transfer that timed out: dmesg | grep $LP_MOD)"; fi
+}
+
+check_lp_module() {  # --check's LitePCIe driver section
+  local p st a b
+  say "LitePCIe driver module ($LP_MOD: LitePCIe bitstreams)"
+  if [[ ! -f "$lp_files/dkms.conf" ]]; then
+    note "$lp_files/dkms.conf missing: this package has no LitePCIe driver"; return
+  fi
+  p="$(lp_mod_path)"
+  if [[ -z "$p" ]]; then bad "no $LP_MOD module for $kver (run otpu-setup)"
+  elif [[ -f $lp_stamp && "$p" == "$moddir/updates/$LP_MOD.ko" ]]; then
+    if [[ "$(cat "$lp_stamp")" == "$LP_VER" ]]; then ok "$p ($LP_PKG $LP_VER, no DKMS)"
+    else bad "$p is $LP_PKG $(cat "$lp_stamp"), this package's is $LP_VER (run otpu-setup)"; fi
+  else ok "$p"; fi
+  [[ -f "$lp_src_dir/.complete" ]] || bad "$lp_src_dir missing: this package's $LP_PKG $LP_VER is not installed (run otpu-setup)"
+  if have_dkms; then
+    st="$(dkms status -m "$LP_PKG" -k "$kver" 2>/dev/null || true)"
+    if [[ "$(grep -F "$LP_PKG/$LP_VER" <<< "$st")" == *installed* ]]; then ok "DKMS: $(grep -F "$LP_PKG/$LP_VER" <<< "$st")"
+    elif [[ -n "$st" ]]; then bad "DKMS has ${st//$'\n'/; }, this package's is $LP_PKG/$LP_VER (run otpu-setup)"
+    else note "DKMS present, $LP_PKG/$LP_VER not installed for $kver (run otpu-setup)"; fi
+  fi
+  if ! lp_loaded; then note "$LP_MOD not loaded (it loads for a LitePCIe card, by its PCI ID)"
+  else
+    ok "loaded$(lp_params)"
+    a="$(cat "/sys/module/$LP_MOD/srcversion" 2>/dev/null || true)"
+    b="$(modinfo -F srcversion "$p" 2>/dev/null || true)"
+    [[ -z "$a" || -z "$b" || "$a" == "$b" ]] || \
+      note "the loaded $LP_MOD is not the installed one: the installed one loads at --rescan or reboot"
+  fi
 }
 
 do_check() {
@@ -176,7 +302,7 @@ do_check() {
   if [[ -d "$moddir/build" ]]; then ok "headers in $moddir/build"
   else note "no kernel headers for $kver (needed to build the driver)"; fi
 
-  say "driver module"
+  say "XDMA driver module (xdma: XDMA bitstreams)"
   p="$(mod_path)"; t="$(mod_tag)"; it="$(intree)"
   if [[ -z "$p" ]]; then bad "no xdma module for $kver (run otpu-setup)"
   elif [[ "$t" == "$VER" ]]; then ok "$p (openTPU build $t)"
@@ -202,6 +328,8 @@ do_check() {
       note "the loaded module is not the installed one: the installed one loads at --rescan or reboot"
   fi
 
+  check_lp_module
+
   say "configuration"
   for r in "${rules[@]}"; do
     if cmp -s "$files/$r" "/etc/udev/rules.d/$r"; then ok "/etc/udev/rules.d/$r"
@@ -212,7 +340,7 @@ do_check() {
   bdfs="$(cards)"
   if [[ -z "$bdfs" ]]; then
     say "card"
-    bad "no openTPU card on the bus (10ee:7028): load the bitstream (JTAG, then --rescan), or flash it"
+    bad "no openTPU card on the bus (10ee:7028 XDMA, 10ee:5054 LitePCIe): load the bitstream (JTAG, then --rescan), or flash it"
   else
     for b in $bdfs; do check_card "$b"; done
   fi
@@ -284,20 +412,21 @@ fetch_source() {  # /usr/src/otpu-xdma-<VER>: the pinned driver source with the 
   ok "source $src_dir (dma_ip_drivers ${XDMA_COMMIT:0:7} + xdma-otpu.patch)"
 }
 
-dkms_versions() { dkms status -m $PKG 2>/dev/null | sed -n "s|^$PKG/\([^,:]*\).*|\1|p" | sort -u; }
+dkms_versions() { dkms status -m "$1" 2>/dev/null | sed -n "s|^$1/\([^,:]*\).*|\1|p" | sort -u; }
 
-drop_other_builds() {  # other openTPU driver versions in DKMS and /usr/src
+drop_other_builds() {  # other versions of DKMS package $1 (this script installs version $2,
+  # source $3) in DKMS and /usr/src
   local v
   if command -v dkms >/dev/null; then
-    for v in $(dkms_versions); do
-      if [[ "$v" != "$VER" ]] || ! have_dkms; then
-        dkms remove -m $PKG -v "$v" --all >/dev/null 2>&1 || true
-        note "removed DKMS $PKG/$v"
+    for v in $(dkms_versions "$1"); do
+      if [[ "$v" != "$2" ]] || ! have_dkms; then
+        dkms remove -m "$1" -v "$v" --all >/dev/null 2>&1 || true
+        note "removed DKMS $1/$v"
       fi
     done
   fi
-  for v in /usr/src/$PKG-*; do
-    [[ -e "$v" && "$v" != "$src_dir" ]] || continue
+  for v in /usr/src/"$1"-*; do
+    [[ -e "$v" && "$v" != "$3" ]] || continue
     rm -rf "$v"; note "removed $v"
   done
 }
@@ -344,6 +473,66 @@ search order (/etc/depmod.d, /usr/lib/depmod.d: 'updates' must come before 'buil
   fi
 }
 
+lp_fetch_source() {  # /usr/src/<package>-<version>: the LitePCIe driver's source, its dkms.conf
+  # with the version filled in (the version names the source: lp_hash)
+  if [[ -f "$lp_src_dir/.complete" ]]; then ok "source $lp_src_dir"; return; fi
+  local f
+  rm -rf "$lp_src_dir"
+  while read -r f; do install -D -m 644 "$lp_files/$f" "$lp_src_dir/$f"; done < <(lp_find)
+  sed -i "s/@VERSION@/$LP_VER/" "$lp_src_dir/dkms.conf"
+  touch "$lp_src_dir/.complete"
+  ok "source $lp_src_dir (from $lp_files)"
+}
+
+lp_install_module() {  # the LitePCIe driver built for the running kernel: by DKMS, else into
+  # updates/ with its version beside it (lp_stamp)
+  local plain="$moddir/updates/$LP_MOD.ko" tmp p
+  if have_dkms; then
+    if [[ -f $lp_stamp ]]; then   # (ours, from a run without DKMS: not one DKMS put there)
+      rm -f "$plain" "$lp_stamp"; note "removed $plain (DKMS installs the module now)"
+    fi
+    if [[ "$(dkms status -m "$LP_PKG" -v "$LP_VER" -k "$kver" 2>/dev/null)" == *installed* ]]; then
+      ok "DKMS $LP_PKG/$LP_VER installed for $kver"
+    else
+      say "DKMS: building $LP_PKG/$LP_VER for $kver"
+      dkms status -m "$LP_PKG" -v "$LP_VER" 2>/dev/null | grep -q . || dkms add -m "$LP_PKG" -v "$LP_VER" >/dev/null
+      dkms install -m "$LP_PKG" -v "$LP_VER" -k "$kver" --force \
+        || die "dkms install failed: see /var/lib/dkms/$LP_PKG/$LP_VER/build/make.log"
+      lp_changed=1
+      ok "DKMS $LP_PKG/$LP_VER installed (rebuilt automatically at kernel upgrades)"
+    fi
+  else
+    if [[ -f $plain && "$(cat "$lp_stamp" 2>/dev/null)" == "$LP_VER" && \
+          "$(modinfo -F vermagic "$plain" | awk '{print $1}')" == "$kver" ]]; then
+      ok "$plain ($LP_PKG $LP_VER)"
+    else
+      say "building $LP_MOD for $kver"
+      tmp="$(mktemp -d)"
+      cp -r "$lp_src_dir"/. "$tmp/"
+      make -s -C "$moddir/build" M="$tmp" $(kbuild_llvm) -j"$(nproc)" modules >/dev/null \
+        || die "$LP_MOD build failed (make -C $moddir/build M=$tmp modules)"
+      install -D -m 644 "$tmp/$LP_MOD.ko" "$plain"
+      echo "$LP_VER" > "$lp_stamp"
+      rm -rf "$tmp"
+      lp_changed=1
+      ok "installed $plain ($LP_PKG $LP_VER; no DKMS: re-run otpu-setup after a kernel upgrade)"
+    fi
+  fi
+  depmod -a "$kver"
+  p="$(lp_mod_path)"
+  [[ -n "$p" ]] || die "modprobe $LP_MOD finds no module after the install (depmod -a $kver)"
+  ok "modprobe $LP_MOD -> $p"
+}
+
+lp_install() {  # the LitePCIe driver: its source into /usr/src, then the module
+  if [[ ! -f "$lp_files/dkms.conf" ]]; then
+    note "$lp_files/dkms.conf missing: this package has no LitePCIe driver to install"; return 0
+  fi
+  lp_fetch_source
+  drop_other_builds "$LP_PKG" "$LP_VER" "$lp_src_dir"
+  lp_install_module
+}
+
 install_config() {
   local r changed=0 cur want
   for r in "${rules[@]}"; do
@@ -352,7 +541,7 @@ install_config() {
   done
   if ((changed)); then
     udevadm control --reload
-    udevadm trigger --subsystem-match=xdma --subsystem-match=usb --action=change || true
+    udevadm trigger --subsystem-match=xdma --subsystem-match=otpu --subsystem-match=usb --action=change || true
   fi
   cur="$(conf_poll)"
   want="${poll:-${cur:-$DEFAULT_POLL}}"
@@ -363,16 +552,23 @@ install_config() {
   ok "$modconf: poll_mode=$want ($([[ $want == 1 ]] && echo polling || echo interrupts))"
 }
 
-bind_cards() {  # bind every card to xdma (the override matters for serial-class bitstreams)
-  local b d drv
+bind_cards() {  # bind every card to the driver its bitstream takes (card_driver): an XDMA one to
+  # xdma by the override (it matters for serial-class bitstreams), a LitePCIe one to otpu_pcie by
+  # its ID table (an override left on the device is cleared)
+  local b d drv want
   for b in $(cards); do
     d="/sys/bus/pci/devices/$b"
-    [[ "$(cat "$d/driver_override")" == xdma ]] || echo xdma > "$d/driver_override"
+    want="$(card_driver "$b")"
+    if [[ $want == xdma ]]; then
+      [[ "$(cat "$d/driver_override")" == xdma ]] || echo xdma > "$d/driver_override"
+    elif [[ "$(cat "$d/driver_override")" != "(null)" ]]; then
+      echo > "$d/driver_override"
+    fi
     drv="$(driver_of "$b")"
-    if [[ -n "$drv" && "$drv" != xdma ]]; then
+    if [[ -n "$drv" && "$drv" != "$want" ]]; then
       echo "$b" > "/sys/bus/pci/drivers/$drv/unbind"; note "$b: unbound from $drv"
     fi
-    [[ "$drv" == xdma ]] || echo "$b" > /sys/bus/pci/drivers_probe
+    [[ "$drv" == "$want" ]] || echo "$b" > /sys/bus/pci/drivers_probe
   done
 }
 
@@ -384,7 +580,7 @@ refuse_if_busy() {
   fi
 }
 
-load_driver() {  # (re)load when the loaded module is not the installed one or the mode differs
+load_xdma() {  # (re)load xdma when the loaded module is not the installed one or the mode differs
   local want why=""
   want="$(conf_poll)"
   if loaded; then
@@ -395,7 +591,7 @@ load_driver() {  # (re)load when the loaded module is not the installed one or t
       why="poll_mode $(cat /sys/module/xdma/parameters/poll_mode) -> $want"
     fi
     if [[ -n "$why" ]]; then
-      if busy; then
+      if busy_mod xdma; then
         note "$why; the card is in use, so this waits for the next --rescan or reboot:"
         users | sed 's/^/         /'
         return 0
@@ -407,11 +603,40 @@ load_driver() {  # (re)load when the loaded module is not the installed one or t
     fi
   fi
   loaded || modprobe xdma
+}
+
+load_lp() {  # (re)load otpu_pcie when the loaded module is not the installed one (none
+  # installed: nothing to load)
+  local why="" a b n
+  [[ -n "$(lp_mod_path)" ]] || return 0
+  if lp_loaded; then
+    a="$(cat "/sys/module/$LP_MOD/srcversion" 2>/dev/null || true)"
+    b="$(modinfo -k "$kver" -F srcversion "$LP_MOD" 2>/dev/null || true)"
+    if ((lp_changed)) || [[ -n "$a" && -n "$b" && "$a" != "$b" ]]; then
+      why="the loaded $LP_MOD is not the installed build"
+    fi
+    if [[ -n "$why" ]]; then
+      if busy_mod "$LP_MOD"; then
+        note "$why; the card is in use, so this waits for the next --rescan or reboot:"
+        users | sed 's/^/         /'
+        return 0
+      fi
+      say "reloading $LP_MOD ($why)"
+      for n in 1 2 3 4 5 6 7 8 9 10; do modprobe -r "$LP_MOD" 2>/dev/null && break; sleep 0.5; done
+      ! lp_loaded || die "cannot unload $LP_MOD: in use (lsmod | grep $LP_MOD)"
+    fi
+  fi
+  lp_loaded || modprobe "$LP_MOD"
+}
+
+load_drivers() {  # both drivers loaded (the installed builds), every card bound to its own
+  load_xdma
+  load_lp
   bind_cards
   udevadm settle -t 10 || true
 }
 
-wait_nodes() {  # up to 10 s for every card's /dev/xdma*_user
+wait_nodes() {  # up to 10 s for every card's /dev/xdma*_user or /dev/otpu*_user
   local b n all
   for _ in $(seq 50); do
     all=1
@@ -422,17 +647,17 @@ wait_nodes() {  # up to 10 s for every card's /dev/xdma*_user
 }
 
 report_cards() {
-  local b node id n=0
+  local b node id want n=0
   for b in $(cards); do
     n=$((n + 1))
-    node="$(node_of "$b")"
+    node="$(node_of "$b")"; want="$(card_driver "$b")"
     if [[ -z "$node" ]]; then
-      bad "$b: no /dev/xdma* nodes (dmesg | grep -i xdma; with the IOMMU on, boot with iommu=pt)"
+      bad "$b: no /dev/$(node_class "$want")* nodes from $want (dmesg | grep -i $want; with the IOMMU on, boot with iommu=pt)"
       continue
     fi
     id="$(read_id "$node" || true)"
     if [[ "$id" == "$OTPU_ID" ]]; then
-      ok "$b -> /dev/${node}_*, ID 0x$id (OTPU), class $(cat /sys/bus/pci/devices/$b/class), poll_mode=$(cat /sys/module/xdma/parameters/poll_mode)"
+      ok "$b -> /dev/${node}_*, ID 0x$id (OTPU), class $(cat /sys/bus/pci/devices/$b/class), $(drv_state "$want")"
     elif [[ "$id" == ffffffff ]]; then
       bad "$b: ID 0xffffffff: the card was reprogrammed after enumeration: otpu-setup --rescan"
     else
@@ -446,12 +671,14 @@ do_install() {
   say "XDMA driver ($PKG $VER, kernel $kver)"
   need_build_tools
   fetch_source
-  drop_other_builds
+  drop_other_builds "$PKG" "$VER" "$src_dir"
   install_module
+  say "LitePCIe driver ($LP_PKG $LP_VER, kernel $kver)"
+  lp_install
   say "udev rules and driver options"
   install_config
-  say "driver"
-  load_driver
+  say "drivers"
+  load_drivers
   wait_nodes || true
   report_cards
   ((nfail == 0)) || exit 1
@@ -466,7 +693,7 @@ do_rescan() {
 loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot \
 (the FPGA keeps its configuration while the slot stays powered)"
   trap - EXIT
-  load_driver
+  load_drivers
   wait_nodes || true
   report_cards
   ((nfail == 0)) || exit 1
@@ -477,9 +704,13 @@ do_uninstall() {
   refuse_if_busy "stop it first"
   say "uninstall"
   if loaded && loaded_ours; then modprobe -r xdma; ok "unloaded xdma"; fi
+  if lp_loaded; then modprobe -r "$LP_MOD"; ok "unloaded $LP_MOD"; fi
   if command -v dkms >/dev/null; then
-    for v in $(dkms_versions); do
+    for v in $(dkms_versions $PKG); do
       dkms remove -m $PKG -v "$v" --all >/dev/null && ok "removed DKMS $PKG/$v"
+    done
+    for v in $(dkms_versions "$LP_PKG"); do
+      dkms remove -m "$LP_PKG" -v "$v" --all >/dev/null && ok "removed DKMS $LP_PKG/$v"
     done
   fi
   for k in /lib/modules/*; do
@@ -487,9 +718,11 @@ do_uninstall() {
     if [[ -f $f && -n "$(modinfo -F otpu "$f" 2>/dev/null)" ]]; then
       rm -f "$f"; depmod -a "${k##*/}"; ok "removed $f"
     elif [[ -f $f ]]; then note "kept $f (no otpu tag: not installed by this script)"; fi
+    f="$k/updates/$LP_MOD.ko"           # (the name is openTPU's alone)
+    if [[ -f $f ]]; then rm -f "$f" "$k/updates/$LP_MOD.version"; depmod -a "${k##*/}"; ok "removed $f"; fi
   done
-  rm -rf /usr/src/$PKG-* "${cache%/*}"
-  ok "removed /usr/src/$PKG-* and ${cache%/*}"
+  rm -rf /usr/src/$PKG-* /usr/src/"$LP_PKG"-* "${cache%/*}"
+  ok "removed /usr/src/$PKG-*, /usr/src/$LP_PKG-* and ${cache%/*}"
   for f in "${rules[@]}"; do
     if [[ -f /etc/udev/rules.d/$f ]]; then rm -f "/etc/udev/rules.d/$f"; ok "removed /etc/udev/rules.d/$f"; fi
   done

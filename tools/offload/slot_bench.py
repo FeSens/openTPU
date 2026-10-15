@@ -5,7 +5,7 @@ the card's side of the mailbox itself (it posts each request's ids and seq), so 
 It writes whole 64-byte beats only, into a scratch layout at --base, after zeroing its mailbox
 and directory (a scrubbed card: no read of a beat never written).
 
-    python3 tools/offload/slot_bench.py                 # the card (/dev/xdma0), under its lock
+    python3 tools/offload/slot_bench.py                 # the card, under its lock
     python3 tools/offload/slot_bench.py --null          # host only: a transport that drops
                                                         # the DMA (the staging's CPU cost)
 
@@ -123,8 +123,8 @@ def main():
         board.info()["caps"]["chash"] = True            # the production map's swaps
         a.base = 0
     else:
-        from opentpu.host.board import XdmaTransport
-        board = Board(XdmaTransport("/dev/xdma0"))
+        from opentpu.host.board import card_transport
+        board = Board(card_transport())
     try:
         for s in a.sizes:
             for kind in ("backend", "board"):

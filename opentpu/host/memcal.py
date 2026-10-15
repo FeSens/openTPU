@@ -187,10 +187,11 @@ def main(argv: list[str] | None = None, open_transport=None) -> int:
     ap.add_argument("--force", action="store_true", help="cal: both channels, from the host")
     ap.add_argument("--stride", type=int, default=1, help="DQS scan stride, fine steps")
     ap.add_argument("--firmware", type=Path, help="selfcal: this image (fw.py's selfcal.bin) first")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     a = ap.parse_args(argv)
-    from .board import Board, XdmaTransport
-    t = open_transport() if open_transport else XdmaTransport(a.dev)
+    from .board import Board, card_transport
+    t = open_transport() if open_transport else card_transport(a.dev)
     with Board(t, calibrate=False) as b:
         st = b.t.reg_read(R.R_STATUS)
         hc = hostcal(b.t)

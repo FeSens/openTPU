@@ -49,7 +49,8 @@ def main(argv=None) -> int:
     ap.add_argument("--wformat", default="fp4")
     ap.add_argument("--head-format", default="int8")
     ap.add_argument("--mhz", type=float, default=120.755)
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     a = ap.parse_args(argv)
     path = model_dir(a.model)
     spec = load_spec(path)

@@ -166,7 +166,8 @@ def describe(s: dict, j: int) -> str:
 def main(argv: list[str] | None = None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(prog="otpu-ddr4", description=__doc__.split("\n")[0])
     ap.add_argument("cmd", nargs="?", default="status", choices=("status", "bist", "ecc"))
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--dimm", type=int, action="append", help="DIMM (default: every one)")
     ap.add_argument("--gib", type=float, default=1.0, help="bist: GiB per DIMM (from its start)")
     ap.add_argument("--passes", type=int, default=1)
@@ -174,10 +175,10 @@ def main(argv: list[str] | None = None, open_transport=None) -> int:
                     help="ecc: clear the counters after (every DIMM's)")
     a = ap.parse_args(argv)
     if open_transport is None:
-        from .board import XdmaTransport
+        from .board import card_transport
         # the BIST writes over the DRAM: it holds the device lock (a DMA transport's); status
         # and ecc only read registers, as otpu-smi
-        t = XdmaTransport(a.dev, dma=a.cmd == "bist")
+        t = card_transport(a.dev, dma=a.cmd == "bist")
     else:
         t = open_transport()
     try:

@@ -1,4 +1,5 @@
-"""otpu-setup: the host PC setup for the card (XDMA driver, udev rules, driver options).
+"""otpu-setup: the host PC setup for the card (the PCIe drivers: XDMA's for the XDMA bitstreams,
+openTPU's LitePCIe driver otpu_pcie for the LitePCIe ones; udev rules, driver options).
 
 A front end for setup_pcie.sh, which ships in this package with its files (pcie/): the
 arguments pass through (--check, --rescan, --uninstall, --poll, --irq, --no-dkms, --src DIR,

@@ -24,7 +24,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", default="qwen3")
     ap.add_argument("--backend", default="board", choices=["board", "isa"])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--slots", type=int, default=8)
     ap.add_argument("--cap", type=int, default=2048)
     ap.add_argument("--context", type=int, default=64)

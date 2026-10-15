@@ -5,7 +5,7 @@ mid-run (SIGKILL) leaves its run to the next holder's open, which waits and refu
 short with OTPU_STOP_RUN=1; a holder sent SIGTERM mid-run stops its run on the way out (exit
 status 143, the next open finds RUN clear).
 
-    otpu-lock -- python3 tools/qual/runend.py [--dev /dev/xdma0]
+    otpu-lock -- python3 tools/qual/runend.py [--dev /dev/otpu0]
 
 Takes the card three times (the killed holders are child processes), so run it under otpu-lock
 (OTPU_LOCK_HELD) or on a card nobody else waits for. Prints a [PASS] / [FAIL] line per check;
@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 from opentpu import isa as I  # noqa: E402
 from opentpu.host import board as B  # noqa: E402
 from opentpu.host import regs as R  # noqa: E402
-from opentpu.host.board import Board, XdmaTransport, device_config  # noqa: E402
+from opentpu.host.board import Board, card_dev, card_transport, device_config  # noqa: E402
 from opentpu.host.checks import run_demo  # noqa: E402
 
 BUSY_AT, BUSY_OUT = 0x8000000, 0x9000000    # 128 / 144 MiB up: no other check's region
@@ -44,10 +44,10 @@ def busy_program(n: int = 50_000_000) -> list:
 CHILD = """
 import os, sys, time
 sys.path.insert(0, {root!r})
-from opentpu.host.board import Board, XdmaTransport
+from opentpu.host.board import Board, card_transport
 sys.path.insert(0, {tools!r})
 from runend import BUSY_PROG, busy_program
-b = Board(XdmaTransport({dev!r}))
+b = Board(card_transport({dev!r}))
 b.load(BUSY_PROG, busy_program())
 b.start()
 print("running", flush=True)
@@ -65,7 +65,7 @@ def _child(dev: str):
 
 
 def cut_short(dev: str) -> tuple[bool, str]:
-    with Board(XdmaTransport(dev)) as b:
+    with Board(card_transport(dev)) as b:
         cfg = device_config(b.info())
         b.load(BUSY_PROG, busy_program())
         b.start()
@@ -87,13 +87,13 @@ def killed_holder(dev: str) -> tuple[bool, str]:
     out = []
     B.QUIESCE_WAIT = 2.0
     try:
-        Board(XdmaTransport(dev)).close()
+        Board(card_transport(dev)).close()
         out.append("open did not refuse a run left going")
     except B.CardRunning:
         pass
     os.environ["OTPU_STOP_RUN"] = "1"
     try:
-        with Board(XdmaTransport(dev)) as b:
+        with Board(card_transport(dev)) as b:
             st = b.t.reg_read(R.R_STATUS)
             ok, msg, _ = run_demo(b, device_config(b.info()))
     finally:
@@ -107,7 +107,7 @@ def terminated_holder(dev: str) -> tuple[bool, str]:
     p = _child(dev)
     p.send_signal(signal.SIGTERM)
     rc = p.wait(timeout=30)
-    t = XdmaTransport(dev, dma=False)
+    t = card_transport(dev, dma=False)
     try:
         st = t.reg_read(R.R_STATUS)
     finally:
@@ -118,8 +118,10 @@ def terminated_holder(dev: str) -> tuple[bool, str]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     a = ap.parse_args(argv)
+    a.dev = card_dev(a.dev)             # (one card for the three, the children's too)
     rows = []
     for name, fn in (("a run cut short", cut_short), ("a holder killed mid-run", killed_holder),
                      ("a holder sent SIGTERM mid-run", terminated_holder)):

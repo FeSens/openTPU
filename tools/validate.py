@@ -660,7 +660,7 @@ def load_hf(path: Path, spec):
     return m
 
 
-def open_card(spec, path: Path, cap: int, dev: str):
+def open_card(spec, path: Path, cap: int, dev: str | None):
     """The card's (backend factory, configuration), as otpu-chat --backend board."""
     from opentpu.host.board import ConfigMismatch
     from opentpu.host.chat import make_backend
@@ -912,7 +912,8 @@ def _main(argv=None) -> int:
     ap.add_argument("--cfg", help="the simulators' configuration: board (the default, "
                     "isasim.board_config), design, or a pickled Config (tools/qual/refs.py cfg);"
                     " with the card, or --against a saved card run, the card's")
-    ap.add_argument("--dev", default="/dev/xdma0", help="the card's XDMA device")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--resident", action="store_true", help="the resident decode program")
     ap.add_argument("--tokens", type=int, default=16, help="greedy tokens per prompt")
     ap.add_argument("--chat", action="store_true", help="prompts as user turns of the chat "

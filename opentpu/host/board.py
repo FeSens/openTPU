@@ -1,12 +1,15 @@
-"""Host driver for the openTPU board (YPCB-00338 over PCIe, Xilinx XDMA).
+"""Host driver for the openTPU board (YPCB-00338 over PCIe: Xilinx XDMA, or LitePCIe).
 
-The card exposes, through the XDMA bridge:
+The card exposes, through its PCIe bridge (Xilinx's XDMA; on a LitePCIe bitstream, LitePCIe with
+openTPU's own driver, opentpu/host/pcie/otpu, whose nodes take XDMA's calls):
   - its memory channels on the bridge's AXI master: channel j at BASE[j] (the YPCB-00338's two
     DDR3 channels, 2 GiB each; a register map 4 bitstream's from its CFG_* registers:
     channel_map), written with /dev/xdma0_h2c_0 and read with /dev/xdma0_c2h_0 (file offset =
-    AXI address);
+    AXI address; /dev/otpu0_h2c_0 and _c2h_0 on a LitePCIe bitstream);
   - the control registers (rtl/shell/otpu_ctrl.sv; map in regs.py and
-    docs/observability.md) on BAR0, /dev/xdma0_user.
+    docs/observability.md) on BAR0, /dev/xdma0_user (/dev/otpu0_user).
+card_transport opens whichever driver has the card (card_dev: an explicit device, else card
+0, /dev/otpu0 before /dev/xdma0): XdmaTransport or LitePcieTransport.
 
 The accelerator addresses one logical DRAM interleaved over the channels in 64-byte beats:
 logical beat b of chunk m = b // 2 lives at BASE[c] + m * 64 on channel c = b % 2, or, on a
@@ -23,9 +26,9 @@ register. With transport=SimTransport the identical protocol runs against the Ve
 of the board (sim/verilator/tb_board.sv) -- the bring-up rehearsal.
 
 A Board takes the device's exclusive lock (runstate.DeviceLock, /tmp/otpu/<dev>.lock) when its
-transport names a device (XdmaTransport, FakeTransport); monitors pass lock=False. Register map
-version 1 bitstreams (no REGMAP register) work for everything but the counters, the trace and
-the temperature: info() reports regmap 1 and snapshot() returns None.
+transport names a device (XdmaTransport, LitePcieTransport, FakeTransport); monitors pass
+lock=False. Register map version 1 bitstreams (no REGMAP register) work for everything but the
+counters, the trace and the temperature: info() reports regmap 1 and snapshot() returns None.
 
 A locked Board ends what an earlier holder left on the card before anything writes it
 (Board.quiesce: a process killed mid-run leaves its program running, storing into DRAM), and
@@ -37,8 +40,10 @@ from __future__ import annotations
 import collections
 import concurrent.futures
 import fcntl
+import glob
 import mmap
 import os
+import re
 import struct
 import sys
 import threading
@@ -76,8 +81,16 @@ DMA_PLACE = 2048
 # writes data from 8 KiB further on, or stale data, and the engine keeps that slip until the
 # bitstream is loaded again (docs/host.md, "XDMA's H2C overrun"). Calls of 4 KiB were clean
 # under both. So while a run is in flight Board.write moves at most RUN_H2C bytes per call and
-# channel (XdmaTransport.run_h2c); larger writes belong before or after the run.
+# channel (XdmaTransport.run_h2c); larger writes belong before or after the run. LitePCIe's
+# reader fetches only into room it has and cannot lap: LitePcieTransport.run_h2c is 0 (no limit).
 RUN_H2C = 4096
+# The cards' device nodes, /dev/<prefix>N_{user,h2c_0,c2h_0}, by the PCIe driver that made them:
+# openTPU's own LitePCIe driver's (opentpu/host/pcie/otpu, PCI ID 10ee:5054) and Xilinx's XDMA
+# driver's (the XDMA bitstreams, 10ee:7028). Each names its sysfs class after the prefix too,
+# /sys/class/<prefix>/<prefix>N_user/device being the card's PCI device (card_sysfs).
+DRIVERS = {"otpu": "otpu_pcie", "xdma": "xdma"}    # node prefix -> kernel module
+DMA_ALIGN = 16                  # LitePCIe: a DMA call's card address, length and host buffer
+                                # must be multiples of it (the driver refuses others: EINVAL)
 PIPE = 2 * DMA_CHUNK            # Board.write / read: logical bytes per pipelined piece
 POLL_SPIN = 100e-6              # poll: seconds of back-to-back register reads before sleeping
 POLL_MAX_SLEEP = 1e-3           # poll: longest sleep between reads
@@ -273,6 +286,7 @@ class XdmaTransport:
     threaded = True             # Board may run the DMA calls in a worker thread (Board.write/read)
     streams = True              # DMA while the accelerator runs (BoardBackend streamed logits)
     run_h2c = RUN_H2C           # Board.write's bytes per call and channel during a run
+    dma_align = 1               # a DMA call's host buffer alignment the driver needs (bytes)
     # BoardBackend.host's sleep between polls that found nothing: none, the hook's read of the
     # card (a DMA call, ~30 us) paces the loop, so the card's request is seen ~45 us after its
     # post, not ~100 (HOST_IDLE's 50 us slept ~110 on the card's host; docs/offload.md 10.8)
@@ -376,7 +390,7 @@ class XdmaTransport:
         else:
             buf = out
         mv = memoryview(buf).cast("B")
-        direct = n < 64 << 10 or _read_ok(_addr(buf), base)
+        direct = (n < 64 << 10 or _read_ok(_addr(buf), base)) and _addr(buf) % self.dma_align == 0
         pos = 0
         while pos < n:
             want = min(DMA_CHUNK, n - pos)
@@ -436,6 +450,83 @@ class XdmaTransport:
                 late = el - max(expect, 0.0)
                 time.sleep(min(POLL_MAX_SLEEP, max(POLL_MIN_SLEEP, late / 32)))
                 self.poll_exact = False
+
+
+class LitePcieTransport(XdmaTransport):
+    """The card through openTPU's LitePCIe driver (opentpu/host/pcie/otpu, module otpu_pcie),
+    whose nodes take XDMA's calls: /dev/otpuN_user maps BAR0's user window (its first 512 KiB,
+    the register map above; the LitePCIe DMA's own CSRs past it are the driver's, which refuses
+    a map that reaches them), and pwrite / pread on _h2c_0 / _c2h_0 move data to / from the card
+    address at the file offset, each call returning once its data has landed.
+
+    Its DMA reader fetches a descriptor's data only into room it has, so it cannot lap its
+    buffer as XDMA's H2C engine does (RUN_H2C): Board.write's calls during a run take any size
+    (run_h2c 0). The driver refuses a call (EINVAL) whose card address, length or host buffer is
+    not a multiple of DMA_ALIGN. Writes always are: whole beats, from a host buffer at (host -
+    card) % 64 == 0 or else through the staging buffer, which is placed so. A read's range off
+    the grid is widened to it, and a read into a host buffer off it goes through the staging
+    buffer."""
+    run_h2c = 0
+    dma_align = DMA_ALIGN
+
+    def __init__(self, dev: str = "/dev/otpu0", dma: bool = True):
+        super().__init__(dev, dma)
+
+    def mem_read(self, ch: int, off: int, n: int, out: np.ndarray | None = None) -> np.ndarray:
+        """XdmaTransport.mem_read on the driver's grid: a range off it is read widened, into a
+        buffer of its own, and cut."""
+        a = DMA_ALIGN
+        if not (off % a or n % a):
+            return super().mem_read(ch, off, n, out)
+        o0 = off // a * a
+        got = super().mem_read(ch, o0, -(-(off + n) // a) * a - o0)[off - o0:off - o0 + n]
+        if out is None:
+            return got
+        memoryview(out).cast("B")[:] = memoryview(got)
+        return out
+
+
+def node_kind(dev: str) -> str:
+    """The driver a node prefix is named for (DRIVERS): "otpu" for /dev/otpuN, else "xdma" (the
+    XDMA nodes, and the stand-ins tests name otherwise)."""
+    return "otpu" if Path(dev).name.startswith("otpu") else "xdma"
+
+
+def card_nodes() -> list[str]:
+    """Every card's node prefix (/dev/otpuN, /dev/xdmaN: those with a register node), sorted."""
+    return sorted(p[:-len("_user")] for k in DRIVERS for p in glob.glob(f"/dev/{k}[0-9]*_user"))
+
+
+def card_dev(dev: str | None = None) -> str:
+    """The node prefix to open for `dev`: `dev` itself when its register node (<dev>_user)
+    exists; else, for a driver's name (/dev/xdmaN, /dev/otpuN), the same card's under the other
+    driver when that one exists (a script's --dev /dev/xdma0 on a LitePCIe bitstream); else `dev`
+    as given (its open fails naming it). None: card 0, /dev/otpu0 when /dev/otpu0_user exists,
+    else /dev/xdma0."""
+    if dev is None:
+        return "/dev/otpu0" if os.path.exists("/dev/otpu0_user") else "/dev/xdma0"
+    if os.path.exists(f"{dev}_user"):
+        return dev
+    p = Path(dev)
+    m = re.fullmatch(r"(otpu|xdma)(\d+)", p.name)
+    if m:
+        alt = str(p.with_name(("xdma" if m[1] == "otpu" else "otpu") + m[2]))
+        if os.path.exists(f"{alt}_user"):
+            return alt
+    return dev
+
+
+def card_sysfs(dev: str) -> Path:
+    """The card's PCI device in sysfs (link speed and width, bus ID), through its driver's class
+    device: /sys/class/xdma/xdmaN_user/device, /sys/class/otpu/otpuN_user/device."""
+    return Path(f"/sys/class/{node_kind(dev)}/{Path(dev).name}_user/device")
+
+
+def card_transport(dev: str | None = None, dma: bool = True):
+    """The card's transport, `dev` resolved by card_dev: LitePcieTransport on a LitePCIe node,
+    XdmaTransport on any other. dma=False: the register BAR alone (monitors: no lock)."""
+    dev = card_dev(dev)
+    return (LitePcieTransport if node_kind(dev) == "otpu" else XdmaTransport)(dev, dma)
 
 
 class SimTransport:
@@ -660,7 +751,7 @@ class Board:
         """check: the card must answer as openTPU; calibrate: then calibrate its DDR3 if the
         bitstream wants the host to (LiteDRAM, CAPS bit27: memcal.ensure; once per
         configuration, as the STATUS calibration bits say)."""
-        self.t = transport or XdmaTransport()
+        self.t = transport or card_transport()
         self.lock = _lock(self.t) if lock else None
         self._info = None
         self._trace = None              # (depth, keep_first) of a started traced run

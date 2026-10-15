@@ -100,7 +100,8 @@ def main(argv=None) -> int:
     ap.add_argument("--modes", default="mm,st,ld,dstep,mm+st,mm+ld,mm+dstep")
     ap.add_argument("--mb", type=float, default=8.0, help="MB of fp4 weights per MM mode")
     ap.add_argument("--mhz", type=float, default=120.755)
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--json")
     ap.add_argument("--plus", action="append", default=[],
                     help="sim: extra simulator argument, overriding the calibrated ones "
@@ -109,8 +110,8 @@ def main(argv=None) -> int:
     n_mm = max(1, round(a.mb * MB / (R * Q.row_bytes(H, "fp4", 128))))
     n_dma = {"st": 64, "ld": 64, "dstep": 32}
     if a.where == "card":
-        from opentpu.host.board import Board, XdmaTransport, device_config
-        board = Board(XdmaTransport(a.dev))
+        from opentpu.host.board import Board, card_transport, device_config
+        board = Board(card_transport(a.dev))
         board.scrub()
         cfg = device_config(board.info())
     else:

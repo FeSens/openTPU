@@ -541,7 +541,7 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False,
          prompt_runs: bool = False, long: bool = False, xl: bool = False) -> int:
     import numpy as np
 
-    from opentpu.host.board import BoardBackend, XdmaTransport
+    from opentpu.host.board import BoardBackend, card_transport
     from opentpu.llm.qwen3 import Engine
     resident = resident or loop or prompt_runs
     cfg = pickle.loads(cfgf.read_bytes())
@@ -555,7 +555,7 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False,
         return 1
     path, spec, W, tok = load(model)
     ids = prompt_ids(tok, long, xl)
-    tr = XdmaTransport("/dev/xdma0")
+    tr = card_transport()
     hf_ = None if hf == "-" else hf
     dev = Engine(spec, W, cap=cap(xl), cfg=cfg, wformat=wf, head_format=hf_, resident=resident,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=path.name),
@@ -620,8 +620,8 @@ def main():
     a = ap.parse_args()
     cfgf = Path(a.cfg)
     if a.mode == "cfg":
-        from opentpu.host.board import Board, XdmaTransport, device_config
-        t = XdmaTransport("/dev/xdma0", dma=False)
+        from opentpu.host.board import Board, card_transport, device_config
+        t = card_transport(dma=False)
         cfg = device_config(Board(t, check=False, lock=False).info())
         blob = pickle.dumps(cfg)
         cfgf.write_bytes(blob)

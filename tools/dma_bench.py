@@ -1,7 +1,8 @@
-"""Host <-> card DMA latency and bandwidth through the XDMA driver, for comparing the driver's
-completion modes (poll_mode=1 vs interrupts; docs/host.md section 2).
+"""Host <-> card DMA latency and bandwidth through the PCIe driver (XDMA's, or LitePCIe's
+otpu_pcie), for comparing the driver's completion modes (XDMA's poll_mode=1 vs interrupts;
+docs/host.md section 2; otpu_pcie's module parameters) and the two drivers.
 
-    python3 tools/dma_bench.py [--dev /dev/xdma0] [--json out.json]
+    python3 tools/dma_bench.py [--dev /dev/otpu0] [--json out.json]
 
 Takes the device lock. Uses channel 0 from 1 GiB up (writes before it reads: the card's ECC
 DRAM hangs on a read of a never-written beat) and checks every read against what was written.
@@ -24,7 +25,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from opentpu.host.board import XdmaTransport, placed  # noqa: E402
+from opentpu.host.board import DRIVERS, card_dev, card_transport, node_kind, placed  # noqa: E402
 from opentpu.host.runstate import DeviceLock  # noqa: E402
 
 BASE = 1 << 30                                 # channel-0 offset of the test region
@@ -32,7 +33,8 @@ BASE = 1 << 30                                 # channel-0 offset of the test re
 
 def cpu() -> float:
     """CPU seconds of this process plus the XDMA driver's kernel threads (cmpl_status_th*, where
-    poll mode waits for completions), so other load on the PC does not count."""
+    poll mode waits for completions; otpu_pcie has none), so other load on the PC does not
+    count."""
     tot = sum(os.times()[:2])
     hz = os.sysconf("SC_CLK_TCK")
     for d in os.listdir("/proc"):
@@ -62,15 +64,21 @@ def timed(fn, reps: int) -> tuple[np.ndarray, float]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--json")
     a = ap.parse_args()
+    a.dev = card_dev(a.dev)
     lock = DeviceLock(Path(a.dev).name)
-    t = XdmaTransport(a.dev)
-    mode = Path("/sys/module/xdma/parameters/poll_mode").read_text().strip()
+    t = card_transport(a.dev)
+    mod = DRIVERS[node_kind(a.dev)]
+    par = {p.name: p.read_text().strip()
+           for p in sorted(Path(f"/sys/module/{mod}/parameters").glob("*"))}
     rng = np.random.default_rng(1)
-    out = {"poll_mode": int(mode), "latency": [], "bandwidth": []}
-    print(f"poll_mode={mode}")
+    out = {"driver": mod, "params": par, "latency": [], "bandwidth": []}
+    if "poll_mode" in par:                                      # (XDMA's)
+        out["poll_mode"] = int(par["poll_mode"])
+    print(f"{mod}: " + " ".join(f"{k}={v}" for k, v in par.items()))
 
     reg = timed(lambda: t.reg_read(0), 10000)[0]
     out["reg_read_us"] = {"median": float(np.median(reg) * 1e6), "p99": float(np.percentile(reg, 99) * 1e6)}

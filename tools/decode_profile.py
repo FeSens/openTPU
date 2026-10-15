@@ -178,7 +178,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", default="lfm2")
     ap.add_argument("--backend", default="board", choices=["board", "fake"])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--tokens", type=int, default=64)
     ap.add_argument("--cap", type=int, default=2048)
     ap.add_argument("--prompt", default="Write a short story about a lighthouse keeper.")

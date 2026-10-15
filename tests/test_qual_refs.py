@@ -221,7 +221,7 @@ def fake(tmp_path, monkeypatch):
     monkeypatch.setattr(refs, "prompt_runs_taken", lambda eng, ids: True)
     monkeypatch.setattr(qwen3, "Engine", FakeEngine)
     monkeypatch.setattr(board, "sim_config", lambda *a, **kw: None)
-    monkeypatch.setattr(board, "XdmaTransport", lambda *a, **kw: None)
+    monkeypatch.setattr(board, "card_transport", lambda *a, **kw: None)
     monkeypatch.setattr(FakeEngine, "off", {})
     monkeypatch.setattr(FakeEngine, "engaged", True)
     cfg = tmp_path / "cfg.pkl"

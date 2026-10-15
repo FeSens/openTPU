@@ -122,7 +122,7 @@ def card_busy() -> str:
     "" when none."""
     from opentpu.host.runstate import pid_alive, read_status, run_dir
     who = []
-    for lock in sorted(run_dir().glob("xdma*.lock")):
+    for lock in sorted([*run_dir().glob("otpu*.lock"), *run_dir().glob("xdma*.lock")]):
         if lock.name.count(".") > 1:        # (xdma0.i2c.lock: the board's I2C)
             continue
         try:

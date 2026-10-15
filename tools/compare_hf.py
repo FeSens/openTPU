@@ -59,7 +59,8 @@ def main() -> None:
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"])
     ap.add_argument("--backend", default="isa", choices=["isa", "board"],
                     help="the ISA simulator, or the card (--cfg does not apply)")
-    ap.add_argument("--dev", default="/dev/xdma0", help="the card's XDMA device (--backend board)")
+    ap.add_argument("--dev", help="the card's device prefix (--backend board; default: "
+                    "/dev/otpu0 if present, else /dev/xdma0)")
     ap.add_argument("--resident", action="store_true",
                     help="decode with the resident program (Engine resident=True)")
     a = ap.parse_args()

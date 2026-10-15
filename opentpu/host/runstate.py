@@ -7,8 +7,9 @@
                               every token (or at most every min_interval seconds) and removed
                               at exit; otpu-smi reads it
 
-<device> is the device node's basename (xdma0 for /dev/xdma0). OTPU_RUN_DIR moves the
-directory (tests). Monitors never lock: they only read registers.
+<device> is the device node's basename (otpu0 for /dev/otpu0, a LitePCIe bitstream's; xdma0
+for /dev/xdma0, an XDMA one's). OTPU_RUN_DIR moves the directory (tests). Monitors never lock:
+they only read registers.
 
 The lock is flock(2): it belongs to the open file description, so it is released when the
 process dies however it dies, and a second open() of the file -- in another process or in the
@@ -604,7 +605,7 @@ def _run(cmd: list, env: dict) -> int:
 
 
 def hold_main(argv=None) -> int:
-    """otpu-lock [--dev /dev/xdma0] [--wait SEC] [--prebuild MODEL:WF:HF ...] -- CMD...: run CMD
+    """otpu-lock [--dev /dev/otpu0] [--wait SEC] [--prebuild MODEL:WF:HF ...] -- CMD...: run CMD
     while holding the device lock (for steps that are not openTPU tools but must not overlap a
     run: a JTAG reload, a driver reload, a rescan), or a sequence of runs that must not be
     interleaved with others (a reload, then tests on the new image). openTPU tools inside CMD
@@ -616,7 +617,8 @@ def hold_main(argv=None) -> int:
     import argparse
     import subprocess
     ap = argparse.ArgumentParser(prog="otpu-lock", description=hold_main.__doc__.split("\n")[0])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0: the lock its tools take, board.card_dev)")
     ap.add_argument("--wait", type=float, default=3600.0, help="seconds to wait for the lock")
     ap.add_argument("--prebuild", action="append", default=[], metavar="MODEL:WF:HF",
                     help="quantize into the image cache first, outside the lock")
@@ -633,7 +635,8 @@ def hold_main(argv=None) -> int:
         if rc:
             print(f"otpu-lock: prebuild exit {rc}; the tools quantize under the lock",
                   file=sys.stderr, flush=True)
-    name = devname(a.dev)
+    from .board import card_dev
+    name = devname(card_dev(a.dev))
     lock = DeviceLock(name, wait=a.wait)
     env = dict(os.environ)
     if lock.fd is not None:         # (inside another otpu-lock: its holder stays named)

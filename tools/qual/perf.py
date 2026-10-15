@@ -38,7 +38,7 @@ def main():
     m, wf, hf = a.model, a.wformat, (a.head_format if a.head_format not in (None, "-") else None)
     path = model_dir(m)
     spec, tok = load_spec(path), AutoTokenizer.from_pretrained(path)
-    backend, cfg = C.make_backend("board", spec, 2048, "/dev/xdma0", path.name)
+    backend, cfg = C.make_backend("board", spec, 2048, None, path.name)
     eng = Q.Engine(spec, Q.load_weights(path), cap=2048, cfg=cfg, backend=backend,
                    wformat=wf, head_format=hf, resident=True)
     board, info = eng.backend.board, eng.backend.info

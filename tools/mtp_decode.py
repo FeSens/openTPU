@@ -182,8 +182,8 @@ def _backend(a, path) -> dict:
     device lock until it closes)."""
     if not a.card:
         return {}
-    from opentpu.host.board import BoardBackend, XdmaTransport
-    tr = XdmaTransport(a.dev)
+    from opentpu.host.board import BoardBackend, card_transport
+    tr = card_transport(a.dev)
     return {"backend": lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=path.name)}
 
 
@@ -329,7 +329,8 @@ def main() -> None:
     ap.add_argument("--head-format", default="int8", choices=["int8", "int4", "fp4"])
     ap.add_argument("--out")
     ap.add_argument("--card", help="run on the card: its configuration (refs.py cfg pickle)")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--want", help="an ISA simulator run's JSON: the tokens to equal too")
     ap.add_argument("--loop", default="host", choices=["host", "device"],
                     help="the MTP loop: driven by the host (phase 2), or on the device "

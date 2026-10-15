@@ -146,7 +146,7 @@ def test_ddr_rate(monkeypatch, capsys):
     monkeypatch.setattr(selftest.Runner, "stage", first_two)
     for n, (mts, want) in enumerate(((1300, "core 100 MHz, DDR3-1300, build"),
                                      (None, "core 100 MHz, build"))):
-        monkeypatch.setattr(selftest, "XdmaTransport",      # selftest keeps its lock: new device
+        monkeypatch.setattr(selftest, "card_transport",     # selftest keeps its lock: new device
                             lambda dev, n=n, mts=mts: FakeTransport(devname=f"fake{n}",
                                                                     ddr_mts=mts))
         selftest.main([])
@@ -253,7 +253,7 @@ def test_board_backend_rejects_another_configuration(no_cfg_env):
 def test_chat_board_backend_takes_the_bitstream_configuration(no_cfg_env):
     from opentpu.host import board, chat
     card = FakeTransport(devname="fake4", MCOLS=4, LANES=16)
-    no_cfg_env.setattr(board, "XdmaTransport", lambda dev: card)
+    no_cfg_env.setattr(board, "card_transport", lambda dev: card)
     backend, cfg = chat.make_backend("board", None, 256, "/dev/fake4", "m0")
     assert (cfg.MCOLS, cfg.LANES) == (4, 16)
     be = backend(replace(cfg, DRAM_BYTES=1 << 21), [np.zeros(4096, np.uint8)])
@@ -266,7 +266,7 @@ def test_chat_board_backend_takes_the_bitstream_configuration(no_cfg_env):
 
 def test_selftest_stops_at_config_on_a_stale_environment(no_cfg_env, capsys):
     from opentpu.host import selftest
-    no_cfg_env.setattr(selftest, "XdmaTransport", lambda dev: FakeTransport(MCOLS=4))
+    no_cfg_env.setattr(selftest, "card_transport", lambda dev: FakeTransport(MCOLS=4))
     no_cfg_env.setenv("OTPU_MCOLS", "2")
     assert selftest.main([]) == 1
     out = capsys.readouterr().out
@@ -1969,9 +1969,12 @@ def test_chat_tui_shows_the_live_numbers(tmp_path):
 
 def test_setup_pcie_package():
     """otpu-setup's script and files ship together and agree: the module tag the patch adds is
-    the version the script checks for, the dkms.conf is a template, the rules match the card."""
+    the version the script checks for, the dkms.conf is a template, the rules match the XDMA
+    bitstreams; the LitePCIe bitstream's PCI ID (tools/litepcie/gen_core.py) is the one its
+    driver (pcie/otpu, csr.h) binds and the script tells it by, and the driver maps the user
+    window the transport maps."""
     import re
-    from opentpu.host import pcie_setup
+    from opentpu.host import board, pcie_setup
     host = os.path.join(ROOT, "opentpu", "host")
     script = open(pcie_setup.SCRIPT).read()
     ver = re.search(r"^VER=(\S+)", script, re.M).group(1)
@@ -1979,10 +1982,16 @@ def test_setup_pcie_package():
     patch = open(os.path.join(host, "pcie", "xdma-otpu.patch")).read()
     assert f'MODULE_INFO(otpu, "{ver}");' in patch and ver.startswith(commit[:7])
     assert '"@VERSION@"' in open(os.path.join(host, "pcie", "dkms.conf")).read()
+    assert '"@VERSION@"' in open(os.path.join(host, "pcie", "otpu", "dkms.conf")).read()
     rules = open(os.path.join(host, "pcie", "59-otpu-xdma.rules")).read()
     assert 'ATTR{device}=="0x7028"' in rules and 'ATTR{subsystem_device}=="0x4f54"' in rules
-    bd = open(os.path.join(ROOT, "boards", "ypcb-00338", "vivado", "bd_native.tcl")).read()
-    assert "CONFIG.pf0_device_id {7028}" in bd and "CONFIG.pf0_subsystem_id {4F54}" in bd
+    gen = open(os.path.join(ROOT, "tools", "litepcie", "gen_core.py")).read()
+    csr = open(os.path.join(host, "pcie", "otpu", "csr.h")).read()
+    num = lambda pat, text: int(re.search(pat, text, re.M).group(1), 16)    # noqa: E731
+    dev, sub = num(r"^DEVICE_ID = 0x(\w+)", gen), num(r"^SUBSYS_ID = 0x(\w+)", gen)
+    assert (dev, sub) == (num(r"OTLP_DEVICE_ID 0x(\w+)", csr), num(r"OTLP_SUBSYS_ID 0x(\w+)", csr))
+    assert f'== 0x{dev:04x}' in script and f"10ee:{dev:04x} (subsystem 10ee:{sub:04x})" in script
+    assert num(r"OTLP_USER_SIZE 0x(\w+)", csr) == board.R.R_DDR4 + 4 * board.R.DDR4_STRIDE
     subprocess.run(["bash", "-n", str(pcie_setup.SCRIPT)], check=True)
     r = subprocess.run(["bash", str(pcie_setup.SCRIPT), "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "--rescan" in r.stdout and "set -euo" not in r.stdout

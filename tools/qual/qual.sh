@@ -46,8 +46,8 @@
 #   and a WAITW timeout. Before the final selftest, tools/qual/turnaround.py: TURN seconds
 #   (default 30) of fp4 weight reads beside 64 KiB stores and loads (the DRAM's read / write
 #   turnarounds; fastmux's rtw 3), the data against the ISA simulator, and both channels' ECC
-#   counters, which must be 0 then; and the kernel's xdma errors since the load (dmesg), each a
-#   FAIL line.
+#   counters, which must be 0 then; and the kernel's PCIe driver errors (xdma, otpu_pcie) since
+#   the load (dmesg), each a FAIL line.
 # full (~45 min): also a cold diag with the full march C- (2 x 2.6 min), decode_profile for all
 #   six, rw_bench, a 5 min soak and the full march in the warm diag.
 # Every phase prints its duration; the table is at the end and in $OUT/phases.tsv.
@@ -102,7 +102,7 @@ phase() {
 }
 # root helpers: opentpu has narrow sudo rules (/etc/sudoers.d/60-otpu-card) for these exact commands
 rescan() { if [ -x /usr/local/sbin/otpu-rescan ]; then sudo -n /usr/local/sbin/otpu-rescan; else sudo ~/otpu-venv/bin/otpu-setup --rescan; fi; }
-others() { sudo -n lsof -t /dev/xdma0_* 2>/dev/null | head -1; }
+others() { sudo -n lsof -t /dev/xdma0_* /dev/otpu0_* 2>/dev/null | head -1; }   # (either driver's)
 quiet() { for _ in $(seq 120); do [ -z "$(others)" ] && return 0; sleep 5; done
   echo "device open by pid $(others)"; return 1; }
 # load BIT: JTAG (openFPGALoader's exit status counts; its output in $OUT/jtag.log), then the
@@ -134,9 +134,9 @@ EXC='^Traceback \(most recent call last\)|^([A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][
 ecc_each() {
   [ "${ECC_EACH:-0}" = 1 ] || return 0
   local c prev
-  c=$(timeout 60 $P -c "from opentpu.host.board import XdmaTransport
+  c=$(timeout 60 $P -c "from opentpu.host.board import card_transport
 from opentpu.host import memcal
-e = memcal.ecc(XdmaTransport('/dev/xdma0', dma=False))
+e = memcal.ecc(card_transport(dma=False))
 print('ECC', 'none' if e is None else ' '.join('%d/%d' % x for x in e))" 2>/dev/null | sed -n 's/^ECC //p' | tail -1)
   prev=$(awk -F'\t' '$3 != "?" {v = $3} END {print v}' "$OUT/ecc.tsv" 2>/dev/null)   # (the last read)
   printf '%s\t%s\t%s\n' "$(date +%T)" "$1" "${c:-?}" >> "$OUT/ecc.tsv"
@@ -165,8 +165,8 @@ check_build() {
   local got=""
   [ -n "$1" ] || { fail "$2: no build id to check the card against (REST_EXPECT, or a" \
                         "directory named ..._<8 hex digits>)"; return 1; }
-  read -r got GENC WAITWC <<< "$(run "probe ($2)" $P -c "from opentpu.host.board import Board, XdmaTransport
-i = Board(XdmaTransport('/dev/xdma0', dma=False), check=False, lock=False).info()
+  read -r got GENC WAITWC <<< "$(run "probe ($2)" $P -c "from opentpu.host.board import Board, card_transport
+i = Board(card_transport(dma=False), check=False, lock=False).info()
 c, b = i['caps'] or {}, i['build_id']
 print('PROBE', 'none' if b is None else '%08x' % b, int(bool(c.get('gen'))), int(bool(c.get('waitw'))))" \
     | sed -n 's/^PROBE //p' | tail -1)"
@@ -181,13 +181,14 @@ restore() {
   check_build "${REST_EXPECT:-$(hexid "$(cd "$(dirname "$REST")" 2>/dev/null && basename "$(pwd -P)")")}" \
               "REST ($REST)"
 }
-# the kernel log's last timestamp (s since boot), then its xdma errors after it: a FAIL line each
+# the kernel log's last timestamp (s since boot), then its PCIe driver's errors after it (XDMA's
+# xdma, LitePCIe's otpu_pcie): a FAIL line each
 klog_t() { sudo -n dmesg 2>/dev/null | sed -n 's/^\[ *\([0-9][0-9]*\.[0-9]*\)\].*/\1/p' | tail -1; }
 xdma_errors() {
   local k; k=$(sudo -n dmesg 2>&1) || { fail "dmesg: not readable ($(printf %s "$k" | tail -1))"; return; }
   printf '%s\n' "$k" | awk -v t0="$K0" 'match($0, /^\[ *[0-9]+\.[0-9]+\]/) {
       if (substr($0, 2, RLENGTH - 2) + 0 > t0 + 0) print }' \
-    | grep -iE "xdma.*(timed out|error|fail)" | cut -c1-200 | while IFS= read -r l; do fail "dmesg: $l"; done
+    | grep -iE "(xdma|otpu_pcie).*(timed out|error|fail)" | cut -c1-200 | while IFS= read -r l; do fail "dmesg: $l"; done
 }
 selftest() { run selftest timeout 1800 $P -m opentpu.host.selftest \
   | grep -E "\[(PASS|FAIL)\]|config|ALL|stopped|hint" | tee -a "$OUT/checks.txt"; }

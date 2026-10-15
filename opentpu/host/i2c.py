@@ -75,7 +75,7 @@ class _ArbitrationLost(Exception):
 
 
 class Bus:
-    """One of the card's I2C buses. `t` is a transport (XdmaTransport, FakeTransport) of a
+    """One of the card's I2C buses. `t` is a transport (board.card_transport, FakeTransport) of a
     bitstream with CAPS.i2c. Public calls are whole transactions under the I2C lock."""
 
     def __init__(self, t, bus: int | str = 0, half: float = 5e-6, idle: float = 50e-6,
@@ -600,7 +600,8 @@ def main(argv=None, open_transport=None) -> int:
     ap = argparse.ArgumentParser(
         prog="otpu-i2c", description="The card's I2C buses, read only: scan, read, PMBus dump. "
         "Bus 'sensor' is the LM73's (N24 / N25), 'smbus' the PCIe edge connector's (R26 / R27).")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--fake", action="store_true", help="a demo card (fake_i2c.card_buses)")
     ap.add_argument("--khz", type=float, default=100.0,
                     help="SCL rate bound (half bit spun; register accesses add to it)")
@@ -628,8 +629,8 @@ def main(argv=None, open_transport=None) -> int:
         from .fake_i2c import card_buses
         t = FakeTransport(devname=None, i2c=card_buses())
     else:
-        from .board import XdmaTransport
-        t = XdmaTransport(a.dev, dma=False)
+        from .board import card_transport
+        t = card_transport(a.dev, dma=False)
     if t.reg_read(R.R_ID) != R.ID_OTPU:
         print("otpu-i2c: no openTPU on the card", file=sys.stderr)
         return 1

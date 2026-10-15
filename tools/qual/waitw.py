@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from opentpu.host.board import Board, XdmaTransport  # noqa: E402
+from opentpu.host.board import Board, card_transport  # noqa: E402
 from opentpu.host.checks import waitw_host, waitw_tag, waitw_timeout  # noqa: E402
 
 
@@ -29,9 +29,10 @@ def main(argv=None) -> int:
     ap.add_argument("--seed", type=int, default=5)
     ap.add_argument("--tag-rounds", type=int, default=0,
                     help="rounds of the tag in the data's last beat (0: none)")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     a = ap.parse_args(argv)
-    with Board(XdmaTransport(a.dev)) as b:
+    with Board(card_transport(a.dev)) as b:
         if not b.info()["caps"].get("waitw"):
             print("  [FAIL] WAITW: this bitstream has no WAITW (CAPS bit31 clear)")
             return 1

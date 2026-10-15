@@ -33,4 +33,5 @@ otpu-ddr4 = "opentpu.host.ddr4:main"
 include = ["opentpu*"]
 
 [tool.setuptools.package-data]
-opentpu = ["lens_app.html", "host/setup_pcie.sh", "host/pcie/*", "host/litedram/*", "host/litedram4/*"]
+opentpu = ["lens_app.html", "host/setup_pcie.sh", "host/pcie/*", "host/pcie/otpu/*", "host/litedram/*",
+           "host/litedram4/*"]

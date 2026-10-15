@@ -11,7 +11,7 @@ the restart's, the snapshot's and the restore's device cycles (the ISA simulator
 cycles: tokens and runs). --mtp: the turns' prefill is MTP's (its rows and
 the MTP layer's runs), the restart a plain prefill of the rows.
 
-    otpu-lock -- python3 tools/qual/chatkv.py --model qwen35 [--mtp] [--dev /dev/xdma0]
+    otpu-lock -- python3 tools/qual/chatkv.py --model qwen35 [--mtp] [--dev /dev/otpu0]
     otpu-lock -- python3 tools/qual/chatkv.py --model gemma4 --think --max-new 300 --turns 3
     python3 tools/qual/chatkv.py --model qwen3 --backend isa --turns 3 --max-new 8   (dry run)
 
@@ -88,7 +88,8 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default="qwen35",
                     help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--backend", default="board", choices=["board", "board-sim", "isa"])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card's device prefix (default: /dev/otpu0 if present, "
+                    "else /dev/xdma0)")
     ap.add_argument("--cap", type=int, default=1024)
     ap.add_argument("--wformat", default="int8", choices=["int8", "fp4", "int4", "nvfp4", "mix"],
                     help="int8 (default): bit-exact in any split; with PAIR a 4-bit run of "
