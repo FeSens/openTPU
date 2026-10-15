@@ -29,11 +29,11 @@ SRC = [RTL / "otpu_afifo.sv", RTL / "otpu_axi_split2.sv", RTL / "otpu_mem_ch.sv"
 JOBS = os.environ.get("MEMCH_JOBS", "4")      # C++ compile jobs per build
 PAR = int(os.environ.get("MEMCH_PAR", "3"))   # simulations at once
 
-# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO; xreg: otpu_dma_split's
+# builds: tb_memch parameters (cred: a 16-beat accelerator read-data FIFO, XRD 16 with it; xreg: otpu_dma_split's
 # register slices, as on the card: XREG 2)
 BUILDS = {
     "ldn": dict(),
-    "cred": dict(ARD=16),
+    "cred": dict(ARD=16, XRD=16),     # (XRD at most ARD: the read tag's slot)
     "xreg": dict(XREG=2),
     # LiteDRAM's own controller (otpu_ldc_ch.v, the production core's settings) for the model
     "ldc": dict(LDC=1),
