@@ -39,10 +39,10 @@ def test_pcie_mm_scenarios(bench, args):
 
 
 # Throughput with the streams never held: the H2C side takes a beat a cycle (4 GB/s at 250 MHz,
-# the PCIe Gen2 x8 link's raw rate), the C2H side one channel's reads (otpu_mem_ch's 16
-# outstanding: 0.71 beats a cycle, 2.85 GB/s, above what XDMA's C2H reached on the card)
+# the PCIe Gen2 x8 link's raw rate), the C2H side one channel's reads (otpu_mem_ch's XRD 32 in
+# flight: 0.98 beats a cycle, 3.9 GB/s; at XRD 16 0.71, 2.85 GB/s)
 def test_pcie_mm_throughput(bench):
     out = _run(bench, "+seq=1")
     m = re.search(r"seq: H2C ([0-9.]+) beats/cycle .* C2H ([0-9.]+) beats/cycle", out)
     assert m and re.search(r"^PASS", out, re.M), out[-3000:]
-    assert float(m[1]) >= 0.99 and float(m[2]) >= 0.70, out[-3000:]
+    assert float(m[1]) >= 0.99 and float(m[2]) >= 0.95, out[-3000:]

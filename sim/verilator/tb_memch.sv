@@ -58,7 +58,7 @@ endpackage
 
 module tb_memch #(
   parameter int ARD = 64,
-  parameter int XRD = 16,
+  parameter int XRD = 32,                 // otpu_mem_ch's (the board's)
   parameter int XREG = 0,
   parameter bit LDC = 1'b0,               // the controllers: LiteDRAM's own (otpu_ldc_model), else the model
   parameter int XQD = 32,                 // otpu_mem_ch's XDMA batches (its defaults)

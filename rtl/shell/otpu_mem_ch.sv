@@ -86,7 +86,9 @@
 module otpu_mem_ch #(
   parameter int XIDW = 4,         // XDMA M_AXI ID width
   parameter int ARD  = 64,        // accelerator read-data FIFO (read credits), beats
-  parameter int XRD  = 16,        // XDMA read-data FIFO, beats
+  parameter int XRD  = 32,        // the host DMA's read-data FIFO (read credits), beats: 32 its
+                                  // LUTRAM's depth at 16 too; C2H 0.71 -> 0.98 beats a cycle
+                                  // (tb_pcie_mm: 16 reads in flight did not cover the latency)
   parameter int RUN  = 32,        // commands from one master before the arbiter may switch
   parameter int OQ   = 32,        // output command queue per port (and one register)
   parameter int OD   = 32,        // output write-data FIFO per port: writes issued, data not taken
@@ -161,7 +163,7 @@ module otpu_mem_ch #(
   localparam int XSW = $clog2(XRD);
   localparam int TW  = 2 + ASW;            // read tag: {read-modify-write, xdma, slot}
   // the read tags' FIFO per port: every read in flight (ARD + XRD and a read-modify-write's), a
-  // power of two (128 at the board's ARD 64, XRD 16)
+  // power of two (128 at the board's ARD 64, XRD 32)
   localparam int TGD = 2 ** $clog2(ARD + XRD + 1);
   initial if (XRD > ARD) $fatal(1, "otpu_mem_ch: XRD > ARD (the tag's slot)");
 
