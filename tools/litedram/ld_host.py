@@ -454,7 +454,8 @@ def main():
     ap.add_argument("--span", type=int, help="all: scan only this many steps (default one tCK)")
     ap.add_argument("--gib", type=float, default=2.0, help="BIST size (the channel: 2 GiB)")
     ap.add_argument("--stride", type=int, default=4, help="DQS scan stride, fine steps")
-    ap.add_argument("--dev", default="/dev/xdma0_user")
+    ap.add_argument("--dev", default="/dev/otpu0_user" if os.path.exists("/dev/otpu0_user")
+                    else "/dev/xdma0_user", help="BAR0's node (default: the LitePCIe driver's, else XDMA's)")
     ap.add_argument("--fused", action="store_true",
                     help="the production image: BUILD_DIR is its host tree's opentpu/host/litedram, "
                          "the core's CSRs are at BAR0 0x10000 (open no Board: it would calibrate)")

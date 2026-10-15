@@ -50,7 +50,7 @@ fi
 
 # the card must be idle: nothing holds its device nodes, no other JTAG tool has the cable
 if [[ $mode != detect ]]; then
-  holder="$(sudo -n lsof -t /dev/xdma0_* 2>/dev/null | head -1 || true)"
+  holder="$(sudo -n lsof -t /dev/xdma0_* /dev/otpu0_* 2>/dev/null | head -1 || true)"   # either driver's
   [[ -z $holder ]] || die "process $holder has the card open: stop it first"
 fi
 ! pgrep -x openFPGALoader >/dev/null || die "openFPGALoader is running (the cable is taken)"

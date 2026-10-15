@@ -85,8 +85,8 @@ stop_tree() {   # hostr21.sh's: TERM to the server's process group (timeout's), 
 }
 xdma_free() {
   local w u
-  for w in $(seq 1 60); do u=$(lsof -t /dev/xdma0_* 2> /dev/null | tr '\n' ' '); [ -z "$u" ] && return 0; sleep 1; done
-  echo "  /dev/xdma0 still open by pids $u: FAIL"; return 1
+  for w in $(seq 1 60); do u=$(lsof -t /dev/xdma0_* /dev/otpu0_* 2> /dev/null | tr '\n' ' '); [ -z "$u" ] && return 0; sleep 1; done
+  echo "  the card's nodes still open by pids $u: FAIL"; return 1
 }
 warm() {   # checkpoint, pool: every other big file out of the page cache, the pool read into it (mtp2.sh's)
   python - $1 $2 $DROPOTHER <<'PY'

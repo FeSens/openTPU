@@ -165,12 +165,43 @@ they now reset with `otpu_pcie_mm`.
 
 **The driver** builds against the hosts' kernel (7.2.5) with `W=1`, no warnings.
 
-**Timing at 250 MHz.** The first m8 build (407a035b, FAST: Vivado's default strategies, no
-retiming, 2026-10-15) missed the PCIe user clock by 1.195 ns, with more than 5000 failing paths:
-LitePCIe's completion buffers in block RAM (1.8 ns clock-to-out) into the reader's data FIFO,
-the descriptor tables' 1024-deep LUTRAM write fanout, the loopback mux, the PHY's CDC FIFOs, and
-`otpu_pcie_mm`'s burst decision (11 logic levels). The second build (2df5b89a) has the fixes of
-sections 2 and 3.
+**Timing at 250 MHz.** Measured on the m8 card target (xc7k480t, Vivado 2026.1), the PCIe user
+clock (`main_s7pciephy_clkout3`, 4 ns) and the core's (7.5 ns at 133.33 MHz):
+
+| build | flow | PCIe user clock | core clock | what changed |
+|---|---|---|---|---|
+| 407a035b | FAST (defaults, core 100 MHz) | -1.195 ns, >5000 endpoints | | first build |
+| 2df5b89a | FAST | -0.223 ns, ~9 paths | | the fixes of sections 2 and 3 (below) |
+| dbf3dcfc | full (production strategy, 133.33) | -0.531 ns, 2504 endpoints | -0.304 ns, 114 | slices reset with `otpu_pcie_mm` |
+| 72da3027 | full | -0.033 ns, 34 endpoints | +0.011 ns | PHY / AXI-Lite slices, reader retire, pointer fanout, split REG 2, h_avail |
+| f5267ed6 | full, production's RTL (E3) | (pending) | | 2abb37d0's core: both retires, C2H event, second TX stage |
+
+The first build's 1.2 ns came from LitePCIe's completion buffers in block RAM (1.8 ns
+clock-to-out) into the reader's data FIFO, the descriptor tables' 1024-deep LUTRAM write fanout,
+the loopback mux, the PHY's CDC FIFOs and `otpu_pcie_mm`'s burst decision (11 logic levels): the
+completion buffers and every other memory of 64 words or fewer went to LUTRAM, the tables to 256
+deep, loopback out, the PHY's streams into its own clock domain, slices on the user streams and
+the burst decision registered. In the first full build the core's own placement left the PCIe
+side less room, and the failures were wire, not logic (route 85-90% of each path): the H2C beats
+crossing the die from the PCIe block (clock region X1Y4) to channel 0's DDR3 bank (X0) through
+the split's two slices (a 1-LUT path between them at -0.381 ns), LitePCIe's TLP layer straight
+into the hard block wrapper's ready and throttle logic (12 levels, no register once its CDC FIFOs
+were gone), the user window's Wishbone-to-AXI-Lite master into the block design's SmartConnect
+(9 levels), the reader's descriptor retire into its 16-bit loop counters (6), and the endpoint's
+FIFO read pointers, each bit the read address of a 138-bit LUTRAM (137 loads). 72da3027 added a
+slice stage at each end of each of those (`RegisteredPHY`, `axil_slice`, `RetireRegTable`,
+`otpu_dma_split` REG 2), MAX_FANOUT 32 on the pointers and `h_avail`'s registered push: post-placement
+TNS -1614 -> -88 ns. Its last 34 endpoints were the writer's retire and `otpu_dma`'s C2H count
+(both 6 levels from the packetizer's ready), the TX slice's valid into the hard block's
+TRNTCFGGNT (3.3 ns of route) and one path in channel 0's host side (main's `otpu_mem_ch`, -0.023
+ns; r2.2's XDMA build had its paths at +0.014): 2abb37d0 registers the first two and puts a second
+valid stage by the hard block.
+
+**Area** (72da3027, Vivado's hierarchical utilization): LitePCIe's core 12,059 LUTs (2,564 as
+LUTRAM), 11,523 flip-flops, 13.5 RAMB36; with `otpu_pcie_mm` (919 LUTs, 1,404 flip-flops, 4
+RAMB36) 12,978 / 12,927 / 17.5, against XDMA's 16,971 LUTs (1,691 LUTRAM), 18,900 flip-flops and
+28.5 RAMB36 in an XDMA build of the same board (deploy_adw100): 24% fewer LUTs, 32% fewer
+flip-flops, 39% fewer block RAMs.
 
 ## 6. On the card
 

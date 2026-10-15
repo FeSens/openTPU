@@ -55,8 +55,8 @@ stop_tree() {   # $1: a background job's PID, timeout's (exec'd), the leader of 
 }
 xdma_free() {   # the card's device files closed by every process of this user (60 s at most)
   local w u
-  for w in $(seq 1 60); do u=$(lsof -t /dev/xdma0_* 2> /dev/null | tr '\n' ' '); [ -z "$u" ] && return 0; sleep 1; done
-  echo "  /dev/xdma0 still open by pids $u: FAIL"; return 1
+  for w in $(seq 1 60); do u=$(lsof -t /dev/xdma0_* /dev/otpu0_* 2> /dev/null | tr '\n' ' '); [ -z "$u" ] && return 0; sleep 1; done
+  echo "  the card's nodes still open by pids $u: FAIL"; return 1
 }
 echo "HOSTR21 SESSION START $(date +%T) PART $PART host $(cat $H/COMMIT) up since $(uptime -s)"
 for f in $D/otpu.bit $H/models $RC/configs/$(basename $D).pkl $D/chatmoe/chatmoe-qwen35-35b.json; do
