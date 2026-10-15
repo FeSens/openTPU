@@ -11,7 +11,7 @@
 // Device     : xc7k480tffg1156-2
 // Hierarchy  : disabled
 // LiteX sha1 : --------
-// Date       : 2026-10-15 03:56:10
+// Date       : 2026-10-15 05:12:55
 //------------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -113,14 +113,15 @@ OTPULitePCIe
 │    │    ├── [BB:FDCE]
 │    │    ├── [BB:FDCE]
 │    │    └── [BB:MMCME2_ADV]
-│    ├── [BB:BUFG]
 │    ├── [BB:IBUFDS_GTE2]
+│    ├── [BB:BUFG]
 │    ├── [BB:BUFGCTRL]
 │    └── [BB:pcie_s7]
 ├── phy_tx_buf (Buffer)
 │    ├── pipe_valid (PipeValid)
 │    ├── pipe_ready (PipeReady)
 │    └── pipeline (Pipeline)
+├── phy_tx_pv (PipeValid)
 ├── phy_rx_buf (Buffer)
 │    ├── pipe_valid (PipeValid)
 │    ├── pipe_ready (PipeReady)
@@ -3202,6 +3203,7 @@ wire          main_otpu_dma_c2h_count_rd_stb;
 wire   [31:0] main_otpu_dma_c2h_count_status;
 reg           main_otpu_dma_c2h_count_wr_stb = 1'd0;
 reg           main_otpu_dma_c2h_d = 1'd0;
+reg           main_otpu_dma_c2h_ev = 1'd0;
 wire    [7:0] main_otpu_dma_c2h_flags;
 wire   [23:0] main_otpu_dma_c2h_len;
 reg    [31:0] main_otpu_dma_c2h_len_storage = 32'd0;
@@ -4113,6 +4115,9 @@ reg    [31:0] main_pcie_dma0_writer_table_loop_status_status = 32'd0;
 reg           main_pcie_dma0_writer_table_loop_status_wr_stb = 1'd0;
 reg           main_pcie_dma0_writer_table_reset_storage = 1'd0;
 reg           main_pcie_dma0_writer_table_reset_wr_stb = 1'd0;
+reg           main_pcie_dma0_writer_table_retire = 1'd0;
+reg           main_pcie_dma0_writer_table_retire_first = 1'd0;
+reg           main_pcie_dma0_writer_table_retire_loop = 1'd0;
 (* max_fanout = 32 *)
 reg     [7:0] main_pcie_dma0_writer_table_self_consume = 8'd0;
 wire          main_pcie_dma0_writer_table_self_do_read;
@@ -4190,6 +4195,104 @@ reg    [31:0] main_pcie_msi_vector = 32'd0;
 wire          main_pcie_msi_vector_rd_stb;
 wire   [31:0] main_pcie_msi_vector_status;
 reg           main_pcie_msi_vector_wr_stb = 1'd0;
+reg           main_phy_rx_pipe_ready_sink_d_first = 1'd0;
+reg           main_phy_rx_pipe_ready_sink_d_last = 1'd0;
+reg    [15:0] main_phy_rx_pipe_ready_sink_d_payload_be = 16'd0;
+reg   [127:0] main_phy_rx_pipe_ready_sink_d_payload_dat = 128'd0;
+reg           main_phy_rx_pipe_ready_sink_d_ready = 1'd0;
+reg           main_phy_rx_pipe_ready_sink_d_valid = 1'd0;
+wire          main_phy_rx_pipe_ready_sink_first;
+wire          main_phy_rx_pipe_ready_sink_last;
+wire   [15:0] main_phy_rx_pipe_ready_sink_payload_be;
+wire  [127:0] main_phy_rx_pipe_ready_sink_payload_dat;
+wire          main_phy_rx_pipe_ready_sink_ready;
+wire          main_phy_rx_pipe_ready_sink_valid;
+reg           main_phy_rx_pipe_ready_source_first = 1'd0;
+reg           main_phy_rx_pipe_ready_source_last = 1'd0;
+reg    [15:0] main_phy_rx_pipe_ready_source_payload_be = 16'd0;
+reg   [127:0] main_phy_rx_pipe_ready_source_payload_dat = 128'd0;
+wire          main_phy_rx_pipe_ready_source_ready;
+reg           main_phy_rx_pipe_ready_source_valid = 1'd0;
+reg           main_phy_rx_pipe_ready_valid = 1'd0;
+wire          main_phy_rx_pipe_valid_sink_first;
+wire          main_phy_rx_pipe_valid_sink_last;
+wire   [15:0] main_phy_rx_pipe_valid_sink_payload_be;
+wire  [127:0] main_phy_rx_pipe_valid_sink_payload_dat;
+wire          main_phy_rx_pipe_valid_sink_ready;
+wire          main_phy_rx_pipe_valid_sink_valid;
+reg           main_phy_rx_pipe_valid_source_first = 1'd0;
+reg           main_phy_rx_pipe_valid_source_last = 1'd0;
+reg    [15:0] main_phy_rx_pipe_valid_source_payload_be = 16'd0;
+reg   [127:0] main_phy_rx_pipe_valid_source_payload_dat = 128'd0;
+wire          main_phy_rx_pipe_valid_source_ready;
+reg           main_phy_rx_pipe_valid_source_valid = 1'd0;
+wire          main_phy_rx_sink_sink_first;
+wire          main_phy_rx_sink_sink_last;
+wire   [15:0] main_phy_rx_sink_sink_payload_be;
+wire  [127:0] main_phy_rx_sink_sink_payload_dat;
+wire          main_phy_rx_sink_sink_ready;
+wire          main_phy_rx_sink_sink_valid;
+wire          main_phy_rx_source_source_first;
+wire          main_phy_rx_source_source_last;
+wire   [15:0] main_phy_rx_source_source_payload_be;
+wire  [127:0] main_phy_rx_source_source_payload_dat;
+wire          main_phy_rx_source_source_ready;
+wire          main_phy_rx_source_source_valid;
+wire          main_phy_sink_first;
+wire          main_phy_sink_last;
+wire   [15:0] main_phy_sink_payload_be;
+wire  [127:0] main_phy_sink_payload_dat;
+wire          main_phy_sink_ready;
+wire          main_phy_sink_valid;
+reg           main_phy_source_first = 1'd0;
+reg           main_phy_source_last = 1'd0;
+reg    [15:0] main_phy_source_payload_be = 16'd0;
+reg   [127:0] main_phy_source_payload_dat = 128'd0;
+wire          main_phy_source_ready;
+reg           main_phy_source_valid = 1'd0;
+reg           main_phy_tx_pipe_ready_sink_d_first = 1'd0;
+reg           main_phy_tx_pipe_ready_sink_d_last = 1'd0;
+reg    [15:0] main_phy_tx_pipe_ready_sink_d_payload_be = 16'd0;
+reg   [127:0] main_phy_tx_pipe_ready_sink_d_payload_dat = 128'd0;
+reg           main_phy_tx_pipe_ready_sink_d_ready = 1'd0;
+reg           main_phy_tx_pipe_ready_sink_d_valid = 1'd0;
+wire          main_phy_tx_pipe_ready_sink_first;
+wire          main_phy_tx_pipe_ready_sink_last;
+wire   [15:0] main_phy_tx_pipe_ready_sink_payload_be;
+wire  [127:0] main_phy_tx_pipe_ready_sink_payload_dat;
+wire          main_phy_tx_pipe_ready_sink_ready;
+wire          main_phy_tx_pipe_ready_sink_valid;
+reg           main_phy_tx_pipe_ready_source_first = 1'd0;
+reg           main_phy_tx_pipe_ready_source_last = 1'd0;
+reg    [15:0] main_phy_tx_pipe_ready_source_payload_be = 16'd0;
+reg   [127:0] main_phy_tx_pipe_ready_source_payload_dat = 128'd0;
+wire          main_phy_tx_pipe_ready_source_ready;
+reg           main_phy_tx_pipe_ready_source_valid = 1'd0;
+reg           main_phy_tx_pipe_ready_valid = 1'd0;
+wire          main_phy_tx_pipe_valid_sink_first;
+wire          main_phy_tx_pipe_valid_sink_last;
+wire   [15:0] main_phy_tx_pipe_valid_sink_payload_be;
+wire  [127:0] main_phy_tx_pipe_valid_sink_payload_dat;
+wire          main_phy_tx_pipe_valid_sink_ready;
+wire          main_phy_tx_pipe_valid_sink_valid;
+reg           main_phy_tx_pipe_valid_source_first = 1'd0;
+reg           main_phy_tx_pipe_valid_source_last = 1'd0;
+reg    [15:0] main_phy_tx_pipe_valid_source_payload_be = 16'd0;
+reg   [127:0] main_phy_tx_pipe_valid_source_payload_dat = 128'd0;
+wire          main_phy_tx_pipe_valid_source_ready;
+reg           main_phy_tx_pipe_valid_source_valid = 1'd0;
+wire          main_phy_tx_sink_sink_first;
+wire          main_phy_tx_sink_sink_last;
+wire   [15:0] main_phy_tx_sink_sink_payload_be;
+wire  [127:0] main_phy_tx_sink_sink_payload_dat;
+wire          main_phy_tx_sink_sink_ready;
+wire          main_phy_tx_sink_sink_valid;
+wire          main_phy_tx_source_source_first;
+wire          main_phy_tx_source_source_last;
+wire   [15:0] main_phy_tx_source_source_payload_be;
+wire  [127:0] main_phy_tx_source_source_payload_dat;
+wire          main_phy_tx_source_source_ready;
+wire          main_phy_tx_source_source_valid;
 reg    [31:0] main_rec_irq = 32'd0;
 wire          main_reset0;
 wire          main_reset1;
@@ -4197,49 +4300,6 @@ wire          main_reset2;
 wire          main_reset3;
 reg     [1:0] main_reset_storage = 2'd0;
 reg           main_reset_wr_stb = 1'd0;
-reg           main_rx_pipe_ready_sink_d_first = 1'd0;
-reg           main_rx_pipe_ready_sink_d_last = 1'd0;
-reg    [15:0] main_rx_pipe_ready_sink_d_payload_be = 16'd0;
-reg   [127:0] main_rx_pipe_ready_sink_d_payload_dat = 128'd0;
-reg           main_rx_pipe_ready_sink_d_ready = 1'd0;
-reg           main_rx_pipe_ready_sink_d_valid = 1'd0;
-wire          main_rx_pipe_ready_sink_first;
-wire          main_rx_pipe_ready_sink_last;
-wire   [15:0] main_rx_pipe_ready_sink_payload_be;
-wire  [127:0] main_rx_pipe_ready_sink_payload_dat;
-wire          main_rx_pipe_ready_sink_ready;
-wire          main_rx_pipe_ready_sink_valid;
-reg           main_rx_pipe_ready_source_first = 1'd0;
-reg           main_rx_pipe_ready_source_last = 1'd0;
-reg    [15:0] main_rx_pipe_ready_source_payload_be = 16'd0;
-reg   [127:0] main_rx_pipe_ready_source_payload_dat = 128'd0;
-wire          main_rx_pipe_ready_source_ready;
-reg           main_rx_pipe_ready_source_valid = 1'd0;
-reg           main_rx_pipe_ready_valid = 1'd0;
-wire          main_rx_pipe_valid_sink_first;
-wire          main_rx_pipe_valid_sink_last;
-wire   [15:0] main_rx_pipe_valid_sink_payload_be;
-wire  [127:0] main_rx_pipe_valid_sink_payload_dat;
-wire          main_rx_pipe_valid_sink_ready;
-wire          main_rx_pipe_valid_sink_valid;
-reg           main_rx_pipe_valid_source_first = 1'd0;
-reg           main_rx_pipe_valid_source_last = 1'd0;
-reg    [15:0] main_rx_pipe_valid_source_payload_be = 16'd0;
-reg   [127:0] main_rx_pipe_valid_source_payload_dat = 128'd0;
-wire          main_rx_pipe_valid_source_ready;
-reg           main_rx_pipe_valid_source_valid = 1'd0;
-wire          main_rx_sink_sink_first;
-wire          main_rx_sink_sink_last;
-wire   [15:0] main_rx_sink_sink_payload_be;
-wire  [127:0] main_rx_sink_sink_payload_dat;
-wire          main_rx_sink_sink_ready;
-wire          main_rx_sink_sink_valid;
-wire          main_rx_source_source_first;
-wire          main_rx_source_source_last;
-wire   [15:0] main_rx_source_source_payload_be;
-wire  [127:0] main_rx_source_source_payload_dat;
-wire          main_rx_source_source_ready;
-wire          main_rx_source_source_valid;
 wire          main_s7pciephy0;
 wire          main_s7pciephy1;
 wire          main_s7pciephy10;
@@ -4472,49 +4532,6 @@ reg           main_slave_source_ready = 1'd0;
 wire          main_slave_source_valid;
 reg           main_soc_rst = 1'd0;
 reg           main_tlp_ctrl_rst = 1'd0;
-reg           main_tx_pipe_ready_sink_d_first = 1'd0;
-reg           main_tx_pipe_ready_sink_d_last = 1'd0;
-reg    [15:0] main_tx_pipe_ready_sink_d_payload_be = 16'd0;
-reg   [127:0] main_tx_pipe_ready_sink_d_payload_dat = 128'd0;
-reg           main_tx_pipe_ready_sink_d_ready = 1'd0;
-reg           main_tx_pipe_ready_sink_d_valid = 1'd0;
-wire          main_tx_pipe_ready_sink_first;
-wire          main_tx_pipe_ready_sink_last;
-wire   [15:0] main_tx_pipe_ready_sink_payload_be;
-wire  [127:0] main_tx_pipe_ready_sink_payload_dat;
-wire          main_tx_pipe_ready_sink_ready;
-wire          main_tx_pipe_ready_sink_valid;
-reg           main_tx_pipe_ready_source_first = 1'd0;
-reg           main_tx_pipe_ready_source_last = 1'd0;
-reg    [15:0] main_tx_pipe_ready_source_payload_be = 16'd0;
-reg   [127:0] main_tx_pipe_ready_source_payload_dat = 128'd0;
-wire          main_tx_pipe_ready_source_ready;
-reg           main_tx_pipe_ready_source_valid = 1'd0;
-reg           main_tx_pipe_ready_valid = 1'd0;
-wire          main_tx_pipe_valid_sink_first;
-wire          main_tx_pipe_valid_sink_last;
-wire   [15:0] main_tx_pipe_valid_sink_payload_be;
-wire  [127:0] main_tx_pipe_valid_sink_payload_dat;
-wire          main_tx_pipe_valid_sink_ready;
-wire          main_tx_pipe_valid_sink_valid;
-reg           main_tx_pipe_valid_source_first = 1'd0;
-reg           main_tx_pipe_valid_source_last = 1'd0;
-reg    [15:0] main_tx_pipe_valid_source_payload_be = 16'd0;
-reg   [127:0] main_tx_pipe_valid_source_payload_dat = 128'd0;
-wire          main_tx_pipe_valid_source_ready;
-reg           main_tx_pipe_valid_source_valid = 1'd0;
-wire          main_tx_sink_sink_first;
-wire          main_tx_sink_sink_last;
-wire   [15:0] main_tx_sink_sink_payload_be;
-wire  [127:0] main_tx_sink_sink_payload_dat;
-wire          main_tx_sink_sink_ready;
-wire          main_tx_sink_sink_valid;
-wire          main_tx_source_source_first;
-wire          main_tx_source_source_last;
-wire   [15:0] main_tx_source_source_payload_be;
-wire  [127:0] main_tx_source_source_payload_dat;
-wire          main_tx_source_source_ready;
-wire          main_tx_source_source_valid;
 wire          pcie_clk;
 wire          pcie_rst;
 wire          pclk_clk;
@@ -4535,18 +4552,24 @@ assign sys_rst = pcie_rst;
 assign clk = pcie_clk;
 assign rst = pcie_rst;
 assign link_up = main_s7pciephy_csrfield_status;
-assign main_s7pciephy_sink_sink_valid0 = main_tx_source_source_valid;
-assign main_tx_source_source_ready = main_s7pciephy_sink_sink_ready0;
-assign main_s7pciephy_sink_sink_first0 = main_tx_source_source_first;
-assign main_s7pciephy_sink_sink_last0 = main_tx_source_source_last;
-assign main_s7pciephy_sink_sink_payload_dat0 = main_tx_source_source_payload_dat;
-assign main_s7pciephy_sink_sink_payload_be0 = main_tx_source_source_payload_be;
-assign main_rx_sink_sink_valid = main_s7pciephy_source_source_valid0;
-assign main_s7pciephy_source_source_ready0 = main_rx_sink_sink_ready;
-assign main_rx_sink_sink_first = main_s7pciephy_source_source_first0;
-assign main_rx_sink_sink_last = main_s7pciephy_source_source_last0;
-assign main_rx_sink_sink_payload_dat = main_s7pciephy_source_source_payload_dat0;
-assign main_rx_sink_sink_payload_be = main_s7pciephy_source_source_payload_be0;
+assign main_phy_sink_valid = main_phy_tx_source_source_valid;
+assign main_phy_tx_source_source_ready = main_phy_sink_ready;
+assign main_phy_sink_first = main_phy_tx_source_source_first;
+assign main_phy_sink_last = main_phy_tx_source_source_last;
+assign main_phy_sink_payload_dat = main_phy_tx_source_source_payload_dat;
+assign main_phy_sink_payload_be = main_phy_tx_source_source_payload_be;
+assign main_s7pciephy_sink_sink_valid0 = main_phy_source_valid;
+assign main_phy_source_ready = main_s7pciephy_sink_sink_ready0;
+assign main_s7pciephy_sink_sink_first0 = main_phy_source_first;
+assign main_s7pciephy_sink_sink_last0 = main_phy_source_last;
+assign main_s7pciephy_sink_sink_payload_dat0 = main_phy_source_payload_dat;
+assign main_s7pciephy_sink_sink_payload_be0 = main_phy_source_payload_be;
+assign main_phy_rx_sink_sink_valid = main_s7pciephy_source_source_valid0;
+assign main_s7pciephy_source_source_ready0 = main_phy_rx_sink_sink_ready;
+assign main_phy_rx_sink_sink_first = main_s7pciephy_source_source_first0;
+assign main_phy_rx_sink_sink_last = main_s7pciephy_source_source_last0;
+assign main_phy_rx_sink_sink_payload_dat = main_s7pciephy_source_source_payload_dat0;
+assign main_phy_rx_sink_sink_payload_be = main_s7pciephy_source_source_payload_be0;
 always @(*) begin
     main_pcie_msi_irqs = 32'd0;
     main_pcie_msi_irqs[0] = main_rec_irq[31];
@@ -4872,98 +4895,99 @@ assign clk125_clk = main_s7pciephy_clkout_buf0;
 assign clk250_clk = main_s7pciephy_clkout_buf1;
 assign userclk1_clk = main_s7pciephy_clkout_buf2;
 assign userclk2_clk = main_s7pciephy_clkout_buf3;
-assign main_tx_pipe_valid_sink_ready = ((~main_tx_pipe_valid_source_valid) | main_tx_pipe_valid_source_ready);
-assign main_tx_pipe_ready_sink_ready = (~main_tx_pipe_ready_valid);
+assign main_phy_tx_pipe_valid_sink_ready = ((~main_phy_tx_pipe_valid_source_valid) | main_phy_tx_pipe_valid_source_ready);
+assign main_phy_tx_pipe_ready_sink_ready = (~main_phy_tx_pipe_ready_valid);
 always @(*) begin
-    main_tx_pipe_ready_source_first = 1'd0;
-    main_tx_pipe_ready_source_last = 1'd0;
-    main_tx_pipe_ready_source_payload_be = 16'd0;
-    main_tx_pipe_ready_source_payload_dat = 128'd0;
-    main_tx_pipe_ready_source_valid = 1'd0;
-    if (main_tx_pipe_ready_valid) begin
-        main_tx_pipe_ready_source_valid = main_tx_pipe_ready_sink_d_valid;
-        main_tx_pipe_ready_source_first = main_tx_pipe_ready_sink_d_first;
-        main_tx_pipe_ready_source_last = main_tx_pipe_ready_sink_d_last;
-        main_tx_pipe_ready_source_payload_dat = main_tx_pipe_ready_sink_d_payload_dat;
-        main_tx_pipe_ready_source_payload_be = main_tx_pipe_ready_sink_d_payload_be;
+    main_phy_tx_pipe_ready_source_first = 1'd0;
+    main_phy_tx_pipe_ready_source_last = 1'd0;
+    main_phy_tx_pipe_ready_source_payload_be = 16'd0;
+    main_phy_tx_pipe_ready_source_payload_dat = 128'd0;
+    main_phy_tx_pipe_ready_source_valid = 1'd0;
+    if (main_phy_tx_pipe_ready_valid) begin
+        main_phy_tx_pipe_ready_source_valid = main_phy_tx_pipe_ready_sink_d_valid;
+        main_phy_tx_pipe_ready_source_first = main_phy_tx_pipe_ready_sink_d_first;
+        main_phy_tx_pipe_ready_source_last = main_phy_tx_pipe_ready_sink_d_last;
+        main_phy_tx_pipe_ready_source_payload_dat = main_phy_tx_pipe_ready_sink_d_payload_dat;
+        main_phy_tx_pipe_ready_source_payload_be = main_phy_tx_pipe_ready_sink_d_payload_be;
     end else begin
-        main_tx_pipe_ready_source_valid = main_tx_pipe_ready_sink_valid;
-        main_tx_pipe_ready_source_first = main_tx_pipe_ready_sink_first;
-        main_tx_pipe_ready_source_last = main_tx_pipe_ready_sink_last;
-        main_tx_pipe_ready_source_payload_dat = main_tx_pipe_ready_sink_payload_dat;
-        main_tx_pipe_ready_source_payload_be = main_tx_pipe_ready_sink_payload_be;
+        main_phy_tx_pipe_ready_source_valid = main_phy_tx_pipe_ready_sink_valid;
+        main_phy_tx_pipe_ready_source_first = main_phy_tx_pipe_ready_sink_first;
+        main_phy_tx_pipe_ready_source_last = main_phy_tx_pipe_ready_sink_last;
+        main_phy_tx_pipe_ready_source_payload_dat = main_phy_tx_pipe_ready_sink_payload_dat;
+        main_phy_tx_pipe_ready_source_payload_be = main_phy_tx_pipe_ready_sink_payload_be;
     end
 end
-assign main_tx_pipe_valid_sink_valid = main_tx_sink_sink_valid;
-assign main_tx_sink_sink_ready = main_tx_pipe_valid_sink_ready;
-assign main_tx_pipe_valid_sink_first = main_tx_sink_sink_first;
-assign main_tx_pipe_valid_sink_last = main_tx_sink_sink_last;
-assign main_tx_pipe_valid_sink_payload_dat = main_tx_sink_sink_payload_dat;
-assign main_tx_pipe_valid_sink_payload_be = main_tx_sink_sink_payload_be;
-assign main_tx_pipe_ready_sink_valid = main_tx_pipe_valid_source_valid;
-assign main_tx_pipe_valid_source_ready = main_tx_pipe_ready_sink_ready;
-assign main_tx_pipe_ready_sink_first = main_tx_pipe_valid_source_first;
-assign main_tx_pipe_ready_sink_last = main_tx_pipe_valid_source_last;
-assign main_tx_pipe_ready_sink_payload_dat = main_tx_pipe_valid_source_payload_dat;
-assign main_tx_pipe_ready_sink_payload_be = main_tx_pipe_valid_source_payload_be;
-assign main_tx_source_source_valid = main_tx_pipe_ready_source_valid;
-assign main_tx_pipe_ready_source_ready = main_tx_source_source_ready;
-assign main_tx_source_source_first = main_tx_pipe_ready_source_first;
-assign main_tx_source_source_last = main_tx_pipe_ready_source_last;
-assign main_tx_source_source_payload_dat = main_tx_pipe_ready_source_payload_dat;
-assign main_tx_source_source_payload_be = main_tx_pipe_ready_source_payload_be;
-assign main_rx_pipe_valid_sink_ready = ((~main_rx_pipe_valid_source_valid) | main_rx_pipe_valid_source_ready);
-assign main_rx_pipe_ready_sink_ready = (~main_rx_pipe_ready_valid);
+assign main_phy_tx_pipe_valid_sink_valid = main_phy_tx_sink_sink_valid;
+assign main_phy_tx_sink_sink_ready = main_phy_tx_pipe_valid_sink_ready;
+assign main_phy_tx_pipe_valid_sink_first = main_phy_tx_sink_sink_first;
+assign main_phy_tx_pipe_valid_sink_last = main_phy_tx_sink_sink_last;
+assign main_phy_tx_pipe_valid_sink_payload_dat = main_phy_tx_sink_sink_payload_dat;
+assign main_phy_tx_pipe_valid_sink_payload_be = main_phy_tx_sink_sink_payload_be;
+assign main_phy_tx_pipe_ready_sink_valid = main_phy_tx_pipe_valid_source_valid;
+assign main_phy_tx_pipe_valid_source_ready = main_phy_tx_pipe_ready_sink_ready;
+assign main_phy_tx_pipe_ready_sink_first = main_phy_tx_pipe_valid_source_first;
+assign main_phy_tx_pipe_ready_sink_last = main_phy_tx_pipe_valid_source_last;
+assign main_phy_tx_pipe_ready_sink_payload_dat = main_phy_tx_pipe_valid_source_payload_dat;
+assign main_phy_tx_pipe_ready_sink_payload_be = main_phy_tx_pipe_valid_source_payload_be;
+assign main_phy_tx_source_source_valid = main_phy_tx_pipe_ready_source_valid;
+assign main_phy_tx_pipe_ready_source_ready = main_phy_tx_source_source_ready;
+assign main_phy_tx_source_source_first = main_phy_tx_pipe_ready_source_first;
+assign main_phy_tx_source_source_last = main_phy_tx_pipe_ready_source_last;
+assign main_phy_tx_source_source_payload_dat = main_phy_tx_pipe_ready_source_payload_dat;
+assign main_phy_tx_source_source_payload_be = main_phy_tx_pipe_ready_source_payload_be;
+assign main_phy_sink_ready = ((~main_phy_source_valid) | main_phy_source_ready);
+assign main_phy_rx_pipe_valid_sink_ready = ((~main_phy_rx_pipe_valid_source_valid) | main_phy_rx_pipe_valid_source_ready);
+assign main_phy_rx_pipe_ready_sink_ready = (~main_phy_rx_pipe_ready_valid);
 always @(*) begin
-    main_rx_pipe_ready_source_first = 1'd0;
-    main_rx_pipe_ready_source_last = 1'd0;
-    main_rx_pipe_ready_source_payload_be = 16'd0;
-    main_rx_pipe_ready_source_payload_dat = 128'd0;
-    main_rx_pipe_ready_source_valid = 1'd0;
-    if (main_rx_pipe_ready_valid) begin
-        main_rx_pipe_ready_source_valid = main_rx_pipe_ready_sink_d_valid;
-        main_rx_pipe_ready_source_first = main_rx_pipe_ready_sink_d_first;
-        main_rx_pipe_ready_source_last = main_rx_pipe_ready_sink_d_last;
-        main_rx_pipe_ready_source_payload_dat = main_rx_pipe_ready_sink_d_payload_dat;
-        main_rx_pipe_ready_source_payload_be = main_rx_pipe_ready_sink_d_payload_be;
+    main_phy_rx_pipe_ready_source_first = 1'd0;
+    main_phy_rx_pipe_ready_source_last = 1'd0;
+    main_phy_rx_pipe_ready_source_payload_be = 16'd0;
+    main_phy_rx_pipe_ready_source_payload_dat = 128'd0;
+    main_phy_rx_pipe_ready_source_valid = 1'd0;
+    if (main_phy_rx_pipe_ready_valid) begin
+        main_phy_rx_pipe_ready_source_valid = main_phy_rx_pipe_ready_sink_d_valid;
+        main_phy_rx_pipe_ready_source_first = main_phy_rx_pipe_ready_sink_d_first;
+        main_phy_rx_pipe_ready_source_last = main_phy_rx_pipe_ready_sink_d_last;
+        main_phy_rx_pipe_ready_source_payload_dat = main_phy_rx_pipe_ready_sink_d_payload_dat;
+        main_phy_rx_pipe_ready_source_payload_be = main_phy_rx_pipe_ready_sink_d_payload_be;
     end else begin
-        main_rx_pipe_ready_source_valid = main_rx_pipe_ready_sink_valid;
-        main_rx_pipe_ready_source_first = main_rx_pipe_ready_sink_first;
-        main_rx_pipe_ready_source_last = main_rx_pipe_ready_sink_last;
-        main_rx_pipe_ready_source_payload_dat = main_rx_pipe_ready_sink_payload_dat;
-        main_rx_pipe_ready_source_payload_be = main_rx_pipe_ready_sink_payload_be;
+        main_phy_rx_pipe_ready_source_valid = main_phy_rx_pipe_ready_sink_valid;
+        main_phy_rx_pipe_ready_source_first = main_phy_rx_pipe_ready_sink_first;
+        main_phy_rx_pipe_ready_source_last = main_phy_rx_pipe_ready_sink_last;
+        main_phy_rx_pipe_ready_source_payload_dat = main_phy_rx_pipe_ready_sink_payload_dat;
+        main_phy_rx_pipe_ready_source_payload_be = main_phy_rx_pipe_ready_sink_payload_be;
     end
 end
-assign main_rx_pipe_valid_sink_valid = main_rx_sink_sink_valid;
-assign main_rx_sink_sink_ready = main_rx_pipe_valid_sink_ready;
-assign main_rx_pipe_valid_sink_first = main_rx_sink_sink_first;
-assign main_rx_pipe_valid_sink_last = main_rx_sink_sink_last;
-assign main_rx_pipe_valid_sink_payload_dat = main_rx_sink_sink_payload_dat;
-assign main_rx_pipe_valid_sink_payload_be = main_rx_sink_sink_payload_be;
-assign main_rx_pipe_ready_sink_valid = main_rx_pipe_valid_source_valid;
-assign main_rx_pipe_valid_source_ready = main_rx_pipe_ready_sink_ready;
-assign main_rx_pipe_ready_sink_first = main_rx_pipe_valid_source_first;
-assign main_rx_pipe_ready_sink_last = main_rx_pipe_valid_source_last;
-assign main_rx_pipe_ready_sink_payload_dat = main_rx_pipe_valid_source_payload_dat;
-assign main_rx_pipe_ready_sink_payload_be = main_rx_pipe_valid_source_payload_be;
-assign main_rx_source_source_valid = main_rx_pipe_ready_source_valid;
-assign main_rx_pipe_ready_source_ready = main_rx_source_source_ready;
-assign main_rx_source_source_first = main_rx_pipe_ready_source_first;
-assign main_rx_source_source_last = main_rx_pipe_ready_source_last;
-assign main_rx_source_source_payload_dat = main_rx_pipe_ready_source_payload_dat;
-assign main_rx_source_source_payload_be = main_rx_pipe_ready_source_payload_be;
-assign main_depacketizer_sink_sink_valid = main_rx_source_source_valid;
-assign main_rx_source_source_ready = main_depacketizer_sink_sink_ready;
-assign main_depacketizer_sink_sink_first = main_rx_source_source_first;
-assign main_depacketizer_sink_sink_last = main_rx_source_source_last;
-assign main_depacketizer_sink_sink_payload_dat = main_rx_source_source_payload_dat;
-assign main_depacketizer_sink_sink_payload_be = main_rx_source_source_payload_be;
-assign main_tx_sink_sink_valid = main_packetizer_source_valid;
-assign main_packetizer_source_ready = main_tx_sink_sink_ready;
-assign main_tx_sink_sink_first = main_packetizer_source_first;
-assign main_tx_sink_sink_last = main_packetizer_source_last;
-assign main_tx_sink_sink_payload_dat = main_packetizer_source_payload_dat;
-assign main_tx_sink_sink_payload_be = main_packetizer_source_payload_be;
+assign main_phy_rx_pipe_valid_sink_valid = main_phy_rx_sink_sink_valid;
+assign main_phy_rx_sink_sink_ready = main_phy_rx_pipe_valid_sink_ready;
+assign main_phy_rx_pipe_valid_sink_first = main_phy_rx_sink_sink_first;
+assign main_phy_rx_pipe_valid_sink_last = main_phy_rx_sink_sink_last;
+assign main_phy_rx_pipe_valid_sink_payload_dat = main_phy_rx_sink_sink_payload_dat;
+assign main_phy_rx_pipe_valid_sink_payload_be = main_phy_rx_sink_sink_payload_be;
+assign main_phy_rx_pipe_ready_sink_valid = main_phy_rx_pipe_valid_source_valid;
+assign main_phy_rx_pipe_valid_source_ready = main_phy_rx_pipe_ready_sink_ready;
+assign main_phy_rx_pipe_ready_sink_first = main_phy_rx_pipe_valid_source_first;
+assign main_phy_rx_pipe_ready_sink_last = main_phy_rx_pipe_valid_source_last;
+assign main_phy_rx_pipe_ready_sink_payload_dat = main_phy_rx_pipe_valid_source_payload_dat;
+assign main_phy_rx_pipe_ready_sink_payload_be = main_phy_rx_pipe_valid_source_payload_be;
+assign main_phy_rx_source_source_valid = main_phy_rx_pipe_ready_source_valid;
+assign main_phy_rx_pipe_ready_source_ready = main_phy_rx_source_source_ready;
+assign main_phy_rx_source_source_first = main_phy_rx_pipe_ready_source_first;
+assign main_phy_rx_source_source_last = main_phy_rx_pipe_ready_source_last;
+assign main_phy_rx_source_source_payload_dat = main_phy_rx_pipe_ready_source_payload_dat;
+assign main_phy_rx_source_source_payload_be = main_phy_rx_pipe_ready_source_payload_be;
+assign main_depacketizer_sink_sink_valid = main_phy_rx_source_source_valid;
+assign main_phy_rx_source_source_ready = main_depacketizer_sink_sink_ready;
+assign main_depacketizer_sink_sink_first = main_phy_rx_source_source_first;
+assign main_depacketizer_sink_sink_last = main_phy_rx_source_source_last;
+assign main_depacketizer_sink_sink_payload_dat = main_phy_rx_source_source_payload_dat;
+assign main_depacketizer_sink_sink_payload_be = main_phy_rx_source_source_payload_be;
+assign main_phy_tx_sink_sink_valid = main_packetizer_source_valid;
+assign main_packetizer_source_ready = main_phy_tx_sink_sink_ready;
+assign main_phy_tx_sink_sink_first = main_packetizer_source_first;
+assign main_phy_tx_sink_sink_last = main_packetizer_source_last;
+assign main_phy_tx_sink_sink_payload_dat = main_packetizer_source_payload_dat;
+assign main_phy_tx_sink_sink_payload_be = main_packetizer_source_payload_be;
 assign main_slave_source_valid = main_depacketizer_req_source_valid;
 assign main_depacketizer_req_source_ready = main_slave_source_ready;
 assign main_slave_source_first = main_depacketizer_req_source_first;
@@ -11088,49 +11112,56 @@ always @(posedge sys_clk) begin
             main_bus_errors <= (main_bus_errors + 1'd1);
         end
     end
-    if (((~main_tx_pipe_valid_source_valid) | main_tx_pipe_valid_source_ready)) begin
-        main_tx_pipe_valid_source_valid <= main_tx_pipe_valid_sink_valid;
-        main_tx_pipe_valid_source_first <= main_tx_pipe_valid_sink_first;
-        main_tx_pipe_valid_source_last <= main_tx_pipe_valid_sink_last;
-        main_tx_pipe_valid_source_payload_dat <= main_tx_pipe_valid_sink_payload_dat;
-        main_tx_pipe_valid_source_payload_be <= main_tx_pipe_valid_sink_payload_be;
+    if (((~main_phy_tx_pipe_valid_source_valid) | main_phy_tx_pipe_valid_source_ready)) begin
+        main_phy_tx_pipe_valid_source_valid <= main_phy_tx_pipe_valid_sink_valid;
+        main_phy_tx_pipe_valid_source_first <= main_phy_tx_pipe_valid_sink_first;
+        main_phy_tx_pipe_valid_source_last <= main_phy_tx_pipe_valid_sink_last;
+        main_phy_tx_pipe_valid_source_payload_dat <= main_phy_tx_pipe_valid_sink_payload_dat;
+        main_phy_tx_pipe_valid_source_payload_be <= main_phy_tx_pipe_valid_sink_payload_be;
     end
-    if ((main_tx_pipe_ready_sink_valid & (~main_tx_pipe_ready_source_ready))) begin
-        main_tx_pipe_ready_valid <= 1'd1;
+    if ((main_phy_tx_pipe_ready_sink_valid & (~main_phy_tx_pipe_ready_source_ready))) begin
+        main_phy_tx_pipe_ready_valid <= 1'd1;
     end else begin
-        if (main_tx_pipe_ready_source_ready) begin
-            main_tx_pipe_ready_valid <= 1'd0;
+        if (main_phy_tx_pipe_ready_source_ready) begin
+            main_phy_tx_pipe_ready_valid <= 1'd0;
         end
     end
-    if (((~main_tx_pipe_ready_source_ready) & (~main_tx_pipe_ready_valid))) begin
-        main_tx_pipe_ready_sink_d_valid <= main_tx_pipe_ready_sink_valid;
-        main_tx_pipe_ready_sink_d_ready <= main_tx_pipe_ready_sink_ready;
-        main_tx_pipe_ready_sink_d_first <= main_tx_pipe_ready_sink_first;
-        main_tx_pipe_ready_sink_d_last <= main_tx_pipe_ready_sink_last;
-        main_tx_pipe_ready_sink_d_payload_dat <= main_tx_pipe_ready_sink_payload_dat;
-        main_tx_pipe_ready_sink_d_payload_be <= main_tx_pipe_ready_sink_payload_be;
+    if (((~main_phy_tx_pipe_ready_source_ready) & (~main_phy_tx_pipe_ready_valid))) begin
+        main_phy_tx_pipe_ready_sink_d_valid <= main_phy_tx_pipe_ready_sink_valid;
+        main_phy_tx_pipe_ready_sink_d_ready <= main_phy_tx_pipe_ready_sink_ready;
+        main_phy_tx_pipe_ready_sink_d_first <= main_phy_tx_pipe_ready_sink_first;
+        main_phy_tx_pipe_ready_sink_d_last <= main_phy_tx_pipe_ready_sink_last;
+        main_phy_tx_pipe_ready_sink_d_payload_dat <= main_phy_tx_pipe_ready_sink_payload_dat;
+        main_phy_tx_pipe_ready_sink_d_payload_be <= main_phy_tx_pipe_ready_sink_payload_be;
     end
-    if (((~main_rx_pipe_valid_source_valid) | main_rx_pipe_valid_source_ready)) begin
-        main_rx_pipe_valid_source_valid <= main_rx_pipe_valid_sink_valid;
-        main_rx_pipe_valid_source_first <= main_rx_pipe_valid_sink_first;
-        main_rx_pipe_valid_source_last <= main_rx_pipe_valid_sink_last;
-        main_rx_pipe_valid_source_payload_dat <= main_rx_pipe_valid_sink_payload_dat;
-        main_rx_pipe_valid_source_payload_be <= main_rx_pipe_valid_sink_payload_be;
+    if (((~main_phy_source_valid) | main_phy_source_ready)) begin
+        main_phy_source_valid <= main_phy_sink_valid;
+        main_phy_source_first <= main_phy_sink_first;
+        main_phy_source_last <= main_phy_sink_last;
+        main_phy_source_payload_dat <= main_phy_sink_payload_dat;
+        main_phy_source_payload_be <= main_phy_sink_payload_be;
     end
-    if ((main_rx_pipe_ready_sink_valid & (~main_rx_pipe_ready_source_ready))) begin
-        main_rx_pipe_ready_valid <= 1'd1;
+    if (((~main_phy_rx_pipe_valid_source_valid) | main_phy_rx_pipe_valid_source_ready)) begin
+        main_phy_rx_pipe_valid_source_valid <= main_phy_rx_pipe_valid_sink_valid;
+        main_phy_rx_pipe_valid_source_first <= main_phy_rx_pipe_valid_sink_first;
+        main_phy_rx_pipe_valid_source_last <= main_phy_rx_pipe_valid_sink_last;
+        main_phy_rx_pipe_valid_source_payload_dat <= main_phy_rx_pipe_valid_sink_payload_dat;
+        main_phy_rx_pipe_valid_source_payload_be <= main_phy_rx_pipe_valid_sink_payload_be;
+    end
+    if ((main_phy_rx_pipe_ready_sink_valid & (~main_phy_rx_pipe_ready_source_ready))) begin
+        main_phy_rx_pipe_ready_valid <= 1'd1;
     end else begin
-        if (main_rx_pipe_ready_source_ready) begin
-            main_rx_pipe_ready_valid <= 1'd0;
+        if (main_phy_rx_pipe_ready_source_ready) begin
+            main_phy_rx_pipe_ready_valid <= 1'd0;
         end
     end
-    if (((~main_rx_pipe_ready_source_ready) & (~main_rx_pipe_ready_valid))) begin
-        main_rx_pipe_ready_sink_d_valid <= main_rx_pipe_ready_sink_valid;
-        main_rx_pipe_ready_sink_d_ready <= main_rx_pipe_ready_sink_ready;
-        main_rx_pipe_ready_sink_d_first <= main_rx_pipe_ready_sink_first;
-        main_rx_pipe_ready_sink_d_last <= main_rx_pipe_ready_sink_last;
-        main_rx_pipe_ready_sink_d_payload_dat <= main_rx_pipe_ready_sink_payload_dat;
-        main_rx_pipe_ready_sink_d_payload_be <= main_rx_pipe_ready_sink_payload_be;
+    if (((~main_phy_rx_pipe_ready_source_ready) & (~main_phy_rx_pipe_ready_valid))) begin
+        main_phy_rx_pipe_ready_sink_d_valid <= main_phy_rx_pipe_ready_sink_valid;
+        main_phy_rx_pipe_ready_sink_d_ready <= main_phy_rx_pipe_ready_sink_ready;
+        main_phy_rx_pipe_ready_sink_d_first <= main_phy_rx_pipe_ready_sink_first;
+        main_phy_rx_pipe_ready_sink_d_last <= main_phy_rx_pipe_ready_sink_last;
+        main_phy_rx_pipe_ready_sink_d_payload_dat <= main_phy_rx_pipe_ready_sink_payload_dat;
+        main_phy_rx_pipe_ready_sink_d_payload_be <= main_phy_rx_pipe_ready_sink_payload_be;
     end
     if ((main_depacketizer_header_extracter_sink_valid & main_depacketizer_header_extracter_sink_ready)) begin
         main_depacketizer_header_extracter_dat_r <= main_depacketizer_header_extracter_sink_payload_dat;
@@ -11899,8 +11930,8 @@ always @(posedge sys_clk) begin
         main_pcie_dma0_writer_table_index <= 1'd0;
         main_pcie_dma0_writer_table_count <= 1'd0;
     end else begin
-        if ((main_pcie_dma0_writer_table_self_source_valid & main_pcie_dma0_writer_table_self_source_ready)) begin
-            if (((main_pcie_dma0_writer_table_loop_prog_n_storage == 1'd1) & main_pcie_dma0_writer_table_self_source_first)) begin
+        if (main_pcie_dma0_writer_table_retire) begin
+            if ((main_pcie_dma0_writer_table_retire_loop & main_pcie_dma0_writer_table_retire_first)) begin
                 main_pcie_dma0_writer_table_index <= 1'd0;
                 main_pcie_dma0_writer_table_loop_first <= 1'd0;
                 main_pcie_dma0_writer_table_count <= (main_pcie_dma0_writer_table_count + {(~main_pcie_dma0_writer_table_loop_first)});
@@ -11912,6 +11943,9 @@ always @(posedge sys_clk) begin
             end
         end
     end
+    main_pcie_dma0_writer_table_retire <= (main_pcie_dma0_writer_table_source_source_valid & main_pcie_dma0_writer_table_source_source_ready);
+    main_pcie_dma0_writer_table_retire_first <= main_pcie_dma0_writer_table_source_source_first;
+    main_pcie_dma0_writer_table_retire_loop <= (main_pcie_dma0_writer_table_loop_prog_n_storage == 1'd1);
     if (((main_pcie_dma0_writer_table_self_syncfifo_we & main_pcie_dma0_writer_table_self_syncfifo_writable) & (~main_pcie_dma0_writer_table_self_replace))) begin
         main_pcie_dma0_writer_table_self_produce <= (main_pcie_dma0_writer_table_self_produce + 1'd1);
     end
@@ -12144,10 +12178,11 @@ always @(posedge sys_clk) begin
         main_pcie_dma0_reader_syncfifo1_consume <= 11'd0;
     end
     builder_litepciedmareader_fsm_state <= builder_litepciedmareader_fsm_next_state;
+    main_otpu_dma_c2h_ev <= main_pcie_dma0_writer_irq;
     if (main_otpu_dma_h2c_done) begin
         main_otpu_dma_h2c_cnt <= (main_otpu_dma_h2c_cnt + 1'd1);
     end
-    if (main_pcie_dma0_writer_irq) begin
+    if (main_otpu_dma_c2h_ev) begin
         main_otpu_dma_c2h_cnt <= (main_otpu_dma_c2h_cnt + 1'd1);
     end
     if ((~main_otpu_dma_csrfield_enable)) begin
@@ -12155,7 +12190,7 @@ always @(posedge sys_clk) begin
         main_otpu_dma_sc <= main_otpu_dma_c2h_cnt;
     end
     main_otpu_dma_h2c_d <= main_otpu_dma_h2c_done;
-    main_otpu_dma_c2h_d <= main_pcie_dma0_writer_irq;
+    main_otpu_dma_c2h_d <= main_otpu_dma_c2h_ev;
     if (main_otpu_dma_h2c_reset0) begin
         main_otpu_dma_h2c_overflow <= 1'd0;
     end else begin
@@ -12842,14 +12877,15 @@ always @(posedge sys_clk) begin
         main_s7pciephy_bus_master_enable_wr_stb <= 1'd0;
         main_s7pciephy_max_request_size_wr_stb <= 1'd0;
         main_s7pciephy_max_payload_size_wr_stb <= 1'd0;
-        main_tx_pipe_valid_source_valid <= 1'd0;
-        main_tx_pipe_ready_valid <= 1'd0;
-        main_tx_pipe_ready_sink_d_valid <= 1'd0;
-        main_tx_pipe_ready_sink_d_ready <= 1'd0;
-        main_rx_pipe_valid_source_valid <= 1'd0;
-        main_rx_pipe_ready_valid <= 1'd0;
-        main_rx_pipe_ready_sink_d_valid <= 1'd0;
-        main_rx_pipe_ready_sink_d_ready <= 1'd0;
+        main_phy_tx_pipe_valid_source_valid <= 1'd0;
+        main_phy_tx_pipe_ready_valid <= 1'd0;
+        main_phy_tx_pipe_ready_sink_d_valid <= 1'd0;
+        main_phy_tx_pipe_ready_sink_d_ready <= 1'd0;
+        main_phy_rx_pipe_valid_source_valid <= 1'd0;
+        main_phy_rx_pipe_ready_valid <= 1'd0;
+        main_phy_rx_pipe_ready_sink_d_valid <= 1'd0;
+        main_phy_rx_pipe_ready_sink_d_ready <= 1'd0;
+        main_phy_source_valid <= 1'd0;
         main_depacketizer_header_extracter_first <= 1'd0;
         main_depacketizer_header_extracter_flush <= 1'd0;
         main_depacketizer_dispatcher_first <= 1'd1;
@@ -12881,6 +12917,9 @@ always @(posedge sys_clk) begin
         main_pcie_dma0_writer_table_self_level <= 9'd0;
         main_pcie_dma0_writer_table_self_produce <= 8'd0;
         main_pcie_dma0_writer_table_self_consume <= 8'd0;
+        main_pcie_dma0_writer_table_retire <= 1'd0;
+        main_pcie_dma0_writer_table_retire_first <= 1'd0;
+        main_pcie_dma0_writer_table_retire_loop <= 1'd0;
         main_pcie_dma0_writer_table_loop_first <= 1'd0;
         main_pcie_dma0_writer_splitter_length <= 24'd0;
         main_pcie_dma0_writer_data_fifo_readable <= 1'd0;
@@ -12955,6 +12994,7 @@ always @(posedge sys_clk) begin
         main_otpu_dma_mm_status_wr_stb <= 1'd0;
         main_otpu_dma_h2c_cnt <= 32'd0;
         main_otpu_dma_c2h_cnt <= 32'd0;
+        main_otpu_dma_c2h_ev <= 1'd0;
         main_otpu_dma_sh <= 32'd0;
         main_otpu_dma_sc <= 32'd0;
         main_otpu_dma_wh <= 32'd0;
@@ -14230,5 +14270,5 @@ FDPE #(
 endmodule
 
 // -----------------------------------------------------------------------------
-//  Auto-Generated by LiteX on 2026-10-15 03:56:11.
+//  Auto-Generated by LiteX on 2026-10-15 05:12:56.
 //------------------------------------------------------------------------------

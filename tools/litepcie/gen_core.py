@@ -179,12 +179,17 @@ class OTPUDMA(LiteXModule):
             self.mm_status.status.eq(self.mm_status_in),
         ]
 
-        # completion counters (never reset but by the link: the driver works with differences)
+        # completion counters (never reset but by the link: the driver works with differences).
+        # The writer's event registered first (it comes from the packetizer's ready through 6
+        # levels): its count, record and MSI a cycle later, after the transfer's last write all
+        # the same
         h2c_cnt = Signal(32)
         c2h_cnt = Signal(32)
+        c2h_ev = Signal()
         self.sync += [
+            c2h_ev.eq(c2h_event),
             If(self.h2c_done, h2c_cnt.eq(h2c_cnt + 1)),
-            If(c2h_event, c2h_cnt.eq(c2h_cnt + 1)),
+            If(c2h_ev, c2h_cnt.eq(c2h_cnt + 1)),
         ]
         self.comb += [self.h2c_count.status.eq(h2c_cnt), self.c2h_count.status.eq(c2h_cnt)]
 
@@ -238,23 +243,29 @@ class OTPUDMA(LiteXModule):
         self.sync += If(~enable, sh.eq(h2c_cnt), sc.eq(c2h_cnt))
         h2c_d = Signal()
         c2h_d = Signal()
-        self.sync += [h2c_d.eq(self.h2c_done), c2h_d.eq(c2h_event)]
+        self.sync += [h2c_d.eq(self.h2c_done), c2h_d.eq(c2h_ev)]
         self.irq_off = Signal()
         self.comb += self.irq_off.eq(~enable & (h2c_d | c2h_d))
 
 
 class RetireRegTable(lpdma.LitePCIeDMAScatterGather):
-    """The DMA reader's table with its retire inputs registered. They only step loop_status
-    (software status for LitePCIe's loop mode; the driver runs prog mode and never reads it), and
-    their logic from the reader's request metadata into the 16-bit index's and count's reset and
-    enable was a 250 MHz path (6 levels)."""
+    """The DMA tables with their retire registered. A retire only steps loop_status (software
+    status for LitePCIe's loop mode; the driver runs prog mode and never reads it), and its logic
+    into the 16-bit index's and count's reset and enable was a 250 MHz path (6 levels): from the
+    reader's request metadata (its external retire), from the packetizer's ready through the
+    writer's splitter (a descriptor taken from the table, the default)."""
     def __init__(self, depth, address_width=32, with_external_retire=False):
-        super().__init__(depth, address_width, with_external_retire)
+        super().__init__(depth, address_width, with_external_retire=True)
+        regs = (self.retire, self.retire_first, self.retire_loop)
         if with_external_retire:
-            regs = (self.retire, self.retire_first, self.retire_loop)
             # the reader drives these after the table is built: theirs, registered into the table's
             self.retire, self.retire_first, self.retire_loop = Signal(), Signal(), Signal()
-            self.sync += [r.eq(d) for r, d in zip(regs, (self.retire, self.retire_first, self.retire_loop))]
+            src = (self.retire, self.retire_first, self.retire_loop)
+        else:
+            # the default's: a descriptor taken from the table (its source is the table's)
+            src = (self.source.valid & self.source.ready, self.source.first,
+                   self.loop_prog_n.storage == 1)
+        self.sync += [r.eq(d) for r, d in zip(regs, src)]
 
 
 class RegisteredPHY:
@@ -262,13 +273,17 @@ class RegisteredPHY:
     and ready from flip-flops on both sides), every other attribute the PHY's own. With the streams
     in the PHY's clock domain (cd "pcie") LitePCIe connects the TLP layer straight to the hard
     block wrapper's AXI interface, whose ready and throttle logic it then drove through 12 levels
-    from the packetizer's buffer (the slices LitePCIe's own clock crossing had are gone with it)."""
+    from the packetizer's buffer (the slices LitePCIe's own clock crossing had are gone with it).
+    TX has a second valid stage (stream.PipeValid), which placement can put by the hard block."""
     def __init__(self, soc, phy):
         self._phy = phy
         tx = stream.Buffer(phy.sink.description, pipe_valid=True, pipe_ready=True)
         rx = stream.Buffer(phy.source.description, pipe_valid=True, pipe_ready=True)
-        soc.phy_tx_buf, soc.phy_rx_buf = tx, rx
-        soc.comb += [tx.source.connect(phy.sink), phy.source.connect(rx.sink)]
+        # and a second valid stage by the hard block (its TX throttle and config grant logic)
+        tx2 = stream.PipeValid(phy.sink.description)
+        soc.phy_tx_buf, soc.phy_tx_pv, soc.phy_rx_buf = tx, tx2, rx
+        soc.comb += [tx.source.connect(tx2.sink), tx2.source.connect(phy.sink),
+                     phy.source.connect(rx.sink)]
         self.sink, self.source = tx.sink, rx.source
 
     def __getattr__(self, name):
