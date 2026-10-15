@@ -15,7 +15,7 @@ if {[llength $lp_mux] == 1} {
   set lp_c0 [get_clocks -quiet -of_objects $lp_i0]
   set lp_c1 [get_clocks -quiet -of_objects $lp_i1]
   if {[llength $lp_c0] == 1 && [llength $lp_c1] == 1} {
-    create_generated_clock -name lp_pclk_125 -source $lp_i0 -divide_by 1 -master_clock $lp_c0 \
+    create_generated_clock -name lp_pclk_125 -source $lp_i0 -divide_by 1 -add -master_clock $lp_c0 \
       [get_pins $lp_mux/O]
     create_generated_clock -name lp_pclk_250 -source $lp_i1 -divide_by 1 -add -master_clock $lp_c1 \
       [get_pins $lp_mux/O]

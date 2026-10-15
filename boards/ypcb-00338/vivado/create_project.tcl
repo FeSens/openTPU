@@ -149,6 +149,8 @@ if {$CLK2X} { lappend late $cons/otpu_clk2x.tcl }
 lappend late $cons/otpu_mxu_place.tcl $cons/otpu_ddr_phy_place.tcl
 add_files -fileset constrs_1 -norecurse $late
 set_property SCOPED_TO_REF otpu_mem_ch [get_files $cons/otpu_mem_ch.tcl]
+# LiteX writes the core's constraints for the core as the top (get_nets {*pclk_sel})
+set_property SCOPED_TO_REF otpu_litepcie [get_files otpu_litepcie.xdc]
 set_property PROCESSING_ORDER LATE [get_files $late]
 set_property USED_IN_SYNTHESIS false [get_files $late]
 foreach f $late {

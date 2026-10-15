@@ -58,6 +58,7 @@ and reproduced by tools/litepcie/check_core.sh.
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -73,6 +74,7 @@ from litex.soc.integration.soc import SoCRegion
 from litex.soc.integration.soc_core import SoCMini
 from litex.soc.integration.builder import Builder
 
+from litepcie.common import dma_layout
 from litepcie.core import LitePCIeEndpoint, LitePCIeMSI
 from litepcie.frontend.dma import LitePCIeDMA
 from litepcie.frontend.wishbone import LitePCIeWishboneMaster
@@ -82,9 +84,11 @@ OTLP_VERSION = 1
 BAR0_SIZE = 0x100000          # 1 MiB, XDMA's BAR0
 USER_SIZE = 0x80000           # the user window (R_DDR4 + 4 x DDR4_STRIDE)
 CSR_BASE = 0x80000
-TABLE_DEPTH = 1024            # descriptors per DMA table (4 MiB of 4 KiB pages)
+TABLE_DEPTH = 256             # descriptors per DMA table (1 MiB of 4 KiB pages; LUTRAM)
 PENDING = 16                  # read requests in flight (16 x 512 B = 8 KiB)
 CMD_DEPTH = 64                # commands per queue
+MSI_DELAY = 32                # cycles a record's MSI waits behind its write (see core_logic)
+LUTRAM_DEPTH = 64             # memories this deep or less: distributed RAM (see lutram)
 # PCI identity: Xilinx's vendor ID as before, the device ID and subsystem new so that neither the
 # xdma driver (device 7028, subsystem 10ee:4f54 by udev rule) nor this one takes the other's card.
 # pcie_7x validates Device_ID as a long written in hex (Vivado 2026.1 refuses 4F54): hex digits
@@ -268,25 +272,60 @@ def user_ios(dw):
 
 
 def core_logic(soc, phy, platform=None, sys_clk_freq=250e6):
-    """Everything above the PHY (shared with sim_core.py, which puts LitePCIe's host model in the
-    PHY's place): the endpoint, the BAR0 master, the DMA, otpu_dma, MSI. Returns the DMA and
-    otpu_dma; the caller connects the streams."""
+    """Everything above the PHY but BAR0's master (shared with sim_core.py, which puts LitePCIe's
+    host model in the PHY's place): the endpoint, the DMA, otpu_dma, MSI. Returns the endpoint and
+    otpu_pcie_mm's side: the command and data streams, each through a register slice (both ways:
+    otpu_pcie_mm sits apart from the PCIe block, by the memory port), and otpu_dma."""
     soc.pcie_endpoint = endpoint = LitePCIeEndpoint(phy,
         endianness=phy.endianness, address_width=64, max_pending_requests=PENDING)
     soc.pcie_dma0 = dma = LitePCIeDMA(phy, endpoint, with_table=True, table_depth=TABLE_DEPTH,
-        address_width=64, data_width=phy.data_width, with_loopback=True)
+        address_width=64, data_width=phy.data_width)
     soc.otpu_dma = od = OTPUDMA(endpoint, c2h_event=dma.writer.irq)
+    # the record's MSI MSI_DELAY cycles behind its write: the write still crosses the TLP layer
+    # and the PHY when its pulse comes, and the hard block's MSI could otherwise reach the host
+    # first (the driver's waiter would find the old record and sleep again)
     soc.pcie_msi = msi = LitePCIeMSI(width=32)
+    rec_irq = Signal(MSI_DELAY)
+    soc.sync += rec_irq.eq(Cat(od.irq | od.irq_off, rec_irq[:-1]))
     soc.comb += [
-        msi.irqs[0].eq(od.irq | od.irq_off),
+        msi.irqs[0].eq(rec_irq[-1]),
         msi.irqs[1].eq(od.mm_err),
         msi.source.connect(phy.msi),
     ]
-    return endpoint, dma, od
+    user = {}
+    for name, src, layout in (("h2c_cmd", od.h2c_cmd, cmd_layout), ("c2h_cmd", od.c2h_cmd, cmd_layout),
+                              ("h2c_dat", dma.source, dma_layout(phy.data_width))):
+        buf = stream.Buffer(layout, pipe_valid=True, pipe_ready=True)
+        setattr(soc, name + "_buf", buf)
+        soc.comb += src.connect(buf.sink)
+        user[name] = buf.source
+    buf = stream.Buffer(dma_layout(phy.data_width), pipe_valid=True, pipe_ready=True)
+    soc.c2h_dat_buf = buf
+    soc.comb += buf.source.connect(dma.sink)
+    user["c2h_dat"] = buf.sink
+    return endpoint, user, od
+
+
+def bar0_logic(soc, endpoint, phy):
+    """BAR0's master (shared with sim_core.py): wishbone, the user window to an AXI-Lite master
+    (returned), LiteX's CSRs above it."""
+    soc.pcie_wb = LitePCIeWishboneMaster(endpoint,
+        qword_aligned=getattr(phy, "qword_aligned", False))
+    soc.bus.add_master(name="pcie", master=soc.pcie_wb.wishbone)
+    wb = wishbone.Interface(data_width=32)
+    soc.bus.add_slave(name="user", slave=wb,
+        region=SoCRegion(origin=0, size=USER_SIZE, cached=False))
+    axi = AXILiteInterface(data_width=32, address_width=32)
+    soc.wb2axi = Wishbone2AXILite(wb, axi)
+    return axi
 
 
 class OTPULitePCIe(SoCMini):
     SoCMini.mem_map["csr"] = CSR_BASE
+
+    def add_csr_bridge(self, name="csr", origin=None, with_register=False):
+        # registered: BAR0's write decode (the TLP header to the CSR storages) in two cycles
+        SoCMini.add_csr_bridge(self, name=name, origin=origin, with_register=True)
 
     def __init__(self, platform, nlanes=8):
         from litepcie.phy.s7pciephy import S7PCIEPHY
@@ -305,9 +344,10 @@ class OTPULitePCIe(SoCMini):
             clk.eq(ClockSignal("pcie")), rst.eq(ResetSignal("pcie")),
         ]
 
-        # PHY: Gen2 x8, 128 bits, 1 MiB BAR0, one MSI vector
+        # PHY: Gen2 x8, 128 bits, 1 MiB BAR0, one MSI vector. Its streams in its own clock domain
+        # (cd "pcie", which is sys): another would put asynchronous FIFOs on both datapaths
         self.pcie_phy = phy = S7PCIEPHY(platform, platform.request("pcie"),
-            data_width=128, pcie_data_width=128, bar0_size=BAR0_SIZE)
+            data_width=128, pcie_data_width=128, bar0_size=BAR0_SIZE, cd="pcie")
         phy.update_config({
             "Device_ID": f"{DEVICE_ID:04X}",
             "Subsystem_Vendor_ID": "10EE",
@@ -317,16 +357,8 @@ class OTPULitePCIe(SoCMini):
         })
         self.comb += platform.request("link_up").eq(phy._link_status.fields.status)
 
-        endpoint, dma, od = core_logic(self, phy, platform, sys_clk_freq)
-
-        # BAR0 master: wishbone, the user window to the AXI-Lite master port, the CSRs above it
-        self.pcie_wb = LitePCIeWishboneMaster(endpoint, qword_aligned=phy.qword_aligned)
-        self.bus.add_master(name="pcie", master=self.pcie_wb.wishbone)
-        wb = wishbone.Interface(data_width=32)
-        self.bus.add_slave(name="user", slave=wb,
-            region=SoCRegion(origin=0, size=USER_SIZE, cached=False))
-        axi = AXILiteInterface(data_width=32, address_width=32)
-        self.wb2axi = Wishbone2AXILite(wb, axi)
+        endpoint, user, od = core_logic(self, phy, platform, sys_clk_freq)
+        axi = bar0_logic(self, endpoint, phy)
         platform.add_extension(axi.get_ios("mmap_axi_lite"))
         self.comb += axi.connect_to_pads(platform.request("mmap_axi_lite"), mode="master")
 
@@ -336,24 +368,35 @@ class OTPULitePCIe(SoCMini):
         h2c_dat = platform.request("h2c_dat")
         c2h_dat = platform.request("c2h_dat")
         mm = platform.request("mm")
-        for cmd, src in ((h2c_cmd, od.h2c_cmd), (c2h_cmd, od.c2h_cmd)):
+        for cmd, src in ((h2c_cmd, user["h2c_cmd"]), (c2h_cmd, user["c2h_cmd"])):
             self.comb += [cmd.valid.eq(src.valid), src.ready.eq(cmd.ready),
                           cmd.addr.eq(src.addr), cmd.len.eq(src.len), cmd.flags.eq(src.flags)]
+        h2c, c2h = user["h2c_dat"], user["c2h_dat"]
         self.comb += [
             # the reader's stream (the driver disables last on its descriptors: no last)
-            h2c_dat.valid.eq(dma.source.valid),
-            dma.source.ready.eq(h2c_dat.ready),
-            h2c_dat.data.eq(dma.source.data),
-            h2c_dat.last.eq(dma.source.last),
-            dma.sink.valid.eq(c2h_dat.valid),
-            c2h_dat.ready.eq(dma.sink.ready),
-            dma.sink.data.eq(c2h_dat.data),
-            dma.sink.last.eq(c2h_dat.last),
+            h2c_dat.valid.eq(h2c.valid),
+            h2c.ready.eq(h2c_dat.ready),
+            h2c_dat.data.eq(h2c.data),
+            h2c_dat.last.eq(h2c.last),
+            c2h.valid.eq(c2h_dat.valid),
+            c2h_dat.ready.eq(c2h.ready),
+            c2h.data.eq(c2h_dat.data),
+            c2h.last.eq(c2h_dat.last),
             od.h2c_done.eq(mm.h2c_done),
             od.mm_status_in.eq(mm.status),
             od.mm_err.eq(mm.err),
             mm.rst.eq(od.mm_rst),
         ]
+
+
+def lutram(v):
+    """Distributed RAM for the core's small memories (LUTRAM_DEPTH words or fewer: the endpoint's
+    completion buffers, its tag and request queues, the reader's request queue, the command
+    queues). Vivado puts some in block RAM, whose 1.8 ns clock-to-out the 250 MHz paths after them
+    cannot take; a LUTRAM's synchronous read is a slice flip-flop."""
+    def attr(m):
+        return ('(* ram_style = "distributed" *)\n' if int(m[2]) + 1 <= LUTRAM_DEPTH else "") + m[0]
+    return re.sub(r"^(reg \[\d+:0\] storage(?:_\d+)?)\[0:(\d+)\];", attr, v, flags=re.M)
 
 
 def ip_tcl(platform):
@@ -385,7 +428,10 @@ def main():
                       csr_csv=os.path.join(a.out, "csr.csv"),
                       csr_json=os.path.join(a.out, "csr.json"))
     builder.build(build_name="otpu_litepcie", run=False)
-    shutil.copy(os.path.join(gw, "otpu_litepcie.v"), os.path.join(a.out, "otpu_litepcie.v"))
+    with open(os.path.join(gw, "otpu_litepcie.v")) as f:
+        v = lutram(f.read())
+    with open(os.path.join(a.out, "otpu_litepcie.v"), "w") as f:
+        f.write(v)
     # the identifier ROM ("openTPU LitePCIe"), which the Verilog $readmemh's by file name
     shutil.copy(os.path.join(gw, "otpu_litepcie_mem.init"), os.path.join(a.out, "otpu_litepcie_mem.init"))
     with open(os.path.join(a.out, "pcie_s7_place.tcl"), "w") as f:
