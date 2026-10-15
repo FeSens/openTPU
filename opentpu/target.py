@@ -81,8 +81,8 @@ TECH = {"generic": ["tech/generic/otpu_tech_dsp.sv", "tech/generic/otpu_tech_ram
 SHELL = ["shell/otpu_ctrl.sv", "shell/otpu_trace.sv", "shell/otpu_board.sv",
          "mem/otpu_native_dram.sv", "shell/otpu_afifo.sv", "shell/otpu_mem_ch.sv",
          "shell/otpu_axi_split2.sv"]
-BOARDS = {"ypcb-00338": ["boards/ypcb-00338/otpu_native_sys.sv",
-                         "boards/ypcb-00338/otpu_fpga_top_ld.sv"],
+BOARDS = {"ypcb-00338": ["shell/otpu_pcie_mm.sv", "boards/ypcb-00338/otpu_native_sys.sv",
+                         "boards/ypcb-00338/otpu_fpga_top_ld.sv"],   # (otpu_pcie_mm: LitePCIe's DMA)
           "bcu1525": ["boards/bcu1525/otpu_bcu_sys.sv", "boards/bcu1525/otpu_fpga_top_bcu.sv"]}
 
 

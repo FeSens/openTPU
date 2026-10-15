@@ -72,9 +72,12 @@ rewrites them).
   TLP layer and the PHY when it is accepted, and the co-simulation saw an undelayed MSI reach
   the host first.
 - **MSI.** One vector: bit 0 a record, bit 1 an `otpu_pcie_mm` error.
-- **Timing.** Register slices (`stream.Buffer`, both directions) on the four streams to
-  `otpu_pcie_mm`, a registered CSR bridge, and LUTRAM for every memory of 64 words or fewer
-  (section 5).
+- **Timing.** Register slices (`stream.Buffer`: valid, payload and ready from flip-flops) on the
+  four streams to `otpu_pcie_mm`, on the PHY's two TLP streams (`RegisteredPHY`: the endpoint sees
+  the PHY through them) and on each channel of the user window's AXI-Lite master
+  (`axil_slice`); a registered CSR bridge; the DMA reader's descriptor retire registered
+  (`RetireRegTable`: it only steps `loop_status`, which the driver does not read); LUTRAM for
+  every memory of 64 words or fewer; MAX_FANOUT 32 on the FIFOs' pointers (section 5).
 
 BAR0's CSRs (`csr.h`): `OTPU_DMA_*` at 0x81000 (ID 0x4f544c50 "OTLP", CAPS {version, log2 table
 depth, tags, log2 queue depth}, the queues, counts, record address and control, `MM_CTRL` (a
@@ -98,7 +101,10 @@ at 0x81800, `PCIE_ENDPOINT_PHY_*` / `PCIE_PHY_PHY_*` (link status, negotiated si
 - **Timing.** Register slices on both streams and on the AXI master (`otpu_skid`,
   `otpu_axi_slice`): every path to LitePCIe and to the memory port runs flip-flop to flip-flop.
   A burst's length is registered a cycle after the command position moves, and the FIFOs' room
-  and promised beats are counters (section 5).
+  and promised beats are counters (a pushed beat counts a cycle later, from a flip-flop). Behind
+  it `otpu_dma_split` runs at `REG` 2 (`otpu_native_sys` `XREG` 2): a second slice at each
+  channel's bridge, since the PCIe block and the DDR3 banks are on opposite sides of the die
+  (section 5).
 
 `sim/verilator/tb_pcie_mm.sv` runs it through `otpu_dma_split` and both `otpu_mem_ch`s against
 LiteDRAM port models at the card's clocks: random commands from any 16-byte offset, FILLs,
@@ -106,8 +112,9 @@ zero-length commands, stream gaps and stalls, a byte shadow of each channel chec
 beat, `h2c_done` once per command and never before its last write response, plus assertions
 (no burst across 512 bytes, W never starved, R never into a full FIFO). **Measured** (Verilator
 5.047): every scenario passes; back to back 64 KiB commands move 0.998 H2C beats per cycle
-(3.99 GB/s at 250 MHz) and 0.712 C2H (2.85 GB/s: one channel's reads, `otpu_mem_ch`'s 16
-outstanding).
+(3.99 GB/s at 250 MHz) and 0.713 C2H (2.85 GB/s: one channel's reads, `otpu_mem_ch`'s 16
+outstanding), the same with the split's second slices as without (0.712).
+`tools/memch_test.py` builds `tb_memch`'s slice configurations at `XREG` 2.
 
 ## 4. The driver: `opentpu/host/pcie/otpu`
 

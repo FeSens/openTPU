@@ -1,8 +1,8 @@
 name: otpu_xunit
 description: 'Cross-unit paths: otpu_slice (the units and their wiring: scoreboard grants, TMEM port muxes,
   DRAM ports), otpu_top, otpu_pkg, the board wrappers (otpu_board: PCIe bridge, DRAM adapter, control
-  registers, trace; otpu_native_sys: the channels'' bridges (otpu_mem_ch, otpu_afifo) and XDMA''s split
-  (otpu_axi_split2); otpu_fpga_top_ld: clocks and resets), the RAMs every unit instantiates
+  registers, trace; otpu_native_sys: the channels'' bridges (otpu_mem_ch, otpu_afifo) and the host DMA''s
+  split (otpu_axi_split2); otpu_pcie_mm: LitePCIe''s DMA streams onto it; otpu_fpga_top_ld: clocks and resets), the RAMs every unit instantiates
   (otpu_tech_ram: otpu_ram_1r1w / otpu_ram_1r1w_be) and the core timing constraints (otpu_top_ld.xdc:
   pblocks, placement, no timing exceptions or clock changes). Changes here target paths
   that cross unit boundaries: register slices on inter-unit buses, fanout of broadcast signals, placement.'
@@ -16,6 +16,7 @@ allowed:
 - rtl/shell/otpu_mem_ch.sv
 - rtl/shell/otpu_afifo.sv
 - rtl/shell/otpu_axi_split2.sv
+- rtl/shell/otpu_pcie_mm.sv
 - rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv
 - rtl/shell/otpu_trace.sv
 - rtl/tech/generic/otpu_tech_ram.sv
@@ -48,4 +49,5 @@ tests:
   - tests/test_rtl.py::test_board_memory_path_stress[2-60]
   - tests/test_rtl.py::test_board_memory_path_fuzz[1-70]
   - tests/test_board.py
+  - tests/test_pcie_mm.py
 perf: true
