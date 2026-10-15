@@ -107,7 +107,7 @@ class SimSoC(SoCMini):
     """The core above the PHY as gen_core builds it, on the host model."""
     def __init__(self, platform):
         SoCMini.__init__(self, platform, clk_freq=250e6, csr_data_width=32, csr_ordering="big",
-                         ident="openTPU LitePCIe", ident_version=True)
+                         ident="openTPU LitePCIe", ident_version=False)
         host = Host(128, ROOT_ID, ENDPOINT_ID, bar0_size=gc.BAR0_SIZE,
                     chipset_split=True, chipset_reordering=True)
         phy = host.phy

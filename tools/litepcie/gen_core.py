@@ -333,7 +333,7 @@ class OTPULitePCIe(SoCMini):
         platform.add_extension(pcie_ios(nlanes))
         platform.add_extension(user_ios(128))
         SoCMini.__init__(self, platform, clk_freq=sys_clk_freq, csr_data_width=32,
-            csr_ordering="big", ident="openTPU LitePCIe", ident_version=True)
+            csr_ordering="big", ident="openTPU LitePCIe", ident_version=False)
 
         # clock: the PCIe user clock (userclk2, 250 MHz at Gen2 x8 / 128 bits), out to the top
         self.cd_sys = ClockDomain()
