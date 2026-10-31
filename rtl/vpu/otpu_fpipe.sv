@@ -1,11 +1,13 @@
 // Pipelined fp32 operators built from the staged functions of otpu_fp. Every register advances
 // with `en`: a unit freezes as a whole while its TMEM grant is withheld.
 //
-//   otpu_fmul    y = a * b                LAT >= 2 (s1 | s2, extra cycles appended)
+//   otpu_fmul    y = a * b                LAT >= 2 (s1 | s2, extra cycles appended); SPLIT:
+//                                         LAT >= 3 (s1 | s2a | s2b, extra cycles appended)
 //   otpu_fadd    y = a + b                LAT >= 4 (s1 | s2 | s3 | s4, extra cycles appended)
 //   otpu_fmadd   y = (a * b) + c          two roundings, as in the ISA; LAT = LM + LA
 //   otpu_fmma    y = (a * b) + (c * e)    three roundings; with e = 1.0 it is otpu_fmadd
 //                                         (c * 1.0 == c bit for bit after the adder's flush)
+//   (otpu_fmadd / otpu_fmma MSPLIT: their multipliers' SPLIT, LM >= 3)
 //   otpu_delay   N-cycle delay line (SRL-friendly: no reset)
 
 module otpu_delay #(parameter int W = 32, parameter int N = 1) (
@@ -34,22 +36,33 @@ module otpu_delay #(parameter int W = 32, parameter int N = 1) (
   end
 endmodule
 
+// SPLIT (default 0: the two stages as always): the rounding stage fp_mul_s2 is two registered
+// steps, fp_mul_s2a (the rounding decision, the increment, the exponent tests) and fp_mul_s2b
+// (the picks), so the multiplier has three stages and LAT >= 3 (250 MHz, FK35: the MXU's
+// g_rmw u_m m -> r, 10 levels, -0.77 ns). The same results; m and r are the same registers.
 module otpu_fmul
   import otpu_fp::*;
-#(parameter int LAT = 2) (
+#(parameter int LAT = 2, parameter bit SPLIT = 1'b0) (
   input  logic  clk,
   input  logic  en,
   input  f32_t  a,
   input  f32_t  b,
   output f32_t  y
 );
+  initial if (LAT < (SPLIT ? 3 : 2)) $fatal(1, "otpu_fmul: LAT %0d too small (SPLIT %0d)", LAT, SPLIT);
   fmul_mid_t m;
   f32_t r;
-  always_ff @(posedge clk) if (en) begin
-    m <= fp_mul_s1(a, b);
-    r <= fp_mul_s2(m);
+  always_ff @(posedge clk) if (en) m <= fp_mul_s1(a, b);
+  if (SPLIT) begin : g_s3
+    fmul_rnd_t q;
+    always_ff @(posedge clk) if (en) begin
+      q <= fp_mul_s2a(m);
+      r <= fp_mul_s2b(q);
+    end
+  end else begin : g_s2
+    always_ff @(posedge clk) if (en) r <= fp_mul_s2(m);
   end
-  otpu_delay #(.W(32), .N(LAT - 2)) u_pad (.clk, .en, .d(r), .q(y));
+  otpu_delay #(.W(32), .N(LAT - (SPLIT ? 3 : 2))) u_pad (.clk, .en, .d(r), .q(y));
 endmodule
 
 module otpu_fadd
@@ -104,7 +117,7 @@ endmodule
 
 module otpu_fmadd
   import otpu_fp::*;
-#(parameter int LM = 2, parameter int LA = 4) (
+#(parameter int LM = 2, parameter int LA = 4, parameter bit MSPLIT = 1'b0) (
   input  logic  clk,
   input  logic  en,
   input  f32_t  a,
@@ -113,14 +126,14 @@ module otpu_fmadd
   output f32_t  y
 );
   f32_t p, cd;
-  otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
+  otpu_fmul #(.LAT(LM), .SPLIT(MSPLIT)) u_m (.clk, .en, .a, .b, .y(p));
   otpu_delay #(.W(32), .N(LM)) u_c (.clk, .en, .d(c), .q(cd));
   otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(cd), .y);
 endmodule
 
 module otpu_fmma
   import otpu_fp::*;
-#(parameter int LM = 2, parameter int LA = 4) (
+#(parameter int LM = 2, parameter int LA = 4, parameter bit MSPLIT = 1'b0) (
   input  logic  clk,
   input  logic  en,
   input  f32_t  a,
@@ -130,7 +143,7 @@ module otpu_fmma
   output f32_t  y
 );
   f32_t p, q;
-  otpu_fmul #(.LAT(LM)) u_m (.clk, .en, .a, .b, .y(p));
-  otpu_fmul #(.LAT(LM)) u_c (.clk, .en, .a(c), .b(e), .y(q));
+  otpu_fmul #(.LAT(LM), .SPLIT(MSPLIT)) u_m (.clk, .en, .a, .b, .y(p));
+  otpu_fmul #(.LAT(LM), .SPLIT(MSPLIT)) u_c (.clk, .en, .a(c), .b(e), .y(q));
   otpu_fadd #(.LAT(LA)) u_a (.clk, .en, .a(p), .b(q), .y);
 endmodule

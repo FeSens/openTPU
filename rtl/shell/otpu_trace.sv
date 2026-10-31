@@ -14,7 +14,8 @@
 //       saturates in its high bits only: past 2^32 - DEPTH records its low log2(DEPTH) bits keep
 //       counting, so count mod DEPTH is the next record's slot (the host's oldest record) on any
 //       run, and count stays >= DEPTH
-// Reading: rdata is the record at raddr, two cycles after raddr (the block RAM's output register).
+// Reading: rdata is the record at raddr, three cycles after raddr (the block RAM's read and two
+// output registers; otpu_ctrl's readout leaves them the time, below).
 // busy: events are on their way to the ring; after the halt the host waits for it to clear
 // (the events of the last cycles, up to QD bundles of up to 61 records, are still draining).
 module otpu_trace
@@ -67,8 +68,11 @@ module otpu_trace
   end
 
   // ------------------------------------------------------------------ S0: input register
+  // ev_sx: the S records' R flags (cycle - ready >= 0xFFFF), from pr: S1's item count (bnd_t ni)
+  // starts at flip-flops, not behind the subtracts
   perf_t      ev;
   logic [5:0] ev_n;                                    // events (trace lines) in ev
+  logic [NUNITS-1:0] ev_sx;
   always_ff @(posedge clk) begin
     logic [5:0] n;
     n = 6'(pr.sq.d) + 6'(pr.sq.g) + 6'(pr.u_mxu) + 6'(pr.u_q) + 6'(pr.u_vpu) + 6'(pr.h) +
@@ -77,6 +81,7 @@ module otpu_trace
     for (int i = 0; i < 16; i++) n = n + 6'(pr.sq.e[i]);
     ev <= pr;
     ev_n <= n;
+    for (int u = 0; u < NUNITS; u++) ev_sx[u] <= pr.sq.cyc - pr.sq.s_rdy[u] >= 32'hFFFF;
     if (rst || clear || !pr_en || stopped) begin
       ev.sq.d <= 1'b0; ev.sq.s <= '0; ev.sq.g <= 1'b0; ev.sq.e <= '0;
       ev.u_mxu <= 1'b0; ev.u_q <= 1'b0; ev.u_vpu <= 1'b0; ev.h <= 1'b0; ev.w <= 1'b0;
@@ -112,7 +117,12 @@ module otpu_trace
     logic [23:0]              w_n;
     logic [NP-1:0][31:0]      w_p;
     logic [NQ-1:0][31:0]      w_q;
+    logic [5:0]               ni;          // its items (records): items()'s ones
   } bnd_t;
+
+  // the item list's layout (U, below): a bundle's records per field
+  localparam int I_G = 0, I_E = 1, I_S = 17, I_D = 27, I_U1 = 30, I_U2 = 35, I_U3 = 37,
+                 I_H = 39, I_P = 44, I_Q = 54, NI = 61;
 
   bnd_t nb;
   always_comb begin
@@ -122,11 +132,11 @@ module otpu_trace
     nb.e = ev.sq.e[15:0];
     nb.s = ev.sq.s;
     for (int u = 0; u < NUNITS; u++) begin
-      logic [31:0] dt;
-      dt = ev.sq.cyc - ev.sq.s_rdy[u];
+      logic [15:0] dt;
+      dt = ev.sq.cyc[15:0] - ev.sq.s_rdy[u][15:0];
       nb.s_slot[u] = ev.sq.s_slot[u][3:0];
-      nb.s_x[u] = dt >= 32'hFFFF;
-      nb.s_dt[u] = nb.s_x[u] ? 16'hFFFF : dt[15:0];
+      nb.s_x[u] = ev_sx[u];
+      nb.s_dt[u] = nb.s_x[u] ? 16'hFFFF : dt;
       nb.s_rdy[u] = ev.sq.s_rdy[u];
     end
     nb.d = ev.sq.d;
@@ -145,6 +155,12 @@ module otpu_trace
     nb.w_n = ev.w_n[23:0];
     nb.w_p = ev.w_p;
     nb.w_q = ev.w_q;
+    // items(nb)'s ones, field by field
+    nb.ni = 6'(nb.g) + 6'((I_U1 - I_D) * nb.d) + 6'((I_U2 - I_U1) * nb.u_mxu) +
+            6'((I_U3 - I_U2) * nb.u_q) + 6'((I_H - I_U3) * nb.u_vpu) + 6'((I_P - I_H) * nb.h) +
+            6'((NI - I_P) * nb.w);
+    for (int i = 0; i < 16; i++) nb.ni = nb.ni + 6'(nb.e[i]);
+    for (int u = 0; u < NUNITS; u++) nb.ni = nb.ni + 6'(nb.s[u]) + 6'(nb.s[u] && nb.s_x[u]);
   end
 
   (* ram_style = "distributed" *) bnd_t qm [QD];
@@ -156,9 +172,7 @@ module otpu_trace
   assign qh = qm[q_hd];
 
   // ------------------------------------------------------------------ U: unpacker
-  // a bundle's items, in record order
-  localparam int I_G = 0, I_E = 1, I_S = 17, I_D = 27, I_U1 = 30, I_U2 = 35, I_U3 = 37,
-                 I_H = 39, I_P = 44, I_Q = 54, NI = 61;
+  // a bundle's items, in record order (I_*: above)
   function automatic logic [NI-1:0] items(input bnd_t b);
     logic [NI-1:0] m;
     m = '0;
@@ -188,8 +202,13 @@ module otpu_trace
   logic [63:0]   irec [NI];
   logic [63:0]   rec;
   assign first = pend & (~pend + 1'b1);
-  wire   last = (pend & (pend - 1'b1)) == '0;          // at most one item left
-  wire   load = last && q_n != 0;
+  // load: the head bundle into cur once at most one item is left in pend (and the queue has one),
+  // from a register (ld), computed a cycle ahead from pend's count (cnt: its ones; the bundle's
+  // own, ni, when loaded) and the queue's, replicated over cur's ~1,000 enables (250 MHz, FK35:
+  // pend -> pend - 1 == 0 -> cur's enables, 8 levels, 74% route, -0.31 ns)
+  (* max_fanout = 64 *) logic ld;
+  logic [5:0]    cnt;
+  wire   load = ld;
   always_comb begin
     for (int i = 0; i < NI; i++) irec[i] = '0;
     irec[I_G] = {T_G, 4'd0, cur.g_slot, 20'd0, cur.cyc};
@@ -222,24 +241,34 @@ module otpu_trace
   end
 
   // ------------------------------------------------------------------ W: the ring
+  // the read and two output registers (rd_q, rd_p: the cascade's pipeline at 250 MHz, and rdata).
+  // otpu_ctrl takes a record four cycles after TRACE_ADDR moves at the earliest (TRACE_HI's
+  // increment, the rest of its read and the next read's address stage; a TRACE_ADDR write's
+  // response through otpu_axil_iso first: checked there), so the third register costs the host
+  // nothing.
   (* ram_style = "block" *) logic [63:0] mem [DEPTH];
   logic          r_v;
   logic [63:0]   r_rec;
   logic [LD-1:0] wp;
   wire           wr = r_v && !stopped;
   always_ff @(posedge clk) if (wr) mem[wp] <= r_rec;
-  logic [63:0] rd_q;
+  logic [63:0] rd_q, rd_p;
   always_ff @(posedge clk) begin
-    rd_q <= mem[raddr[LD-1:0]];
-    rdata <= rd_q;
+    rd_q  <= mem[raddr[LD-1:0]];
+    rd_p  <= rd_q;
+    rdata <= rd_p;
   end
 
   assign busy = (pr_any && pr_en) || ev_any || q_n != 0 || pend != '0 || r_v;
 
+  // cur loads with ld alone (in a reset or clear too: pend is emptied then, and the next load
+  // overwrites it), so its enables are ld's replicas
+  always_ff @(posedge clk) if (load) cur <= qh;
   always_ff @(posedge clk) begin
     if (rst || clear) begin
       q_t <= '0; q_hd <= '0; q_n <= '0;
       pend <= '0; r_v <= 1'b0;
+      cnt <= '0; ld <= 1'b0;
 `ifdef SYNTHESIS
       wp <= '0; count <= '0;
 `else
@@ -249,12 +278,17 @@ module otpu_trace
     end else begin
       if (push) q_t <= q_t + 1'b1;
       if (load) begin
-        cur <= qh;
         pend <= items(qh);
+        cnt <= qh.ni;
         q_hd <= q_hd + 1'b1;
       end else begin
         pend <= pend & ~first;
+        if (cnt != '0) cnt <= cnt - 1'b1;
       end
+      // the next cycle's load: at most one item left then (the loaded bundle's, or two now) and
+      // a bundle in the queue then (one pushed, or one more now than this cycle's load takes)
+      ld <= (load ? qh.ni <= 6'd1 : cnt <= 6'd2) &&
+            (push || q_n > (QW+1)'(load));
       q_n <= q_n + (QW+1)'(push) - (QW+1)'(load);
       if (ev_any && !push) drop <= (drop > ~32'(ev_n)) ? '1 : drop + 32'(ev_n);
       r_v <= pend != '0;
@@ -275,5 +309,11 @@ module otpu_trace
   always_ff @(posedge clk)
     if (!rst && !clear && wp != count[LD-1:0])
       $fatal(1, "otpu_trace: write slot %0d, count %0d", wp, count);
+  // ld is the load as pend and the queue stand: at most one item left, a bundle queued; cnt is
+  // pend's ones
+  always_ff @(posedge clk)
+    if (!rst && !clear && (cnt != 6'($countones(pend)) ||
+                           ld != (((pend & (pend - 1'b1)) == '0) && q_n != 0)))
+      $fatal(1, "otpu_trace: load %0d with pend %h (count %0d), queue %0d", ld, pend, cnt, q_n);
 `endif
 endmodule

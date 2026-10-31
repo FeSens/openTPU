@@ -23,7 +23,7 @@ the wires, this is a good place to start.
 
 The design runs ten modern models with their real weights on an Inspur YPCB-00338 card
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
-simulator, bit for bit.
+simulator, bit for bit. The last three rows are the SQRL FK33 (HBM, 250 MHz).
 
 | Model | Weights | Decode, device | Decode, wall | Prefill, device | DRAM while decoding |
 |:--|:--|--:|--:|--:|--:|
@@ -45,6 +45,9 @@ simulator, bit for bit.
 | Qwen3.5-2B | 4-bit, int8 head | 12.09 tok/s | 12.03 tok/s | 41.7 tok/s | 15.8 GB/s (92%) |
 | Qwen3.5-4B | 4-bit, int8 head | 5.88 tok/s | 5.87 tok/s | 12.9 tok/s | 15.7 GB/s (92%) |
 | Gemma 4 E4B | int8, 4-bit head and down 0-23 | 3.78 tok/s | 3.75 tok/s | 14.8 tok/s | 16.0 GB/s (94%) |
+| Qwen3.5-0.8B, SQRL FK33 | int8 | 30.72 tok/s | 29.83 tok/s | 132.3 tok/s | 25.0 GB/s |
+| Qwen3.5-2B, SQRL FK33 | int8 | 12.84 tok/s | 12.72 tok/s | 63.4 tok/s | 25.1 GB/s |
+| Qwen3.5-4B, SQRL FK33 | mix (4-bit DeltaNet and MLP layers) | 8.53 tok/s | 8.46 tok/s | 20.8 tok/s | 24.8 GB/s |
 
 *Measured on the card: the first three models on 2026-09-29 with the production image
 `deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30, and Qwen3.5-2B and
@@ -74,6 +77,13 @@ at 91-94% of the DRAM peak instead of 82-87%. Qwen3.5-4B's int8 image is over 4 
   11.01 / 12.73 tok/s (int8 / 4-bit head), E4B 3.83 tok/s, on the device.*
 - *Every configuration matches the simulator token for token, per-position and with the
   resident decode program. More detail in [docs/board.md](docs/board.md).*
+- *The SQRL FK33 rows: the same accelerator (one slice, four-column matrix unit) on a Virtex
+  UltraScale+ HBM card (xcvu33p, two channels of one HBM2-1800 stack, 4 GiB addressed) at
+  250 MHz ([docs/sqrl-fk33.md](docs/sqrl-fk33.md)), measured on 2026-10-31 with
+  `tools/qual/perf.py` as above (host Intel Core i9-14900K, Windows, PCIe Gen3 x8). Qwen3.5-4B's int8
+  image needs 4142 MiB, so it runs `--wformat mix`. The HBM path has no single DDR-style peak to
+  quote a percentage of; decode stays at 1-4% MXU starvation and 0-1% DRAM wait. The self-test's
+  model stage passes on all three; the per-position simulator comparison has not been run there.*
 
 With the logits streamed back while the card runs (`tools/decode_profile.py`, 96 tokens), 4-bit
 decode is faster, in device / wall tok/s:

@@ -247,12 +247,21 @@ module otpu_dma
   logic [7:0]   oi;                                  // o segment written to TMEM next
   // SE runs up to SE_LAG cycles behind pe (otpu_vpu registers the ss_* inputs) and qualifies
   // y_v and o_v with its own pe: taking one more segment needs room for it, this cycle's y and
-  // the segments of the last SE_LAG pe cycles (pe's counted, the older ones as always taken)
+  // the segments of the last SE_LAG pe cycles (pe's counted, the older ones as always taken).
+  // This cycle's y is counted as if it came (the room a segment short at most): SE's y_v ran
+  // through the room into the take, the chunk's release and occ (250 MHz, FK35: u_vpu's tail ->
+  // u_dma occ, 1 + 10 levels, -0.32 ns); ds_lnz is ds_left != 0, registered
   localparam int SE_LAG = 2;
-  wire  ds_room = ({1'b0, og} + (GW+1)'(y_v) + (GW+1)'(pe)) <= (GW+1)'(NG - SE_LAG);
-  wire  ds_take = ds_run && (ds_left != 0) && (ds_zero || ds_spad || cnt != 0) && ds_room;
+  logic ds_lnz;
+  wire  ds_room = pe ? og <= GW'(NG - SE_LAG - 2) : og <= GW'(NG - SE_LAG - 1);
+  wire  ds_take = ds_run && ds_lnz && (ds_zero || ds_spad || cnt != 0) && ds_room;
   wire  ds_flushed = (ds_ycnt == ds_nseg) && (!ds_qen || ds_ocnt == ds_rows);
-  wire  ds_drain = ds_run && (ds_left == 0) && !ds_flushed && ds_room;
+  wire  ds_drain = ds_run && !ds_lnz && !ds_flushed && ds_room;
+`ifndef SYNTHESIS
+  always_ff @(posedge clk)
+    if (!rst && busy && is_ds && ds_run && ds_lnz != (ds_left != 0))
+      $fatal(1, "otpu_dma: ds_lnz %0d but ds_left %0d", ds_lnz, ds_left);
+`endif
   assign ds_eat = ds_take && !ds_zero && !ds_spad && (32'(ds_pos) == SPC - 1);
   // a registered request (it selects the 1024-bit write data: replicated, no decode on the
   // path); it follows og, which only counts during a stream
@@ -261,7 +270,7 @@ module otpu_dma
   wire  ds_rr_nx = ds_rr && !(ld_iss && (32'(ds_rc) == RUN - 1 || cl_one));
   // a write run: once RUN chunks are in (or the stream has ended), then while chunks are in
   wire  ds_wr_nx = (og_nx >= GW'(SPC)) &&
-                   (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || ds_left == 0)));
+                   (ds_wr || (!ds_rr_nx && (og_nx >= GW'(RUN * SPC) || !ds_lnz)));
   assign ds_wreq = ds_wr;
   // the gather: one simple dual-port RAM per segment position and lane (write: word l of the
   // segment from SE at chunk gt / SPC; read: chunk gh). The write is registered here (the
@@ -371,12 +380,41 @@ module otpu_dma
     return 24'(op | (dst << 4) | (a << 7) | (b << 11));
   endfunction
   localparam int SC_SUB = 1, SC_MUL = 2, O_A = 8, O_X = 9, O_K0 = 10, O_K1 = 11;
-  ss_cfg_t     su_cfg;
+  // The setup's values are registered in two steps before ds_su takes them (ds_s0: the command
+  // and descriptor decode, su_*; ds_s1: the segment and chunk counts, products of the rows and
+  // the segments per row, su_nseg / su_cl ...), two cycles a stream: they ran from the command
+  // through the decode and the rows x segments multiplies into the counts in one (250 MHz, FK35:
+  // sc.op -> cleft / ds_left / ds_nseg, 12-13 levels, -0.31 to -0.43 ns)
+  ss_cfg_t     su_cfg_c, su_cfg;
+  logic [31:0] su_src_c, su_dst_c, su_vec_c, su_x_c, su_k_c, su_ks_c, su_out_c;
   logic [31:0] su_src, su_dst, su_vec, su_x, su_k, su_ks, su_out;
+  logic [5:0]  su_ns_c, su_ns;           // the stream's own segments per row (the fill's)
+  logic        su_ok_c, su_ok;
   logic [15:0] su_nseg;                  // segments SE takes (pad64: 16 per row)
-  logic [5:0]  su_ns;                    // the stream's own segments per row (the fill's)
-  logic        su_ok;
+  logic [31:0] su_cl;                    // chunks the stream reads
+  logic        su_cnz, su_cone;          // ... != 0, == 1
+  logic [7:0]  su_nv;                    // o segments
+  logic        ds_s0, ds_s1;
+  always_ff @(posedge clk) begin
+    if (ds_s0) begin
+      su_cfg <= su_cfg_c; su_src <= su_src_c; su_dst <= su_dst_c; su_vec <= su_vec_c;
+      su_x <= su_x_c; su_k <= su_k_c; su_ks <= su_ks_c; su_out <= su_out_c; su_ns <= su_ns_c;
+      su_ok <= su_ok_c;
+    end
+    if (ds_s1) begin
+      su_nseg <= 16'(32'(su_cfg.rows) * 32'(su_cfg.ns));
+      // cleft = rows * ns / SPC chunks; its flags from the factors, not the product
+      su_cl <= (32'(su_cfg.rows) * su_ns) >> (CWL - SWL);
+      su_cnz <= !prod_lt(su_cfg.rows, su_ns, SPC);
+      su_cone <= !prod_lt(su_cfg.rows, su_ns, SPC) && prod_lt(su_cfg.rows, su_ns, 2 * SPC);
+      su_nv <= 8'((32'(su_cfg.rows) + W - 1) / W);
+    end
+  end
   always_comb begin
+    ss_cfg_t     su_cfg;
+    logic [31:0] su_src, su_dst, su_vec, su_x, su_k, su_ks, su_out;
+    logic [5:0]  su_ns;
+    logic        su_ok;
     logic [23:0] d0, d1, d2, d3, d4, o5, o6, o7;
     logic [11:0] rows, cols;
     logic [1:0]  dm, g;
@@ -436,7 +474,8 @@ module otpu_dma
     su_ns = su_cfg.ns;
     su_cfg.pad64 = su_ns == 6'd8;
     if (su_cfg.pad64) su_cfg.ns = 6'd16;
-    su_nseg = 16'(32'(su_cfg.rows) * 32'(su_cfg.ns));
+    su_cfg_c = su_cfg; su_src_c = su_src; su_dst_c = su_dst; su_vec_c = su_vec; su_x_c = su_x;
+    su_k_c = su_k; su_ks_c = su_ks; su_out_c = su_out; su_ns_c = su_ns; su_ok_c = su_ok;
   end
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
@@ -541,8 +580,14 @@ module otpu_dma
   logic [LANES-1:0]       lw_en;
   logic [LANES-1:0][31:0] lw_addr, lw_data;
   logic                   ds_ow;               // DSTEP: o segment oi goes to TMEM
+  // the write register's data in two parts (the buffer's segment, t_wl; a stream's o or WAITW's
+  // word, t_wo) and their select (t_ws), the data a LUT after them: the buffer's block RAM read
+  // went through the segment select and both overrides (250 MHz, FK35: u_lb -> t_wdata, 2 levels,
+  // -0.49 ns)
+  logic [LANES-1:0][31:0] lw_alt, t_wl, t_wo;
+  logic [LANES-1:0]       lw_sel, t_ws;
   always_comb begin
-    lw_en = '0; lw_addr = '0; lw_data = '0;
+    lw_en = '0; lw_addr = '0; lw_data = '0; lw_alt = '0; lw_sel = '0;
     for (int l = 0; l < W; l++) begin
       lw_en[l] = dv_v && dv_m[l] && !is_ww;          // a WAITW's word waits for its compare
       lw_addr[l] = dv_a + 32'(l);
@@ -550,20 +595,26 @@ module otpu_dma
       if (ds_ow) begin
         lw_en[l] = (32'(oi) * W + l) < 32'(ds_rows);
         lw_addr[l] = ds_oa + 32'(oi) * W + 32'(l);
-        lw_data[l] = ob_q[l];
+        lw_alt[l] = ob_q[l];
+        lw_sel[l] = 1'b1;
       end
     end
     if (ww_c2 && ww_ok) begin                       // WAITW (C3): the word that held
       lw_en[0] = 1'b1;
       lw_addr[0] = ww_t;
-      lw_data[0] = ww_w;
+      lw_alt[0] = ww_w;
+      lw_sel[0] = 1'b1;
     end
   end
   always_ff @(posedge clk) begin
     t_wen <= rst ? '0 : lw_en;
     t_waddr <= lw_addr;
-    t_wdata <= lw_data;
+    t_wl <= lw_data;
+    t_wo <= lw_alt;
+    t_ws <= lw_sel;
   end
+  always_comb
+    for (int l = 0; l < LANES; l++) t_wdata[l] = t_ws[l] ? t_wo[l] : t_wl[l];
 
   // ---- ST: a two-stage read pipeline. The segment read last cycle is in t_rdata (pa: its
   // position, lanes, whether it ends its chunk), the one before in t_rq, a register (st_pend,
@@ -726,19 +777,22 @@ module otpu_dma
       ds_wr <= 1'b0;
       ds_rr <= 1'b0;
       ds_dsc <= 1'b0; ds_dsd <= 1'b0; ds_su <= 1'b0; ds_wait <= 1'b0;
+      ds_s0 <= 1'b0; ds_s1 <= 1'b0;
       ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
       ds_fx <= 1'b0; ds_dw <= 1'b0;
       ss_req <= 1'b0;
       is_ww <= 1'b0; ww_c1 <= 1'b0; ww_c2 <= 1'b0; ww_sl <= 1'b0; ww_late <= 1'b0; err <= 1'b0;
     end else if (start && (cmd.op == OP_DSTEP || cmd.op == OP_STREAM)) begin
-      // the reads start at the setup: a DSTEP's next cycle, a STREAM's once its descriptor is in
+      // the reads start at the setup (ds_su, after ds_s0 and ds_s1): a DSTEP's from the next
+      // cycle on, a STREAM's once its descriptor is in
       sc <= cmd;
       is_ds <= 1'b1; is_st <= 1'b0; is_ww <= 1'b0; ds_zero <= cmd.flags[DF_ZERO];
       sleft <= '0; sl_nz <= 1'b0; sl_one <= 1'b0;   // no LD delivery into TMEM
       cleft <= '0; cl_nz <= 1'b0; cl_one <= 1'b0;
       occ <= '0; {oc_nf, oc_lr} <= oc_of('0); cnt <= '0; wp <= '0; rp <= '0;
-      ds_ycnt <= '0; ds_ocnt <= '0; ds_wch <= '0;
-      ds_dsc <= cmd.op == OP_STREAM; ds_dsd <= 1'b0; ds_su <= cmd.op == OP_DSTEP;
+      ds_ycnt <= '0; ds_ocnt <= '0; ds_wch <= '0; ds_lnz <= 1'b0;
+      ds_dsc <= cmd.op == OP_STREAM; ds_dsd <= 1'b0; ds_su <= 1'b0;
+      ds_s0 <= cmd.op == OP_DSTEP; ds_s1 <= 1'b0;
       ds_wait <= 1'b0; ds_fill <= 1'b0; ds_run <= 1'b0; ds_out <= 1'b0;
       ds_fx <= 1'b0; ds_dw <= 1'b0;
       og <= '0; gt <= '0; gh <= '0; ds_pos <= '0; oi <= '0; ds_wr <= 1'b0;
@@ -797,25 +851,30 @@ module otpu_dma
         end
         if (ds_dsd) begin
           ds_dsd <= 1'b0;
+          ds_s0 <= 1'b1;
+        end
+        if (ds_s0) begin
+          ds_s0 <= 1'b0;
+          ds_s1 <= 1'b1;
+        end
+        if (ds_s1) begin
+          ds_s1 <= 1'b0;
           ds_su <= 1'b1;
         end
         // the setup: the reads start, SE is requested (ss_cfg valid while ss_req)
         if (ds_su) begin
           ds_su <= 1'b0;
           ic <= su_src >> 2;
-          // cleft = rows * ns / SPC chunks; its flags from the factors, not the product (the
-          // multiply's output feeds cleft alone)
-          cleft <= ds_zero ? '0 : (32'(su_cfg.rows) * su_ns) >> (CWL - SWL);
-          cl_nz <= !ds_zero && !prod_lt(su_cfg.rows, su_ns, SPC);
-          cl_one <= !ds_zero && !prod_lt(su_cfg.rows, su_ns, SPC) &&
-                    prod_lt(su_cfg.rows, su_ns, 2 * SPC);
+          cleft <= ds_zero ? '0 : su_cl;
+          cl_nz <= !ds_zero && su_cnz;
+          cl_one <= !ds_zero && su_cone;
           ds_wb <= su_dst >> 2;
           ds_wa <= su_dst >> 2;
           ds_oa <= su_out;
           ds_rows <= su_cfg.rows; ds_qen <= su_cfg.q_en; ds_pad <= su_cfg.pad64;
           ds_sj <= '0; ds_yj <= '0;
-          ds_nseg <= su_nseg; ds_left <= su_nseg;
-          ds_nv <= 8'((32'(su_cfg.rows) + W - 1) / W);
+          ds_nseg <= su_nseg; ds_left <= su_nseg; ds_lnz <= su_nseg != 0;
+          ds_nv <= su_nv;
           ss_cfg <= su_cfg;
           ss_req <= 1'b1;
           ds_wait <= 1'b1;
@@ -835,6 +894,7 @@ module otpu_dma
         end
         if (ds_take) begin
           ds_left <= ds_left - 1'b1;
+          ds_lnz <= ds_left != 16'd1;
           if (!ds_zero && !ds_spad) ds_pos <= ds_eat ? '0 : ds_pos + 1'b1;
           ds_sj <= ds_sj + 1'b1;                   // pad64 rows are 16 segments
         end

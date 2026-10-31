@@ -450,7 +450,12 @@ module otpu_slice
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
-  logic [NG-1:0] gnt;
+  // the TMEM grants, each unit's enable that cycle (a grant is the cycle's: the units' reads and
+  // writes go with it, the TMEM ports' lanes take it, so it is not registered): replicated by
+  // their loads, 32 a copy, the arbiter's last LUT with them (250 MHz, FK35: gnt[G_MXU], fanout
+  // 2,096, -0.9 ns behind the collective port's FIFO read, which otpu_coll_port now presents
+  // from flip-flops; TMEM's input stage no longer takes the grants as its enables)
+  (* max_fanout = 32 *) logic [NG-1:0] gnt;
   logic        q3_en;
   logic [31:0] q3_addr;
   logic d_dma, d_mxu, d_q, d_vpu, r_dma, r_mxu, r_q, r_vpu;
@@ -475,8 +480,10 @@ module otpu_slice
   // second stage (rst_q0, rst_v0, rst_m0), so their replicas are loaded next to them: in the SE
   // v2 build the board's core_rst copies into rst_vpu / rst_q had -0.107 ns with no logic, on
   // 812bb01 rst_mxu into the MXU's weight FIFO pointers +0.123 ns with none. They leave reset
-  // two cycles after the sequencer (checked below).
-  (* max_fanout = 64 *) logic rst_dma, rst_mxu, rst_q, rst_vpu;
+  // two cycles after the sequencer (checked below). rst_mxu: 32 a copy (250 MHz, FK35: rst_mxu ->
+  // the MXU's r0 / r1 / t_ren, 0 levels, -0.21 ns at 64 a copy over the systolic array's span)
+  (* max_fanout = 64 *) logic rst_dma, rst_q, rst_vpu;
+  (* max_fanout = 32 *) logic rst_mxu;
   logic rst_q0, rst_v0, rst_m0;
   always_ff @(posedge clk) begin
     rst_dma <= srst; rst_m0 <= srst; rst_q0 <= srst; rst_v0 <= srst;
@@ -580,7 +587,6 @@ module otpu_slice
         rl_m <= ucmd[U_COLL].flags[RF_MUL] ? ucmd[U_COLL].w2 : 32'd1;
       end else if (rl_pq && r_en[P_COLL][0]) rl_pend <= 1'b0;
       rl_cv <= rl_got;
-      if (rl_got) rl_w <= r_data[P_COLL][0];
       rl_c1 <= rl_cv;
       if (rl_cv) rl_x <= rl_raw ? rl_w : rld_f2i(rl_w);
       rl_c2 <= rl_c1;
@@ -592,6 +598,10 @@ module otpu_slice
       if (rl_c2) rl_val <= rl_pl + {rl_ph, 16'd0};
     end
   end
+  // the lane's word, every cycle (read when rl_cv: the cycle after rl_got): its enable was rl_got
+  // and the reset, behind TMEM's read path (250 MHz, FK35: u_tmem's URAM -> rl_w, 5 levels,
+  // -0.59 ns)
+  always_ff @(posedge clk) rl_w <= r_data[P_COLL][0];
   // the TMEM request arrays, each assembled in one process from the units' ports
   always_comb begin
     rq_en = '0; r_addr = '0; wq_en = '0; w_addr = '0; w_data = '0;
@@ -639,7 +649,8 @@ module otpu_slice
   // WPB = 1; ARB_MASK) only needs write-bank masks: a unit is granted when no bank it writes was taken by
   // a higher-priority unit this cycle (a unit's own lanes write distinct banks). Shallow logic,
   // no counters. Other configurations count reads and writes per bank.
-  logic [NG-1:0] gnt_m, gnt_c;
+  (* max_fanout = 32 *) logic [NG-1:0] gnt_m;
+  logic [NG-1:0] gnt_c;
   logic          cgl_m, cgl_c;
   // Each group's write-bank mask, the pairwise conflicts between groups (in parallel), then
   // priority on single bits: a group is admitted unless it conflicts with an earlier admitted
@@ -647,16 +658,27 @@ module otpu_slice
   // the per-bank reductions out of the priority chain)
   logic [NG-1:0][LANES-1:0] amk;
   logic [NG-1:0][NG-1:0]    acf;
-  logic [NG-1:0]            aok;
+  (* max_fanout = 32 *) logic [NG-1:0] aok;
+  // A write port other than the MXU's carries a contiguous run (enabled lane l writes word a0 +
+  // l, a0 lane 0's address; otpu_tmem checks it with WPB = 1, which the mask arbiters need), so
+  // its bank b is lane (b - a0) mod LANES's: its mask is its enables rotated by a0's bank bits
+  // (a mux per bank) instead of a compare per lane and bank OR-ed (250 MHz, FK35: the masks ->
+  // the conflicts -> the priority -> the MXU's and the VPU's grants, -0.7 to -0.9 ns behind the
+  // collective port's write FIFO; that port now presents its head from flip-flops)
   always_comb begin
     logic [NWP-1:0] wp;
     for (int g = 0; g < NG; g++) begin
       wp = grp_wports(g);
       amk[g] = '0;
       for (int p = 0; p < NWP; p++)
-        if (wp[p])
-          for (int l = 0; l < LANES; l++)
-            if (wq_en[p][l]) amk[g][w_addr[p][l][BW-1:0]] = 1'b1;
+        if (wp[p]) begin
+          if (p == W_MXU) begin
+            for (int l = 0; l < LANES; l++)
+              if (wq_en[p][l]) amk[g][w_addr[p][l][BW-1:0]] = 1'b1;
+          end else
+            for (int b = 0; b < LANES; b++)
+              if (wq_en[p][BW'(b - int'(w_addr[p][0][BW-1:0]))]) amk[g][b] = 1'b1;
+        end
     end
     acf = '0;
     for (int g = 0; g < NG; g++)
@@ -907,32 +929,62 @@ module otpu_slice
   // ---- the SW port's output register (docs/asic.md "The ports"): the QST writes leave the slice
   // from flip-flops, not through the quantizer's scale-row words and the TMEM grant (on the card
   // the quantizer -> the DRAM adapter's gather registers: 5-14 levels, 4-7 ns of route; -0.260 ns
-  // in an r2 candidate, -0.092 ns in an r2.1 one). The register takes a write when it is empty or
-  // drains this cycle (sw_rdy_i, what the arbiters see: sw_rdy does not depend on sw_req), and a
-  // write in it counts as one the DRAM has not taken (wr_idle_i), so a QST, a HALT CHAIN and a
-  // WAITW timeout still end only once the DRAM has every write (and a write in port B's output
-  // register, below, counts the same). sw_req is its valid bit: outside the slice, every write it
-  // gave is taken once wr_idle && !sw_req && !(b_req && b_we) (otpu_board's STATUS WR_IDLE and
-  // go_ok). Only the loader's reset clears it: a write the quantizer gave before a run's reset
-  // (rst) still goes out, as one in the DRAM's queues does. The units and the arbiters read the
-  // DRAM's sw_rdy and wr_idle only through it (tests/test_target.py)
+  // in an r2 candidate, -0.092 ns in an r2.1 one). A write in it counts as one the DRAM has not
+  // taken (wr_idle_i), so a QST, a HALT CHAIN and a WAITW timeout still end only once the DRAM
+  // has every write (and a write in port B's output register, below, counts the same). sw_req is
+  // its valid bit: outside the slice, every write it gave is taken once wr_idle && !sw_req &&
+  // !(b_req && b_we) (otpu_board's STATUS WR_IDLE and go_ok). Only the loader's reset clears it: a
+  // write the quantizer gave before a run's reset (rst) still goes out, as one in the DRAM's
+  // queues does. The units and the arbiters read the DRAM's sw_rdy and wr_idle only through it
+  // (tests/test_target.py).
+  // The register is the head of a FIFO of SWQ writes (sw_n of them, sw_v: any), and what the
+  // arbiters see (sw_rdy_i) is a flip-flop, sw_rm: room for SW_LAG + 1 more writes after this
+  // cycle's, whatever this cycle gives (a bound: one a cycle). So the quantizer may give up to
+  // SW_LAG writes after the cycle its grant saw sw_rdy_i low (its enable network registered or
+  // replicated, otpu_quant), and the DRAM's room never runs into its grant: the DRAM's sw_rdy is a
+  // flip-flop too (otpu_native_dram), and the FIFO's head leaves when it is up (250 MHz, FK35: the
+  // adapter's qw_n -> sw_rdy -> the arbiter -> the quantizer's enable, BUFGCE, 7,285 DSP and
+  // register enables, 3 levels, 93% route, -0.70 ns). The FIFO's entries shift down as the head
+  // leaves; the free entry after this cycle's move takes the quantizer's word every cycle (a
+  // write only moves the count), so the quantizer's write strobe reaches the count and sw_rm
+  // only, not the entries' enables. At the quantizer's rate (one write a cycle into a DRAM that
+  // takes one a cycle) the FIFO holds one write and sw_rm stays up.
+  localparam int SW_LAG = 2;
+  localparam int SWQ = SW_LAG + 2;
+  localparam int SQW = $clog2(SWQ + 1);
   wire  sw_req_c = q_areq && q_awe;
-  logic sw_v;
-  assign sw_rdy_i  = !sw_v || sw_rdy;
+  logic [SQW-1:0] sw_n;
+  logic sw_v, sw_rm;
+  logic [31:0] swq_a [SWQ], swq_d [SWQ];
+  logic [3:0]  swq_b [SWQ];
+  wire  sw_pop = sw_v && sw_rdy;          // the DRAM takes the head
+  assign sw_v      = sw_n != 0;
+  assign sw_rdy_i  = sw_rm;
   assign wr_idle_i = wr_idle && !sw_v && !(b_req && b_we);
   assign sw_req    = sw_v;
+  assign sw_addr   = swq_a[0];
+  assign sw_wdata  = swq_d[0];
+  assign sw_be     = swq_b[0];
   always_ff @(posedge clk) begin : sw_reg
-    if (sys_rst) sw_v <= 1'b0;
-    else if (sw_rdy_i) sw_v <= sw_req_c;
-    if (sw_rdy_i && sw_req_c) begin
-      sw_addr <= q_aaddr; sw_wdata <= q_awdata; sw_be <= q_abe;
+    if (sys_rst) begin
+      sw_n <= '0; sw_rm <= 1'b0;
+    end else begin
+      sw_n <= sw_n + SQW'(sw_req_c) - SQW'(sw_pop);
+      sw_rm <= (32'(sw_n) + 1 - 32'(sw_pop)) <= SWQ - 1 - SW_LAG;
     end
+    for (int i = 0; i < SWQ; i++)
+      if (sw_pop && 32'(i) + 1 < 32'(sw_n)) begin
+        swq_a[i] <= swq_a[i + 1]; swq_d[i] <= swq_d[i + 1]; swq_b[i] <= swq_b[i + 1];
+      end else if (32'(i) == (sw_pop ? 32'(sw_n) - 1 : 32'(sw_n))) begin
+        swq_a[i] <= q_aaddr; swq_d[i] <= q_awdata; swq_b[i] <= q_abe;
+      end
   end : sw_reg
 `ifndef SYNTHESIS
-  // the arbiters withhold the quantizer's grant while the port cannot take its write
+  // the arbiters withhold the quantizer's grant while sw_rdy_i is low: no more than SW_LAG writes
+  // come after it falls, and the FIFO holds them
   always @(posedge clk)
-    if (!sys_rst && sw_req_c && !sw_rdy_i)
-      $fatal(1, "otpu_slice: a QST write the SW port cannot take");
+    if (!sys_rst && sw_req_c && sw_n == SQW'(SWQ) && !sw_pop)
+      $fatal(1, "otpu_slice: a QST write the SW port cannot take (its FIFO full)");
 `endif
 
   // ---- DRAM ports: the MXU's port A reads, and port B's requests (b_*_c), into their output
@@ -978,16 +1030,32 @@ module otpu_slice
   // its data comes back, as one in the DRAM's queues. The units, the loader and the arbiters read
   // the DRAM's b_rdy, rd_idle, b_rvalid, b_rtag and b_rdata only through them
   // (tests/test_target.py). One cycle more each way costs nothing measurable (co-simulated:
-  // within +-0.07% at m4 on decode, a tiled prompt run and a MoE step, signs mixed)
+  // within +-0.07% at m4 on decode, a tiled prompt run and a MoE step, signs mixed).
+  // The request's fields load whenever the register is free (b_rdy_i), request or not (b_req
+  // says whether one came; every reader qualifies them with it), and the write data and mask, in
+  // NBK pieces, at copies of b_rdy_i of their own (b_req_k, a copy of b_req per piece; the
+  // DRAM's b_rdy is a flip-flop, otpu_native_dram): their enables were b_rdy_i && b_req_c, the
+  // DMA's and the MXU's requests and the MXU's issue through port B's grant (250 MHz, FK35: the
+  // adapter's qb_n -> b_rdy -> mxu_bgnt -> the MXU's issue -> b_wdata's enables, fanout 1,024,
+  // 6 levels, -0.81 ns; u_dma is_st -> b_wdata, 7 levels, -0.73 ns)
+  localparam int NBK = D / 8;            // pieces: 64 data bits, 2 mask bits
+  (* keep = "true" *) logic [NBK-1:0] b_req_k;
   assign b_rdy_i   = !b_req || b_rdy;
   assign rd_idle_i = rd_idle && !a_req && !(b_req && !b_we) && !b_rvalid_i;
   always_ff @(posedge clk) begin : pb_reg
-    if (sys_rst) b_req <= 1'b0;
-    else if (b_rdy_i) b_req <= b_req_c;
-    if (b_rdy_i && b_req_c) begin
-      b_tag <= b_tag_c; b_we <= b_we_c; b_wmask <= b_wmask_c; b_wdata <= b_wdata_c;
-      b_addr <= b_addr_c; b_par <= b_par_c;
+    if (sys_rst) begin
+      b_req <= 1'b0; b_req_k <= '0;
+    end else if (b_rdy_i) begin
+      b_req <= b_req_c; b_req_k <= {NBK{b_req_c}};
     end
+    if (b_rdy_i) begin
+      b_tag <= b_tag_c; b_we <= b_we_c; b_addr <= b_addr_c; b_par <= b_par_c;
+    end
+    for (int k = 0; k < NBK; k++)
+      if (!b_req_k[k] || b_rdy) begin
+        b_wdata[64 * k +: 64] <= b_wdata_c[64 * k +: 64];
+        b_wmask[2 * k +: 2] <= b_wmask_c[2 * k +: 2];
+      end
     b_rvalid_i <= !sys_rst && b_rvalid;
     // every cycle, not on b_rvalid: every reader takes them in a b_rvalid_i cycle only (the
     // loader's IMEM and sidecar writes, the DMA's line buffer, the MXU's FIFO), so they are the
@@ -1000,18 +1068,20 @@ module otpu_slice
   // MXU's issue -> a_req: the ASIC card point's a_req, -1.62 ns against the ideal I/O clock), and
   // a_rdy and b_rdy through it, do not reach the boundary. It is the register the card's DRAM
   // adapter took port A's requests into (otpu_native_dram), moved here: one register between the
-  // MXU and the adapter's queues on the card as before, so the same cycles. It takes a request
-  // when it is empty or drains this cycle (a_rdy_i, the MXU's grant: a_rdy does not depend on
-  // a_req), a_req its valid bit; a read in it is one not back (rd_idle_i). Only the loader's
-  // reset clears it, as the adapter's did: it holds a request, not data, and the adapter's
-  // a_flush (a run's reset, a load, a WAITW's word holding) drops the beats it holds (its
-  // reused beat and runs), so a read that leaves after a flush reads the memory as the host left
-  // it. The read data needs none: the MXU registers a_rdata at the port (ln1)
+  // MXU and the adapter's queues on the card as before (the adapter adds two stages of its own
+  // for 250 MHz). It takes a request when it is empty or drains this cycle (a_rdy_i, the MXU's
+  // grant: a_rdy does not depend on a_req; a flip-flop on the card), a_req its valid bit; a read
+  // in it is one not back (rd_idle_i). The address loads whenever it is free (a_req says whether
+  // a request came). Only the loader's reset clears it, as the adapter's did: it holds a request,
+  // not data, and the adapter's a_flush (a run's reset, a load, a WAITW's word holding) drops the
+  // beats it holds (its reused beat and runs), so a read that leaves after a flush reads the
+  // memory as the host left it. The read data needs none: the MXU registers a_rdata at the port
+  // (ln1)
   assign a_rdy_i = !a_req || a_rdy;
   always_ff @(posedge clk) begin : pa_reg
     if (sys_rst) a_req <= 1'b0;
     else if (a_rdy_i) a_req <= mxu_areq;
-    if (a_rdy_i && mxu_areq) a_addr <= mxu_aaddr;
+    if (a_rdy_i) a_addr <= mxu_aaddr;
   end : pa_reg
 
   // a unit's DRAM request waiting for its port, a cycle late (pf: the board's B_STALL and

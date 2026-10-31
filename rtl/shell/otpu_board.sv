@@ -114,6 +114,20 @@ module otpu_board #(
   import otpu_pkg::*;
   localparam int XR = 2;              // register stages each way across an SLR (S > 1)
 
+  // ---- the reset tree: rst through a register per destination, each next to its loads (250
+  // MHz, FK35: the block design's reset -> the control block's counters and the trace's pointers
+  // in one net, 1 level, 95% route, -0.65 ns; otpu_bcu_sys registers it first): r_ctl the control
+  // block and its AXI-Lite isolator (one reset: the isolator hands the control block no access
+  // while it is in reset), r_trc the trace, r_sh the rest of the shell and the slices' system
+  // reset. keep: not merged back into one register. Everything here leaves reset a cycle after rst.
+  (* keep = "true", shreg_extract = "no", max_fanout = 128 *) logic r_ctl;
+  (* keep = "true", shreg_extract = "no", max_fanout = 64 *) logic r_trc, r_sh;
+  always_ff @(posedge clk) begin
+    r_ctl <= rst;
+    r_trc <= rst;
+    r_sh  <= rst;
+  end
+
   // ---- calibration and uncorrectable-ECC flags from the memory controllers' clock domains
   // (registers there; levels, each bit on its own)
   (* ASYNC_REG = "TRUE" *) logic [2*S-1:0] cal_s1, cal_s2, ded_s1, ded_s2;
@@ -141,7 +155,7 @@ module otpu_board #(
     tmp_s1 <= temp;
     tmp_s2 <= tmp_s1;
     tmp_s3 <= tmp_s2;
-    if (rst) begin
+    if (r_sh) begin
       temp_q <= '0;
       temp_v <= 1'b0;
     end else if (tmp_s2 == tmp_s3 && tmp_s3 != '0) begin
@@ -170,6 +184,8 @@ module otpu_board #(
   logic [S-1:0][1:0] q_ret;
   logic [S-1:0][31:0] q_icount;
   logic [S-1:0] x_rst, x_srst, x_ld_start;
+  logic [S-1:0] x_frst, x_mrst;     // x_rst and x_srst for the adapter (its flush, its reset; at
+                                    //   S > 1 copies of their own, the same cycles)
   logic [S-1:0][31:0] x_ld_addr, x_ld_n;
   logic [31:0] x_arg [S][8];
   // the free-running counters' increments: every channel's beats, every slice's instructions
@@ -203,7 +219,7 @@ module otpu_board #(
   logic c_awvalid, c_awready, c_wvalid, c_wready, c_bvalid, c_bready;
   logic c_arvalid, c_arready, c_rvalid, c_rready;
   otpu_axil_iso #(.AW(12)) u_iso (
-    .clk, .m_rst(ctl_mrst), .s_rst(rst),
+    .clk, .m_rst(ctl_mrst), .s_rst(r_ctl),
     .m_awaddr(s_ctl_awaddr), .m_awvalid(s_ctl_awvalid), .m_awready(s_ctl_awready),
     .m_wdata(s_ctl_wdata), .m_wstrb(s_ctl_wstrb), .m_wvalid(s_ctl_wvalid),
     .m_wready(s_ctl_wready), .m_bresp(s_ctl_bresp), .m_bvalid(s_ctl_bvalid),
@@ -226,7 +242,7 @@ module otpu_board #(
               .DRAM_LOG2(32), .NCH(2), .CH_LOG2(31), .MXU_IMPL(MXU_IMPL), .TMEM_IMPL(TMEM_IMPL),
               .VPU_CL(VPU_CL), .ULANES(ULANES), .SEQ_WC(SEQ_WC), .PLATFORM(PLATFORM),
               .ARCH_HASH(ARCH_HASH)) u_ctrl (
-    .clk, .rst,
+    .clk, .rst(r_ctl),
     .s_awaddr(c_awaddr), .s_awvalid(c_awvalid), .s_awready(c_awready),
     .s_wdata(c_wdata), .s_wstrb(c_wstrb), .s_wvalid(c_wvalid),
     .s_wready(c_wready), .s_bresp(c_bresp), .s_bvalid(c_bvalid),
@@ -251,7 +267,7 @@ module otpu_board #(
   // ---- hardware trace
   if (TRACE_DEPTH != 0) begin : g_trace
     otpu_trace #(.DEPTH(TRACE_DEPTH), .QD(TRACE_QD), .WIN(WIN)) u_trace (
-      .clk, .rst, .pf(pf_c), .en(tr_en && run), .stop(tr_stop), .clear(tr_clear), .raddr(tr_addr),
+      .clk, .rst(r_trc), .pf(pf_c), .en(tr_en && run), .stop(tr_stop), .clear(tr_clear), .raddr(tr_addr),
       .rdata(tr_rdata), .count(tr_count), .drop(tr_drop), .busy(tr_busy));
   end else begin : g_no_trace
     assign tr_rdata = '0;
@@ -269,8 +285,8 @@ module otpu_board #(
   (* max_fanout = 256 *) logic core_rst;
   logic go_ok;
   always_ff @(posedge clk) begin
-    go_ok <= !rst && ((run && go_ok) || (rd_idle && wr_idle));
-    core_rst <= rst || !run || !go_ok;
+    go_ok <= !r_sh && ((run && go_ok) || (rd_idle && wr_idle));
+    core_rst <= r_sh || !run || !go_ok;
   end
 
   // the run's status from every slice
@@ -320,8 +336,10 @@ module otpu_board #(
 
   // the collective's reset through a register of its own, next to it: it leaves reset a cycle
   // after the slice, idle either way (133.33 MHz, 110ec6d: core_rst -> u_coll's state, 0 levels,
-  // 97% route, +0.162 ns); a request can only come many cycles after reset (checked)
-  logic coll_rst;
+  // 97% route, +0.162 ns); a request can only come many cycles after reset (checked). keep: the
+  // crossings' u_dn_tx register core_rst too, and merged with theirs it drove them from the unit
+  // (250 MHz, FK35: coll_rst -> g_x[].u_dn_rx, 0 levels, 98% route, -0.38 ns)
+  (* keep = "true" *) logic coll_rst;
   always_ff @(posedge clk) coll_rst <= core_rst;
 `ifndef SYNTHESIS
   always @(posedge clk)
@@ -330,8 +348,10 @@ module otpu_board #(
   initial if (S > 1 && !COLL_GATHER) $fatal(1, "otpu_board: COLL_GATHER 0 needs S = 1");
   if (COLL_GATHER) begin : g_coll
     // RQ: its reads from its own request register on the slice's port at S = 1; at S > 1 each
-    // slice's otpu_coll_port presents them a cycle later (TMEM's input stage)
-    otpu_coll #(.S(S), .LANES(LANES), .RQ(S == 1)) u_coll (
+    // slice's otpu_coll_port presents them a cycle later (TMEM's input stage). UG at S > 1: the
+    // hub's crossings take the addresses and data from the unit's registers as they are, valid
+    // with their enables (otpu_coll)
+    otpu_coll #(.S(S), .LANES(LANES), .RQ(S == 1), .UG(S > 1)) u_coll (
       .clk, .rst(coll_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gnt), .ack(coll_ack),
       .r_en(coll_ren), .r_addr(coll_raddr), .r_data(coll_rdata),
       .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
@@ -355,7 +375,7 @@ module otpu_board #(
   assign q_rd_idle[0] = m_rd_idle && !a_req && !(b_req && !b_we) && !m_rv;
   always_ff @(posedge clk) m_rv <= !x_srst[0] && b_rvalid;
   otpu_native_dram #(.D(D), .CHASH(CHASH)) u_mem (
-    .clk, .rst(x_srst[0]), .a_flush(x_rst[0] || x_ld_start[0] || a_inval),
+    .clk, .rst(x_mrst[0]), .a_flush(x_frst[0] || x_ld_start[0] || a_inval),
     .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
         .a_be_x(a_be), .a_rvalid, .a_rdata,
     .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
@@ -401,7 +421,7 @@ module otpu_board #(
       .icount(q_icount[s]), .pf, .dump(1'b0));
 
     otpu_native_dram #(.D(D), .CHASH(CHASH)) u_mem (
-      .clk, .rst(x_srst[s]), .a_flush(x_rst[s] || x_ld_start[s] || a_inval),
+      .clk, .rst(x_mrst[s]), .a_flush(x_frst[s] || x_ld_start[s] || a_inval),
       .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
           .a_be_x(a_be), .a_rvalid, .a_rdata,
       .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
@@ -419,7 +439,9 @@ module otpu_board #(
   if (S == 1) begin : g_x1
     // ---- one slice: wired
     assign x_rst[0] = core_rst;
-    assign x_srst[0] = rst;
+    assign x_srst[0] = r_sh;
+    assign x_frst[0] = core_rst;
+    assign x_mrst[0] = r_sh;
     assign x_ld_start[0] = ld_start;
     assign x_ld_addr[0] = ld_addr;
     assign x_ld_n[0] = ld_n;
@@ -493,22 +515,39 @@ module otpu_board #(
       logic [L-1:0][31:0] p_dd;
       logic [L-1:0]       p_rm, p_wm;
       logic [L-1:0][31:0] p_ra, p_wa, p_wd;
-      logic          p_rv, p_wv, rx_crst;
+      logic          p_rv, p_wv, rx_crst, rx_srst;
       logic [1:0]    drd, dwr;
       for (genvar k = 0; k < 8; k++) begin : g_arg
         assign arg_d[32*k +: 32] = arg[k];
         assign x_arg[s][k] = arg_q[32*k +: 32];
       end
-      assign dn_d = {arg_d, ld_n, ld_addr, ld_start, core_rst, rst, h_wd, h_wa, h_wm, h_ra, h_rm,
+      assign dn_d = {arg_d, ld_n, ld_addr, ld_start, core_rst, r_sh, h_wd, h_wa, h_wm, h_ra, h_rm,
                      h_wv, h_rv[s], h_ack};
       otpu_xr #(.W(DW), .RW(3)) u_dn_tx (.clk, .rst(coll_rst), .d(dn_d), .q(dn_m));
       otpu_xr #(.W(DW), .RW(3)) u_dn_rx (.clk, .rst(rx_crst), .d(dn_m), .q(dn_q));
-      assign {arg_q, x_ld_n[s], x_ld_addr[s], x_ld_start[s], rx_crst, x_srst[s], p_wd, p_wa,
+      assign {arg_q, x_ld_n[s], x_ld_addr[s], x_ld_start[s], rx_crst, rx_srst, p_wd, p_wa,
               p_wm, p_ra, p_rm, p_wv, p_rv, sc_ack[s]} = dn_q;
-      assign x_rst[s] = rx_crst;
+      // the slice's resets, a register per destination after the crossing, next to its loads
+      // (250 MHz, FK35: u_dn_rx's reset bits -> the slice's activity registers, its adapter's
+      // reply-tag RAM, 0-1 levels, 97% route, -0.59 ns): the core reset to the slice (x_rst), to its
+      // adapter's flush (x_frst), to the collective port and the up crossing; the system reset to
+      // the slice (x_srst) and to its adapter (x_mrst). They reach the slice a cycle after the rest
+      // of the crossing (LOAD, the arguments): LOAD comes only with RUN 0, the core reset held, and
+      // the system reset only at power-up; a stopped run's slice stops a cycle later (go_ok waits
+      // for its adapter as before). keep: equivalent flip-flops (and the other slice's), kept apart.
+      (* keep = "true", shreg_extract = "no", max_fanout = 64 *) logic [2:0] cr_q;
+      (* keep = "true", shreg_extract = "no", max_fanout = 64 *) logic [1:0] sr_q;
+      always_ff @(posedge clk) begin
+        cr_q <= {3{rx_crst}};
+        sr_q <= {2{rx_srst}};
+      end
+      assign x_rst[s]  = cr_q[0];
+      assign x_frst[s] = cr_q[1];
+      assign x_srst[s] = sr_q[0];
+      assign x_mrst[s] = sr_q[1];
 
       otpu_coll_port #(.LANES(L)) u_cport (
-        .clk, .rst(x_rst[s]), .rv(p_rv), .rm(p_rm), .ra(p_ra), .wv(p_wv), .wm(p_wm), .wa(p_wa),
+        .clk, .rst(cr_q[2]), .rv(p_rv), .rm(p_rm), .ra(p_ra), .wv(p_wv), .wm(p_wm), .wa(p_wa),
         .wd(p_wd), .dv(p_dv), .dd(p_dd), .pop(p_pop),
         .coll_ren(sc_ren[s]), .coll_raddr(sc_raddr[s]), .coll_rdata(sc_rdata[s]),
         .coll_wen(sc_wen[s]), .coll_waddr(sc_waddr[s]), .coll_wdata(sc_wdata[s]),
@@ -526,7 +565,7 @@ module otpu_board #(
       assign up_d = {drd, dwr, q_icount[s], q_ret[s], q_ld_busy[s], q_halted[s], q_error[s],
                      q_wait_to[s], q_wr_idle[s], q_rd_idle[s], sc_cmd[s], p_dd, p_pop, p_dv,
                      sc_req[s]};
-      otpu_xr #(.W(UW), .RW(3)) u_up_tx (.clk, .rst(x_rst[s]), .d(up_d), .q(up_m));
+      otpu_xr #(.W(UW), .RW(3)) u_up_tx (.clk, .rst(cr_q[2]), .d(up_d), .q(up_m));
       otpu_xr #(.W(UW), .RW(3)) u_up_rx (.clk, .rst(coll_rst), .d(up_m), .q(up_q));
       assign {sl_drd[s], sl_dwr[s], icount[s], sl_ret[s], sl_ld_busy[s], sl_halted[s],
               sl_error[s], sl_wait_to[s], sl_wr_idle[s], sl_rd_idle[s], h_cmd[s], h_dd[s],
@@ -559,7 +598,10 @@ endmodule
 
 // One register stage of an SLR crossing (otpu_board at S > 1: a pair per direction and slice, one
 // stage on each side). The low RW bits (valid pulses, request levels) clear with rst; the others
-// are data. max_fanout: a stage's reset bit drives a slice's whole core reset (as core_rst).
+// are data. keep: every slice's stages hold the same control bits (the arguments, LOAD, the
+// resets, the collective's writes), and merged into one set they sat between the slices and drove
+// both (250 MHz, FK35: g_x[].u_dn_rx -> the slices' resets, -0.59 ns), so each slice keeps its own.
+// shreg_extract: two plain stages behind plain sources stay flip-flops (no SRL).
 module otpu_xr #(
   parameter int W  = 1,
   parameter int RW = 0
@@ -569,7 +611,8 @@ module otpu_xr #(
   input  logic [W-1:0] d,
   output logic [W-1:0] q
 );
-  (* max_fanout = 256 *) logic [W-1:0] r;     // r_reg: the floorplan's USER_SLL_REG cells
+  // r_reg: the BCU1525 floorplan's USER_SLL_REG cells
+  (* keep = "true", shreg_extract = "no", max_fanout = 256 *) logic [W-1:0] r;
   assign q = r;
   always_ff @(posedge clk) begin
     r <= d;

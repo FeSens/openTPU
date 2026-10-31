@@ -15,7 +15,7 @@
 module otpu_ram_1r1w #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -66,7 +66,7 @@ endmodule
 module otpu_ram_1r1w_ra #(
   parameter int    W     = 32,
   parameter int    N     = 64,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -111,7 +111,7 @@ endmodule
 module otpu_ram_1r1w_be #(
   parameter int    W     = 64,           // a multiple of 8
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -150,7 +150,7 @@ endmodule
 module otpu_ram_1rw #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -189,7 +189,7 @@ endmodule
 module otpu_ram_1rw1r #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,

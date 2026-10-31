@@ -83,7 +83,9 @@ SHELL = ["shell/otpu_ctrl.sv", "shell/otpu_trace.sv", "shell/otpu_board.sv",
          "shell/otpu_axi_split2.sv"]
 BOARDS = {"ypcb-00338": ["boards/ypcb-00338/otpu_native_sys.sv",
                          "boards/ypcb-00338/otpu_fpga_top_ld.sv"],
-          "bcu1525": ["boards/bcu1525/otpu_bcu_sys.sv", "boards/bcu1525/otpu_fpga_top_bcu.sv"]}
+          "bcu1525": ["boards/bcu1525/otpu_bcu_sys.sv", "boards/bcu1525/otpu_fpga_top_bcu.sv"],
+          "sqrl-fk33": ["boards/sqrl-fk33/otpu_fk33_sys.sv", "boards/sqrl-fk33/otpu_hbm_port.sv",
+                        "boards/sqrl-fk33/otpu_hbm.sv", "boards/sqrl-fk33/otpu_fpga_top_fk33.sv"]}
 
 
 class TargetError(ValueError):

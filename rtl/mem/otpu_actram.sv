@@ -80,10 +80,18 @@ module otpu_actram #(
   (* shreg_extract = "no" *) logic [7:0]            w_row_i, w_off_i, s_row_i;
   (* shreg_extract = "no" *) logic [7:0]            w_row_h, w_off_h, s_row_h;
   (* shreg_extract = "no" *) logic [DW+BW-1:0]      w_idx_i, w_idx_h;
-  (* shreg_extract = "no" *) logic [LANES-1:0][7:0] w_data_i, w_data_h;
+  (* shreg_extract = "no" *) logic [LANES-1:0][7:0] w_data_i;
   (* shreg_extract = "no" *) logic                  w_dup_i, swe_i, w_dup_h, swe_h;
   (* shreg_extract = "no" *) logic [BW-1:0]         s_blk_i, s_blk_h;
   (* shreg_extract = "no" *) logic [63:0]           s_data_i, s_data_h;
+  // the second hop's lanes, byte offset and enables, a copy per piece (keep: not merged back): the
+  // piece's placement register (its PB bytes of wbe / wd, by its block RAMs) takes them from a
+  // copy of its own. One copy fed all D bytes, spread over the MXU's columns' block RAMs
+  // (250 MHz, FK35: w_data_h -> wd, 0 levels, 98% route, -0.77 ns; w_idx_h -> wd, 1 level,
+  // -0.68 ns; we_h -> wbe, -0.62 ns)
+  (* shreg_extract = "no", keep = "true" *) logic [LANES-1:0]      we_hp [NP];
+  (* shreg_extract = "no", keep = "true" *) logic [DW-1:0]         w_ix_hp [NP];
+  (* shreg_extract = "no", keep = "true" *) logic [LANES-1:0][7:0] w_data_hp [NP];
   always_ff @(posedge clk) begin
     we_i <= we;
     w_row_i <= w_row;
@@ -98,7 +106,11 @@ module otpu_actram #(
     we_h <= we_i;
     w_row_h <= w_row_i;
     w_idx_h <= w_idx_i;
-    w_data_h <= w_data_i;
+    for (int p = 0; p < NP; p++) begin
+      we_hp[p] <= we_i;
+      w_ix_hp[p] <= w_idx_i[DW-1:0];
+      w_data_hp[p] <= w_data_i;
+    end
     w_dup_h <= w_dup_i;
     w_off_h <= w_off_i;
     swe_h <= swe_i;
@@ -126,20 +138,34 @@ module otpu_actram #(
       wg_n[j] = sgrp(j, w_row_h, w_off_h);
       sg_n[j] = sgrp(j, s_row_h, w_off_h);
     end
+  // (the lanes' bytes are in one piece: the index is LANES aligned -- the quantizer, the only
+  // writer, clears its low bits -- and LANES divides PB). Byte b takes lane b % LANES when the
+  // index's lane group is b's: a compare of the group bits, no add (250 MHz, FK35: the per-lane
+  // w_ix + l and its piece test, w_ix_hp -> wd, 15 levels after synthesis)
+  localparam int LW = $clog2(LANES);
   always_ff @(posedge clk) begin
     wbe <= '0;
     wd <= '0;
-    for (int l = 0; l < LANES; l++) begin
-      wbe[w_idx_h[DW-1:0] + DW'(l)] <= we_h[l];
-      wd[8 * (w_idx_h[DW-1:0] + DW'(l)) +: 8] <= w_data_h[l];
-    end
+    for (int p = 0; p < NP; p++)
+      for (int b = p * PB; b < (p + 1) * PB; b++)
+        if (w_ix_hp[p][DW-1:LW] == (DW-LW)'(b / LANES)) begin
+          wbe[b] <= we_hp[p][b % LANES];
+          wd[8 * b +: 8] <= w_data_hp[p][b % LANES];
+        end
+`ifndef SYNTHESIS
+    if (|we_i && w_idx_i[LW-1:0] != '0)
+      $fatal(1, "otpu_actram: write index %0d is not a multiple of LANES %0d", w_idx_i, LANES);
+`endif
     ssel <= ssel_n;
     for (int j = 0; j < MCOLS; j++) sg[j] <= sg_n[j];
     sb <= s_blk_h;
     sd <= s_data_h;
   end
 `ifndef SYNTHESIS
-  initial begin we_i = '0; swe_i = 1'b0; we_h = '0; swe_h = 1'b0; ssel = '0; end
+  initial begin
+    we_i = '0; swe_i = 1'b0; we_h = '0; swe_h = 1'b0; ssel = '0;
+    for (int p = 0; p < NP; p++) we_hp[p] = '0;
+  end
 `endif
 
   for (genvar j = 0; j < MCOLS; j++) begin : g_row
