@@ -36,7 +36,10 @@ from __future__ import annotations
 
 import collections
 import concurrent.futures
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: fcntl_win shims the flock subset we use
+    from .. import fcntl_win as fcntl
 import mmap
 import os
 import struct

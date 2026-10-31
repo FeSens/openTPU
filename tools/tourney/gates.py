@@ -14,7 +14,10 @@ up to 2 Vivado jobs of other streams), TEST_SLOTS["local"] = 1 here.
 """
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: fcntl_win shims the flock subset we use
+    from opentpu import fcntl_win as fcntl
 import fnmatch
 import os
 import re

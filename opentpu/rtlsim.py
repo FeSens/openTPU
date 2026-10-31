@@ -1,7 +1,10 @@
 """Build and run the SystemVerilog RTL with Verilator."""
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: fcntl_win shims the flock subset we use
+    from . import fcntl_win as fcntl
 import hashlib
 import os
 import re as _re

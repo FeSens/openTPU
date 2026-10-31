@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: fcntl_win shims the flock subset we use
+    from opentpu import fcntl_win as fcntl
 import hashlib
 import json
 import os

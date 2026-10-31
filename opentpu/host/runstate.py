@@ -33,7 +33,10 @@ from __future__ import annotations
 import atexit
 import errno
 import functools
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows: fcntl_win shims the flock subset we use
+    from .. import fcntl_win as fcntl
 import json
 import os
 import signal

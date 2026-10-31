@@ -37,9 +37,13 @@ import dataclasses
 import json
 import os
 import re
-import resource
 import sys
 import time
+
+try:
+    import resource
+except ImportError:  # Windows: the shim covers getrusage/ru_maxrss
+    from opentpu import fcntl_win as resource
 from pathlib import Path
 
 import numpy as np
