@@ -26,6 +26,9 @@ dstep="${DSTEP:-${T_DSTEP:-1}}"
 seq_wc="${SEQ_WC:-${T_SEQ_WC:-0}}"
 core_mhz="${CORE_MHZ:-${T_CORE_MHZ:-250}}"
 platform="${T_PLATFORM:-5}"
+# the DRAM address width per slice (the target's DAW, 32..36: create_project.tcl's verilog_define OTPU_DAW, otpu_pkg;
+# 33: the slice on all 8 GB)
+daw="${T_DAW:-32}"
 arch_hash="$(PYTHONPATH="$root" python3 -m opentpu.target hash sqrl-fk33 MCOLS="$mcols" \
   LANES="$lanes" ACT_ROWS="$act_rows" DSTEP="$dstep" SEQ_WC="$seq_wc" 2>/dev/null || echo 0)"
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
@@ -53,7 +56,7 @@ if [[ "${STEP:-}" == impl ]]; then
   run "$here/vivado/build.tcl" "$out" "$jobs" impl "${IMPL_STRATEGY:-}"
 else
   run "$here/vivado/create_project.tcl" "$out" "$mcols" "$core_mhz" "$build_id" "$vpu_cl" "$lanes" \
-    "$act_rows" "$dstep" "$platform" "$arch_hash"
+    "$act_rows" "$dstep" "$platform" "$arch_hash" "$daw"
   run "$here/vivado/build.tcl" "$out" "$jobs" full "${IMPL_STRATEGY:-}"
 fi
 echo "done: $out/otpu.bit"

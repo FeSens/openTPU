@@ -1,4 +1,4 @@
-// AXI4 1-to-2 split by address bit 31 (XDMA's M_AXI onto the two channels' bridges,
+// AXI4 1-to-2 split by address bit AW - 1 (31: XDMA's M_AXI onto the two channels' bridges,
 // otpu_mem_ch; channel 0 at 0x0000_0000, channel 1 at 0x8000_0000, as the address map of
 // opentpu/host/board.py). One clock. W beats follow their AW's channel; B and R responses come
 // back in the order of their AW / AR, whatever the IDs (legal, and XDMA's own order), so a
@@ -7,7 +7,8 @@
 module otpu_axi_split2 #(
   parameter int IDW = 4,
   parameter int DW  = 128,
-  parameter int OD  = 16
+  parameter int OD  = 16,
+  parameter int AW  = 32               // address bits (channels of 2^(AW - 1) bytes)
 ) (
   input  logic                  clk,
   input  logic                  rst,
@@ -15,7 +16,7 @@ module otpu_axi_split2 #(
   input  logic                  s_awvalid,
   output logic                  s_awready,
   input  logic [IDW-1:0]        s_awid,
-  input  logic [31:0]           s_awaddr,
+  input  logic [AW-1:0]         s_awaddr,
   input  logic [7:0]            s_awlen,
   input  logic                  s_wvalid,
   output logic                  s_wready,
@@ -29,7 +30,7 @@ module otpu_axi_split2 #(
   input  logic                  s_arvalid,
   output logic                  s_arready,
   input  logic [IDW-1:0]        s_arid,
-  input  logic [31:0]           s_araddr,
+  input  logic [AW-1:0]         s_araddr,
   input  logic [7:0]            s_arlen,
   output logic                  s_rvalid,
   input  logic                  s_rready,
@@ -61,8 +62,8 @@ module otpu_axi_split2 #(
   logic ob_wr, ob_rv, ob_rd;              // B route (AW order)
   logic or_wr, or_rv, or_rd;              // R route (AR order)
   logic awc, arc;
-  assign awc = s_awaddr[31];
-  assign arc = s_araddr[31];
+  assign awc = s_awaddr[AW-1];
+  assign arc = s_araddr[AW-1];
 
   // the order FIFOs' flags and heads from registers (RO): they steer every channel's valids,
   // readies and the R / B muxes
@@ -131,7 +132,8 @@ endmodule
 module otpu_axi_slice #(
   parameter bit REG = 1'b1,
   parameter int IDW = 4,
-  parameter int DW  = 128
+  parameter int DW  = 128,
+  parameter int AW  = 32
 ) (
   input  logic                  clk,
   input  logic                  rst,
@@ -139,7 +141,7 @@ module otpu_axi_slice #(
   input  logic                  s_awvalid,
   output logic                  s_awready,
   input  logic [IDW-1:0]        s_awid,
-  input  logic [31:0]           s_awaddr,
+  input  logic [AW-1:0]         s_awaddr,
   input  logic [7:0]            s_awlen,
   input  logic                  s_wvalid,
   output logic                  s_wready,
@@ -153,7 +155,7 @@ module otpu_axi_slice #(
   input  logic                  s_arvalid,
   output logic                  s_arready,
   input  logic [IDW-1:0]        s_arid,
-  input  logic [31:0]           s_araddr,
+  input  logic [AW-1:0]         s_araddr,
   input  logic [7:0]            s_arlen,
   output logic                  s_rvalid,
   input  logic                  s_rready,
@@ -165,7 +167,7 @@ module otpu_axi_slice #(
   output logic                  m_awvalid,
   input  logic                  m_awready,
   output logic [IDW-1:0]        m_awid,
-  output logic [31:0]           m_awaddr,
+  output logic [AW-1:0]         m_awaddr,
   output logic [7:0]            m_awlen,
   output logic                  m_wvalid,
   input  logic                  m_wready,
@@ -179,7 +181,7 @@ module otpu_axi_slice #(
   output logic                  m_arvalid,
   input  logic                  m_arready,
   output logic [IDW-1:0]        m_arid,
-  output logic [31:0]           m_araddr,
+  output logic [AW-1:0]         m_araddr,
   output logic [7:0]            m_arlen,
   input  logic                  m_rvalid,
   output logic                  m_rready,
@@ -189,7 +191,7 @@ module otpu_axi_slice #(
   input  logic                  m_rlast
 );
   if (REG) begin : g_reg
-    otpu_skid #(.W(IDW + 40)) u_aw (.clk, .rst, .s_valid(s_awvalid), .s_ready(s_awready),
+    otpu_skid #(.W(IDW + AW + 8)) u_aw (.clk, .rst, .s_valid(s_awvalid), .s_ready(s_awready),
       .s_data({s_awid, s_awaddr, s_awlen}), .m_valid(m_awvalid), .m_ready(m_awready),
       .m_data({m_awid, m_awaddr, m_awlen}));
     otpu_skid #(.W(DW + DW / 8 + 1)) u_w (.clk, .rst, .s_valid(s_wvalid), .s_ready(s_wready),
@@ -198,7 +200,7 @@ module otpu_axi_slice #(
     otpu_skid #(.W(IDW + 2)) u_b (.clk, .rst, .s_valid(m_bvalid), .s_ready(m_bready),
       .s_data({m_bid, m_bresp}), .m_valid(s_bvalid), .m_ready(s_bready),
       .m_data({s_bid, s_bresp}));
-    otpu_skid #(.W(IDW + 40)) u_ar (.clk, .rst, .s_valid(s_arvalid), .s_ready(s_arready),
+    otpu_skid #(.W(IDW + AW + 8)) u_ar (.clk, .rst, .s_valid(s_arvalid), .s_ready(s_arready),
       .s_data({s_arid, s_araddr, s_arlen}), .m_valid(m_arvalid), .m_ready(m_arready),
       .m_data({m_arid, m_araddr, m_arlen}));
     otpu_skid #(.W(IDW + DW + 3)) u_r (.clk, .rst, .s_valid(m_rvalid), .s_ready(m_rready),
@@ -226,7 +228,8 @@ endmodule
 module otpu_dma_split #(
   parameter bit REG = 1'b0,
   parameter int IDW = 4,
-  parameter int DW  = 128
+  parameter int DW  = 128,
+  parameter int AW  = 32
 ) (
   input  logic                  clk,
   input  logic                  rst,
@@ -234,7 +237,7 @@ module otpu_dma_split #(
   input  logic                  s_awvalid,
   output logic                  s_awready,
   input  logic [IDW-1:0]        s_awid,
-  input  logic [31:0]           s_awaddr,
+  input  logic [AW-1:0]         s_awaddr,
   input  logic [7:0]            s_awlen,
   input  logic                  s_wvalid,
   output logic                  s_wready,
@@ -248,7 +251,7 @@ module otpu_dma_split #(
   input  logic                  s_arvalid,
   output logic                  s_arready,
   input  logic [IDW-1:0]        s_arid,
-  input  logic [31:0]           s_araddr,
+  input  logic [AW-1:0]         s_araddr,
   input  logic [7:0]            s_arlen,
   output logic                  s_rvalid,
   input  logic                  s_rready,
@@ -260,7 +263,7 @@ module otpu_dma_split #(
   output logic [1:0]            m_awvalid,
   input  logic [1:0]            m_awready,
   output logic [1:0][IDW-1:0]   m_awid,
-  output logic [1:0][31:0]      m_awaddr,
+  output logic [1:0][AW-1:0]    m_awaddr,
   output logic [1:0][7:0]       m_awlen,
   output logic [1:0]            m_wvalid,
   input  logic [1:0]            m_wready,
@@ -274,7 +277,7 @@ module otpu_dma_split #(
   output logic [1:0]            m_arvalid,
   input  logic [1:0]            m_arready,
   output logic [1:0][IDW-1:0]   m_arid,
-  output logic [1:0][31:0]      m_araddr,
+  output logic [1:0][AW-1:0]    m_araddr,
   output logic [1:0][7:0]       m_arlen,
   input  logic [1:0]            m_rvalid,
   output logic [1:0]            m_rready,
@@ -288,7 +291,7 @@ module otpu_dma_split #(
   logic             i_awvalid, i_awready, i_wvalid, i_wready, i_wlast, i_bvalid, i_bready;
   logic             i_arvalid, i_arready, i_rvalid, i_rready, i_rlast;
   logic [IDW-1:0]   i_awid, i_arid, i_bid, i_rid;
-  logic [31:0]      i_awaddr, i_araddr;
+  logic [AW-1:0]    i_awaddr, i_araddr;
   logic [7:0]       i_awlen, i_arlen;
   logic [DW-1:0]    i_wdata, i_rdata;
   logic [DW/8-1:0]  i_wstrb;
@@ -299,7 +302,7 @@ module otpu_dma_split #(
   logic [1:0][1:0]      j_bresp, j_rresp;
   logic [1:0][DW-1:0]   j_rdata;
 
-  otpu_axi_slice #(.REG(REG), .IDW(IDW), .DW(DW)) u_xs (.clk, .rst,
+  otpu_axi_slice #(.REG(REG), .IDW(IDW), .DW(DW), .AW(AW)) u_xs (.clk, .rst,
     .s_awvalid, .s_awready, .s_awid, .s_awaddr, .s_awlen, .s_wvalid, .s_wready, .s_wdata,
     .s_wstrb, .s_wlast, .s_bvalid, .s_bready, .s_bid, .s_bresp, .s_arvalid, .s_arready, .s_arid,
     .s_araddr, .s_arlen, .s_rvalid, .s_rready, .s_rid, .s_rdata, .s_rresp, .s_rlast,
@@ -310,7 +313,7 @@ module otpu_dma_split #(
     .m_arid(i_arid), .m_araddr(i_araddr), .m_arlen(i_arlen), .m_rvalid(i_rvalid),
     .m_rready(i_rready), .m_rid(i_rid), .m_rdata(i_rdata), .m_rresp(i_rresp), .m_rlast(i_rlast));
 
-  otpu_axi_split2 #(.IDW(IDW), .DW(DW)) u_split (.clk, .rst,
+  otpu_axi_split2 #(.IDW(IDW), .DW(DW), .AW(AW)) u_split (.clk, .rst,
     .s_awvalid(i_awvalid), .s_awready(i_awready), .s_awid(i_awid), .s_awaddr(i_awaddr),
     .s_awlen(i_awlen), .s_wvalid(i_wvalid), .s_wready(i_wready), .s_wdata(i_wdata),
     .s_wstrb(i_wstrb), .s_wlast(i_wlast), .s_bvalid(i_bvalid), .s_bready(i_bready),
@@ -323,7 +326,7 @@ module otpu_dma_split #(
     .m_rid(j_rid), .m_rdata(j_rdata), .m_rresp(j_rresp), .m_rlast(j_rlast));
 
   for (genvar c = 0; c < 2; c++) begin : g_cs
-    otpu_axi_slice #(.REG(REG), .IDW(IDW), .DW(DW)) u_cs (.clk, .rst,
+    otpu_axi_slice #(.REG(REG), .IDW(IDW), .DW(DW), .AW(AW)) u_cs (.clk, .rst,
       .s_awvalid(j_awvalid[c]), .s_awready(j_awready[c]), .s_awid(i_awid), .s_awaddr(i_awaddr),
       .s_awlen(i_awlen), .s_wvalid(j_wvalid[c]), .s_wready(j_wready[c]), .s_wdata(i_wdata),
       .s_wstrb(i_wstrb), .s_wlast(i_wlast), .s_bvalid(j_bvalid[c]), .s_bready(j_bready[c]),
@@ -350,14 +353,16 @@ endmodule
 // their order, the write data its write-command order, the read data its command order (no
 // backpressure, one cycle later); n_wdone comes a cycle late, so the adapter's WR_IDLE does too
 // (it counts a write taken here, and waits for the controller's count). In reset it holds nothing.
-module otpu_native_reg (
+module otpu_native_reg #(
+  parameter int BAW = 25                 // the channel's beat address bits (otpu_native_dram)
+) (
   input  logic         clk,
   input  logic         rst,
   // the adapter's side
   input  logic         s_cvalid,
   output logic         s_cready,
   input  logic         s_cwe,
-  input  logic [24:0]  s_caddr,
+  input  logic [BAW-1:0] s_caddr,
   input  logic         s_wvalid,
   output logic         s_wready,
   input  logic [511:0] s_wdata,
@@ -370,7 +375,7 @@ module otpu_native_reg (
   output logic         m_cvalid,
   input  logic         m_cready,
   output logic         m_cwe,
-  output logic [24:0]  m_caddr,
+  output logic [BAW-1:0] m_caddr,
   output logic         m_wvalid,
   input  logic         m_wready,
   output logic [511:0] m_wdata,
@@ -380,7 +385,7 @@ module otpu_native_reg (
   input  logic [15:0]  m_wdone,
   input  logic         m_err
 );
-  otpu_skid #(.W(26)) u_cmd (.clk, .rst, .s_valid(s_cvalid), .s_ready(s_cready),
+  otpu_skid #(.W(BAW + 1)) u_cmd (.clk, .rst, .s_valid(s_cvalid), .s_ready(s_cready),
     .s_data({s_cwe, s_caddr}), .m_valid(m_cvalid), .m_ready(m_cready), .m_data({m_cwe, m_caddr}));
   otpu_skid #(.W(576)) u_wd (.clk, .rst, .s_valid(s_wvalid), .s_ready(s_wready),
     .s_data({s_wmask, s_wdata}), .m_valid(m_wvalid), .m_ready(m_wready),

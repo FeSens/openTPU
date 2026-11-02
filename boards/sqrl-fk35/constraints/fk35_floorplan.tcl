@@ -1,0 +1,59 @@
+# The SLR floorplan of the FK35 build (docs/sqrl-fk35.md). Unmanaged Tcl (cell lookups with checks), read in
+# implementation only and late (create_project.tcl). The BCU1525's bcu1525_floorplan.tcl is the model; the layout is
+# the openTPU_FK FK35 block-design build's, which met 250 / 250 MHz on this part.
+#
+# The xcvu35p's two SLRs: both HBM stacks (all 32 AXI ports) at the bottom edge of SLR0, the PCIe block (PCIE4C_X1Y0,
+# GTY quads 224-227) in SLR0 too.
+#   - pb_mem, SLR0 (the memory side): every channel's otpu_mem_ch, its HBM adapter (otpu_hbm_port) and the u_rx half
+#     of its native-port crossing. The block design (XDMA) and the HBM IP stay unconstrained: their sites are fixed
+#     in SLR0 anyway.
+#   - pb_cmp, SLR1 (the compute side): otpu_board, i.e. both slices, their native DRAM blocks and the shell (control
+#     block, collective unit, trace and the slices' crossings, otpu_board g_xs), and the u_tx halves.
+# Slice 0, the shell and the memory side in SLR0 (the BCU1525's split: the shell with the PCIe block) filled ~93% of
+# SLR0's usable CLBs in the openTPU_FK FK35 build and did not route; this way SLR0 is about a quarter full and SLR1 about
+# two thirds.
+#
+# What crosses SLR1 -> SLR0 (core_clk): each channel's native port, through two otpu_native_reg (otpu_fk35_sys SLL =
+# 4'b1111): u_tx with the slice, u_rx with otpu_mem_ch; the read data, write count and error flags leave u_rx from
+# flip-flops into u_tx's (flop to flop: USER_SLL_REG on both puts them in the Laguna sites), the commands and write
+# data leave u_tx from its skid buffers' output registers (Laguna TX) into u_rx's skid entry. The core reset crosses
+# as otpu_fk35_sys's copies (rst_b with the slices, rst_c[j] with each channel). The control registers (the block
+# design's SmartConnect -> otpu_board's AXI-Lite isolator) cross as AXI-Lite, the die temperature as a register.
+proc fk35_pb {name slr cells} {
+  set found {}
+  foreach c $cells {
+    set x [get_cells -quiet $c]
+    if {[llength $x]} { lappend found $x } else {
+      puts "CRITICAL WARNING: \[fk35_floorplan.tcl\] $name: no cell $c"
+    }
+  }
+  set pb [create_pblock $name]
+  resize_pblock $pb -add $slr
+  if {[llength $found]} { add_cells_to_pblock $pb [join $found] }
+  puts "fk35_floorplan.tcl: $name in $slr, [llength $found] of [llength $cells] cells"
+}
+set mem {}
+set cmp [list u_sys/u_board u_sys/rst_b_reg]
+foreach j {0 1 2 3} {
+  lappend mem "u_sys/g_ch\[$j\].u_ch" "u_sys/g_ch\[$j\].g_sll.u_rx" "g_hbm\[$j\].u_port" "u_sys/rst_c_reg\[$j\]"
+  lappend cmp "u_sys/g_ch\[$j\].g_sll.u_tx"
+}
+fk35_pb pb_mem SLR0 $mem
+fk35_pb pb_cmp SLR1 $cmp
+
+# Laguna registers on the flop-to-flop crossings, per channel: the read data, write count and error flags (u_rx's
+# s_* registers drive u_tx's directly) and the commands' / write data's output registers (u_tx's m_* registers)
+foreach j {0 1 2 3} {
+  set sll {}
+  set g "u_sys/g_ch\[$j\].g_sll"
+  foreach pat [list "$g.u_rx/s_rdata_reg*" "$g.u_rx/s_wdone_reg*" "$g.u_rx/s_err_reg" "$g.u_tx/s_rdata_reg*" \
+               "$g.u_tx/s_wdone_reg*" "$g.u_tx/s_err_reg" "$g.u_tx/u_cmd/m_data_reg*" "$g.u_tx/u_wd/m_data_reg*"] {
+    set sll [concat $sll [get_cells -quiet $pat -filter {REF_NAME =~ FD*}]]
+  }
+  if {[llength $sll]} {
+    set_property USER_SLL_REG TRUE $sll
+    puts "fk35_floorplan.tcl: channel $j, [llength $sll] Laguna registers"
+  } else {
+    puts "CRITICAL WARNING: \[fk35_floorplan.tcl\] channel $j: no crossing registers found"
+  }
+}

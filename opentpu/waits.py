@@ -110,16 +110,20 @@ class Fp:
     wr: tuple = ()
 
 
-def _mk(sp, base, ln):
-    """otpu_pkg mk() over every value of the base: [lo, hi) clamped to the last byte; a list of
-    ranges (two when the base's values wrap)."""
+def _mk(sp, base, ln, reg=0):
+    """otpu_pkg mk() over every value of the base: [lo, hi) clamped to the last byte (of the
+    4 GiB region reg: a DRAM range of a DAW > 32 instruction, isa.py "DRAM address width"); a
+    list of ranges (two when the base's values wrap: the address counters wrap inside their
+    region). The region is address bits 32 and up of both ends, so ranges of different regions
+    never overlap, as in the sequencer, which compares the DAW-bit ends."""
     ln &= M32
     if ln == 0:
         return []
     lo, hi = base
+    o = reg << 32
     if hi <= M32:
-        return [(sp, lo, min(hi + ln, M32))]
-    return [(sp, lo, M32), (sp, 0, min(hi - (1 << 32) + ln, M32))]
+        return [(sp, o + lo, o + min(hi + ln, M32))]
+    return [(sp, o + lo, o + M32), (sp, o, o + min(hi - (1 << 32) + ln, M32))]
 
 
 def _beats(rs):
@@ -165,13 +169,15 @@ def footprint(ins: I.Instr, R, D: int = 128, S: int = 1) -> Fp:
         return Fp(all=True)
     w = resolve(ins, R)
     c = [x[0] for x in w]          # immediates (the fields the RTL does not resolve)
+    g = ins.region()               # the DRAM operands' 4 GiB region (not a register sum)
     rd, wr = [], []
     if op == I.LD:
-        rd.append(_mk(SP_DRAM, w[0], c[2] << 2)); wr.append(_mk(SP_TMEM, w[1], c[2]))
+        rd.append(_mk(SP_DRAM, w[0], c[2] << 2, g)); wr.append(_mk(SP_TMEM, w[1], c[2]))
     elif op == I.ST:
-        rd.append(_mk(SP_TMEM, w[1], c[2])); wr.append(_mk(SP_DRAM, w[0], c[2] << 2))
+        rd.append(_mk(SP_TMEM, w[1], c[2])); wr.append(_mk(SP_DRAM, w[0], c[2] << 2, g))
     elif op == I.STREAM:
-        wr.append(_mk(SP_DRAM, w[1], 4 * 256 * 256)); wr.append(_mk(SP_DRAM, w[2], 4 * 256 * 256))
+        wr.append(_mk(SP_DRAM, w[1], 4 * 256 * 256, g))
+        wr.append(_mk(SP_DRAM, w[2], 4 * 256 * 256, g))
         wr.append(_mk(SP_TMEM, w[6], 256))
         rd.append(_mk(SP_TMEM, ((c[0] & 0xFFFF,) * 2), 8))
         rd.append(_mk(SP_TMEM, w[3], 4 * 256)); rd.append(_mk(SP_TMEM, w[4], 256))
@@ -180,7 +186,8 @@ def footprint(ins: I.Instr, R, D: int = 128, S: int = 1) -> Fp:
         rows, cols = c[3] & 0xFFFF, c[3] >> 16
         if rows and cols:
             p0 = _p(rows - 1, cols)
-            wr.append(_mk(SP_DRAM, w[0], (p0 + cols) << 2)); wr.append(_mk(SP_TMEM, w[5], rows))
+            wr.append(_mk(SP_DRAM, w[0], (p0 + cols) << 2, g))
+            wr.append(_mk(SP_TMEM, w[5], rows))
             rd.append(_mk(SP_TMEM, w[1], cols << 1)); rd.append(_mk(SP_TMEM, w[2], rows))
             rd.append(_mk(SP_TMEM, w[4], c[6] + 1))
     elif op == I.MM:
@@ -188,7 +195,7 @@ def footprint(ins: I.Instr, R, D: int = 128, S: int = 1) -> Fp:
         if n and kb and m:
             p0, p1 = _p(n - 1, c[4]), _p(n - 1, c[6])
             p2, p3 = _p(m - 1, c[5] & 0xFFFF), _p(m, c[5] & 0xFFFF)
-            rd.append(_mk(SP_DRAM, w[0], p0 + kb * D))
+            rd.append(_mk(SP_DRAM, w[0], p0 + kb * D, g))
             if not fl & I.F_UNIT:
                 # a scale row's bytes up to block k0 + KB's (MX, docs/isa.md "Weight formats"):
                 # RSC Sw; int8x Sw and a byte a block; NVFP4 Sw, three reserved words and 8
@@ -196,7 +203,7 @@ def footprint(ins: I.Instr, R, D: int = 128, S: int = 1) -> Fp:
                 wf = (fl >> I.WF_SHIFT) & 3
                 sb = (4 if fl & I.F_RSC else 4 + k0 + kb if wf == I.W8 else
                       24 + ((k0 + kb) << 3) if wf == I.WNV else 12 + ((k0 + kb) << 2))
-                rd.append(_mk(SP_DRAM, w[1], p1 + sb))
+                rd.append(_mk(SP_DRAM, w[1], p1 + sb, g))
             if fl & I.F_ASCALE:
                 rd.append(_mk(SP_TMEM, w[1], m))
             ab = (c[5] >> 24) & 0xFF
@@ -221,8 +228,8 @@ def footprint(ins: I.Instr, R, D: int = 128, S: int = 1) -> Fp:
             # a scale row's words (not ROW): Sw and ceil(KB / 4) words of offsets
             p2, p3 = _p(kb * D - 1, c[6]), _p(rows, 1 + ((kb + 3) >> 2))
             rd.append(_mk(SP_TMEM, w[0], p0 + kb * D))
-            wr.append(_beats(_mk(SP_DRAM, w[1], p1 + p2 + 1)))
-            wr.append(_beats(_mk(SP_DRAM, w[2], 4 * (rows if fl & I.F_ROW else p3))))
+            wr.append(_beats(_mk(SP_DRAM, w[1], p1 + p2 + 1, g)))
+            wr.append(_beats(_mk(SP_DRAM, w[2], 4 * (rows if fl & I.F_ROW else p3), g)))
     elif op == I.VOP:
         rows, cols = c[3] & 0xFFFF, c[3] >> 16
         f, bm = (c[5] >> 16) & 0xFF, (c[5] >> 24) & 3
@@ -256,7 +263,9 @@ def footprint(ins: I.Instr, R, D: int = 128, S: int = 1) -> Fp:
     elif op == I.RLD:
         rd.append(_mk(SP_TMEM, w[0], 1))
     elif op == I.WAITW:
-        wr.append(_mk(SP_DRAM, (0, 0), M32)); wr.append(_mk(SP_TMEM, w[1], 1))
+        # all of DRAM as written, every region (the flag word's region does not say where the
+        # data it guards is): one range over all DAW bits (otpu_pkg: WAITW's)
+        wr.append([(SP_DRAM, 0, (1 << I.MAX_DAW) - 1)]); wr.append(_mk(SP_TMEM, w[1], 1))
     return Fp(False, tuple(x for rs in rd for x in rs), tuple(x for rs in wr for x in rs))
 
 

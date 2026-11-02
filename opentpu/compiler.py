@@ -33,6 +33,19 @@ class CompileError(RuntimeError):
     pass
 
 
+REGION = 1 << 32                # a DRAM region (isa.py "DRAM address width"): 4 GiB
+
+
+def region_of(addr: int, nbytes: int = 1) -> int:
+    """The 4 GiB region of the DRAM range [addr, addr + nbytes); CompileError when it crosses a
+    region boundary (no instruction's DRAM range may: isa.py "DRAM address width")."""
+    r = int(addr) // REGION
+    if nbytes > 0 and (int(addr) + int(nbytes) - 1) // REGION != r:
+        raise CompileError(f"the DRAM range {int(addr):#x} + {int(nbytes):#x} crosses a 4 GiB "
+                           f"boundary")
+    return r
+
+
 # =============================================================================== affine addresses
 _loop_ids = itertools.count()
 
@@ -892,6 +905,79 @@ class Builder:
             self.used_regs.add(r)
         return self.regs[key], a.const
 
+    # ---- DRAM addresses: {REG, (R + imm) mod 2^32} above DAW 32 (isa.py "DRAM address width")
+    def region(self, a, span: int = 1, what: str = "DRAM access") -> int:
+        """The 4 GiB region (an instruction's REG) of the DRAM address `a` (an Affine / int):
+        every execution's range [const + least offset, const + greatest offset + span) must lie
+        in it (span: the bytes one execution touches from the address; the offsets: a loop's
+        c * (count - 1), a run-time value's c * (bound - 1)). The register of the address
+        (Builder.addr) holds its terms only, and the immediate is the constant: the hardware's
+        (R + imm) mod 2^32 is then the address's offset in its region, so the program's words
+        are those of the same tensors 4 GiB lower but for REG.
+        Region 0 holds everything a register or table word names absolutely (isa.py): a device
+        value (DevVar, Counter: an absolute slot or row address, a count the program steps) and a
+        run-time value without a bound address region 0 only (their range is unknown there: it
+        is not checked, as at DAW 32). CompileError names the access when its range crosses a
+        4 GiB boundary, leaves the DRAM's 2^DAW bytes, or needs an unchecked value above 4 GiB.
+        At DAW 32 the address is as ever: region 0, nothing checked (the layout-only probes'
+        images past 4 GiB compile as before)."""
+        if self.cfg.DAW <= 32:
+            return 0
+        a = Affine.of(a)
+        lo = hi = 0
+        free = None                     # a value whose range is not known
+        for v, c in a.terms.items():
+            if isinstance(v, DevVar):
+                free = free or v
+                continue
+            n = v.bound if isinstance(v, RunVar) else (None if v.rcount else v.count)
+            if not n or n < 1:
+                free = free or v
+                continue
+            e = c * (int(n) - 1)
+            lo, hi = lo + min(e, 0), hi + max(e, 0)
+        bot, top = a.const + lo, a.const + hi + max(int(span), 1)
+
+        def fail(msg: str):
+            where = f"{what} at {a.const:#x}" + "".join(f" + {c}*{v}" for v, c in a.terms.items())
+            frame = next(iter(_user_frames(1)), None)           # the kernel line that asked
+            if frame is not None:
+                where += f" ({os.path.basename(frame[0])}:{frame[1]} in {frame[2]})"
+            raise CompileError(f"{where}: {msg}")
+
+        if top <= REGION:               # region 0 (a wrapped range too: the mask rows)
+            return 0
+        if free is not None:
+            fail(f"{free} ({'a device value' if isinstance(free, DevVar) else 'no bound'}) "
+                 f"addresses region 0 only, the range reaches {top:#x}")
+        if bot < 0 or top > 1 << self.cfg.DAW:
+            fail(f"the range {bot:#x}..{top:#x} leaves the DRAM's {self.cfg.DAW}-bit addresses")
+        r = bot // REGION
+        if (top - 1) // REGION != r:
+            fail(f"the range {bot:#x}..{top:#x} crosses a 4 GiB boundary (regions {r} and "
+                 f"{(top - 1) // REGION}): the layout keeps a tensor in one region, the run "
+                 f"planners split loops at 4 GiB")
+        return r
+
+    def dram(self, a, span: int = 1, what: str = "DRAM access") -> tuple[int, int, int]:
+        """(register, immediate, region) of the DRAM address `a`: Builder.addr and the region
+        whose REG the instruction takes (Builder.region; span bytes from it, `what` names it)."""
+        g = self.region(a, span, what)
+        ra, imm = self.addr(a)
+        return ra, imm, g
+
+    def same_region(self, what: str, *regs) -> int:
+        """The one region of an instruction's DRAM operands (regs: each operand's; None: the
+        operand is not in DRAM): CompileError when they differ (isa.py: REG is the
+        instruction's, so a matrix and its scale rows, a cache and its scale rows, a stream's
+        source and destination share a region; the layout co-locates them)."""
+        rs = {r for r in regs if r is not None}
+        if len(rs) > 1:
+            raise CompileError(f"{what}: its DRAM operands lie in regions {sorted(rs)}: one "
+                               f"instruction's DRAM operands share its 4 GiB region (co-locate "
+                               f"them)")
+        return rs.pop() if rs else 0
+
     def arg_reg(self, var: RunVar, c: int) -> int:
         """The argument register that holds c * var (allocated on first use; it leaves the
         address registers)."""
@@ -1203,12 +1289,15 @@ class Builder:
               rc: int = 0, interval: int = 0, timeout: int = 0, comment: str = "") -> None:
         """Wait until the DRAM word at R[ra] + dram compares (cmp: I.C_EQ / C_NE / C_GE) with
         R[rc] + ref, then the one-word tile t = the word's bits (WAITW: a word the host writes,
-        docs/isa.md; rld(raw=True) takes it into a register)."""
+        docs/isa.md; rld(raw=True) takes it into a register). The host's words are in region 0
+        (isa.py "DRAM address width"); a static word above it (ra 0) takes its region."""
         self.check_live(t)
         if t.rows * t.cols != 1:
             raise CompileError(f"waitw: {t} is not one word")
+        g = self.region(dram, 4, "waitw") if not ra else self.region(Affine(dram) + DevVar(
+            "a register", ra), 4, "waitw")
         self.emit(I.waitw(dram, t.base, ref, cmp, ra=ra, rc=rc, interval=interval,
-                          timeout=timeout, comment=comment or "waitw"))
+                          timeout=timeout, comment=comment or "waitw", reg=g))
 
     def argmax(self, x: "Tile", base: int = 0, out: "Tile | None" = None,
                rbase: int = 0) -> "Tile":
@@ -1489,25 +1578,27 @@ class Builder:
                 raise CompileError(f"load: out {out} is not a contiguous {t.shape} tile")
             self.bump_version(out.buf)
         if strided:
-            ra, imm = self.addr(t.base)
             n = (t.shape[0] - 1) * out.rs + t.shape[1]
-            self.emit(I.ld(imm, out.base, n, ra=ra, comment="load rows"))
+            ra, imm, g = self.dram(t.base, 4 * n, "load rows")
+            self.emit(I.ld(imm, out.base, n, ra=ra, comment="load rows", reg=g))
             return out
         if len(t.shape) == 1:
             if t.strides[0] != 1:
                 raise CompileError("strided 1-D loads are not supported")
-            ra, imm = self.addr(t.base)
-            self.emit(I.ld(imm, out.base, t.shape[0], ra=ra, comment="load"))
+            ra, imm, g = self.dram(t.base, 4 * t.shape[0], "load")
+            self.emit(I.ld(imm, out.base, t.shape[0], ra=ra, comment="load", reg=g))
             return out
         if len(t.shape) != 2 or t.strides[1] != 1:
             raise CompileError("loads must be 1-D or row-major 2-D")
         if not by_row:
-            ra, imm = self.addr(t.base)
-            self.emit(I.ld(imm, out.base, t.shape[0] * t.shape[1], ra=ra, comment="load"))
+            n = t.shape[0] * t.shape[1]
+            ra, imm, g = self.dram(t.base, 4 * n, "load")
+            self.emit(I.ld(imm, out.base, n, ra=ra, comment="load", reg=g))
         else:
             for r in builtins.range(t.shape[0]):
-                ra, imm = self.addr(t.base + r * 4 * t.strides[0])
-                self.emit(I.ld(imm, out.base + r * out.rs, t.shape[1], ra=ra, comment="load row"))
+                ra, imm, g = self.dram(t.base + r * 4 * t.strides[0], 4 * t.shape[1], "load row")
+                self.emit(I.ld(imm, out.base + r * out.rs, t.shape[1], ra=ra, comment="load row",
+                               reg=g))
         return out
 
     def store(self, t: Tensor, x) -> None:
@@ -1522,9 +1613,9 @@ class Builder:
         merged = rows > 1 and x.contiguous and rstride == x.cols
         for r in builtins.range(1 if merged else rows):
             base = t.base + r * 4 * rstride
-            ra, imm = self.addr(base)
             n = rows * x.cols if merged else x.cols
-            self.emit(I.st(imm, x.base + r * x.rs, n, ra=ra, comment="store"))
+            ra, imm, g = self.dram(base, 4 * n, "store")
+            self.emit(I.st(imm, x.base + r * x.rs, n, ra=ra, comment="store", reg=g))
             if t.host is not None:
                 if not Affine.of(t.offset).is_static or not Affine.of(base).is_static:
                     raise CompileError("stores to kernel outputs must use static addresses")
@@ -1793,7 +1884,12 @@ class Builder:
             if gap and (gap % self.cfg.D or abs(gap) < 4 * d.rows * d.cols):
                 raise CompileError("stream: dst must be chunk aligned and not overlap the state")
         at = self.stream_desc(d)
-        ra, imm = self.addr(state.base)
+        # the source (unless zero: not read) and the destination (the state, or dst at `gap`)
+        # share the register ra and the instruction's region: each range rows x cols words
+        span = 4 * d.rows * d.cols
+        ra, imm, gs = self.dram(state.base, span, "stream state")
+        gd = gs if not gap else self.region(Affine.of(state.base) + gap, span, "stream dst")
+        g = self.same_region("stream", None if zero else gs, gd)
         (rb, vb), (rc, xb), (rd, kb) = (self.addr(t.base) if t is not None else (0, 0)
                                         for t in (vec, x, k))
         if o is not None and not Affine.of(o.base).is_static:
@@ -1805,7 +1901,7 @@ class Builder:
         self.emit(I.stream(at, imm, imm + gap, vb, xb, kb + k_off,
                            0 if o is None else Affine.of(o.base).const, ks=ks,
                            zero=zero, ra=ra, rb=rb, rc=rc, rd=rd,
-                           comment=f"stream {d.rows}x{d.cols}"))
+                           comment=f"stream {d.rows}x{d.cols}", reg=g))
         if o is not None:
             self.bump_version(o.buf)
 
@@ -1840,9 +1936,9 @@ class Builder:
         if not self.cfg.DSTEP or dst is not None:
             return self.stream(I.gdn_desc(rows, cols), state, qk, v, decay, o, zero, ks=gs,
                                dst=dst)
-        ra, imm = self.addr(state.base)
+        ra, imm, g = self.dram(state.base, 4 * rows * cols, "dstep state")
         self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
-                          ra=ra, comment="dstep"))
+                          ra=ra, comment="dstep", reg=g))
         self.bump_version(o.buf)
 
     def fuse_mm_rmax(self, x: Tile):
@@ -1892,8 +1988,18 @@ class Builder:
             if (out.rows, out.cols) != (M, N):
                 raise CompileError(f"dot: output shape {out.shape} != {(M, N)}")
         ors = out.rs if len(out.shape) == 2 else N
-        ra, sa = self.addr(w.data)
-        rb, ssa = self.addr(w.scale) if w.scale is not None else (0, 0)
+        # the DRAM ranges the MMs read (isasim._mm), both in the MM's region: the weight rows
+        # [sa, sa + (N - 1) rs + the row's blocks in whole chunks), the scale rows [ssa,
+        # ssa + (N - 1) srs + what a row reads: Sw, then the blocks up to the operand's last)
+        D = self.cfg.D
+        bpb = D if w.wf == I.W8 else D // 2             # streamed bytes per block
+        ra, sa, gw = self.dram(w.data, (N - 1) * w.rs + -(-st.KB * bpb // D) * D, "mm weights")
+        rb, ssa, gsc = 0, 0, None
+        if w.scale is not None:
+            kend = w.k0 + st.KB
+            ext = 4 if w.rsc else {I.W8: 4 + kend, I.WNV: 16 + 8 * kend}.get(w.wf, 8 + 4 * kend)
+            rb, ssa, gsc = self.dram(w.scale, (N - 1) * w.srs + ext, "mm scales")
+        g = self.same_region("mm (its weight rows and scale rows)", gw, gsc)
         if acc_scale is not None:
             if acc_scale.shape != (M,):
                 raise CompileError(f"dot: acc_scale shape {acc_scale.shape} != {(M,)}")
@@ -1905,16 +2011,15 @@ class Builder:
                                "ol.empty/zeros/full (they reserve the row-max area)")
         unit = w.scale is None
         # PAIR reads a chunk's two blocks' scales at once: 8-byte (nvfp4: 16-byte) aligned rows
-        # and an even first block
-        al = 16 if w.wf == I.WNV else 8
-        pair = st.pair and w.wf != I.W8 and (unit or w.rsc or (
+        # and an even first block; int8 PAIR (DUAL: two chunks an advance) two adjacent bytes
+        al = 16 if w.wf == I.WNV else 8 if w.wf != I.W8 else 4
+        pair = st.pair and (w.wf != I.W8 or self.cfg.DUAL) and (unit or w.rsc or (
             w.k0 % 2 == 0 and w.srs % al == 0 and Affine.of(w.scale).const % al == 0
             and all(c * getattr(v, "align", 1) % al == 0
                     for v, c in Affine.of(w.scale).terms.items())))
         # one MM per QACT range of the operand (an MM's rows read one Sa: docs/isa.md "MM"),
         # added up in the output: the first as asked (overwrite, ACC or ASCALE), the rest ACC;
         # RMAX on the last, whose written values are the sums
-        bpb = self.cfg.D if w.wf == I.W8 else self.cfg.D // 2   # streamed bytes per block
         parts = st.ranges()
         for i, (k0, k1) in enumerate(parts):
             if (k0 * bpb) % self.cfg.D:
@@ -1930,7 +2035,7 @@ class Builder:
                            ab + k0, w.srs, unit=unit, acc=acc is not None or not first,
                            rmax=rowmax and last, wf=w.wf, pair=ppair, k0=kp, rsc=w.rsc,
                            ascale=acc_scale.base if acc_scale is not None and first else None,
-                           ra=ra, rb=rb,
+                           ra=ra, rb=rb, reg=g,
                            comment=f"mm {M}x{K} . {N}x{K}^T"
                            + (f" part {k0}:{k1}" if len(parts) > 1 else "")
                            + (" pair" if ppair else "") + (" +rowmax" if rowmax and last else "")
@@ -1949,13 +2054,20 @@ class Builder:
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
-        rb, dimm = self.addr(dst)
-        rc, simm = self.addr(sdst)
+        # the data rows [dst, dst + (rows - 1) drs + (elements - 1) es + 1) and the scale rows
+        # (4 bytes a row with ROW, else Sw and the block offsets: 4 + 4 ceil(KB / 4)) back to
+        # back, both in the QST's region (isasim._qst)
+        kb = x.cols // D
+        ne = x.cols // 2 if half else x.cols
+        sw = 4 if row_scale else 4 + 4 * -(-kb // 4)
+        rb, dimm, gd = self.dram(dst, (x.rows - 1) * drs + (ne - 1) * es + 1, "qst data")
+        rc, simm, gsc = self.dram(sdst, x.rows * sw, "qst scales")
+        g = self.same_region("qst (its data rows and scale rows)", gd, gsc)
         rs = x.rs if len(x.shape) == 2 else x.cols
         if not row_scale and x.cols // D > QST_KB_MAX:
             raise CompileError(f"QST of {x.cols // D} blocks without ROW: at most {QST_KB_MAX}")
         self.emit(I.qst(x.base, dimm, simm, x.rows, x.cols // D, rs, drs, es, row=row_scale,
-                        half=half, rb=rb, rc=rc, comment="quantized store"))
+                        half=half, rb=rb, rc=rc, comment="quantized store", reg=g))
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)

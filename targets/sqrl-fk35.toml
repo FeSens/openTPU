@@ -1,0 +1,63 @@
+# The SQRL FK35 (Forest Kitten 35): Virtex UltraScale+ HBM xcvu35p-fsvh2104-2-e (two SLRs), 8 GB HBM2 (two stacks),
+# PCIe (XDMA, PCIE4C_X1Y0, x8); the FK33's PCB (targets/sqrl-fk33.toml) with the bigger FPGA. Two slices, each on two
+# channels: board channel j = 2s + c at j x 2 GiB of HBM through otpu_hbm_port (rtl/boards/sqrl-fk35), slice 0 on the
+# first stack and slice 1 on the second, so the slices' 32-bit DRAM addresses reach all 8 GB (docs/sqrl-fk35.md).
+# The card's XDMA identity is SQRL's (1E24:1533). platform_id 4 as the openTPU_FK port's fk35 target (3 is taken there
+# by the VCU128, 5 is the FK33).
+
+[target]
+name = "sqrl-fk35"
+kind = "fpga"
+platform_id = 4
+description = "SQRL FK35: xcvu35p, HBM2 8 GB, XDMA x8; 2 slices x 2 channels"
+
+[arch]
+S = 2
+D = 128
+MCOLS = 4
+ACT_BLOCKS = 128
+ACT_ROWS = 0
+TMEM_WORDS = 65536
+IMEM_WORDS = 32768
+DRAM_BYTES = 4294967296         # per slice: 2 GiB of each of its two channels
+LANES = 8
+PAIR = true
+DUAL = false                    # port B chunk pairs (int8 MM PAIR, otpu_native_dram2)
+DAW = 32                        # DRAM address width per slice, 32..36 (docs/wide_dram_hbm.md)
+DSTEP = true
+STREAM = true
+SEQ_WC = false
+
+[uarch]
+MXU_IMPL = 2
+MXU_CL = 16
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 0
+RPB = 0
+WPB = 1
+WIN = 16
+FIFO_DEPTH = 1024
+TRACE_DEPTH = 16384
+PQ_WIN = 1024
+CHASH = true
+
+[tech]
+family = "xilinxus"             # rtl/tech/xilinxus: DSP48E2 cells; the TEMP register's SYSMONE4 formula
+part = "xcvu35p-fsvh2104-2-e"
+vendor = "xilinx"
+
+[platform]
+board = "sqrl-fk35"
+core_mhz = 250.0                # the core clock (bd.tcl: from XDMA's 250 MHz axi_aclk); uclk (HBM AXI) 250 MHz
+mem = "hbm2"
+mem_mts = 1800                  # HBM2 at 900 MHz
+mem_ctrl = "xilinx_hbm"
+hostcal = false
+channels_per_slice = 2
+channel_bytes = 2147483648      # 2 GiB of HBM per channel; the host's DMA reaches channel j = 2s + c at j x this
+channel_phys_bytes = 2147483648
+beat_bytes = 64
+host = "pcie"
+pcie_gen = 3
+pcie_lanes = 8

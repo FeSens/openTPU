@@ -73,7 +73,9 @@ def _hash_without_numerics(cfg) -> int:
     import hashlib
     import json
     d = dataclasses.asdict(cfg)
-    d.pop("SEQ_WC")                     # (a field that host's Config does not have)
+    d.pop("SEQ_WC")                     # (fields that host's Config does not have)
+    d.pop("DUAL")
+    d.pop("DAW")
     s = json.dumps({k: (int(v) if isinstance(v, bool) else v) for k, v in sorted(d.items())},
                    separators=(",", ":"))
     return int.from_bytes(hashlib.sha256(s.encode()).digest()[:4], "big")
@@ -330,7 +332,8 @@ def test_rtl_file_lists_agree():
     make = _make_rtl(ROOT / "boards/ypcb-00338/Makefile")
     assert make == [f for f in card if not f.endswith("otpu_fpga_top_ld.sv")]
     sim = [f for f in rtlsim.RTL_SOURCES
-           if f not in ("mem/otpu_dram.sv", "mem/otpu_native_dram.sv", "top/otpu_top.sv",
+           if f not in ("mem/otpu_dram.sv", "mem/otpu_native_dram.sv",
+                        "mem/otpu_native_dram2.sv", "top/otpu_top.sv",
                         "exp/tmem_nocopy/otpu_tmem_model.sv")]
     assert sim == T.sources("nangate45", "generic")
     for f in T.CORE + T.SHELL + sum(T.TECH.values(), []) + sum(T.BOARDS.values(), []):
@@ -458,8 +461,9 @@ def test_the_board_counts_the_port_registers_as_requests_pending():
     the adapter's wr_idle and rd_idle (m_wr_idle, m_rd_idle) go to the slice alone, for slice 0 and
     the others. sim/verilator/tb_board.sv checks the same in every board simulation."""
     code = re.sub(r"//.*", "", (ROOT / "rtl/shell/otpu_board.sv").read_text())
-    assert re.findall(r"\.wr_idle\(([^)]*)\)", code) == ["m_wr_idle"] * 4
-    assert re.findall(r"\.rd_idle\(([^)]*)\)", code) == ["m_rd_idle"] * 4
+    # (5: slice 0's adapter is otpu_native_dram or, DUAL, otpu_native_dram2)
+    assert re.findall(r"\.wr_idle\(([^)]*)\)", code) == ["m_wr_idle"] * 5
+    assert re.findall(r"\.rd_idle\(([^)]*)\)", code) == ["m_rd_idle"] * 5
     assert re.findall(r"assign\s+q_wr_idle\[(\w+)\]\s*=\s*([^;]*);", code) == \
         [(k, "m_wr_idle && !sw_req && !(b_req && b_we)") for k in ("0", "s")]
     assert re.findall(r"assign\s+q_rd_idle\[(\w+)\]\s*=\s*([^;]*);", code) == \

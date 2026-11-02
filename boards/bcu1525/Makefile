@@ -32,7 +32,7 @@ RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.s
   mem/otpu_actram.sv seq/otpu_seq.sv vpu/otpu_vtree.sv dma/otpu_dma.sv mxu/otpu_mxu.sv \
   tech/xilinxus/otpu_tech_dsp.sv tech/generic/otpu_tech_ram.sv vpu/otpu_quant.sv vpu/otpu_se_comp.sv vpu/otpu_se_tail.sv \
   vpu/otpu_vpu.sv top/otpu_coll.sv top/otpu_slice.sv shell/otpu_ctrl.sv shell/otpu_trace.sv \
-  shell/otpu_board.sv mem/otpu_native_dram.sv shell/otpu_afifo.sv shell/otpu_mem_ch.sv \
+  shell/otpu_board.sv mem/otpu_native_dram.sv mem/otpu_native_dram2.sv shell/otpu_afifo.sv shell/otpu_mem_ch.sv \
   shell/otpu_axi_split2.sv boards/bcu1525/otpu_bcu_sys.sv)
 LINT := verilator --lint-only -Wno-fatal -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-UNUSEDSIGNAL \
   -Wno-UNUSEDPARAM -DSYNTHESIS sim/unisim_dsp48e2_stub.sv sim/unisim_stubs.sv

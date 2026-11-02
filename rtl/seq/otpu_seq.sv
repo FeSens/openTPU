@@ -80,6 +80,7 @@ module otpu_seq
   localparam int NROW = IMEM_WORDS / (8 * IPR);
   localparam int RW = $clog2(NROW);
   initial if (D % 32 != 0) $fatal(1, "otpu_seq: D must be a multiple of 32");
+  initial if (DAW < 32 || DAW > 36) $fatal(1, "otpu_seq: DAW %0d (OTPU_DAW) is 32 .. 36", DAW);
   logic [D*8-1:0] irow;           // the RAM output: the row holding fa
   logic [255:0]   ir;             // the instruction at pc
   logic           ir_v;           // ir is valid (0 only in the first cycle after reset)
@@ -131,14 +132,16 @@ module otpu_seq
   // (the row maxima, the spare row after the output tile) is folded into its output range: the
   // hull [min lo, max hi) covers both, so every dependency on either is kept (ovr() is monotone
   // in the range); it adds only the output tile's padding words between them (ors - N).
-  // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
+  // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. Their ends are
+  // DAW bits, {REG, 32 bits} (otpu_pkg mkr): ranges of different regions never overlap, and
+  // WAITW's one range [0, 2^DAW - 1] is every region's. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
   // TMEM ranges keep TAW/TAW+1 bits: TMEM holds 2^16 words (more in a configuration with a
   // larger TMEM: TAW follows it), so every access the ISA allows has lo < 2^TAW, hi <= 2^TAW.
   // A valid TMEM range that does not fit raises all instead (the instruction then conflicts
   // with everything, like BAR) -- conservative, never wrong.
   localparam int TAW = (TMEM_WORDS > (1 << 16)) ? $clog2(TMEM_WORDS) : 16;
-  typedef struct packed { logic [31:0] lo, hi; } r32_t;
+  typedef struct packed { logic [DAW-1:0] lo, hi; } r32_t;     // DRAM (DAW bits: the name is old)
   typedef struct packed { logic [TAW-1:0] lo; logic [TAW:0] hi; } rt_t;
   typedef struct packed { logic w; rt_t r; } rtw_t;     // TMEM, may be written
   typedef struct packed {
@@ -336,9 +339,9 @@ module otpu_seq
     o = r;
     if (r.hi != '0 && g > 0) begin
       m = (64'd1 << g) - 1;
-      h = ({32'd0, r.hi} + m) & ~m;
-      o.lo = r.lo & ~m[31:0];
-      o.hi = (h > 64'hFFFF_FFFF) ? 32'hFFFF_FFFF : h[31:0];
+      h = (64'(r.hi) + m) & ~m;
+      o.lo = r.lo & ~DAW'(m);
+      o.hi = ((h >> DAW) != 0) ? '1 : DAW'(h);
     end
     return o;
   endfunction
@@ -507,6 +510,17 @@ module otpu_seq
     dcmd.w5 = iw[5] + (is_str ? rv(rc) : 32'd0);
     dcmd.w6 = iw[6] + (is_str ? rv(rd) : 32'd0);
     dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
+    // DAW > 32: the instruction's DRAM region REG from its spare bits (isa.py "DRAM address
+    // width"): rd[RGN-1:0] (rd names no register of these ops: only LI, ADDI, RLD, VOP's w7
+    // and STREAM's k use it) and STREAM's flags[7:4] (its flags 3:0 are the DMA's). Straight from
+    // ir, off the adders' path; at DAW 32 a constant 0 (the bits are ignored)
+    dcmd.rg = '0;
+    if (WIDE)
+      case (op)
+        OP_LD, OP_ST, OP_DSTEP, OP_WAITW, OP_MM, OP_QST: dcmd.rg = RGW'(rd);
+        OP_STREAM: dcmd.rg = RGW'(flags[7:4]);
+        default: ;
+      endcase
   end
   int dunit;
   always_comb dunit = (!STREAMS && (op == OP_DSTEP || op == OP_STREAM)) ? -1 : unit_of(op);

@@ -1,19 +1,20 @@
 # Block design "otpu_bd" for the SQRL FK33 (create_project.tcl; boards/bcu1525/vivado/bd.tcl is its model): PCIe
-# (XDMA), the clocks, resets, the SYSMON, the control interconnect and XDMA's DMA split onto the two channels. No
+# (XDMA), the clocks, resets, the SYSMON, the control interconnect and XDMA's DMA split onto the four channels. No
 # memory controller: the HBM IP, its adapters and the accelerator are outside, in the top
 # (rtl/boards/sqrl-fk33/otpu_fpga_top_fk33.sv). External interfaces:
 #   M_AXI_CTL      AXI4-Lite master -> the accelerator's control registers (BAR0 0x00000, core_clk)
 #   M_AXI_DMA<j>   AXI4 masters, 128 bits, no IDs, xdma_aclk -> channel j's bridge (otpu_mem_ch): XDMA's DMA
-#                  through the SmartConnect sc_dma, which decodes card address bit 31 (channel j at j x 2 GiB;
+#                  through the SmartConnect sc_dma, which decodes card address bits 32:31 (channel j at j x 2 GiB;
 #                  opentpu.host.board.channel_map) and converts the width
 # and device_temp (the SYSMON's die temperature, 10 bits, core_clk; BAR0 0x30000: its registers).
 #
-# PCIe: the settings of the openTPU_FK FK33 / FK35 builds that run on the cards (XDMA on PCIE4C_X1Y0, the GTY lanes
-# of the card's edge connector, SQRL's identity 1E24:1533 / 1E24:0001 rev A3: the Windows driver sqrlfk.sys binds
-# to it) without their Tandem PCIe: the bitstream is loaded over JTAG (or from the flash) whole. Gen3 x8, 256-bit
-# AXI at 250 MHz. The card has no clock input besides the PCIe reference, so the clock wizard runs from XDMA's
-# axi_aclk (250 MHz): core_clk (CORE_MHZ), uclk (UCLK_MHZ: the HBM's AXI ports, the adapters, otpu_mem_ch's controller
-# side) and clk100 (the HBM's reference and APB clock); each resets until its lock and with axi_aresetn.
+# PCIe: the settings of the openTPU_FK FK33 / FK35 builds that run on the cards (the FK35's bd.tcl, four DMA ports: XDMA on
+# PCIE4C_X1Y0, the GTY lanes of the card's edge connector, SQRL's identity 1E24:1533 / 1E24:0001 rev A3, which the
+# Windows driver sqrlfk.sys binds to) without their Tandem PCIe: the bitstream is loaded over JTAG (or from the flash)
+# whole. Gen3 x8, 256-bit AXI at 250 MHz. The card has no clock input besides the PCIe reference, so the clock
+# wizard runs from XDMA's axi_aclk (250 MHz): core_clk (CORE_MHZ), uclk (UCLK_MHZ: the HBM's AXI ports, the adapters,
+# otpu_mem_ch's controller side) and clk100 (the HBM's reference and APB clock); each resets until its lock and with
+# axi_aresetn.
 # Variables (set before sourcing): CORE_MHZ, UCLK_MHZ (default 250 both).
 proc ip_vlnv {name} {
   set defs [lsort -decreasing [get_ipdefs -all "xilinx.com:ip:${name}:*"]]
@@ -90,10 +91,10 @@ set UCLK_HZ [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/uclk]]
 puts "core_clk $CORE_HZ Hz, uclk $UCLK_HZ Hz (clock wizard on XDMA's axi_aclk)"
 set_property -dict [list CONFIG.FREQ_HZ $CORE_HZ CONFIG.ASSOCIATED_BUSIF M_AXI_CTL CONFIG.ASSOCIATED_RESET core_rstn] \
   [get_bd_ports core_clk]
-# ------------------------------------------------------------------ XDMA's DMA onto the two channels
-set dmas {M_AXI_DMA0 M_AXI_DMA1}
+# ------------------------------------------------------------------ XDMA's DMA onto the four channels
+set dmas {M_AXI_DMA0 M_AXI_DMA1 M_AXI_DMA2 M_AXI_DMA3}
 set scd [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_dma]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2} CONFIG.NUM_CLKS {1}] $scd
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {4} CONFIG.NUM_CLKS {1}] $scd
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_dma/aclk]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins sc_dma/aresetn]
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins sc_dma/S00_AXI]
@@ -128,13 +129,13 @@ connect_bd_intf_net [get_bd_intf_pins sc_ctl/M00_AXI] [get_bd_intf_ports M_AXI_C
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M01_AXI] [get_bd_intf_pins sysmon/S_AXI_LITE]
 # ------------------------------------------------------------------ address map
 # BAR0 (1 MB): 0x00000 the control registers, 0x30000 the SYSMON (the YPCB's and BCU1525's layout). XDMA's DMA:
-# 4 GiB, M_AXI_DMA<j> at j x 2 GiB
+# 8 GiB, M_AXI_DMA<j> at j x 2 GiB (explicit offsets: 2019.2's Tcl 8.5 format %X truncates to 32 bits)
 set lite [get_bd_addr_spaces xdma_0/M_AXI_LITE]
 assign_bd_address -offset 0x00000000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_CTL/Reg] -force
 assign_bd_address -offset 0x00030000 -range 64K -target_address_space $lite \
   [get_bd_addr_segs -of [get_bd_intf_pins sysmon/S_AXI_LITE]] -force
-foreach j {0 1} {
-  assign_bd_address -offset [format 0x%09X [expr {$j * 0x80000000}]] -range 2G \
+foreach {j off} {0 0x000000000 1 0x080000000 2 0x100000000 3 0x180000000} {
+  assign_bd_address -offset $off -range 2G \
     -target_address_space [get_bd_addr_spaces xdma_0/M_AXI] [get_bd_addr_segs M_AXI_DMA$j/Reg] -force
 }
 validate_bd_design

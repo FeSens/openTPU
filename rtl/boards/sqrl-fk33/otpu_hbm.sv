@@ -6,15 +6,17 @@
 // the IP's AXI_CLK_FREQ).
 // openTPU_FK: NHP a parameter, not a localparam: Vivado 2019.2's elaboration never finishes on an instance of
 // a module whose parameter port list holds only a localparam (fk35 build, 2026-10-24).
+// AAW: the AXI address bits, the IP's (33: 8 GB, both stacks of 4-high; 34: 16 GB, a VU47P's 8-high stacks).
 module otpu_hbm #(
-    parameter int NHP = 32
+    parameter int NHP = 32,
+    parameter int AAW = 33
 ) (
     input  wire                   hbm_ref,     // HBM_REF_CLK_0/1 (100 MHz)
     input  wire                   aclk,
     input  wire                   aresetn,
     input  wire                   pclk,        // APB (100 MHz = USER_APB_PCLK)
     input  wire                   presetn,
-    input  wire [NHP-1:0][32:0]  h_awaddr,
+    input  wire [NHP-1:0][AAW-1:0] h_awaddr,
     input  wire [NHP-1:0][1:0]   h_awburst,
     input  wire [NHP-1:0][5:0]   h_awid,
     input  wire [NHP-1:0][3:0]   h_awlen,
@@ -31,7 +33,7 @@ module otpu_hbm #(
     output wire [NHP-1:0][5:0]   h_bid,
     output wire [NHP-1:0][1:0]   h_bresp,
     output wire [NHP-1:0]         h_bvalid,
-    input  wire [NHP-1:0][32:0]  h_araddr,
+    input  wire [NHP-1:0][AAW-1:0] h_araddr,
     input  wire [NHP-1:0][1:0]   h_arburst,
     input  wire [NHP-1:0][5:0]   h_arid,
     input  wire [NHP-1:0][3:0]   h_arlen,

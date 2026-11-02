@@ -23,15 +23,17 @@ at E 4, 64K TMEM words) and m8 (8 at E 8, 128K words).
 
 | Section | What | Who depends on it |
 |---|---|---|
-| `[arch]` | the `opentpu.isasim.Config` fields: S, D, MCOLS, ACT_BLOCKS, ACT_ROWS, TMEM / IMEM words, DRAM bytes per slice, LANES, PAIR / DSTEP / STREAM, SEQ_WC (EXPERIMENTAL: the sequencer's wait entries, which the host loads with every program; docs/isa.md "Wait counts") | the compiler and the programs. Two targets with the same arch run the same programs |
+| `[arch]` | the `opentpu.isasim.Config` fields: S, D, MCOLS, ACT_BLOCKS, ACT_ROWS, TMEM / IMEM words, DRAM bytes per slice, LANES, PAIR / DUAL / DSTEP / STREAM, SEQ_WC (EXPERIMENTAL: the sequencer's wait entries, which the host loads with every program; docs/isa.md "Wait counts") | the compiler and the programs. Two targets with the same arch run the same programs |
 | `[uarch]` | timing-only RTL parameters: MXU_IMPL, MXU_E (optional), VPU_CL, ULANES, TMEM_IMPL, RPB / WPB, WIN, FIFO_DEPTH, the trace buffer | the RTL, the co-simulation |
 | `[tech]` | the cell family (`rtl/tech/<family>`: generic, xilinx7, xilinxus, asic), the part or the PDK | the RTL file list |
 | `[platform]` | the board: memory type and rate, channels per slice, bytes a slice addresses per channel, the host link, the core clock | the board flow, the host runtime |
 
 Every `[arch]` field is stated: the file is the hardware's truth. `board_config()`, which the
 simulators and tests use, takes the target's sizes but keeps its optional features (PAIR,
-DSTEP, STREAM, SEQ_WC) off unless `OTPU_PAIR` / `OTPU_DSTEP` / `OTPU_STREAM` / `OTPU_SEQ_WC`
-turn them on, as it did before targets; `opentpu.target.config(name)` is the full truth.
+DUAL, DSTEP, STREAM, SEQ_WC) off unless `OTPU_PAIR` / `OTPU_DUAL` / `OTPU_DSTEP` / `OTPU_STREAM` /
+`OTPU_SEQ_WC` turn them on, as it did before targets; `opentpu.target.config(name)` is the full
+truth. DUAL (a slice on four memory channels, port B in chunk pairs: int8 MM PAIR, docs/isa.md
+"Column reuse") and SEQ_WC are in the arch hash only when on, so every other target's hash stays.
 
 ## What is derived
 

@@ -176,18 +176,20 @@ class Spec:
                      embed_host, formats)
 
 
-def _place(b, runs, size) -> dict:
+def _place(b, runs, size, bases=None) -> dict:
     """The layer blocks of the runs (plan's) from b.next on, each run's units one after the
-    other (size(key): a block's bytes): {layer: (run base, unit stride, iteration, offset in
-    the unit, unit length)}."""
+    other (size(key): a block's bytes), or from each run's base in `bases` (regions.place_runs':
+    b is not moved): {layer: (run base, unit stride, iteration, offset in the unit, unit
+    length)}."""
     loc = {}
-    for first, unit, reps in runs:
+    for i, (first, unit, reps) in enumerate(runs):
         offs = np.cumsum([0] + [size(k) for k in unit]).tolist()
-        us, base = offs[-1], b.next
+        us, base = offs[-1], b.next if bases is None else bases[i]
         for it in range(reps):
             for e in range(len(unit)):
                 loc[first + it * len(unit) + e] = (base, us, it, offs[e], len(unit))
-        b.next = base + reps * us
+        if bases is None:
+            b.next = base + reps * us
     return loc
 
 
@@ -523,6 +525,8 @@ class Image(EmbedHost):
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
+        from .regions import check_low      # (above DAW 32: in region 0, not placed over the
+        check_low(cfg, self.nbytes)         # regions, opentpu/llm/regions.py)
 
     def _layout(self, g: tuple, mlp: dict, rb) -> SimpleNamespace:
         """The layer block layouts of formats group g (conv, attention, gate / up, down): each
@@ -906,9 +910,9 @@ def _ring_store(lw, last, ringo: int, K: int, n: int) -> None:
     r = b.scratch()
     b.emit(I.rld(r, ringo, mul=win.rs, comment="the ring's rotation"))
     for y in range(1, 2 * K):
-        ra, imm = b.addr(Affine.of(lw.state.base) + 4 * n * y)
+        ra, imm, g = b.dram(Affine.of(lw.state.base) + 4 * n * y, 4 * n, "ring row")
         j = y - 1 if y <= K else y - K - 1
-        b.emit(I.st(imm, win.base + j * win.rs, n, ra=ra, rb=r, comment="ring row"))
+        b.emit(I.st(imm, win.base + j * win.rs, n, ra=ra, rb=r, comment="ring row", reg=g))
     b.unscratch(r)
     del win
 

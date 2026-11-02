@@ -59,7 +59,7 @@ module otpu_dma
   output logic                    b_we,
   output logic [D/4-1:0]          b_wmask,
   output logic [D*8-1:0]          b_wdata,
-  output logic [31:0]             b_addr,
+  output logic [AWW-1:0]          b_addr,     // the word address: {REG, its 30 bits} (otpu_pkg wport)
   input  logic                    b_rvalid,
   input  logic [D*8-1:0]          b_rdata,
   input  logic                    wr_idle,    // no DRAM write outstanding
@@ -100,6 +100,10 @@ module otpu_dma
   initial if (DEPTH != (1 << PW) || DEPTH < 2) $fatal(1, "otpu_dma: DEPTH must be a power of two");
 
   logic        busy, is_st, ackw;
+  // the command's DRAM region (DAW > 32; a constant 0 at 32): every port B address of the
+  // instruction is in it (LD, ST, WAITW: w1; DSTEP: its state; STREAM: its src and dst), the
+  // 32-bit word counters (ic, ds_wa) its low bits
+  logic [RGW-1:0] d_rg;
   assign rdy = !busy;
   // DSTEP: the phases (fill: TMEM reads of the vectors; run: stream; out: o to TMEM)
   logic        is_ds, ds_fill, ds_run, ds_out, ds_zero;
@@ -692,7 +696,7 @@ module otpu_dma
   end
 `endif
   always_comb begin
-    b_req = ld_req; b_we = 1'b0; b_addr = ic;
+    b_req = ld_req; b_we = 1'b0; b_addr = wport(d_rg, ic);
     t_ren_c = '0; t_raddr_c = '0;
     for (int p = 0; p < SPC; p++)
       for (int l = 0; l < W; l++) begin
@@ -704,7 +708,7 @@ module otpu_dma
     if (ds_wreq) begin                    // a stream: the head chunk of the gather
       b_req = 1'b1;
       b_we = 1'b1;
-      b_addr = ds_wa;
+      b_addr = wport(d_rg, ds_wa);
       for (int p = 0; p < SPC; p++)
         for (int l = 0; l < W; l++) begin
           b_wmask[p * W + l] = 1'b1;
@@ -722,7 +726,7 @@ module otpu_dma
         t_raddr_c[l] = 32'(sc.w1[15:0]) + 32'(l);
       end
     if (busy && is_st && !ackw) begin
-      b_addr = ic;
+      b_addr = wport(d_rg, ic);
       if (st_wq) begin
         b_req = 1'b1;
         b_we = 1'b1;
@@ -767,6 +771,7 @@ module otpu_dma
     dv_m <= sm;
     dv_a <= so;
     dv_p <= pos_of(sw);
+    if (start) d_rg <= cmd.rg;
     if (rst) begin
       ld_fin <= 1'b0;
       dv_v <= 1'b0;

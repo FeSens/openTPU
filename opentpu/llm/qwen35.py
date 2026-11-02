@@ -77,6 +77,7 @@ from .lfm2 import _place, plan, run_layers, subs
 from . import formats as FM
 from . import generate as G
 from . import moe as MO
+from . import regions as RG
 from . import rope_parameters
 from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords,
                     _amask, _attention, _attention_rows, _Bump,
@@ -84,7 +85,7 @@ from .qwen3 import (ATTN_BLOCK, HEAD_CHUNK, OutTokens, RunPos, RunRows, RunWords
                     _qk, gathered_rows,
                     _lm_head, _lm_head_rows, _lookup_alloc, _lookup_build, _lookup_desc, _mlp,
                     _pv, _qdesc, _tdesc, _tok_arg, _tokens_arg, _v_parts, compile_decode,
-                    put_head, rope_tables, EmbedHost, fill_logits, step_descriptors)
+                    put_head, rope_tables, EmbedHost, fill_logits, high_head, step_descriptors)
 
 LIN, ATTN = "linear", "attn"
 PAIR_LOOP = 8       # pairs of DeltaNet heads per slice that decode unrolled at a run-time position
@@ -217,9 +218,10 @@ class Spec:
               wformat: str = "int8", head_format: str | None = None,
               lookup: bool | str = False, experts: int | None = None,
               embed_host: bool | None = None, formats: str | None = None,
-              prefill_rows: int | None = None) -> "Image":
+              prefill_rows: int | None = None, high_base: int | None = None,
+              low_limit: int | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts,
-                     embed_host, formats, prefill_rows)
+                     embed_host, formats, prefill_rows, high_base, low_limit)
 
 
 # =============================================================================== reference
@@ -680,12 +682,20 @@ class Image(EmbedHost):
     (mtp.layers.0) with its own KV cache, then its norms, fc and the draft head (fp4 rows of
     the MTP_VOCAB lowest ids); the I/O area gains `hid` (the final norm's rows) and `draft`
     (each row's draft id).
+
+    Above DAW 32 (opentpu/llm/regions.py), as qwen3.Image: an image that does not fit region 0
+    with the program area puts each run of its layer blocks (weights, KV caches, DeltaNet
+    states and windows) whole in a high region; the rest stays in region 0 (`prog_at`, `spans`,
+    `nbytes` the extent). What is not placed over regions (the MTP layer, a MoE's expert slots,
+    a subclass's own regions) keeps the image in region 0. high_base / low_limit: the
+    relocation switches.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool | str = False,
                  experts: int | None = None, embed_host: bool | None = None,
-                 formats: str | None = None, prefill_rows: int | None = None):
+                 formats: str | None = None, prefill_rows: int | None = None,
+                 high_base: int | None = None, low_limit: int | None = None):
         spec.check(cfg)
         if batch != 1:
             raise ValueError("Qwen3.5 runs one sequence: batch=1")
@@ -775,10 +785,44 @@ class Image(EmbedHost):
         # the runs (plan): a layer's key is its kind and formats group; then the MTP layer
         self.keys = tuple(zip(spec.kinds, self.lf))
         self.plan = plan(self.keys)
-        self.loc = _place(b, self.plan, lambda k: self.layouts[k[1]].size[k[0]])
+        size = lambda k: self.layouts[k[1]].size[k[0]]                  # noqa: E731
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
+        shared = spec.tied and self.head_format == "int8" and S == 1
+        if embed_host is None:      # an int8 table of its own on the host by default where its
+            embed_host = (bool(lookup) and not shared         # DRAM is expert slots
+                          and getattr(spec, "embed", "f32") == "int8" and spec.moe is not None)
+        if embed_host and not lookup:
+            raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
+        # (a MoE model's mask tiles: its tiled layer runs, on unless OTPU_TILE=0 as it is built)
+        from .prefill import layer_tile_flag
+
+        def tail(t, head_at=None):
+            """The LM head's rows (at `head_at` when it lies in a high region) and the lookup
+            tables from bump t: (head, lookup)."""
+            hd = head_at or (t.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
+                             t.alloc(self.v_loc * Q.scale_bytes(H, self.head_format, D)))
+            return hd, (_lookup_alloc(t, spec, cap, D=D, head=hd if shared else None,
+                                      M=cfg.MCOLS, embed_host=bool(embed_host),
+                                      rows=self.grows,                # (layer 0's R rows)
+                                      imem=cfg.IMEM_WORDS,
+                                      masks=bool(self.prefill_rows)
+                                      and layer_tile_flag(None, True),
+                                      waitc=cfg.SEQ_WC) if lookup else {})
+        # above DAW 32 the layer runs go to the high regions when the image does not fit region
+        # 0 with the program area (regions.py; or where high_base / low_limit say); what is not
+        # placed over regions keeps the image contiguous in region 0
+        no = ("the MTP layer" if spec.mtp else "a MoE's expert slots" if mo is not None
+              else "a subclass's own regions" if type(self).before_slots is not Image.before_slots
+              else None)
+        t = _Bump()
+        tail(t)                                     # (their bytes: wherever they go)
+        rg = RG.regions_for(cfg, self.layer0, self.plan, size, t.next, high_base, low_limit,
+                            no=no)
+        self.plan, bases, b.next = RG.place_runs(self.plan, size, self.layer0, rg)
+        self.loc = _place(b, self.plan, size, bases)
         # a unit's repeated part (the DeltaNet layers before each attention layer) loops again
         # inside the unit's loop in the prefill programs (NEST: qwen35_rows, tiled.qwen35_tile)
-        self.subs = subs(self.plan, lambda k: self.layouts[k[1]].size[k[0]])
+        self.subs = subs(self.plan, size)
         if spec.mtp:                # an attention block after the model's (the formats without a
             gm = tuple(fmt(k, spec.layers) for k in ("delta", "attn", "gateup", "down"))  # range)
             if gm not in self.layouts:
@@ -798,24 +842,10 @@ class Image(EmbedHost):
                                 b.alloc(H * Q.scale_bytes(2 * H, self.mtp_fc, D))),
                          "dh": (b.alloc(self.nd * Q.row_bytes(H, "fp4", D)),
                                 b.alloc(self.nd * Q.scale_bytes(H, "fp4", D)))}
-        self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
-                     b.alloc(self.v_loc * Q.scale_bytes(H, self.head_format, D)))
-        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
-        shared = spec.tied and self.head_format == "int8" and S == 1
-        if embed_host is None:      # an int8 table of its own on the host by default where its
-            embed_host = (bool(lookup) and not shared         # DRAM is expert slots
-                          and getattr(spec, "embed", "f32") == "int8" and spec.moe is not None)
-        if embed_host and not lookup:
-            raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
-        # (a MoE model's mask tiles: its tiled layer runs, on unless OTPU_TILE=0 as it is built)
-        from .prefill import layer_tile_flag
-        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
-                                    M=cfg.MCOLS, embed_host=bool(embed_host),
-                                    rows=self.grows,                # (layer 0's R rows)
-                                    imem=cfg.IMEM_WORDS,
-                                    masks=bool(self.prefill_rows) and layer_tile_flag(None, True),
-                                    waitc=cfg.SEQ_WC) \
-            if lookup else {}
+        hi_head = None              # (high_base: an untied head with the layers; a tied int8
+        if rg is not None and high_base is not None and not shared:     # head is the table's)
+            hi_head = high_head(rg, self.v_loc, H, self.head_format, D)
+        self.head, self.lookup = tail(b, hi_head)
         if lookup and spec.mtp:     # the MTP loop's chain area (opentpu/llm/mtp.py)
             from .mtp import gen_alloc
             self.lookup["mtpgen"] = gen_alloc(b, cap, spec, imem_words=cfg.IMEM_WORDS,
@@ -833,10 +863,9 @@ class Image(EmbedHost):
                                         [n] * (spec.layers + spec.mtp),  # the MTP layer's MoE,
                                         self.fmt.nbytes)                 # one layer more)
             b.next = self.offload.end
-        self.nbytes = b.next
-        if self.nbytes > cfg.DRAM_BYTES:
-            raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
-                              f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
+        prog_at, self.nbytes, spans = RG.extent(cfg, rg, b.next)
+        if prog_at is not None:     # (laid out over regions: the program area in region 0)
+            self.prog_at, self.spans = prog_at, spans
 
     def before_slots(self, b) -> None:
         """A subclass's own DRAM, allocated from `b` (qwen3._Bump) after the model's and before

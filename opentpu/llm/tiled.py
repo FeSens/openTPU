@@ -665,9 +665,11 @@ def _ring_store_part(lw, last, ringo: int, K: int, n: int, c0: int) -> None:
     r = b.scratch()
     b.emit(I.rld(r, ringo, mul=win.rs, comment="the ring's rotation"))
     for y in range(1, 2 * K):
-        ra, imm = b.addr(Affine.of(lw.state.base) + 4 * (n * y + c0))
+        ra, imm, g = b.dram(Affine.of(lw.state.base) + 4 * (n * y + c0), 4 * cp,
+                            "ring row part")
         j = y - 1 if y <= K else y - K - 1
-        b.emit(I.st(imm, win.base + j * win.rs, cp, ra=ra, rb=r, comment="ring row part"))
+        b.emit(I.st(imm, win.base + j * win.rs, cp, ra=ra, rb=r, comment="ring row part",
+                    reg=g))
     b.unscratch(r)
     del win
 

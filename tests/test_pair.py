@@ -117,11 +117,12 @@ def test_pair_scales_are_aligned(wf, ssa, srs, align):
 
 
 def test_pair_needs_4bit_and_room():
-    with pytest.raises(ValueError, match="PAIR needs 4-bit"):
-        I.mm(0, 0, 0, 1, 1, 32, 1, 1, 0, 4, pair=True)
     with pytest.raises(ValueError, match="even k0"):
         I.mm(0, 0, 0, 1, 2, 32, 1, 1, 0, 16, wf=I.W4F, pair=True, k0=1)
     dram = np.zeros(1 << 16, np.uint8)
+    # int8 PAIR encodes (a DUAL configuration's); without DUAL the machine refuses it
+    with pytest.raises(Exception, match="PAIR needs 4-bit"):
+        _run(Config(S=1, D=32, MCOLS=4), dram, [I.mm(WA, SA, OUT, 1, 2, 32, 1, 1, 0, 4, pair=True)])
     with pytest.raises(Exception, match="PAIR needs 2\\*M <= MCOLS|bounds"):
         _run(Config(S=1, D=32, MCOLS=2), dram,
              [I.mm(WA, SA, OUT, 1, 2, 32, 1, 2, 0, 16, wf=I.W4F, pair=True)])

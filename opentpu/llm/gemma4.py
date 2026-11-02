@@ -972,6 +972,8 @@ class Image:
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
+        from .regions import check_low      # (above DAW 32: in region 0, not placed over the
+        check_low(cfg, self.nbytes)         # regions, opentpu/llm/regions.py)
 
     def _key(self, i: int) -> tuple:
         return _key(self.spec, i, self.lf[i])

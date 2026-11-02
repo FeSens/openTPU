@@ -8,7 +8,10 @@
 // of the number of its pseudo-channel (otpu_hbm_amap), so sub-port k only accesses the pseudo-channels
 // of its 1/NS of the channel -- on the board, those of its AXI port's mini-switch (PCB 4, NS 4: the
 // 4 pseudo-channels 4k..4k+3 of the stack, AXI port 16 j + 4 k + p of the channel j = stack j).
-// The channel is 2^(22+PCB) beats of 64 bytes: BAW = 25 (PCB 3, 2 GiB; the default), 26 (PCB 4, 4 GiB).
+// The channel is 2^(PCW+PCB) beats of 64 bytes, PCW the beat bits of a pseudo-channel (22: 256 MiB, the 4-high
+// stacks of the VU33P / VU35P, the default; 23: 512 MiB, the 8-high stacks of a VU47P): BAW = 25 (PCW 22, PCB 3,
+// 2 GiB; the default), 26 (PCB 4, 4 GiB; or PCW 23, PCB 3). The HBM's AXI addresses are AAW bits (33: 8 GB, the
+// default; 34: 16 GB).
 // The stream of adjacent beats of one native port (a series of 128 beats) is split between the NS AXI ports:
 // a native port accepts a beat every uclk cycle (64 bytes), an AXI port 32 bytes per cycle. Equal beats are
 // always in the same sub-port, so the sub-port keeps the per-beat order, as the port did before; the read data
@@ -51,9 +54,11 @@
 // violation (R/B with an unknown ID, a wrong RLAST) -- the flag st_perr. Both are held until urst.
 // The reset urst is synchronous.
 module otpu_hbm_port #(
-  parameter logic [32:0] CH_BASE = 33'h0, // byte address of the channel in the HBM (a multiple of the channel size; CH_BASE[32] -- the stack at PCB 4)
-  parameter int  PCB = 3,                 // log2 of pseudo-channels per channel: 4 -- 16 (4 GiB, one stack), 3 -- 8 (2 GiB), 2 -- 4 (1 GiB)
-  parameter int  BAW = 25,                // bits of the channel's beat number (c_cmd_addr): >= 22 + PCB (25: 2 GiB, 26: 4 GiB = DAW 33)
+  parameter int  AAW = 33,                // bits of the HBM's AXI addresses: 33 (8 GB), 34 (16 GB)
+  parameter logic [AAW-1:0] CH_BASE = '0, // byte address of the channel in the HBM (a multiple of the channel size; CH_BASE[32] -- the stack at PCB 4)
+  parameter int  PCW = 22,                // beat bits of a pseudo-channel: 22 (256 MiB), 23 (512 MiB)
+  parameter int  PCB = 3,                 // log2 of pseudo-channels per channel: 4 -- 16 (4 GiB at PCW 22, one stack), 3 -- 8 (2 GiB), 2 -- 4 (1 GiB)
+  parameter int  BAW = 25,                // bits of the channel's beat number (c_cmd_addr): >= PCW + PCB (25: 2 GiB, 26: 4 GiB)
   parameter int  HAW = 0,                 // bits of the beat in the dependency CAM (tables, comparators): 0 -- BAW (exact), or 1..BAW (the top bits
                                           // dropped: two beats equal in the low HAW bits wait for each other -- a delay, never wrong data)
   parameter int  PC_GRAN = 0,             // log2 of adjacent beats in a row in one pseudo-channel
@@ -81,7 +86,7 @@ module otpu_hbm_port #(
   // NA AXI3 masters to the HBM IP ports
   output logic [NA-1:0]        m_awvalid,
   input  logic [NA-1:0]        m_awready,
-  output logic [NA-1:0][32:0]  m_awaddr,
+  output logic [NA-1:0][AAW-1:0] m_awaddr,
   output logic [NA-1:0][5:0]   m_awid,
   output logic [NA-1:0][3:0]   m_awlen,
   output logic [NA-1:0][2:0]   m_awsize,
@@ -99,7 +104,7 @@ module otpu_hbm_port #(
   input  logic [NA-1:0][1:0]   m_bresp,
   output logic [NA-1:0]        m_arvalid,
   input  logic [NA-1:0]        m_arready,
-  output logic [NA-1:0][32:0]  m_araddr,
+  output logic [NA-1:0][AAW-1:0] m_araddr,
   output logic [NA-1:0][5:0]   m_arid,
   output logic [NA-1:0][3:0]   m_arlen,
   output logic [NA-1:0][2:0]   m_arsize,
@@ -126,7 +131,7 @@ module otpu_hbm_port #(
   localparam int KW  = (NS > 1) ? $clog2(NS) : 1;   // sub-port number (at NS = 1 -- always 0)
   localparam int TQ  = 4 * NS * RD;         // FIFO of sub-port numbers of the native port's reads
   localparam int CQ  = 8;                   // command queue per AXI port (credit counted, see F)
-  localparam int QW  = 33 + 6;              // AR/AW: {address, ID}
+  localparam int QW  = AAW + 6;             // AR/AW: {address, ID}
   localparam int DW  = 64 + 512;            // write data: {WSTRB, WDATA}
   localparam int G   = PC_GRAN;
   localparam int HW  = (HAW == 0) ? BAW : HAW;   // beat bits the dependency CAM compares (tables r_beat / w_beat, eq_c, eq_a, c_rm, c_wm)
@@ -140,15 +145,17 @@ module otpu_hbm_port #(
     if (WD != (1 << WSW) || WD < 4 || WD > 64) $fatal(1, "otpu_hbm_port: WD = 2^k, 4..64");
     if (NS != 1 && NS != 2 && NS != 4) $fatal(1, "otpu_hbm_port: NS = 1, 2, 4");
     if (PCB < 2 || PCB > 4) $fatal(1, "otpu_hbm_port: PCB = 2, 3, 4");
-    if (BAW < 22 + PCB) $fatal(1, "otpu_hbm_port: BAW < 22 + PCB (the channel is 2^(22+PCB) beats)");
+    if (PCW < 22 || PCW > 23) $fatal(1, "otpu_hbm_port: PCW = 22, 23");
+    if (BAW < PCW + PCB) $fatal(1, "otpu_hbm_port: BAW < PCW + PCB (the channel is 2^(PCW+PCB) beats)");
+    if (AAW < PCW + PCB + 6) $fatal(1, "otpu_hbm_port: AAW < PCW + PCB + 6");
     if (HW < 1 || HW > BAW) $fatal(1, "otpu_hbm_port: HAW = 0 or 1..BAW");
     if (NS > (1 << PCB)) $fatal(1, "otpu_hbm_port: NS is greater than the number of pseudo-channels");
     // the reads of a native port accepted and not yet delivered (see g_n): F, then per sub-port CQ, A, H and the ring
     if (NS > 1 && TQ < 1 + NS * (CQ + 2 + RD)) $fatal(1, "otpu_hbm_port: the FIFO of sub-port numbers is too small");
     // PCB 4: a multiple of 4 GiB, 0 or 33'h1_0000_0000 (CH_BASE[32] is the HBM stack)
-    if ((CH_BASE & ((33'd1 << (28 + PCB)) - 33'd1)) != '0)
+    if ((CH_BASE & ((AAW'(1) << (PCW + 6 + PCB)) - AAW'(1))) != '0)
       $fatal(1, "otpu_hbm_port: CH_BASE is not a multiple of the channel size");
-    if (PC_GRAN < 0 || PC_GRAN + (PC_XOR ? 2 * PCB : PCB) > 22 + PCB)
+    if (PC_GRAN < 0 || PC_GRAN + (PC_XOR ? 2 * PCB : PCB) > PCW + PCB)
       $fatal(1, "otpu_hbm_port: PC_GRAN");
   end
 
@@ -293,7 +300,7 @@ module otpu_hbm_port #(
     logic [RD-1:0]        al_rv, a_rdep_n;
     logic [WD-1:0]        al_wv, a_wdep_n;
     logic                 ar_wr, aw_wr;     // space in the AR, AW FIFOs (registers)
-    logic [32:0]          h_addr;
+    logic [AAW-1:0]       h_addr;
 
     assign h_go  = h_v && h_ok && (h_we ? (aw_wr && ws_ok) : (ar_wr && rs_ok));
     assign a_mv  = a_v && (!h_v || h_go);
@@ -353,7 +360,8 @@ module otpu_hbm_port #(
       end
     end
 
-    otpu_hbm_amap #(.CH_BASE(CH_BASE), .PCB(PCB), .BAW(BAW), .PC_GRAN(PC_GRAN), .PC_XOR(PC_XOR)) u_amap (
+    otpu_hbm_amap #(.AAW(AAW), .CH_BASE(CH_BASE), .PCW(PCW), .PCB(PCB), .BAW(BAW), .PC_GRAN(PC_GRAN),
+                    .PC_XOR(PC_XOR)) u_amap (
       .beat(h_beat), .addr(h_addr));
 
     // ---------------------------------------------------------------- CQ and the credits
@@ -391,12 +399,12 @@ module otpu_hbm_port #(
     otpu_hbm_fifo #(.W(QW), .DEPTH(AQ)) u_awq (.clk(uclk), .rst(urst), .wvalid(al_w),
       .wready(aw_wr), .wdata({h_addr, 6'(w_wp)}), .rvalid(m_awvalid[a]), .rready(m_awready[a]),
       .rdata(aw_rd));
-    assign m_araddr[a]  = ar_rd[QW-1 -: 33];
+    assign m_araddr[a]  = ar_rd[QW-1 -: AAW];
     assign m_arid[a]    = ar_rd[5:0];
     assign m_arlen[a]   = 4'd1;
     assign m_arsize[a]  = 3'd5;
     assign m_arburst[a] = 2'b01;
-    assign m_awaddr[a]  = aw_rd[QW-1 -: 33];
+    assign m_awaddr[a]  = aw_rd[QW-1 -: AAW];
     assign m_awid[a]    = aw_rd[5:0];
     assign m_awlen[a]   = 4'd1;
     assign m_awsize[a]  = 3'd5;
@@ -666,30 +674,33 @@ module otpu_hbm_port #(
 endmodule
 
 // Mapping of the channel's beat number to the global HBM byte address (one-to-one).
-// G = PC_GRAN, P = PCB (2^P pseudo-channels of 256 MiB in the channel): a block of 2^G adjacent beats lies
-// in one pseudo-channel; the pseudo-channel number in the channel (address[27+P:28]) -- the bits beat[G+P-1:G], with
-// PC_XOR also XORed with beat[G+2P-1:G+P]; the remaining beat bits in order -- the address inside the pseudo-channel
-// (address[27:6]). A channel is 2^(22+P) beats; the beat bits above that are not used (BAW >= 22 + P: 25 for
-// P = 2, 3 -- the default --, 26 for P = 4, where pc is address[31:28] and CH_BASE[32] is the HBM stack).
+// G = PC_GRAN, P = PCB (2^P pseudo-channels of 2^(PCW+6) bytes in the channel: 256 MiB at PCW 22, 512 MiB at 23):
+// a block of 2^G adjacent beats lies in one pseudo-channel; the pseudo-channel number in the channel
+// (address[PCW+5+P:PCW+6]) -- the bits beat[G+P-1:G], with PC_XOR also XORed with beat[G+2P-1:G+P]; the remaining
+// beat bits in order -- the address inside the pseudo-channel (address[PCW+5:6]). A channel is 2^(PCW+P) beats; the
+// beat bits above that are not used (BAW >= PCW + P: 25 for PCW 22 and P = 2, 3 -- the default --, 26 for P = 4,
+// where pc is address[31:28] and CH_BASE[32] is the HBM stack). The addresses are AAW bits (33; 34 for 16 GB).
 // Rationale: README.md.
 module otpu_hbm_amap #(
-  parameter logic [32:0] CH_BASE = 33'h0,
+  parameter int  AAW     = 33,
+  parameter logic [AAW-1:0] CH_BASE = '0,
+  parameter int  PCW     = 22,
   parameter int  PCB     = 3,
   parameter int  BAW     = 25,
   parameter int  PC_GRAN = 0,
   parameter bit  PC_XOR  = 1'b1
 ) (
   input  logic [BAW-1:0] beat,
-  output logic [32:0]    addr
+  output logic [AAW-1:0] addr
 );
   localparam int G = PC_GRAN;
   logic [PCB-1:0] pc;
-  logic [21:0]    off;
+  logic [PCW-1:0] off;
   always_comb begin
     pc = PCB'(beat >> G);
     if (PC_XOR) pc = pc ^ PCB'(beat >> (G + PCB));
-    off = 22'((beat >> (G + PCB)) << G) | 22'(beat & ((BAW'(1) << G) - BAW'(1)));
-    addr = CH_BASE | (33'(pc) << 28) | (33'(off) << 6);
+    off = PCW'((beat >> (G + PCB)) << G) | PCW'(beat & ((BAW'(1) << G) - BAW'(1)));
+    addr = CH_BASE | (AAW'(pc) << (PCW + 6)) | (AAW'(off) << 6);
   end
 endmodule
 

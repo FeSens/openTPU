@@ -114,9 +114,10 @@ module otpu_ctrl #(
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 15,
   parameter int ACT_BLOCKS = 128,
-  parameter int DRAM_LOG2  = 32,         // log2 DRAM bytes per slice
+  parameter int DRAM_LOG2  = 32,         // log2 DRAM bytes per slice (otpu_board: DAW, 32 .. 36)
   parameter int NCH        = 2,          // memory channels per slice
-  parameter int CH_LOG2    = 31,         // log2 bytes a slice addresses per channel
+  parameter int CH_LOG2    = 31,         // log2 bytes a slice addresses per channel (DAW > 32:
+                                         // DAW - log2 NCH; 31 at DAW 32)
   parameter int MXU_IMPL   = 2,
   parameter int TMEM_IMPL  = 0,
   parameter int VPU_CL     = 2,

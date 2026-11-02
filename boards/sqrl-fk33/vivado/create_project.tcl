@@ -2,7 +2,7 @@
 # both stacks, 8 GB; rtl/boards/sqrl-fk33/otpu_hbm.sv instantiates it), the block design (bd.tcl: XDMA, the clocks,
 # the SYSMON) and the board top (rtl/boards/sqrl-fk33/otpu_fpga_top_fk33.sv: one slice on two HBM channels).
 #   vivado -mode batch -source create_project.tcl -tclargs OUT_DIR MCOLS CORE_MHZ BUILD_ID VPU_CL LANES ACT_ROWS DSTEP
-#     PLATFORM ARCH_HASH
+#     PLATFORM ARCH_HASH DAW
 # (run_vivado.sh takes them from the target, targets/sqrl-fk33.toml; the RTL list below is opentpu.target
 # sources("sqrl-fk33")). Environment: UCLK_MHZ (default 250), OTPU_FAST (Vivado's default strategies), OTPU_IP_CACHE, TMEM_URAM (default 1:
 # the TMEM in UltraRAM, boards/sqrl-fk33/vivado/tmem_uram.xdc).
@@ -24,6 +24,9 @@ set ACT_ROWS [expr {[llength $argv] > 6 ? [lindex $argv 6] : $MCOLS}]
 set DSTEP [expr {[llength $argv] > 7 ? [lindex $argv 7] : 1}]
 set PLATFORM [expr {[llength $argv] > 8 ? [lindex $argv 8] : 5}]
 set ARCH_HASH [hexarg 9]
+# DAW: the DRAM address width per slice (the target's; 32 default): above 32 the RTL is built with OTPU_DAW (otpu_pkg)
+set DAW [expr {[llength $argv] > 10 && [lindex $argv 10] ne "" ? [lindex $argv 10] : 32}]
+if {![string is integer -strict $DAW] || $DAW < 32 || $DAW > 33} { error "DAW $DAW: 32 or 33 (the FK33's 8 GB)" }
 if {$ARCH_HASH eq ""} { set ARCH_HASH 0 }
 if {![regexp {^[0-9a-fA-F]{1,8}$} $ARCH_HASH]} { error "ARCH_HASH $ARCH_HASH: 1 to 8 hex digits" }
 if {$BUILD_ID eq ""} {
@@ -52,7 +55,7 @@ set rtl [list \
   rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_comp.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv \
   rtl/top/otpu_coll.sv rtl/top/otpu_slice.sv \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
-  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
+  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_native_dram2.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
   rtl/shell/otpu_axi_split2.sv rtl/boards/sqrl-fk33/otpu_fk33_sys.sv \
   rtl/boards/sqrl-fk33/otpu_hbm_port.sv rtl/boards/sqrl-fk33/otpu_hbm.sv \
@@ -61,7 +64,11 @@ foreach f $rtl {
   add_files -norecurse $root/$f
   set_property file_type SystemVerilog [get_files $root/$f]
 }
-set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
+if {$DAW > 32} {
+  set_property verilog_define [list SYNTHESIS OTPU_DAW=$DAW] [get_filesets sources_1]
+} else {
+  set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
+}
 
 # ---- the HBM IP: both stacks (8 GB), global switches on, all 32 AXI ports (the top ties off the unused ones), the
 # AXI ports on uclk, the reference and APB clocks 100 MHz; temperature-compensated refresh (2019.2's default is off)
@@ -119,4 +126,4 @@ if {[info exists ::env(OTPU_FAST)] && $::env(OTPU_FAST) eq "1"} {
 }
 set_property report_strategy {No Reports} [get_runs synth_1]
 set_property report_strategy {No Reports} [get_runs impl_1]
-puts "project created in $out (SQRL FK33, S=1, HBM 2 x 2 GiB, Gen3 x8)"
+puts "project created in $out (SQRL FK33, S=1 DUAL, DAW $DAW, HBM 4 x 2 GiB, Gen3 x8)"

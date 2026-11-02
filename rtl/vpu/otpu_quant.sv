@@ -282,7 +282,7 @@ module otpu_quant
   input  logic                    wr_idle,
   output logic                    a_req,
   output logic                    a_we,
-  output logic [31:0]             a_addr,
+  output logic [AWW-1:0]          a_addr,     // the word address: {REG, 30 bits} (otpu_pkg wport)
   output logic [31:0]             a_wdata,
   output logic [3:0]              a_be,
   // profiling: a cycle after a QACT ends, its cycles frozen by the TMEM grant
@@ -322,6 +322,10 @@ module otpu_quant
   logic [31:0] GW;                           // ... read in pass 1 (QST HALF: the first half)
   logic [31:0] sbase, sstep;                 // QST: the row's scale row; the next one's step
   logic [15:0] swn;                          // QST: a scale row's words
+  // QST: its DRAM region (DAW > 32), of the data (dst) and the scale rows (sdst): constant for the
+  // instruction, so no stage carries it: it joins the word address at the output (an
+  // instruction's writes are all out before the next one starts: busy, ackw)
+  logic [RGW-1:0] st_rg;
   // cycles an instruction was frozen by the TMEM grant, for the profiler: the condition is
   // registered (st_c) and summed a cycle late, off the grant path; the count is st_frz + st_c
   // (a start clears it: the unit was idle the cycle before, st_c is 0)
@@ -866,13 +870,13 @@ module otpu_quant
     if (qf_v) begin
       a_req = gnt;
       a_we = gnt;
-      a_addr = {2'b00, qf_hd.addr};
+      a_addr = wport(st_rg, {2'b00, qf_hd.addr});
       a_wdata = qf_hd.data;
       a_be = qf_hd.be;
     end else if (sw_ph) begin
       a_req = gnt;
       a_we = gnt;
-      a_addr = (sbase + {sw_i, 2'b00}) >> 2;
+      a_addr = waddr(st_rg, sbase + {sw_i, 2'b00});
       a_wdata = (sw_i == 0) ? sc_q[r[1:0]] : dword;
       a_be = 4'hF;
     end
@@ -961,6 +965,7 @@ module otpu_quant
       r <= '0; e <= '0;
       badr <= cmd.w2; brs <= cmd.w2;             // QST dst (unused by QACT)
       sbase <= cmd.w3;                           // QST sdst
+      st_rg <= cmd.rg;
       row_src <= cmd.w1;
       pass <= 1'b0; rd_wait <= 1'b0; wide <= 1'b0; sw_ph <= 1'b0; sw_i <= '0;
       m0a <= '0;

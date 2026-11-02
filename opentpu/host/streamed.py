@@ -96,8 +96,10 @@ def probe(spec, cfg, cap: int, experts: int | None = None, rows: int = 1, **kw):
 def fit_experts(spec, cfg, cap: int, image=None, **kw) -> int:
     """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image
     (image: its probe, if made already)."""
+    from opentpu.llm.regions import dram_low
     L = (image or probe(spec, cfg, cap, **kw)).offload
-    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.pitch))
+    # (above DAW 32 the slots are in region 0: their addresses are device values, 32 bits)
+    return min(spec.moe.E, (dram_low(cfg) - L.slots[0][0]) // (L.layers * L.pitch))
 
 
 def expert_major_fits(spec, image, experts: int) -> bool:

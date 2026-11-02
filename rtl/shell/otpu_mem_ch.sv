@@ -59,8 +59,9 @@
 // (from an odd one). Each port's count moves at most one a cycle, one bit; the master's side adds
 // its ports' counts as synchronized, each a value its count had, so the sum never runs ahead.
 //
-// Addresses: n_caddr and bits 30:6 of XDMA's byte address select the 64-byte beat in the channel
-// (2 GiB; XDMA's bit 31, the channel, is dropped by otpu_axi_split2). XDMA's bursts are INCR of
+// Addresses: n_caddr and bits BAW+5:6 of XDMA's byte address select the 64-byte beat in the channel
+// (BAW 25: bits 30:6, 2 GiB; XDMA's bit 31, the channel, is dropped by otpu_axi_split2; a larger
+// channel, BAW > 25 for a slice of more than 4 GiB: XAW = BAW + 6 address bits). XDMA's bursts are INCR of
 // 16-byte beats (AxSIZE 4) and may start anywhere in a 64-byte beat; narrow bursts are not
 // supported (XDMA issues none). Its reads return in order (legal for any IDs); responses are OKAY.
 //
@@ -92,7 +93,9 @@ module otpu_mem_ch #(
   parameter int OD   = 32,        // output write-data FIFO per port: writes issued, data not taken
   parameter int XQD  = 32,        // XDMA's command and write-data FIFOs, beats (a batch's room)
   parameter int XT   = 256,       // XDMA's batches: uclk cycles a ready X waits for one (0: none)
-  parameter int XB   = 24         // ... or until XB of its commands are queued (0: the wait alone)
+  parameter int XB   = 24,        // ... or until XB of its commands are queued (0: the wait alone)
+  parameter int BAW  = 25,        // the channel's beat address bits (otpu_native_dram's n_caddr)
+  parameter int XAW  = (BAW + 6 > 32) ? BAW + 6 : 32   // XDMA's address bits
 ) (
   // accelerator (otpu_native_dram), core clock
   input  logic            clk,
@@ -100,7 +103,7 @@ module otpu_mem_ch #(
   input  logic            n_cvalid,
   output logic            n_cready,
   input  logic            n_cwe,
-  input  logic [24:0]     n_caddr,    // 64-byte beat in the channel
+  input  logic [BAW-1:0]  n_caddr,    // 64-byte beat in the channel
   input  logic            n_wvalid,   // one beat per write command, in write-command order
   output logic            n_wready,
   input  logic [511:0]    n_wdata,
@@ -115,7 +118,7 @@ module otpu_mem_ch #(
   input  logic            x_awvalid,
   output logic            x_awready,
   input  logic [XIDW-1:0] x_awid,
-  input  logic [31:0]     x_awaddr,
+  input  logic [XAW-1:0]  x_awaddr,
   input  logic [7:0]      x_awlen,
   input  logic            x_wvalid,
   output logic            x_wready,
@@ -129,7 +132,7 @@ module otpu_mem_ch #(
   input  logic            x_arvalid,
   output logic            x_arready,
   input  logic [XIDW-1:0] x_arid,
-  input  logic [31:0]     x_araddr,
+  input  logic [XAW-1:0]  x_araddr,
   input  logic [7:0]      x_arlen,
   output logic            x_rvalid,
   input  logic            x_rready,
@@ -143,7 +146,7 @@ module otpu_mem_ch #(
   output logic [1:0]      c_cmd_valid,
   input  logic [1:0]      c_cmd_ready,
   output logic [1:0]      c_cmd_we,
-  output logic [1:0][24:0] c_cmd_addr,
+  output logic [1:0][BAW-1:0] c_cmd_addr,
   output logic [1:0]      c_wdata_valid,
   input  logic [1:0]      c_wdata_ready,
   output logic [1:0][511:0] c_wdata_data,
@@ -152,7 +155,7 @@ module otpu_mem_ch #(
                                           //   one port at a time
   input  logic [1:0][511:0] c_rdata_data  // one bus: port 1's is port 0's (only port 0's is read)
 );
-  localparam int QW = 26;                  // command: {write, beat[24:0]}
+  localparam int QW = BAW + 1;             // command: {write, beat[BAW-1:0]}
   localparam int DW = 577;                 // write data: {partial, byte enables[63:0], data[511:0]}
   localparam int CW = 16;                  // write-accept counters (beats, modulo 2^16)
   localparam int AOW = $clog2(ARD) + 1;
@@ -303,19 +306,19 @@ module otpu_mem_ch #(
   // Read bursts: one command per 64-byte beat touched; the R channel hands out the 16-byte lanes
   // from the burst's first lane. Write bursts: 16-byte beats packed into 64-byte beats.
   localparam int XRQ = XIDW + 10;
-  logic       xai_wv, xai_wr, xai_rv, xai_rr;  logic [31:0] xai_rd;      // {n - 1, beat}
-  logic       xwi_wv, xwi_wr, xwi_rv, xwi_rr;  logic [26:0] xwi_rd;      // {lane, beat}
+  logic       xai_wv, xai_wr, xai_rv, xai_rr;  logic [BAW+6:0] xai_rd;   // {n - 1, beat}
+  logic       xwi_wv, xwi_wr, xwi_rv, xwi_rr;  logic [BAW+1:0] xwi_rd;   // {lane, beat}
   logic       xrq_wv, xrq_wr, xrq_rv, xrq_rr;  logic [XRQ-1:0] xrq_rd;   // {id, len, lane}
   logic       xbq_wv, xbq_wr, xbq_rv, xbq_rr;  logic [XIDW+6:0] xbq_rd;  // {id, n - 1}
   logic [6:0] x_arn, x_awn;                // 64-byte beats of the burst, minus one
   assign x_arn = 7'(({1'b0, x_arlen} + {7'b0, x_araddr[5:4]}) >> 2);
   assign x_awn = 7'(({1'b0, x_awlen} + {7'b0, x_awaddr[5:4]}) >> 2);
   // their heads from registers (RO): the R, B and write-packing logic starts from flip-flops
-  otpu_sfifo #(.W(32), .DEPTH(4), .RO(1'b1)) u_xai (.clk(xclk), .rst(x_crst), .wvalid(xai_wv),
-    .wready(xai_wr), .wdata({x_arn, x_araddr[30:6]}), .rvalid(xai_rv), .rready(xai_rr),
+  otpu_sfifo #(.W(BAW + 7), .DEPTH(4), .RO(1'b1)) u_xai (.clk(xclk), .rst(x_crst), .wvalid(xai_wv),
+    .wready(xai_wr), .wdata({x_arn, x_araddr[BAW+5:6]}), .rvalid(xai_rv), .rready(xai_rr),
     .rdata(xai_rd));
-  otpu_sfifo #(.W(27), .DEPTH(4), .RO(1'b1)) u_xwi (.clk(xclk), .rst(x_crst), .wvalid(xwi_wv),
-    .wready(xwi_wr), .wdata({x_awaddr[5:4], x_awaddr[30:6]}), .rvalid(xwi_rv), .rready(xwi_rr),
+  otpu_sfifo #(.W(BAW + 2), .DEPTH(4), .RO(1'b1)) u_xwi (.clk(xclk), .rst(x_crst), .wvalid(xwi_wv),
+    .wready(xwi_wr), .wdata({x_awaddr[5:4], x_awaddr[BAW+5:6]}), .rvalid(xwi_rv), .rready(xwi_rr),
     .rdata(xwi_rd));
   otpu_sfifo #(.W(XRQ), .DEPTH(16), .RO(1'b1)) u_xrq (.clk(xclk), .rst(x_crst), .wvalid(xrq_wv),
     .wready(xrq_wr), .wdata({x_arid, x_arlen, x_araddr[5:4]}), .rvalid(xrq_rv), .rready(xrq_rr),
@@ -339,10 +342,10 @@ module otpu_mem_ch #(
   logic [63:0]  x_wstb, x_wstb_full;
   logic [3:0]   x_wsfull;                // the lanes of x_wstb with every strobe set
   logic         x_wfull;                 // x_wstb_full all set (no AND over its 64 bits)
-  assign x_wlane  = x_wfirst ? xwi_rd[26:25] : x_wlane_r;
+  assign x_wlane  = x_wfirst ? xwi_rd[BAW+1:BAW] : x_wlane_r;
   assign x_wpush  = x_wlane == 2'd3 || x_wlast;
   assign x_selw   = xwi_rv && x_wvalid && x_wpush;
-  assign x_rlastb = x_roff == xai_rd[31:25];
+  assign x_rlastb = x_roff == xai_rd[BAW+6:BAW];
   always_comb begin
     x_wdata_full = x_wbuf;
     x_wstb_full  = x_wstb;
@@ -350,7 +353,7 @@ module otpu_mem_ch #(
     x_wstb_full[x_wlane * 16 +: 16]    = x_wstrb;
   end
   assign xq_wv    = !x_crst && xq_wr && (x_selw ? xd_wr : xai_rv);
-  assign xq_wd    = x_selw ? {1'b1, 25'(xwi_rd[24:0] + x_woff)} : {1'b0, 25'(xai_rd[24:0] + x_roff)};
+  assign xq_wd    = x_selw ? {1'b1, BAW'(xwi_rd[BAW-1:0] + x_woff)} : {1'b0, BAW'(xai_rd[BAW-1:0] + x_roff)};
   assign x_wready = !x_crst && xwi_rv && (!x_wpush || (xq_wr && xd_wr));
   assign xd_wv    = x_wvalid && x_wready && x_wpush;
   assign x_wfull  = &x_wstrb && &(x_wsfull | (4'b1 << x_wlane));
@@ -455,7 +458,7 @@ module otpu_mem_ch #(
   logic          a_ok, x_ok, pick_x, cur_x, sel_x, go, we, part, rmw, tp;
   logic          a_room, x_room, a_rgo, x_rgo;
   logic [5:0]    run;
-  logic [24:0]   addr;
+  logic [BAW-1:0] addr;
   logic [DW-1:0] wd;
   logic [1:0]    oq_wv, oq_wr, of_wv, of_wr, tg_wr, tg_rv;
   logic [511:0]  of_wd;
@@ -495,7 +498,7 @@ module otpu_mem_ch #(
   end
   assign sel_x = rm_busy ? rm_x : pick_x;  // a read-modify-write: its master's heads
   assign we    = sel_x ? xq_rd[QW-1] : aq_rd[QW-1];
-  assign addr  = sel_x ? xq_rd[24:0] : aq_rd[24:0];
+  assign addr  = sel_x ? xq_rd[BAW-1:0] : aq_rd[BAW-1:0];
   assign wd    = sel_x ? xd_rd : ad_rd;
   assign tp    = addr[7];                  // the port: the beat's bank parity
   assign part  = we && wd[DW-1];
@@ -546,16 +549,16 @@ module otpu_mem_ch #(
   // per port: the output command queue (a FIFO behind a register: the crossbar's inputs come from
   // flip-flops; a command bypasses the empty FIFO), the output write-data FIFO (pushed with the
   // write's command) and the read tags ({read-modify-write, xdma, slot}, in the port's order)
-  logic [26:0]   ocn;
+  logic [BAW+1:0] ocn;
   logic [1:0]    opop, opw_a, opw_x, opc_a, opc_x;
   assign ocn = {rm_busy || (we && !rmw), sel_x, addr};
   for (genvar p = 0; p < 2; p++) begin : g_port
     logic        oq_rv, oq_rr, byp, oc_v;
-    logic [26:0] oq_rd, oc;
+    logic [BAW+1:0] oq_rd, oc;
     assign oq_wv[p] = (go || rm_ok) && tp == 1'(p);
     assign byp      = oq_wv[p] && !oq_rv && (!oc_v || c_cmd_ready[p]);
     assign oq_rr    = oq_rv && (!oc_v || c_cmd_ready[p]);
-    otpu_sfifo #(.W(27), .DEPTH(OQ)) u_oq (.clk(uclk), .rst(urq), .wvalid(oq_wv[p] && !byp),
+    otpu_sfifo #(.W(BAW + 2), .DEPTH(OQ)) u_oq (.clk(uclk), .rst(urq), .wvalid(oq_wv[p] && !byp),
       .wready(oq_wr[p]), .wdata(ocn), .rvalid(oq_rv), .rready(oq_rr), .rdata(oq_rd));
     always_ff @(posedge uclk) begin
       if (urq) oc_v <= 1'b0;
@@ -563,13 +566,13 @@ module otpu_mem_ch #(
       if (!oc_v || c_cmd_ready[p]) oc <= oq_rv ? oq_rd : ocn;
     end
     assign c_cmd_valid[p] = oc_v;
-    assign c_cmd_we[p]    = oc[26];
-    assign c_cmd_addr[p]  = oc[24:0];
+    assign c_cmd_we[p]    = oc[BAW+1];
+    assign c_cmd_addr[p]  = oc[BAW-1:0];
     assign opop[p]  = oc_v && c_cmd_ready[p];
-    assign opw_a[p] = opop[p] && oc[26] && !oc[25];      // a write taken, per master (n_wdone, B)
-    assign opw_x[p] = opop[p] && oc[26] && oc[25];
-    assign opc_a[p] = opop[p] && !oc[25];                // a command taken, per master
-    assign opc_x[p] = opop[p] && oc[25];
+    assign opw_a[p] = opop[p] && oc[BAW+1] && !oc[BAW];  // a write taken, per master (n_wdone, B)
+    assign opw_x[p] = opop[p] && oc[BAW+1] && oc[BAW];
+    assign opc_a[p] = opop[p] && !oc[BAW];               // a command taken, per master
+    assign opc_x[p] = opop[p] && oc[BAW];
 
     // the port's write beats taken, per master (n_wdone, B): at most one a cycle, so the gray
     // code (registered) moves one bit per uclk cycle; synchronized and decoded in the master's

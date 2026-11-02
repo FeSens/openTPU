@@ -79,13 +79,16 @@ TECH = {"generic": ["tech/generic/otpu_tech_dsp.sv", "tech/generic/otpu_tech_ram
         # the RAMs on SRAM macros: the leaves (otpu_sram_*) come from tools/asic/flow.py
         "asic": ["tech/generic/otpu_tech_dsp.sv", "tech/asic/otpu_tech_ram.sv"]}
 SHELL = ["shell/otpu_ctrl.sv", "shell/otpu_trace.sv", "shell/otpu_board.sv",
-         "mem/otpu_native_dram.sv", "shell/otpu_afifo.sv", "shell/otpu_mem_ch.sv",
+         "mem/otpu_native_dram.sv", "mem/otpu_native_dram2.sv", "shell/otpu_afifo.sv",
+         "shell/otpu_mem_ch.sv",
          "shell/otpu_axi_split2.sv"]
 BOARDS = {"ypcb-00338": ["boards/ypcb-00338/otpu_native_sys.sv",
                          "boards/ypcb-00338/otpu_fpga_top_ld.sv"],
           "bcu1525": ["boards/bcu1525/otpu_bcu_sys.sv", "boards/bcu1525/otpu_fpga_top_bcu.sv"],
           "sqrl-fk33": ["boards/sqrl-fk33/otpu_fk33_sys.sv", "boards/sqrl-fk33/otpu_hbm_port.sv",
-                        "boards/sqrl-fk33/otpu_hbm.sv", "boards/sqrl-fk33/otpu_fpga_top_fk33.sv"]}
+                        "boards/sqrl-fk33/otpu_hbm.sv", "boards/sqrl-fk33/otpu_fpga_top_fk33.sv"],
+          "sqrl-fk35": ["boards/sqrl-fk35/otpu_fk35_sys.sv", "boards/sqrl-fk35/otpu_hbm_port.sv",
+                        "boards/sqrl-fk35/otpu_hbm.sv", "boards/sqrl-fk35/otpu_fpga_top_fk35.sv"]}
 
 
 class TargetError(ValueError):
@@ -200,9 +203,12 @@ def load(name: str | None = None) -> Target:
     if raw["arch"]["SEQ_WC"] and raw["uarch"]["WIN"] > 16:
         raise TargetError(f"{path}: SEQ_WC (otpu_seq's wait entries) needs WIN <= 16: 4-bit "
                           f"counts name a unit's last 15 instructions")
-    if a["DRAM_BYTES"] > 1 << 32:
-        raise TargetError(f"{path}: DRAM_BYTES over 4 GiB: DRAM addresses are 32 bits per slice "
-                          f"(more slices, or the reserved window register: docs/targets.md)")
+    if not 32 <= a["DAW"] <= 36:
+        raise TargetError(f"{path}: DAW {a['DAW']}: the DRAM address width per slice is 32..36")
+    if a["DRAM_BYTES"] > 1 << a["DAW"]:
+        raise TargetError(f"{path}: DRAM_BYTES over {1 << (a['DAW'] - 30)} GiB at DAW {a['DAW']}: "
+                          f"DRAM addresses are {a['DAW']} bits per slice (DAW up to 36: a 4 GiB "
+                          f"region per instruction, docs/wide_dram_hbm.md; or more slices)")
     return Target(name=path.stem, kind=t["kind"], platform_id=int(t.get("platform_id", 0)),
                   description=t.get("description", ""), arch=dict(a), uarch=dict(raw["uarch"]),
                   tech=dict(raw["tech"]), platform=dict(raw["platform"]), path=path,
@@ -246,8 +252,11 @@ def arch_hash(cfg) -> int:
     build without it stays, and a host that writes no entries refuses a build with it (its
     hash leaves it out: opentpu/host/board.py check_hash)."""
     d = dict(dataclasses.asdict(cfg), NUMERICS=NUMERICS)
-    if not d.get("SEQ_WC"):
-        d.pop("SEQ_WC", None)
+    for k in ("SEQ_WC", "DUAL"):          # (DUAL, port B chunk pairs, likewise)
+        if not d.get(k):
+            d.pop(k, None)
+    if d.get("DAW", 32) == 32:            # (DAW, the DRAM address width, only when wide)
+        d.pop("DAW", None)
     s = json.dumps({k: (int(v) if isinstance(v, bool) else v) for k, v in sorted(d.items())},
                    separators=(",", ":"))
     return int.from_bytes(hashlib.sha256(s.encode()).digest()[:4], "big")
@@ -287,7 +296,7 @@ def rtl_params(t: Target | str | None = None) -> dict:
         "VPU_CL": u["VPU_CL"], "ULANES": u["ULANES"], "TMEM_IMPL": u["TMEM_IMPL"],
         "RPB": u["RPB"] or NRP * a["LANES"], "WPB": u["WPB"], "WIN": u["WIN"],
         "FIFO_DEPTH": u["FIFO_DEPTH"], "TRACE_DEPTH": u["TRACE_DEPTH"], "PQ_WIN": u["PQ_WIN"],
-        "CHASH": int(u["CHASH"]), "SEQ_WC": int(a["SEQ_WC"]),
+        "CHASH": int(u["CHASH"]), "SEQ_WC": int(a["SEQ_WC"]), "DAW": a["DAW"],
         "DDR_MTS": int(p.get("mem_mts", 0)),
         "NCH": p["channels_per_slice"],
         "CH_LOG2": (p["channel_bytes"] - 1).bit_length(),

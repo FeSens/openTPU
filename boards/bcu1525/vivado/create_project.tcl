@@ -70,7 +70,7 @@ set rtl [list \
   rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_comp.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv \
   rtl/top/otpu_coll.sv rtl/top/otpu_slice.sv \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
-  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
+  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_native_dram2.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
   rtl/shell/otpu_axi_split2.sv rtl/boards/bcu1525/otpu_bcu_sys.sv \
   rtl/boards/bcu1525/otpu_fpga_top_bcu.sv]

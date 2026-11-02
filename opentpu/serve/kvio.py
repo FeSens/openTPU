@@ -282,5 +282,6 @@ def staging_area(eng) -> tuple[int, int] | None:
         return None
     from opentpu import waits as W
     base = -(-(at + W.area(cfg.IMEM_WORDS, getattr(cfg, "SEQ_WC", False))) // 4096) * 4096
-    n = min(STAGING_MAX, cfg.DRAM_BYTES - base)
+    from opentpu.llm.regions import dram_low     # (above DAW 32: region 0, past the program
+    n = min(STAGING_MAX, dram_low(cfg) - base)    # area of an image laid out over regions)
     return (base, n) if n > 0 else None

@@ -429,7 +429,10 @@ def test_uncalibrated_channel_refuses_run_and_load(have_verilator):
     """A channel not calibrated (STATUS CALIB1 clear, +calib): CTRL takes neither RUN nor LOAD
     (nothing would answer their memory requests); TEMP is valid all the same (the XADC does not
     wait for the DDR3)."""
-    t = SimTransport(ch_bytes=1 << 20, plusargs=["+calib=1"])
+    from opentpu.target import current
+    # (DUAL: four channels, CALIB0 channels 0 and 2)
+    t = SimTransport(ch_bytes=1 << 20,
+                     plusargs=["+calib=" + ("5" if current().arch.get("DUAL") else "1")])
     t.reg_write(R.R_PROG_ADDR, 0)
     t.reg_write(R.R_PROG_N, 4)
     t.reg_write(R.R_CTRL, R.CTRL_LOAD)

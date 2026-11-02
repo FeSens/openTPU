@@ -67,13 +67,13 @@ module otpu_asic_top
                                             // read waits in it while a_req is high (reads only: a_we
                                             // is 0; the reads all back: see b_req)
   output logic                a_we,
-  output logic [31:0]         a_addr,
+  output logic [AWW-1:0]      a_addr,       // word addresses, otpu_pkg AWW bits (otpu_slice)
   output logic [31:0]         a_wdata,
   output logic [3:0]          a_be,
   output logic                sw_req,       // the SW outputs come from a register (otpu_slice), and
                                             // a write waits in it while sw_req is high (the writes
                                             // all taken: see b_req)
-  output logic [31:0]         sw_addr,
+  output logic [AWW-1:0]      sw_addr,
   output logic [31:0]         sw_wdata,
   output logic [3:0]          sw_be,
   input  logic                a_rvalid,
@@ -90,7 +90,7 @@ module otpu_asic_top
   output logic                b_we,
   output logic [D/4-1:0]      b_wmask,
   output logic [D*8-1:0]      b_wdata,
-  output logic [31:0]         b_addr,
+  output logic [AWW-1:0]      b_addr,
   output logic                b_par,
   input  logic                b_rvalid,
   input  logic                b_rtag,
@@ -128,6 +128,7 @@ module otpu_asic_top
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
+    .b_two(), .b_rdata2('0),
     .coll_req, .coll_cmd(coll_cmd[0]), .coll_ack,
     .coll_ren(coll_ren[0]), .coll_raddr(coll_raddr[0]), .coll_rdata(coll_rdata[0]),
     .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),

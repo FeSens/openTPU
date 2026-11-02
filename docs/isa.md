@@ -189,7 +189,8 @@ from `n = 0` like the `RMAX` VOP; the softmax row max comes for free from the MX
 `ASCALE` (needs `UNIT` and `ACC`; `ssa` is then the TMEM address of M per-row factors and the old
 accumulator is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + y` -- the
 flash-attention correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed
-weights' format ("Weight formats"), bit6 `PAIR` (4-bit weights at full rate, "Column reuse"),
+weights' format ("Weight formats"), bit6 `PAIR` (4-bit weights at full rate; on a DUAL target int8 weights at twice the rate,
+"Column reuse"),
 bit7 `RSC` (row scales only: each scale row is the one word `Sw[n]`, every `dw = 0` and `m = 1`;
 not with `WF = 3`). The streamed rows are D-byte aligned (`sa` and `rs` are multiples of D):
 the MXU streams whole D-byte DRAM chunks. `N >= 1`, `KB >= 1` and `0 < M <= ACT_ROWS`; RMAX,
@@ -265,6 +266,14 @@ Chunk `c` holds blocks `2c` and `2c+1`, whose scale words (WF 1, 2: 8 bytes; WF 
 together: `k0` is even and `ssa` and `srs` are multiples of 8 (WF 3: 16); with KB odd the last
 chunk's second block word is read and ignored. ACC, RMAX and ASCALE are unchanged and write M
 rows.
+
+On a DUAL target (Config.DUAL: the slice's DRAM on four channels, port B reading two adjacent
+chunks a cycle, rtl/mem/otpu_native_dram2.sv) `PAIR` also takes int8 weights (`WF = 0`): an
+advance takes two chunks, block `2c` (columns `0..M-1`, ACT row `j`) and block `2c+1` (columns
+`M..2M-1`, ACT row `j + M`), so an MM of at most MCOLS/2 rows (decode) streams 256 bytes a
+cycle. The loop above is unchanged (the same integer); `k0` is even (the two blocks' offset
+bytes are adjacent in a scale line); with KB odd the last advance takes one chunk. Elsewhere an
+int8 `PAIR` is an error (the ISA simulator's; the encoder takes it).
 
 ### QACT
 

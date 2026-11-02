@@ -22,8 +22,8 @@
 // cycles, so a busy channel fills the command FIFO and withholds n_cready.
 // Images load from dram_<SID>.bin and dump to dram_out_<SID>.bin, as otpu_dram. With PHYS = 1
 // the files are the channels' own memories instead, as the host sees them: ch<c>.bin (big-endian
-// words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / 2 words each (c = 2 SID
-// and 2 SID + 1: slice SID's channels on a multi-slice board). The dump
+// words, as $fread reads) in, ch<c>_out.bin (little-endian) out, WORDS / NC words each (c = NC SID
+// .. NC SID + NC - 1: slice SID's channels on a multi-slice board). The dump
 // prints each channel's reads, writes, DDR3 row opens and partial writes (MEM ch<c> rd=<n> ...).
 // +nat_trace=FILE writes every command taken, one line each: core cycle, channel, we, beat (the
 // trace sim/verilator/tb_ldc_replay.sv replays through LiteDRAM's controller).
@@ -32,34 +32,52 @@
 // word address), written at that core cycle (a run's: WAITW's tests); <dir>/pokeb_<SID>.txt,
 // lines "run word value", written when run `run` - 1 ends (run_rst, the core's reset, rises: tb_top
 // +runs).
+// A slice of more than 4 GiB (DAW > 32): BAW, the channel beat's bits, as the adapter's, and NREG
+// windows of WORDS words, one a 4 GiB region of the slice's address (2^(DAW - 32)), each decoded by
+// the low bits of the address in its region, as otpu_dram's (the images, the dump and the poke
+// files are the windows in region order; their word addresses the slice's, {REG, 30 bits}).
 module otpu_native_mem #(
   parameter int WORDS = 1 << 18,
   parameter int PHYS  = 0,
   parameter int LAT   = 20,              // minimum read latency (performed -> data)
   parameter int SID   = 0,
-  parameter bit CHASH = 1'b1             // otpu_native_dram's address map
+  parameter bit CHASH = 1'b1,            // otpu_native_dram's address map
+  parameter int NC    = 2,               // channels: 2, or 4 (otpu_native_dram2: chunk m on
+                                         // channels 2 (m & 1) and 2 (m & 1) + 1)
+  parameter int BAW   = 25,              // channel beat address bits (otpu_native_dram)
+  parameter int NREG  = 1                // windows (4 GiB regions), see the top
 ) (
   input  logic                  clk,
   input  logic                  rst,
   input  logic                  run_rst,    // the core's reset: a rise ends a run (pokeb lines)
-  input  logic [1:0]            n_cvalid,
-  output logic [1:0]            n_cready,
-  input  logic [1:0]            n_cwe,
-  input  logic [1:0][24:0]      n_caddr,
-  input  logic [1:0]            n_wvalid,
-  output logic [1:0]            n_wready,
-  input  logic [1:0][511:0]     n_wdata,
-  input  logic [1:0][63:0]      n_wmask,
-  output logic [1:0]            n_rvalid,
-  output logic [1:0][511:0]     n_rdata,
-  output logic [1:0][15:0]      n_wdone,
+  input  logic [NC-1:0]         n_cvalid,
+  output logic [NC-1:0]         n_cready,
+  input  logic [NC-1:0]         n_cwe,
+  input  logic [NC-1:0][BAW-1:0] n_caddr,
+  input  logic [NC-1:0]         n_wvalid,
+  output logic [NC-1:0]         n_wready,
+  input  logic [NC-1:0][511:0]  n_wdata,
+  input  logic [NC-1:0][63:0]   n_wmask,
+  output logic [NC-1:0]         n_rvalid,
+  output logic [NC-1:0][511:0]  n_rdata,
+  output logic [NC-1:0][15:0]   n_wdone,
   input  logic                  dump
 );
   // the image's words: word i is mem_lo[i] below H, else mem_hi[i - H] (two arrays, as Verilator
   // takes at most 2^28 entries in one: 1 GiB each); a beat (16 words) is in one of them
-  localparam int H = WORDS / 2;
+  localparam int NW = WORDS * NREG;
+  localparam int H = NW / 2;
   logic [31:0] mem_lo [H];
-  logic [31:0] mem_hi [WORDS - H];
+  logic [31:0] mem_hi [NW - H];
+  initial if (NREG > 1 && ((1 << $clog2(WORDS)) != WORDS || WORDS > (1 << 30) || PHYS != 0 ||
+                           (1 << $clog2(NREG)) != NREG))
+    $fatal(1, "otpu_native_mem: NREG %0d windows of %0d words (powers of two; not PHYS)", NREG,
+           WORDS);
+  // the memory word of the slice's word address w (NREG 1: w itself)
+  function automatic int widx(input longint w);
+    if (NREG == 1) return int'(w);
+    return int'((w >> 30) % NREG) * WORDS + int'(w % WORDS);
+  endfunction
   function automatic logic [31:0] rdw(input int i);
     return i < H ? mem_lo[i] : mem_hi[i - H];
   endfunction
@@ -73,7 +91,7 @@ module otpu_native_mem #(
   int cqd = 16, wqd = 16;                // command / write-data FIFO entries
   int wdl = 4;                           // n_wdone lag, cycles (+ 0..7)
   int ahead = 16;                        // DDR3 model: data-bus backlog, controller cycles
-  longint n_rd [2], n_wr [2], n_miss [2], n_rmw [2];
+  longint n_rd [NC], n_wr [NC], n_miss [NC], n_rmw [NC];
   // DDR3 model
   int dram = 0, amap = 0;
   int trcd = 2, trp = 2, tras = 4, trc = 6, trtp = 1, trefi = 780, trfc = 16, tturn = 2;
@@ -84,9 +102,14 @@ module otpu_native_mem #(
   integer tfd = 0;
   initial if ($value$plusargs("nat_trace=%s", tfn)) tfd = $fopen(tfn, "w");
 
-  // the logical beat of channel c's beat m
-  function automatic int lbeat(input logic [31:0] m, input int c);
-    return int'(m * 2 + (c[0] ^ (CHASH && ^m)));
+  // the logical beat of channel c's beat m (NC 4: of adapter c / 2's chunk m, the slice's 2m + c / 2)
+  function automatic longint lbeat(input logic [BAW-1:0] m, input int c);
+    if (NC == 4) return (longint'(m) * 2 + longint'(c / 2)) * 2 + longint'(c[0] ^ (CHASH && ^m));
+    return longint'(m) * 2 + longint'(c[0] ^ (CHASH && ^m));
+  endfunction
+  // ... its first word in the memory
+  function automatic int bidx(input logic [BAW-1:0] m, input int c);
+    return widx(lbeat(m, c) * 16);
   endfunction
   function automatic bit rnd_stall();
     return ($urandom % 100) < stall;
@@ -94,19 +117,19 @@ module otpu_native_mem #(
 
   // the controller's per-channel state: the data bus's next free tick, the last direction, the
   // next refresh, each bank's open row (-1: closed), activate time and last column access
-  longint bus [2], nref [2];
-  bit     wdir [2];
-  int     orow [2][8];
-  longint tact [2][8], tcol [2][8];
+  longint bus [NC], nref [NC];
+  bit     wdir [NC];
+  int     orow [NC][8];
+  longint tact [NC][8], tcol [NC][8];
   // the core cycle a beat's column command goes out (and the controller's state after it), with
   // the channel offset m * 64
-  function automatic longint dram_slot(input int c, input logic [24:0] m, input bit wr,
+  function automatic longint dram_slot(input int c, input logic [BAW-1:0] m, input bit wr,
                                        input longint arrive_cyc);
-    logic [30:0] off;
+    logic [30:0] off;                    // (its low 31 bits: the bank model's)
     int bk, row;
     longint t, arrive;
     arrive = arrive_cyc * tpc;
-    off = {m, 6'd0};
+    off = 31'({m, 6'd0});
     if (amap == 0) begin bk = int'(off[30:28]); row = int'(off[27:13]); end
     else           begin bk = int'(off[15:13]); row = int'(off[30:16]); end
     t = arrive > bus[c] ? arrive : bus[c];
@@ -138,35 +161,36 @@ module otpu_native_mem #(
     return (t + tpc - 1) / tpc;
   endfunction
 
-  typedef struct { logic we; logic [24:0] m; longint t; } cq_t;
+  typedef struct { logic we; logic [BAW-1:0] m; longint t; } cq_t;
   typedef struct { longint t; logic [511:0] d; } rq_t;
-  cq_t          cq [2][$];               // commands taken, not yet performed
-  logic [511:0] wq_d [2][$];             // write data taken, not yet performed
-  logic [63:0]  wq_m [2][$];
-  rq_t          rq [2][$];               // read data due
-  longint       wd [2][$];               // the times writes count in n_wdone
+  cq_t          cq [NC][$];               // commands taken, not yet performed
+  logic [511:0] wq_d [NC][$];             // write data taken, not yet performed
+  logic [63:0]  wq_m [NC][$];
+  rq_t          rq [NC][$];               // read data due
+  longint       wd [NC][$];               // the times writes count in n_wdone
 
   always_ff @(posedge clk) cyc <= cyc + 1;
 
   localparam int NPOKE = 4096;
   longint      pk_c [NPOKE];
-  logic [31:0] pk_a [NPOKE], pk_v [NPOKE], pb_r [NPOKE], pb_a [NPOKE], pb_v [NPOKE];
+  logic [63:0] pk_a [NPOKE], pb_a [NPOKE];
+  logic [31:0] pk_v [NPOKE], pb_r [NPOKE], pb_v [NPOKE];
   int          pk_n = 0, pk_i = 0, pb_n = 0;
   int          epoch = 0;                // runs ended
   logic        rr_q = 1'b1;
   always @(posedge clk) begin
     while (pk_i < pk_n && cyc >= pk_c[pk_i]) begin
-      wrw(int'(pk_a[pk_i]), pk_v[pk_i]);
+      wrw(widx(longint'(pk_a[pk_i])), pk_v[pk_i]);
       pk_i++;
     end
     if (run_rst && !rr_q) begin          // a run ended: the host's writes before the next
       epoch++;
-      for (int k = 0; k < pb_n; k++) if (int'(pb_r[k]) == epoch) wrw(int'(pb_a[k]), pb_v[k]);
+      for (int k = 0; k < pb_n; k++) if (int'(pb_r[k]) == epoch) wrw(widx(longint'(pb_a[k])), pb_v[k]);
     end
     rr_q = run_rst;
   end
 
-  for (genvar c = 0; c < 2; c++) begin : g_ch
+  for (genvar c = 0; c < NC; c++) begin : g_ch
     logic crr, wrr, rv;
     logic [511:0] rd;
     logic [15:0] wdone;
@@ -189,7 +213,7 @@ module otpu_native_mem #(
         for (int k = 0; k < 8; k++) begin orow[c][k] = -1; tact[c][k] = -1000; tcol[c][k] = -1000; end
       end else begin
         if (n_cvalid[c] && n_cready[c]) begin
-          if (lbeat(32'(n_caddr[c]), c) * 16 + 16 > WORDS)
+          if (NREG == 1 ? lbeat(n_caddr[c], c) * 16 + 16 > WORDS : (lbeat(n_caddr[c], c) >> 26) >= NREG)
             $fatal(1, "native command beyond memory");
           cq[c].push_back('{n_cwe[c], n_caddr[c], cyc});
           if (tfd != 0) $fdisplay(tfd, "%0d %0d %0d %0d", cyc, c, n_cwe[c], n_caddr[c]);
@@ -206,7 +230,7 @@ module otpu_native_mem #(
           int b;
           longint t;
           cr = cr - 100;
-          b = lbeat(32'(cq[c][0].m), c) * 16;
+          b = bidx(cq[c][0].m, c);
           if (cq[c][0].we) begin
             logic [63:0] s;
             s = wq_m[c][0];
@@ -259,7 +283,7 @@ module otpu_native_mem #(
 
   string dir;
   integer fd, nread;
-  logic [31:0] chm [WORDS / 2];
+  logic [31:0] chm [WORDS / NC];
   initial begin
     void'($value$plusargs("axi_stall=%d", stall));
     void'($value$plusargs("axi_bw=%d", bw));
@@ -281,13 +305,13 @@ module otpu_native_mem #(
     void'($value$plusargs("nat_wq=%d", wqd));
     void'($value$plusargs("nat_wdl=%d", wdl));
     void'($value$plusargs("nat_ahead=%d", ahead));
-    n_rd = '{0, 0}; n_wr = '{0, 0}; n_miss = '{0, 0}; n_rmw = '{0, 0};
+    for (int c = 0; c < NC; c++) begin n_rd[c] = 0; n_wr[c] = 0; n_miss[c] = 0; n_rmw[c] = 0; end
     begin
       int seed;
       if ($value$plusargs("axi_seed=%d", seed)) void'($urandom(seed));
     end
     for (int i = 0; i < H; i++) mem_lo[i] = '0;
-    for (int i = 0; i < WORDS - H; i++) mem_hi[i] = '0;
+    for (int i = 0; i < NW - H; i++) mem_hi[i] = '0;
     if ($value$plusargs("dir=%s", dir)) begin
       if (PHYS == 0) begin
         fd = $fopen($sformatf("%s/dram_%0d.bin", dir, SID), "rb");
@@ -310,20 +334,20 @@ module otpu_native_mem #(
         end
       end else begin
         // channel c word j (beat j / 16) is logical beat lbeat(j / 16, c)
-        for (int c = 0; c < 2; c++) begin
-          for (int i = 0; i < WORDS / 2; i++) chm[i] = '0;
-          fd = $fopen($sformatf("%s/ch%0d.bin", dir, 2 * SID + c), "rb");
+        for (int c = 0; c < NC; c++) begin
+          for (int i = 0; i < WORDS / NC; i++) chm[i] = '0;
+          fd = $fopen($sformatf("%s/ch%0d.bin", dir, NC * SID + c), "rb");
           if (fd != 0) begin
             nread = $fread(chm, fd);
             $fclose(fd);
           end
-          for (int j = 0; j < WORDS / 2; j++) wrw(lbeat(j / 16, c) * 16 + j % 16, chm[j]);
+          for (int j = 0; j < WORDS / NC; j++) wrw(bidx(BAW'(j / 16), c) + j % 16, chm[j]);
         end
       end
     end
   end
   always @(posedge clk) if (dump) begin
-    for (int c = 0; c < 2; c++) begin
+    for (int c = 0; c < NC; c++) begin
       int nw;
       nw = 0;
       for (int k = 0; k < cq[c].size(); k++) if (cq[c][k].we) nw++;
@@ -335,12 +359,12 @@ module otpu_native_mem #(
     end
     if (PHYS == 0) begin
       fd = $fopen($sformatf("%s/dram_out_%0d.bin", dir, SID), "wb");
-      for (int i = 0; i < WORDS; i++) $fwrite(fd, "%u", rdw(i));
+      for (int i = 0; i < NW; i++) $fwrite(fd, "%u", rdw(i));
       $fclose(fd);
     end else begin
-      for (int c = 0; c < 2; c++) begin
-        fd = $fopen($sformatf("%s/ch%0d_out.bin", dir, 2 * SID + c), "wb");
-        for (int j = 0; j < WORDS / 2; j++) $fwrite(fd, "%u", rdw(lbeat(j / 16, c) * 16 + j % 16));
+      for (int c = 0; c < NC; c++) begin
+        fd = $fopen($sformatf("%s/ch%0d_out.bin", dir, NC * SID + c), "wb");
+        for (int j = 0; j < WORDS / NC; j++) $fwrite(fd, "%u", rdw(bidx(BAW'(j / 16), c) + j % 16));
         $fclose(fd);
       end
     end

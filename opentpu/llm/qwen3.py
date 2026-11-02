@@ -44,6 +44,7 @@ from . import formats as FM
 from . import generate as G
 from . import rope_parameters
 from . import snapshot as SN
+from . import regions as RG
 from ..isasim import Config, Machine, design_config
 from ..kernels.attention import Additive, Bucket, _attend_heads
 from ..kernels.layouts import head_parallel_attention_weights
@@ -131,9 +132,10 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
               lookup: bool = False, embed_host: bool | None = None,
-              formats: str | None = None) -> "Image":
+              formats: str | None = None, high_base: int | None = None,
+              low_limit: int | None = None) -> "Image":
         return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, embed_host,
-                     formats)
+                     formats, high_base, low_limit)
 
 
 def finite(v: np.ndarray, name: str) -> np.ndarray:
@@ -548,6 +550,10 @@ class EmbedHost:
     server of the generate loop's requests (each sampled token's row into slot row 0). Data
     movement only, as Gemma 4 E4B's PLE records (docs/offload.md 5.9)."""
 
+    prog_at = None      # an image laid out over the DRAM's regions (DAW > 32) sets its own: the
+    spans = None        # program area's address in region 0 and the byte ranges it uses
+    #                     (opentpu/llm/regions.py; None: the area after the image, all of it)
+
     @property
     def embed_host(self) -> bool:
         return bool(getattr(self, "lookup", None) and self.lookup.get("host"))
@@ -873,6 +879,14 @@ class _Bump:
         return a
 
 
+def high_head(rg, n: int, k: int, fmt: str, D: int) -> tuple[int, int]:
+    """An [n, k] matrix's rows and scale rows (an LM head) in a high region (Regions.alloc),
+    the scale rows after the rows in the same region (one MM reads both)."""
+    nd = -(-n * Q.row_bytes(k, fmt, D) // ALIGN) * ALIGN
+    a = rg.alloc(nd + n * Q.scale_bytes(k, fmt, D))
+    return a, a + nd
+
+
 def _qdesc(daddr: int, saddr: int, n: int, k: int, D: int, fmt: str = "int8") -> QTensor:
     return QTensor.weight(daddr, saddr, n, k, fmt, D)
 
@@ -899,6 +913,14 @@ class Image(EmbedHost):
     A model with layers without RoPE (spec.nope) has a rope gate per layer block: (1, 0) or
     (0, 1), and each layer rotates with cos * g0 + g1 and sin * g0 (_rope_gate).
 
+    Above DAW 32 (opentpu/llm/regions.py): an image that does not fit region 0 with the program
+    area puts each run of its layer blocks (weights, KV caches) whole in a high region where it
+    fits (a run split at a unit only where it fits no region whole); the I/O area, the LM head
+    and the lookup tables stay in region 0, and `prog_at` is the program area's address there
+    (None: after the image), `spans` the ranges the image uses, `nbytes` its extent. high_base /
+    low_limit: the relocation switches (every layer block from high_base on, an untied head with
+    them; the blocks below low_limit in region 0).
+
     Weight formats (opentpu/quant.py): `wformat` for the layers' projections, `head_format`
     (default: the same) for the LM head: "int8", or 4-bit "int4" / "fp4". `formats` sets a
     kind's format over wformat per layer range (opentpu/llm/formats.py, KINDS; None:
@@ -908,7 +930,8 @@ class Image(EmbedHost):
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
-                 embed_host: bool | None = None, formats: str | None = None):
+                 embed_host: bool | None = None, formats: str | None = None,
+                 high_base: int | None = None, low_limit: int | None = None):
         spec.check(cfg)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
@@ -981,34 +1004,48 @@ class Image(EmbedHost):
             else:
                 self.runs.append((i, (key,), 1))
         self.loc = {}                   # layer -> (run base, unit stride, iteration, offset)
-        b.next = self.layer0
-        for first, unit, reps in self.runs:
-            offs = np.cumsum([0] + [self.bsize[k] for k in unit]).tolist()
-            us, base = offs[-1], b.next
-            for it in range(reps):
-                for e in range(len(unit)):
-                    self.loc[first + it * len(unit) + e] = (base, us, it, offs[e])
-            b.next = base + reps * us
         head = cap * d + cap * k_scale_bytes(d, D) + d * cap + 4 * cap   # k, k scales, v^T, v's
         self.kv_bytes = spec.layers * self.nkv_loc * head         # per sequence
-        self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
-                     b.alloc(self.v_loc * Q.scale_bytes(H, self.head_format, D)))
         # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
         shared = spec.tied and self.head_format == "int8" and S == 1
         if embed_host is None:      # dense: the int8 table stays on the card (the Engine moves
             embed_host = False      # it to the host when the image does not fit otherwise)
         if embed_host and not lookup:
             raise ValueError("embed_host needs the image's lookup tables (lookup=True)")
-        self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
-                                    M=cfg.MCOLS, embed_host=bool(embed_host),
-                                    rows=rows, imem=cfg.IMEM_WORDS,
-                                    waitc=cfg.SEQ_WC) if lookup else {}
+
+        def tail(t, head_at=None):
+            """The LM head's rows (at `head_at` when it lies in a high region) and the lookup
+            tables from bump t: (head, lookup)."""
+            hd = head_at or (t.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
+                             t.alloc(self.v_loc * Q.scale_bytes(H, self.head_format, D)))
+            return hd, (_lookup_alloc(t, spec, cap, D=D, head=hd if shared else None,
+                                      M=cfg.MCOLS, embed_host=bool(embed_host),
+                                      rows=rows, imem=cfg.IMEM_WORDS,
+                                      waitc=cfg.SEQ_WC) if lookup else {})
+        # above DAW 32 the layer runs go to the high regions when the image does not fit region
+        # 0 with the program area (regions.py; or where high_base / low_limit say); the I/O
+        # area, the head and the lookup tables stay in region 0. Else one image from 0
+        t = _Bump()
+        tail(t)                                     # (their bytes: wherever they go)
+        rg = RG.regions_for(cfg, self.layer0, self.runs, lambda k: self.bsize[k], t.next,
+                            high_base, low_limit)
+        self.runs, bases, b.next = RG.place_runs(self.runs, lambda k: self.bsize[k],
+                                                 self.layer0, rg)
+        for (first, unit, reps), base in zip(self.runs, bases):
+            offs = np.cumsum([0] + [self.bsize[k] for k in unit]).tolist()
+            us = offs[-1]
+            for it in range(reps):
+                for e in range(len(unit)):
+                    self.loc[first + it * len(unit) + e] = (base, us, it, offs[e])
+        hi_head = None              # (high_base: an untied head with the layers; a tied int8
+        if rg is not None and high_base is not None and not shared:     # head is the table's)
+            hi_head = high_head(rg, self.v_loc, H, self.head_format, D)
+        self.head, self.lookup = tail(b, hi_head)
         self.choices = {"embed_host": self.embed_host,          # (the compile worker's
                         "formats": self.formats}                # image)
-        self.nbytes = b.next
-        if self.nbytes > cfg.DRAM_BYTES:
-            raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
-                              f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
+        prog_at, self.nbytes, spans = RG.extent(cfg, rg, b.next)
+        if prog_at is not None:     # (laid out over regions: the program area in region 0)
+            self.prog_at, self.spans = prog_at, spans
 
     # ---- contents
     def build(self, W: dict) -> list[np.ndarray]:
@@ -1865,12 +1902,16 @@ def _lm_head_rows(x, m, spec, logit_rows):
 # =============================================================================== engine
 def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
                   head_format: str | None = None, lookup: bool = False,
-                  experts: int | None = None, embed_host: bool | None = None, **kw) -> Config:
-    """The design configuration with DRAM sized for this model (power of two MiB)."""
+                  experts: int | None = None, embed_host: bool | None = None,
+                  high_base: int | None = None, low_limit: int | None = None, **kw) -> Config:
+    """The design configuration with DRAM sized for this model (power of two MiB). high_base /
+    low_limit (the relocation switches, opentpu/llm/regions.py) need a DAW above 32 (kw DAW;
+    the DRAM then reaches the image's extent)."""
+    hi = {k: v for k, v in (("high_base", high_base), ("low_limit", low_limit)) if v is not None}
     probe = spec.image(design_config(DRAM_BYTES=1 << 40, **kw), cap, batch, rows, wformat,
                        head_format, **({"lookup": True} if lookup and has_lookup(spec) else {}),
                        **({"experts": experts} if experts is not None else {}),
-                       **({"embed_host": embed_host} if embed_host is not None else {}))
+                       **({"embed_host": embed_host} if embed_host is not None else {}), **hi)
     size = 1 << max(20, (probe.nbytes - 1).bit_length())
     return design_config(DRAM_BYTES=size, **kw)
 
@@ -1878,11 +1919,23 @@ def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: 
 class IsaBackend:
     """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache).
     adopt: the images (arrays of their own) become the machine's DRAM, grown to DRAM_BYTES in
-    place instead of copied, so a 4 GiB image is held once; the caller gives them up."""
+    place instead of copied, so a 4 GiB image is held once; the caller gives them up. Images
+    laid out over the DRAM's regions (regions.ImageArrays, DAW > 32) go into a DRAM of
+    np.zeros, their spans copied (the gaps between them are never touched: lazy pages)."""
 
     def __init__(self, cfg: Config, images: list, adopt: bool = False):
         own = adopt and all(isinstance(m, np.ndarray) and m.dtype == np.uint8 and m.ndim == 1
                             and m.flags.owndata and len(m) <= cfg.DRAM_BYTES for m in images)
+        spans = getattr(images, "spans", None)
+        if spans is not None:
+            drams = []
+            for m in images:
+                d = np.zeros(cfg.DRAM_BYTES, np.uint8)
+                for a, b in spans:
+                    d[a:min(b, len(m))] = m[a:min(b, len(m))]
+                drams.append(d)
+            self.machine = Machine(cfg, [[] for _ in range(cfg.S)], drams, adopt=True)
+            return
         self.machine = Machine(cfg, [[] for _ in range(cfg.S)],
                                [None] * cfg.S if own else images)
         if own:
@@ -2228,7 +2281,8 @@ class Engine:
                  pool_map: bool = True, prog_cache: bool | None = None,
                  prompt_runs: bool = False, layer_ahead=None, expert_major: bool = False,
                  snapshots: int = 0, batch_area: bool = False, tile_runs: bool | None = None,
-                 tile_rows: int | None = None):
+                 tile_rows: int | None = None, high_base: int | None = None,
+                 low_limit: int | None = None):
         from . import prefill as PF
         self.spec, self.cap, self.block = spec, cap, block
         self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
@@ -2241,6 +2295,10 @@ class Engine:
             wkw["experts"] = experts
         if embed_host is not None:          # the int8 embedding table on the host (default: the
             wkw["embed_host"] = embed_host  # image's choice, a MoE's untied table there)
+        if high_base is not None:           # above DAW 32: the layer blocks from high_base on
+            wkw["high_base"] = high_base    # (the relocation switches, regions.py)
+        if low_limit is not None:
+            wkw["low_limit"] = low_limit
         # an int8 embedding is dequantized on the device (the image's tables), never the host
         int8_embed = getattr(spec, "embed", "f32") == "int8"
         # (batch > 1: the tables serve every sequence; sequence 0 keeps the resident decode,
@@ -2286,6 +2344,10 @@ class Engine:
                                                getattr(W, "mtp_from", None)),
                                   extra=(getattr(self.image, "pool_extra", None) or (0,))[0])
         images = IC.build(self.image, W, self.layout)     # (opentpu/imgcache.py)
+        # an image laid out over the DRAM's regions (DAW > 32, regions.py): the areas after it
+        # (snapshots, batch area) and the program area are in region 0, from its prog_at on
+        high = getattr(self.image, "prog_at", None) is not None
+        tail = RG.tail_at(self.image)
         # rollback's snapshots of the state the KV caches do not hold (snapshot.py)
         self.stateful = SN.stateful(self.image)
         self._snaps = None
@@ -2294,6 +2356,7 @@ class Engine:
                                        SN.Snapshots.area(self.image, self.cfg, snapshots))
             if self._snaps.base is not None:
                 images = SN.grow(images, self._snaps.end())
+                tail = -(-self._snaps.end() // 4096) * 4096
         self.snap_stats: list = []          # the snapshots' and restores' copies (stats)
         # batched decode steps over the sequences' KV slots (opentpu/llm/batch.py): their area
         # past the image (and the snapshots)
@@ -2303,12 +2366,18 @@ class Engine:
                 raise ValueError("batch_area needs batch > 1 and the lookup tables "
                                  "(resident=True)")
             from . import batch as BA
-            self.bat = BA.alloc(self.image, self.cfg, batch, -(-len(images[0]) // 4096) * 4096)
+            self.bat = BA.alloc(self.image, self.cfg, batch,
+                                tail if high else -(-len(images[0]) // 4096) * 4096)
             if self.bat["end"] + WC.area(self.cfg.IMEM_WORDS, self.cfg.SEQ_WC) > \
-                    self.cfg.DRAM_BYTES:
+                    RG.dram_low(self.cfg):
                 raise MemoryError("no room in the DRAM for the batch area")
             images = SN.grow(images, self.bat["end"])
             BA.build(images, self.bat, spec, self.cfg)
+            tail = self.bat["end"]
+        if high:                            # the board backend's program area, and what to write
+            spans = list(self.image.spans)
+            spans[0] = (0, max(spans[0][1], tail))
+            images = RG.ImageArrays(images, -(-tail // 4096) * 4096, spans)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
         self.resident = bool(resident) and lookup and bool(getattr(self.backend, "args", False))

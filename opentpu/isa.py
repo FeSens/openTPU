@@ -63,6 +63,33 @@ def f32bits(x: float) -> int:
     return int(np.asarray(x, dtype=np.float32).view(np.uint32))
 
 
+# DRAM address width (isasim.Config.DAW, 32..36; docs/wide_dram_hbm.md): a slice's DRAM byte
+# address is DAW bits, {REG, (R[x] + imm) mod 2^32}. REG is the instruction's 4 GiB region
+# (DAW - 32 bits) in spare bits of w0, and every DRAM operand of the instruction lies in it:
+#   LD, ST, DSTEP, WAITW, MM, QST   rd[3:0]       (MM: the weight rows and the DRAM scale rows;
+#                                                  QST: the data and the scale rows)
+#   STREAM                          flags[7:4]    (its DRAM source and destination)
+# Registers, immediates, strides and lengths stay 32 bits (sums wrap mod 2^32), and one
+# instruction's DRAM ranges never cross a 4 GiB boundary: the engines' address counters wrap
+# inside the region (the ISA simulator raises SimError). REG is 0 in every program of a DAW 32
+# target (the simulator refuses a region past 2^(DAW-32)); HALT CHAIN and the program loads are
+# in region 0. At DAW 33, openTPU_FK's DRAM33 encoding (a bit per field) with both bits equal.
+MAX_DAW = 36
+REG_RD = (LD, ST, DSTEP, WAITW, MM, QST)          # REG in rd
+REG_FLAGS = 4                                     # STREAM: REG in flags[7:4]
+
+
+def region_lo(addr: int) -> tuple[int, int]:
+    """A DRAM byte address (up to MAX_DAW bits) as (REG, the 32-bit immediate)."""
+    _check(0 <= int(addr) < 1 << MAX_DAW, f"DRAM address {int(addr):#x} over {MAX_DAW} bits")
+    return int(addr) >> 32, int(addr) & 0xFFFFFFFF
+
+
+def _reg(what: str, r) -> int:
+    _check(r in range(1 << (MAX_DAW - 32)), f"{what}: region {r!r} (0..{(1 << (MAX_DAW - 32)) - 1})")
+    return int(r)
+
+
 @dataclass
 class Instr:
     op: int
@@ -90,11 +117,29 @@ class Instr:
                      rd=(w0 >> 20) & 15, flags=(w0 >> 24) & 0xFF,
                      w=[int(x) for x in words[1:8]])
 
+    def region(self) -> int:
+        """The instruction's 4 GiB DRAM region (REG: rd for REG_RD, flags[7:4] for STREAM)."""
+        if self.op in REG_RD:
+            return self.rd
+        if self.op == STREAM:
+            return self.flags >> REG_FLAGS
+        return 0
+
+    def rd_flags(self) -> tuple[int, int]:
+        """(rd, flags) without REG (it is not a register or a flag field)."""
+        if self.op in REG_RD:
+            return 0, self.flags
+        if self.op == STREAM:
+            return self.rd, self.flags & ((1 << REG_FLAGS) - 1)
+        return self.rd, self.flags
+
     def __str__(self) -> str:
         name = OPNAMES.get(self.op, f"op{self.op:#x}")
-        regs = f"ra=R{self.ra} rb=R{self.rb} rc=R{self.rc} rd=R{self.rd}"
+        (rd, fl), r = self.rd_flags(), self.region()
+        regs = f"ra=R{self.ra} rb=R{self.rb} rc=R{self.rc} rd=R{rd}"
         c = f"  ; {self.comment}" if self.comment else ""
-        return f"{name:6s} {regs} fl={self.flags:#x} w={[hex(x) for x in self.w]}{c}"
+        g = f" reg={r}" if r else ""
+        return f"{name:6s} {regs} fl={fl:#x}{g} w={[hex(x) for x in self.w]}{c}"
 
 
 def _check(ok: bool, what: str) -> None:
@@ -152,14 +197,14 @@ def rld(rd, tmem, ra=0, raw=False, mul=None, rb=0, bound=None, comment=""):
 
 
 def waitw(dram, tmem, ref, cmp, ra=0, rb=0, rc=0, mask=0xFFFFFFFF, interval=0, timeout=0,
-          comment=""):
+          comment="", *, reg=0):
     """WAITW (DMA): wait until cmp(M32[R[ra] + dram] & mask, R[rc] + ref) holds, polling DRAM
     every `interval` cycles (the first read at once; timeout cycles, 0: none), then
     T[R[rb] + tmem] = the word's bits (an RLD raw takes it into a register); docs/isa.md
-    "WAITW"."""
+    "WAITW". reg: the word's 4 GiB region (DAW > 32)."""
     if cmp not in (C_EQ, C_NE, C_GE):
         raise ValueError(f"WAITW compare {cmp}")
-    return Instr(WAITW, ra=ra, rb=rb, rc=rc, flags=cmp,
+    return Instr(WAITW, ra=ra, rb=rb, rc=rc, rd=_reg("WAITW", reg), flags=cmp,
                  w=_w(dram, tmem, ref, mask, interval, timeout), comment=comment)
 
 
@@ -187,12 +232,13 @@ def f2i(bits: int) -> int:
     return u32(-v if bits >> 31 else v)
 
 
-def ld(dram, tmem, nwords, ra=0, rb=0, comment=""):
-    return Instr(LD, ra=ra, rb=rb, w=_w(dram, tmem, nwords), comment=comment)
+def ld(dram, tmem, nwords, ra=0, rb=0, comment="", *, reg=0):
+    """LD: T[R[rb] + tmem ...] = the words at DRAM byte address {reg, (R[ra] + dram) mod 2^32}."""
+    return Instr(LD, ra=ra, rb=rb, rd=_reg("LD", reg), w=_w(dram, tmem, nwords), comment=comment)
 
 
-def st(dram, tmem, nwords, ra=0, rb=0, comment=""):
-    return Instr(ST, ra=ra, rb=rb, w=_w(dram, tmem, nwords), comment=comment)
+def st(dram, tmem, nwords, ra=0, rb=0, comment="", *, reg=0):
+    return Instr(ST, ra=ra, rb=rb, rd=_reg("ST", reg), w=_w(dram, tmem, nwords), comment=comment)
 
 
 DSTEP_LANES = 8                      # DSTEP: state words per cycle (timing only)
@@ -200,15 +246,16 @@ DSTEP_MAX_ROWS = 256                 # DSTEP: o is held in a 256-word buffer
 F_DZERO = 0x1                        # DSTEP: the state starts at +0 (DRAM is not read)
 
 
-def dstep(dram, qk, v, rows, cols, g, gs, o, zero=False, ra=0, rb=0, rc=0, comment=""):
+def dstep(dram, qk, v, rows, cols, g, gs, o, zero=False, ra=0, rb=0, rc=0, comment="", *,
+          reg=0):
     """DSTEP (DMA): one Gated DeltaNet head step on an fp32 state St [rows, cols] (row-major)
-    in DRAM at byte address R[ra] + dram, updated in place. q = T[qk + c], k = T[qk + cols + c]
+    in DRAM at byte address {reg, R[ra] + dram}, updated in place. q = T[qk + c], k = T[qk + cols + c]
     (qk: R[rb] + w2), v(r) = T[v + r] (R[rc] + w3), the decay e = T[g], beta = T[g + gs], and
     o(r) = T[o + r] is written. Row by row: kv = rdot(St[r], k), d = (v(r) - kv * e) * beta,
     St[r] = St[r] * e + d * k, o(r) = rdot(St[r], q) -- the rounding of RDOT, MUL, SUB, MUL,
     OUTER, RDOT (docs/isa.md). `zero`: the state starts at +0 and is not read (position 0)."""
     _check(0 < rows < 65536 and 0 < cols < 65536, f"DSTEP: rows {rows}, cols {cols}")
-    return Instr(DSTEP, ra=ra, rb=rb, rc=rc, flags=F_DZERO if zero else 0,
+    return Instr(DSTEP, ra=ra, rb=rb, rc=rc, rd=_reg("DSTEP", reg), flags=F_DZERO if zero else 0,
                  w=_w(dram, qk, v, rows | (cols << 16), g, o, gs), comment=comment)
 
 
@@ -325,15 +372,19 @@ class StreamDesc:
 
 
 def stream(desc, src, dst, vec, x, k, out, ks=1, zero=False, src_t=False, dst_t=False,
-           nodst=False, ra=0, rb=0, rc=0, rd=0, comment=""):
+           nodst=False, ra=0, rb=0, rc=0, rd=0, comment="", *, reg=0):
     """STREAM (docs/stream.md): the descriptor at TMEM `desc` over the rows of the stream at
     src + R[ra] (DRAM bytes, or TMEM words with src_t), Y written to dst + R[ra]; column slots
     at vec + R[rb] (slot i at + i * cols), row scalars X[r] = T[x + R[rc] + r], constants
     K_j = T[k + R[rd] + j * ks], row outputs O[r] = T[out + r]. desc and ks share w1 (desc in
-    [15:0], ks in [31:16]) so the scoreboard knows the constants' range."""
+    [15:0], ks in [31:16]) so the scoreboard knows the constants' range. reg: the 4 GiB region
+    (flags[7:4]) of its DRAM source and destination."""
     _check(0 <= desc < 1 << 16 and 0 <= ks < 1 << 16, f"STREAM: desc {desc}, ks {ks} (16 bits)")
+    r = _reg("STREAM", reg)
+    _check(not r or not ((src_t or zero) and (dst_t or nodst)),
+           "STREAM: a region with no DRAM stream (SRC_T / SZERO and DST_T / NODST)")
     fl = (F_SZERO if zero else 0) | (F_SRC_T if src_t else 0) | (F_DST_T if dst_t else 0) | \
-        (F_NODST if nodst else 0)
+        (F_NODST if nodst else 0) | r << REG_FLAGS
     return Instr(STREAM, ra=ra, rb=rb, rc=rc, rd=rd, flags=fl,
                  w=_w(desc | ks << 16, src, dst, vec, x, k, out), comment=comment)
 
@@ -388,19 +439,21 @@ def stream_hw_cfg(d: StreamDesc, flags: int = 0) -> dict | None:
 
 
 def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=False,
-       ascale=None, wf=W8, pair=False, k0=0, rsc=False, ra=0, rb=0, rc=0, comment=""):
+       ascale=None, wf=W8, pair=False, k0=0, rsc=False, ra=0, rb=0, rc=0, comment="", *,
+       reg=0):
     """MM (docs/isa.md). With `ascale` (a TMEM address; needs unit and acc) the old accumulator
     is first multiplied by a per-row factor: y = T[out] * T[ascale + j] + a.w (the
     flash-attention rescale, done in the MXU epilogue). The address travels in the (unused)
     scale field. `wf`: the streamed weights' format (W8, W4I, W4F, WNV). `pair` (4-bit only):
     column reuse, ACT row j + m carries the odd K-blocks of row j ("Column reuse"). `k0`: the
     MM's first block within the scale rows at `ssa` (each row starts with its Sw). `rsc`: the
-    scale rows are Sw alone (one word a row: the K cache)."""
+    scale rows are Sw alone (one word a row: the K cache). reg: the 4 GiB region of the weight
+    rows and of the DRAM scale rows (rd)."""
     _check(0 < n < 65536 and 0 < kb < 256 and 0 < m < 256 and 0 <= ab < 256
            and 0 <= ors < 65536 and 0 <= k0 < 256,
            f"MM: n {n}, kb {kb}, m {m}, ab {ab}, ors {ors}, k0 {k0}")
     _check(wf in (W8, W4I, W4F, WNV), f"MM: weight format {wf}")
-    _check(not pair or wf != W8, "MM: PAIR needs 4-bit weights")
+    # (int8 PAIR: a DUAL configuration's; the ISA simulator and the MXU check it)
     _check(not pair or k0 % 2 == 0, "MM: PAIR needs an even k0")
     _check(not rsc or wf != WNV, "MM: RSC does not take NVFP4")
     if ascale is not None:
@@ -409,7 +462,7 @@ def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=Fal
     fl = (F_UNIT if unit else 0) | (F_ACC if acc else 0) | (F_RMAX if rmax else 0) | \
         (F_ASCALE if ascale is not None else 0) | (F_PAIR if pair else 0) | \
         (F_RSC if rsc else 0) | (wf << WF_SHIFT)
-    return Instr(MM, ra=ra, rb=rb, rc=rc, flags=fl,
+    return Instr(MM, ra=ra, rb=rb, rc=rc, rd=_reg("MM", reg), flags=fl,
                  w=_w(sa, ssa, out, n | (kb << 16) | (k0 << 24), rs,
                       ors | (m << 16) | (ab << 24), srs),
                  comment=comment)
@@ -430,10 +483,12 @@ def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False,
 
 
 def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=0, rc=0,
-        comment=""):
+        comment="", *, reg=0):
+    """QST (docs/isa.md). reg: the 4 GiB region of the data and of the scale rows (rd)."""
     _check(0 < rows < 65536 and 0 < kb < 65536, f"QST: rows {rows}, kb {kb}")
     _check(row or not half, "QST: HALF needs ROW mode")
-    return Instr(QST, ra=ra, rb=rb, rc=rc, flags=(F_ROW if row else 0) | (F_HALF if half else 0),
+    return Instr(QST, ra=ra, rb=rb, rc=rc, rd=_reg("QST", reg),
+                 flags=(F_ROW if row else 0) | (F_HALF if half else 0),
                  w=_w(src, dst, sdst, rows | (kb << 16), srs, drs, es), comment=comment)
 
 

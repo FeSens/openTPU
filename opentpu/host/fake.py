@@ -29,7 +29,10 @@ by hand: sticky on the card). Its identity (VERSION: D,
 MCOLS, LANES) is by default the configuration the environment asks for (board_config:
 OTPU_MCOLS, OTPU_LANES), as a card built for it would report; so are its ACT RAM rows
 (`act_rows`, the target's: 16 on the card; MCOLS when MCOLS is given): above MCOLS, CAPS bit24
-announces the ACT_ROWS register and the CFG_HASH is that Config's.
+announces the ACT_ROWS register and the CFG_HASH is that Config's. The channels follow `cfg`
+(CFG_DRAM: two a slice, or four with DUAL, interleaved by board.slice_beat_at); a wide target's
+(DAW > 32: CFG_DRAM's DRAM_LOG2 over 32, its hash with DAW) channels may be several GiB each:
+the buffers are np.zeros (lazy: only what is written is resident) and offsets are Python ints.
 """
 from __future__ import annotations
 
@@ -39,7 +42,7 @@ import numpy as np
 
 from . import regs as R
 from .board import XdmaTransport as _Xdma   # (its poll; bound here: tests patch board's name)
-from .board import beat_at
+from .board import slice_beat_at
 
 RATES = {"RUNNING": 0.80, "MXU_BUSY": 0.60, "MXU_MAC": 0.50, "VPU_BUSY": 0.12,
          "QNT_BUSY": 0.05, "DMA_BUSY": 0.03, "TMEM_DENY": 0.01, "DRAM_RD": 0.70,
@@ -100,8 +103,11 @@ class FakeTransport:
         self.cfg_words = R.cfg_words(cfg or _target_cfg(D, MCOLS, LANES, pair, dstep, stream,
                                                         act_rows, seq_wc))
         self.slices = R.cfg(self.cfg_words)["S"] if regmap >= R.CFG_SINCE else 1
-        if self.slices > 1:             # two channels per slice (board.channel_map)
-            self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(2 * self.slices)]
+        # two channels per slice, or four (DUAL: CFG_DRAM channels; board.channel_map)
+        self.ncps = R.cfg(self.cfg_words)["channels"] if regmap >= R.CFG_SINCE else 2
+        self.ncps = 4 if self.ncps == 4 else 2
+        if self.slices > 1 or self.ncps != 2:
+            self.ch = [np.zeros(ch_bytes, np.uint8) for _ in range(self.ncps * self.slices)]
         self.i2c = i2c
         self.ddr_mts = ddr_mts          # None: a bitstream without the DDR_MTS register
         self.w4 = w4                    # CAPS bit4: the MXU runs 4-bit weights
@@ -145,13 +151,13 @@ class FakeTransport:
     logits_lag = 0.0            # the last piece lands this long after HALTED (a store in flight)
 
     def _put(self, addr: int, b: np.ndarray) -> None:
-        """Logical bytes at any address into the two channels (64-byte beats alternate; CHASH:
-        board.beat_at's map)."""
+        """Logical bytes at any address into slice 0's channels (64-byte beats alternate; CHASH:
+        board.beat_at's map; DUAL: board.slice_beat_at's)."""
         i = 0
         while i < len(b):
             x = addr + i
             k = min(len(b) - i, 64 - x % 64)
-            c, off = beat_at(x, self.chash)
+            c, off = slice_beat_at(x, self.chash, self.ncps == 4)
             self.ch[c][off:off + k] = b[i:i + k]
             i += k
 
