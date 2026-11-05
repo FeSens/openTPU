@@ -123,8 +123,11 @@ class Spec:
                 (self.n_q % self.n_kv == 0, "n_q % n_kv"),
                 (self.n_q // self.n_kv <= cfg.MCOLS, "query group larger than MXU columns"),
                 (self.vocab % S == 0, f"vocab {self.vocab} % S"),
-                (max(self.ffn, self.n_q * self.head_dim, self.hidden) <= cfg.ACT_BLOCKS * D,
-                 "an inner dimension exceeds ACT RAM")]
+                # the MLP's stationaries are a slice's F at most (W_down's operand is one
+                # all-gathered chunk of each slice; tiled prefill keeps the slice's chunks): the
+                # compiler refuses one that does not fit (Falcon3-7B / 10B: F 23040 on two slices)
+                (max(self.ffn // S, self.n_q * self.head_dim, self.hidden) <=
+                 cfg.ACT_BLOCKS * D, "an inner dimension exceeds ACT RAM")]
         bad = [m for ok, m in need if not ok]
         if bad:
             raise ValueError("model does not map onto this openTPU config: " + "; ".join(bad))
@@ -149,6 +152,22 @@ def finite(v: np.ndarray, name: str) -> np.ndarray:
     at = tuple(int(i) for i in np.unravel_index(int(np.argmax(bad)), v.shape))
     raise ValueError(f"{name}: {int(bad.sum())} of its {v.size} values are not finite (NaN or "
                      f"inf; the first at {at}): the checkpoint is corrupt or was converted wrong")
+
+
+def ternary(h, k: str, t):
+    """Tensor `t` (name `k` in safetensors file `h`), or, for a Hugging Face BitNet weight
+    (quantization_config quant_method "bitnet": Falcon3's 1.58-bit checkpoints; uint8 with a
+    `weight_scale` beside it), the matrix it stands for: packed row r's bits 2i..2i+1 are the
+    code of row i R + r (R packed rows), the element code - 1 in {-1, 0, 1} over the weight
+    scale (transformers' unpack_weights; BitLinear divides its output by the scale). A row of
+    it has one magnitude, so the MXU's 4-bit formats hold it to fp32 rounding."""
+    if t.dtype.is_floating_point or not k.endswith(".weight") or \
+            k + "_scale" not in h.keys():
+        return t
+    import torch
+    t = t.to(torch.uint8)
+    codes = torch.cat([(t >> (2 * i)) & 3 for i in range(4)])
+    return (codes.to(torch.float32) - 1) / h.get_tensor(k + "_scale").to(torch.float32)
 
 
 # a multimodal checkpoint's vision tower and projector: Qwen3.5's model.visual, MiniCPM-V's
@@ -214,7 +233,7 @@ class Weights(Mapping):
         import torch
         h, k, rows = self._where[name]
         t = h.get_tensor(k) if rows is None else h.get_slice(k)[rows[0]:rows[1]]
-        v = finite(t.to(torch.float32).numpy(), name)
+        v = finite(ternary(h, k, t).to(torch.float32).numpy(), name)
         if v.nbytes <= self.CACHE:
             self._small[name] = v
         else:
@@ -286,7 +305,7 @@ class LazyWeights(dict):
     def __getitem__(self, k):
         import torch
         h, name = self._open(k)
-        return finite(h.get_tensor(name).to(torch.float32).numpy(), k)
+        return finite(ternary(h, name, h.get_tensor(name)).to(torch.float32).numpy(), k)
 
     def part(self, k, i):
         """Tensor k's i-th entry along its first axis (one expert of a fused expert tensor),
