@@ -103,7 +103,7 @@ j x 2 GiB (16 GiB of windows, 8 GiB of HBM).
 Implementation: the FK33's directives, placement spreading the logic (AltSpreadLogic_high) and physical optimization
 and routing with AggressiveExplore. TMEM_URAM defaults to 1 here.
 
-## Power (to measure)
+## Power
 
 The card cannot report its own power: the bitstream has no I2C/PMBus master to the board's regulators (HAS_I2C=0),
 and the SYSMON at 0x30000 gives temperature and supply voltages, no current. So far there is only Vivado's
@@ -117,11 +117,15 @@ on-chip only: 38.8 W, of it HBM 17.8, block RAM 4.2, signals 3.6, clocks 3.4, CL
 | mix | 21.96 | ~1.77 | ~0.49 |
 | int8 | 14.29 | ~2.72 | ~0.75 |
 
-Unverified, and without the board's regulator losses, fans and the rest of the card (perhaps 10-30% more at the
-wall). To measure it: a wall-socket meter on the PC, read idle (card loaded, no decode) and during a decode of a few
-minutes at a steady rate (perf.py with a long generation, 9B 4-bit), the difference over the decode's tok/s being
-J/token of the card plus the host's share; a PCIe power-measurement riser (12 V and 3.3 V of the slot, and the card's
-auxiliary 12 V if fitted) measures the card alone. Report both idle and decode watts, and the build ID.
+Unverified, and without the board's regulator losses, fans and the rest of the card.
+
+Measured at the wall (2026-11-05, f35d000b, a socket meter on the whole PC): 130 W with the card configured and idle,
+130 W with Qwen3.5-9B 4-bit loaded and idle, **153 W during its decode with the loop on the card**
+(`Engine.generate_card`: 22.9 tok/s, the host at 6% of one core), so the decode costs the card **about 23 W over
+idle, about 1.0 J/token (0.28 kWh per million tokens)**. A decode loop on the host (perf.py's `step` loop) does not
+measure the card: it can hold a host core at 100%, which on that PC alone is +60 W at the wall. The card's idle power
+is inside the 130 W (it needs a reading without the card, or a PCIe power riser). The 9B int8 decode loop on the card
+stopped after its first token there (run_generate's 600 s timeout; the 4-bit loop and the 0.8B's int8 loop ran).
 
 ## Build and load
 
