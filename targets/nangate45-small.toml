@@ -19,6 +19,7 @@ DRAM_BYTES = 268435456
 LANES = 4
 PAIR = false
 DUAL = false                    # port B chunk pairs (int8 MM PAIR, otpu_native_dram2)
+QUAD = false                    # (DUAL) 4-bit MM PAIR four blocks (two chunks) an advance
 DAW = 32                        # DRAM address width per slice, 32..36 (docs/wide_dram_hbm.md)
 DSTEP = false
 STREAM = false

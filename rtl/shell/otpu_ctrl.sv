@@ -69,7 +69,8 @@
 //   0x90 CFG_DRAM     RO  [7:0] log2 DRAM bytes per slice, [15:8] memory channels per slice,
 //                         [23:16] log2 bytes a slice addresses per channel
 //   0x94 CFG_UARCH    RO  [3:0] MXU_IMPL, [7:4] TMEM_IMPL, [15:8] VPU_CL, [23:16] ULANES,
-//                         [24] SEQ_WC (otpu_seq's wait entries: every program needs them, docs/isa.md)
+//                         [24] SEQ_WC (otpu_seq's wait entries: every program needs them, docs/isa.md),
+//                         [25] QUAD (a 4-bit MM PAIR of MCOLS/4 rows four blocks an advance, otpu_mxu)
 //   0x98 CFG_PLATFORM RO  the target's platform id (1 YPCB-00338, 2 BCU1525; 256 and up ASICs)
 //   0x9C CFG_HASH     RO  opentpu.target.arch_hash of the target's Config at build time
 //   0xA0 + 4s         (reserved: slice s's DRAM window, docs/targets.md)
@@ -123,6 +124,7 @@ module otpu_ctrl #(
   parameter int VPU_CL     = 2,
   parameter int ULANES     = 8,
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
+  parameter bit QUAD       = 1'b0,    // the MXU's QUAD (CFG_UARCH bit25: in the Config, so in CFG_HASH)
   parameter int PLATFORM   = 0,
   parameter logic [31:0] ARCH_HASH = 32'h0,
   // the free-running counters' increment widths (2 and 2 for the YPCB's one slice on two
@@ -376,7 +378,7 @@ module otpu_ctrl #(
         4'h2: r_g[1] <= 32'(IMEM_WORDS);
         4'h3: r_g[1] <= 32'(ACT_BLOCKS);
         4'h4: r_g[1] <= {8'd0, 8'(CH_LOG2), 8'(NCH), 8'(DRAM_LOG2)};
-        4'h5: r_g[1] <= {7'd0, SEQ_WC, 8'(ULANES), 8'(VPU_CL), 4'(TMEM_IMPL), 4'(MXU_IMPL)};
+        4'h5: r_g[1] <= {6'd0, QUAD, SEQ_WC, 8'(ULANES), 8'(VPU_CL), 4'(TMEM_IMPL), 4'(MXU_IMPL)};
         4'h6: r_g[1] <= 32'(PLATFORM);
         4'h7: r_g[1] <= ARCH_HASH;
         default: r_g[1] <= 32'hDEAD_BEEF;

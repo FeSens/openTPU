@@ -23,7 +23,7 @@ the wires, this is a good place to start.
 
 The design runs ten modern models with their real weights on an Inspur YPCB-00338 card
 (Xilinx Kintex-7 xc7k480t, two DDR3 channels), and the card produces the same tokens as the
-simulator, bit for bit. The last three rows are the SQRL FK33 (HBM, 250 MHz).
+simulator, bit for bit. The last thirteen rows are the SQRL FK33 and FK35 (HBM, 250 MHz).
 
 | Model | Weights | Decode, device | Decode, wall | Prefill, device | DRAM while decoding |
 |:--|:--|--:|--:|--:|--:|
@@ -48,6 +48,16 @@ simulator, bit for bit. The last three rows are the SQRL FK33 (HBM, 250 MHz).
 | Qwen3.5-0.8B, SQRL FK33 | int8 | 68.71 tok/s | 63.76 tok/s | 146.0 tok/s | 56.1 GB/s (88%) |
 | Qwen3.5-2B, SQRL FK33 | int8 | 30.98 tok/s | 30.40 tok/s | 78.9 tok/s | 60.5 GB/s (95%) |
 | Qwen3.5-4B, SQRL FK33 | mix (4-bit DeltaNet and MLP layers) | 14.05 tok/s | 13.71 tok/s | 30.9 tok/s | 40.8 GB/s (64%) |
+| Qwen3.5-0.8B, SQRL FK35 | int8 | 117.51 tok/s | 103.15 tok/s | 241.9 tok/s | 96.2 GB/s (75%) |
+| Qwen3.5-0.8B, SQRL FK35 | 4-bit, int8 head | 164.18 tok/s | 137.22 tok/s | 241.7 tok/s | 75.9 GB/s (59%) |
+| Qwen3.5-2B, SQRL FK35 | int8 | 54.03 tok/s | 46.47 tok/s | 120.7 tok/s | 105.6 GB/s (82%) |
+| Qwen3.5-2B, SQRL FK35 | 4-bit, int8 head | 86.02 tok/s | 71.83 tok/s | 125.5 tok/s | 92.4 GB/s (72%) |
+| Qwen3.5-4B, SQRL FK35 | int8 | 25.29 tok/s | 22.44 tok/s | 50.6 tok/s | 111.0 GB/s (87%) |
+| Qwen3.5-4B, SQRL FK35 | mix (4-bit DeltaNet and MLP layers) | 35.90 tok/s | 31.42 tok/s | 51.3 tok/s | 104.9 GB/s (82%) |
+| Qwen3.5-4B, SQRL FK35 | 4-bit, int8 head | 43.08 tok/s | 37.65 tok/s | 51.4 tok/s | 103.2 GB/s (81%) |
+| Qwen3.5-9B, SQRL FK35 | int8 | 14.29 tok/s | 13.92 tok/s | 24.1 tok/s | 116.5 GB/s (91%) |
+| Qwen3.5-9B, SQRL FK35 | mix (4-bit attention, DeltaNet and MLP layers) | 21.96 tok/s | 20.19 tok/s | 28.0 tok/s | 108.3 GB/s (85%) |
+| Qwen3.5-9B, SQRL FK35 | 4-bit, int8 head | 24.48 tok/s | 22.28 tok/s | 28.9 tok/s | 107.3 GB/s (84%) |
 
 *Measured on the card: the first three models on 2026-09-29 with the production image
 `deploy_champ_e698dcd7`. LFM2-2.6B, SmolLM3-3B and Phi-4-mini on 2026-09-30, and Qwen3.5-2B and
@@ -89,6 +99,21 @@ at 91-94% of the DRAM peak instead of 82-87%. Qwen3.5-4B's int8 image is over 4 
   itself has far more); decode stays at 1-2% MXU starvation and 0% DRAM wait. The self-test's
   model stage passes on Qwen3.5-0.8B (on the two-channel build on all three); the per-position
   simulator comparison has not been run there.*
+- *The SQRL FK35 rows: two slices (S = 2) on a Virtex UltraScale+ HBM card (xcvu35p, HBM2-1800,
+  all 8 GB: 4 GiB a slice), each slice on four channels of 1 GiB (DUAL, as the FK33's) at
+  250 MHz, all 32 of the HBM's AXI ports, the slices' memory adapters in the HBM's SLR behind a
+  crossing of the slices' ports (MEMX, [docs/sqrl-fk35.md](docs/sqrl-fk35.md)), and QUAD: a
+  4-bit matrix-vector product takes four blocks (two 128-byte chunks) an advance, as int8 two;
+  build `f35d000b` from flash. Measured on 2026-11-04 with `tools/qual/perf.py` as above, same
+  host. The percentage is of the two slices' ports, 2 x 256 B a cycle (128 GB/s). Both int8 and
+  4-bit now stream 256 bytes a cycle a slice, so 4-bit decodes 1.4-1.7x faster than int8 and the
+  FK35 takes the MIXES of [docs/formats.md](docs/formats.md) again. Without QUAD (build
+  `f35d0004`, 2026-11-02) 4-bit decoded about as fast as int8: 118.65, 56.76, 25.89 and 14.66
+  tok/s (0.8B, 2B, 4B, 9B 4-bit), the 4B mix 25.79. Before DUAL (build `f35e0001`, two 2 GiB
+  channels a slice, 2026-11-01) the card decoded 73.92, 31.12, 13.99 tok/s (0.8B, 2B, 4B int8),
+  20.29 (4B mix), 24.36 (4B 4-bit) and 13.34 (9B 4-bit). The self-test passes on Qwen3.5-0.8B;
+  the 9B 4-bit chat gives coherent greedy text; the per-position simulator comparison has not
+  been run there.*
 
 With the logits streamed back while the card runs (`tools/decode_profile.py`, 96 tokens), 4-bit
 decode is faster, in device / wall tok/s:

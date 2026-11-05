@@ -68,6 +68,9 @@ module otpu_hbm_port #(
   parameter int  WD = 32,                 // write slots per AXI port (AWID), 2^k, 4..64
   parameter int  WQ = 16,                 // write data FIFO per AXI port, beats (credit counted: the pipelining adds ~3 cycles of residency)
   parameter int  AQ = 4,                  // AR and AW FIFO per AXI port
+  parameter bit  RBRAM = 1'b0,            // the read buffers (r_lo / r_hi) in block RAM, else LUT RAM (their read is
+                                          // registered either way: the same behaviour). 32 RAMB36 a channel (a 64-bit
+                                          // slice is a RAMB36): with otpu_mem_ch BRAM's 22.5 SLR0's 672 overflow
   localparam int NA = 2 * NS              // AXI ports: a = p + 2k (native port p, sub-port k)
 ) (
   input  logic              uclk,
@@ -500,18 +503,32 @@ module otpu_hbm_port #(
       end
     end
     assign rr_s = rr_id[RSW-1:0];
+    // The buffers in block RAM (RBRAM, off: otpu_mem_ch's FIFOs took SLR0's block RAM instead): SLR0's CLBs were
+    // 93% used and the read buffers 20k of its LUT RAM cells (f35d0009). A slot's read that meets its last word's write at the same edge is never used (the slot is
+    // not done yet), so the block RAM's collision behaviour does not matter; lo_q / hi_q are its output latches.
     for (genvar g = 0; g < NG; g++) begin : g_rm
       localparam int SWR = 256 / NG;
-      (* ram_style = "distributed" *) logic [SWR-1:0] r_lo [RD];
-      (* ram_style = "distributed" *) logic [SWR-1:0] r_hi [RD];
       logic [SWR-1:0] lo_q, hi_q;
-      always_ff @(posedge uclk) begin
-        if (rr_vg[g] && !rr_lg[g]) r_lo[rr_sg[g]] <= rr_data[g * SWR +: SWR];
-        if (rr_vg[g] &&  rr_lg[g]) r_hi[rr_sg[g]] <= rr_data[g * SWR +: SWR];
-        // the head of the ring is read every cycle (no pk fanout to 512 bits): in the cycle
-        // after the selection qd is the selected beat, r_rp advances on the same edge
-        lo_q <= r_lo[r_rpg[g]];
-        hi_q <= r_hi[r_rpg[g]];
+      if (RBRAM) begin : g_b
+        (* ram_style = "block" *) logic [SWR-1:0] r_lo [RD];
+        (* ram_style = "block" *) logic [SWR-1:0] r_hi [RD];
+        always_ff @(posedge uclk) begin
+          if (rr_vg[g] && !rr_lg[g]) r_lo[rr_sg[g]] <= rr_data[g * SWR +: SWR];
+          if (rr_vg[g] &&  rr_lg[g]) r_hi[rr_sg[g]] <= rr_data[g * SWR +: SWR];
+          lo_q <= r_lo[r_rpg[g]];
+          hi_q <= r_hi[r_rpg[g]];
+        end
+      end else begin : g_d
+        (* ram_style = "distributed" *) logic [SWR-1:0] r_lo [RD];
+        (* ram_style = "distributed" *) logic [SWR-1:0] r_hi [RD];
+        always_ff @(posedge uclk) begin
+          if (rr_vg[g] && !rr_lg[g]) r_lo[rr_sg[g]] <= rr_data[g * SWR +: SWR];
+          if (rr_vg[g] &&  rr_lg[g]) r_hi[rr_sg[g]] <= rr_data[g * SWR +: SWR];
+          // the head of the ring is read every cycle (no pk fanout to 512 bits): in the cycle
+          // after the selection qd is the selected beat, r_rp advances on the same edge
+          lo_q <= r_lo[r_rpg[g]];
+          hi_q <= r_hi[r_rpg[g]];
+        end
       end
       assign qd[g * SWR +: SWR]       = lo_q;
       assign qd[256 + g * SWR +: SWR] = hi_q;

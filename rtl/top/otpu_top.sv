@@ -49,8 +49,9 @@ module otpu_top
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait counts (otpu_slice)
   parameter bit COLL_GATHER = 1'b1,   // 0 (S = 1 only): the collective unit runs BAR alone
                                       // (otpu_coll_bar), as the card builds it (otpu_board)
-  parameter bit DUAL       = 1'b0     // port B chunk pairs: int8 MM PAIR (otpu_slice, otpu_mxu); the
+  parameter bit DUAL       = 1'b0,    // port B chunk pairs: int8 MM PAIR (otpu_slice, otpu_mxu); the
                                       // board's path (AXI 1) on four channels (otpu_native_dram2)
+  parameter bit QUAD       = 1'b0     // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_slice)
 ) (
   input  logic          clk,
   input  logic          clk_f,         // TMEM_PMP 1: 2 x clk, rising with it (otpu_slice)
@@ -177,7 +178,7 @@ module otpu_top
                  .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH),
                  .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP), .TMEM_GST(TMEM_GST),
                  .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM), .SEQ_WC(SEQ_WC),
-                 .DUAL(DUAL))
+                 .DUAL(DUAL), .QUAD(QUAD))
     u_slice (
       .clk, .clk_f, .sys_rst, .rst, .rinit, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
       .a_rdy, .b_rdy, .sw_rdy, .wr_idle, .rd_idle,

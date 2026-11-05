@@ -49,6 +49,7 @@ module otpu_fk33_sys #(
   parameter int PLATFORM   = 5,
   parameter logic [31:0] ARCH_HASH = 32'h0,
   parameter bit DUAL       = 1'b1,          // S = 1 on four channels, port B pairs (otpu_board DUAL)
+  parameter bit QUAD       = 1'b0,          // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_board QUAD)
   parameter int NC         = (DUAL ? 4 : 2) * S,  // memory channels (two per slice; DUAL four)
   // the channels' beat address bits (otpu_board's: 25, 2 GiB a channel, up to DAW 33 with DUAL; a 16 GB part at
   // DAW 34: 26, 4 GiB channels), and so XDMA's address bits of a channel, BAW + 6
@@ -174,7 +175,7 @@ module otpu_fk33_sys #(
                .TMEM_IMPL(TMEM_IMPL), .TMEM_RQ(TMEM_RQ),
                .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH), .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP),
                .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM),
-               .DUAL(DUAL), .BAW(BAW)) u_board (
+               .DUAL(DUAL), .QUAD(QUAD), .BAW(BAW)) u_board (
     .clk, .clk_f, .rst, .ctl_mrst, .calib, .ded, .temp, .led, .i2c_lo, .i2c_pin,
     .s_ctl_awaddr, .s_ctl_awvalid, .s_ctl_awready, .s_ctl_wdata, .s_ctl_wstrb, .s_ctl_wvalid,
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,

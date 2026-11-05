@@ -41,11 +41,11 @@ proc otpu_pb {name slr cells} {
   puts "bcu1525_floorplan.tcl: $name in $slr, [llength $found] of [llength $cells] cells"
 }
 set xs u_sys/u_board/g_xs
-otpu_pb pb_slice0 SLR0 [list u_sys/u_board/u_slice u_sys/u_board/u_mem \
+otpu_pb pb_slice0 SLR0 [list u_sys/u_board/u_slice u_sys/u_board/g_mem.u_mem \
   "$xs.g_x\[0\].u_dn_rx" "$xs.g_x\[0\].u_up_tx" "$xs.g_x\[0\].u_cport" \
   "$xs.g_x\[0\].g_pf.u_pf_tx" \
   {u_sys/g_ch[0].u_ch} {u_sys/g_ch[1].g_sll.u_tx} u_ld0 {g_csr[0].u_iso}]
-otpu_pb pb_slice1 SLR2 [list {u_sys/u_board/g_slice[1].u_slice} {u_sys/u_board/g_slice[1].u_mem} \
+otpu_pb pb_slice1 SLR2 [list {u_sys/u_board/g_slice[1].u_slice} {u_sys/u_board/g_slice[1].g_mem.u_mem} \
   "$xs.g_x\[1\].u_dn_rx" "$xs.g_x\[1\].u_up_tx" "$xs.g_x\[1\].u_cport" \
   {u_sys/g_ch[2].u_ch} {u_sys/g_ch[3].g_sll.u_tx} u_ld3 {g_csr[3].u_iso}]
 otpu_pb pb_shell SLR1 [list u_bd u_sys/u_board/u_ctrl u_sys/u_board/g_coll.u_coll "$xs.u_chub" \

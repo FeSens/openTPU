@@ -275,6 +275,17 @@ cycle. The loop above is unchanged (the same integer); `k0` is even (the two blo
 bytes are adjacent in a scale line); with KB odd the last advance takes one chunk. Elsewhere an
 int8 `PAIR` is an error (the ISA simulator's; the encoder takes it).
 
+On a QUAD target (Config.QUAD, with DUAL, MCOLS a multiple of four) a 4-bit `PAIR` of
+`4*M == MCOLS` rows (not `UNIT`, not `RSC`) takes four blocks an advance, two chunks (the DUAL
+port's pair): block `4a+g` in columns `g*M..(g+1)*M-1` from ACT row `j + g*M`, so a decode MM
+streams 256 bytes of 4-bit weights a cycle, as int8's `PAIR`; the last advance of a row takes the
+`KB mod 4` blocks left. The advance's block data (16 bytes, NVFP4 32, at an even `k0` as `PAIR`'s;
+NVFP4's 16-byte aligned) may straddle two 32-byte scale lines: the MXU reads both (a row whose
+first advance does costs a cycle of its own). Any other 4-bit `PAIR` takes two blocks (one
+chunk); int8 `PAIR` takes two chunks as DUAL's. The result is the same integer. `QACT DUP` of `4*rows <= MCOLS` rows fills rows `r + rows`,
+`r + 2*rows` and `r + 3*rows` (of more rows, `r + rows` alone), so the operand of either `PAIR`
+is in place.
+
 ### QACT
 
 `src = R[ra]+w1` (TMEM words), `rows = w2[7:0]` (at most ACT_ROWS), `ab = w2[15:8]`,
@@ -287,7 +298,7 @@ per-row factor `T[w5 + r]`. With both, `x = (T[src + r*srs + c] * T[w5 + r]) * T
 `Sa[r][ab+k] = S`, `da[r][ab+k][b] = d` of sub-block `b` of block `k`. Flag bit0 `ROW`: every
 `d = 0` (the row's one scale). Flag bit3 `DUP` (`2*rows <= MCOLS`): row `r + rows` receives the
 same bytes and scale records as row `r` in the same cycles, the operand layout of `MM PAIR`
-("Column reuse").
+("Column reuse"); on a QUAD target with `4*rows <= MCOLS` rows `r + 2*rows` and `r + 3*rows` too.
 
 ### QST
 

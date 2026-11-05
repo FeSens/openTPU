@@ -4,11 +4,14 @@
 // per channel and otpu_fk35_sys (the accelerator at S = 2 and XDMA's DMA, meeting in one otpu_mem_ch per channel;
 // the BCU1525's otpu_bcu_sys is its model). The FK33's top (rtl/boards/sqrl-fk33) is this one at S = 1.
 //
-// Channels: board channel j = 2s + c (slice s, its channel c) is HBM bytes j x 2 GiB .. + 2 GiB, pseudo-channels
-// 8j .. 8j + 7: slice 0 on the first stack, slice 1 on the second. Its otpu_hbm_port has NS = 2 AXI ports per
-// controller port: port a = p + 2k (controller port p, sub-port k) on the IP's AXI_(8j + 4k + p), so sub-port k owns
-// mini-switch 2j + k; AXI ports 0, 1, 4, 5, .., 28, 29 are used, the others tied off. The HBM's global switches are
-// on (any port reaches all 8 GB); each slice addresses its 4 GiB.
+// Channels (DUAL, targets/sqrl-fk35.toml): board channel j = 4s + c (slice s, its channel c) is HBM bytes
+// j x 1 GiB .. + 1 GiB, pseudo-channels 4j .. 4j + 3, the four of mini-switch j: slice 0 on the first stack, slice 1
+// on the second. Its otpu_hbm_port (PCB 2) has NS = 2 AXI ports per controller port: port a = p + 2k (controller
+// port p, sub-port k) on the IP's AXI_(4j + a), so sub-port k's two pseudo-channels are those of its own two ports and
+// every access stays in the channel's mini-switch; all 32 AXI ports are used. The HBM's global switches are on (any
+// port reaches all 8 GB); each slice addresses its 4 GiB (otpu_native_dram2: 1 GiB of each of its channels).
+// Without DUAL (DUAL = 0 here) the four channels of the two-channel slices: channel j = 2s + c at j x 2 GiB, PCB 3,
+// AXI_(8j + 4k + p).
 //
 // Clocks (bd.tcl): everything from XDMA's axi_aclk (250 MHz, the card has no other clock input): core_clk, uclk
 // (250 MHz: otpu_mem_ch's controller side, the adapters and the HBM AXI ports) and clk100 (the HBM's reference
@@ -44,7 +47,13 @@ module otpu_fpga_top_fk35 #(
   parameter bit SEQ_WC     = 1'b0,
   parameter int PLATFORM   = 4,             // targets/sqrl-fk35.toml (CFG_PLATFORM)
   parameter logic [31:0] ARCH_HASH = 32'h0, // its arch_hash (CFG_HASH; run_vivado.sh)
-  parameter int PCIE_LANES = 8
+  parameter int PCIE_LANES = 8,
+  parameter int QMEM       = 0,             // the memory adapters' queues: 0 block RAM, 1 LUT RAM, 2 and
+                                            // the B FIFOs in UltraRAM (otpu_native_dram; OTPU_QMEM)
+  parameter bit MEMX       = 1'b1,          // the adapters in SLR0, the crossing on the slices' ports
+                                            // (otpu_board MEMX; OTPU_MEMX=0: the native ports cross)
+  parameter bit QUAD       = 1'b0           // the target's QUAD: 4-bit MM PAIR four blocks an advance
+                                            // (otpu_mxu; run_vivado.sh OTPU_QUAD from targets/sqrl-fk35.toml)
 ) (
   output logic [6:0]  led,                  // 0..3 green, 4..6 the RGB LED (high: on)
   output logic        pcie_clkreq,
@@ -56,10 +65,15 @@ module otpu_fpga_top_fk35 #(
   output logic [PCIE_LANES-1:0] pcie_mgt_txp,
   output logic [PCIE_LANES-1:0] pcie_mgt_txn
 );
-  localparam int NC  = 2 * S;
+  // DUAL (the target's): each slice on four HBM channels, its port B in chunk pairs; XDMA's DMA split onto the eight
+  // channels (bd.tcl NCH 8), each in a 2 GiB window of which the slice uses the first 1 GiB
+  localparam bit DUAL = 1'b1;
+  localparam int NC  = (DUAL ? 4 : 2) * S;
   localparam int NP  = 32;                  // the HBM IP's AXI ports
+  localparam int CHW = DUAL ? 30 : 31;      // log2 of a channel's HBM bytes
+  localparam int PCB = DUAL ? 2 : 3;        // its pseudo-channels' log2
 `ifndef SYNTHESIS
-  initial if (S != 2) $fatal(1, "otpu_fpga_top_fk35: S = 2 (four HBM channels)");
+  initial if (S != 2) $fatal(1, "otpu_fpga_top_fk35: S = 2 (eight HBM channels, DUAL; or four)");
 `endif
   logic        core_clk, core_rstn, uclk, urstn, clk100, clk100_rstn, xdma_aclk, xdma_aresetn, pcie_link_up;
   logic [9:0]  device_temp;                 // SYSMONE4 die-temperature code (core_clk)
@@ -68,7 +82,7 @@ module otpu_fpga_top_fk35 #(
   logic [1:0]  ctl_bresp, ctl_rresp;
   logic ctl_awvalid, ctl_awready, ctl_wvalid, ctl_wready, ctl_bvalid, ctl_bready;
   logic ctl_arvalid, ctl_arready, ctl_rvalid, ctl_rready;
-  logic [NC-1:0][32:0]  dm_awaddr, dm_araddr;
+  logic [NC-1:0][33:0]  dm_awaddr, dm_araddr;
   logic [NC-1:0][7:0]   dm_awlen, dm_arlen;
   logic [NC-1:0][127:0] dm_wdata, dm_rdata;
   logic [NC-1:0][15:0]  dm_wstrb;
@@ -99,7 +113,7 @@ module otpu_fpga_top_fk35 #(
     .M_AXI_CTL_bready(ctl_bready), .M_AXI_CTL_araddr(ctl_araddr), .M_AXI_CTL_arvalid(ctl_arvalid),
     .M_AXI_CTL_arready(ctl_arready), .M_AXI_CTL_rdata(ctl_rdata), .M_AXI_CTL_rresp(ctl_rresp),
     .M_AXI_CTL_rvalid(ctl_rvalid), .M_AXI_CTL_rready(ctl_rready),
-    `BD_DMA(0), `BD_DMA(1), `BD_DMA(2), `BD_DMA(3));
+    `BD_DMA(0), `BD_DMA(1), `BD_DMA(2), `BD_DMA(3), `BD_DMA(4), `BD_DMA(5), `BD_DMA(6), `BD_DMA(7));
 `undef BD_DMA
   assign pcie_clkreq = 1'b0;
   logic core_rst, xrst;
@@ -128,7 +142,7 @@ module otpu_fpga_top_fk35 #(
     .h_araddr, .h_arburst, .h_arid, .h_arlen, .h_arsize, .h_arvalid, .h_arready,
     .h_rready, .h_rdata, .h_rid, .h_rlast, .h_rresp, .h_rvalid,
     .calib(hbm_calib), .cattrip(hbm_cattrip), .temp0(), .temp1());
-  // ---- the accelerator and XDMA on the channels (sc_dma decoded address bits 32:31: the channel's 2 GiB)
+  // ---- the accelerator and XDMA on the channels (sc_dma decoded address bits 33:31: the channel's 2 GiB window)
   logic [NC-1:0][30:0] dm_awaddr_c, dm_araddr_c;
   for (genvar j = 0; j < NC; j++) begin : g_dma
     assign dm_awaddr_c[j] = dm_awaddr[j][30:0];
@@ -147,7 +161,7 @@ module otpu_fpga_top_fk35 #(
                  .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .TRACE_DEPTH(TRACE_DEPTH),
                  .PQ_WIN(PQ_WIN), .CHASH(CHASH), .DSTEP(DSTEP), .CORE_KHZ(CORE_KHZ),
                  .BUILD_ID(BUILD_ID), .SEQ_WC(SEQ_WC), .DDR_MTS(DDR_MTS), .PLATFORM(PLATFORM),
-                 .ARCH_HASH(ARCH_HASH), .TMEM_IMPL(TMEM_IMPL)) u_sys (
+                 .ARCH_HASH(ARCH_HASH), .TMEM_IMPL(TMEM_IMPL), .DUAL(DUAL), .QUAD(QUAD), .NQMEM(QMEM), .MEMX(MEMX)) u_sys (
     .clk(core_clk), .clk_f(1'b0), .rst(core_rst), .ctl_mrst(lrs2), .xclk(xdma_aclk), .xrst,
     .calib({NC{&hbm_calib && !(|hbm_cattrip)}}), .ded('0), .temp({device_temp, 2'b00}),
     .led(board_led), .i2c_lo(), .i2c_pin(5'h1F),
@@ -166,8 +180,9 @@ module otpu_fpga_top_fk35 #(
     .uclk({NC{uclk}}), .urst({NC{u_rst}}),
     .c_cmd_valid, .c_cmd_ready, .c_cmd_we, .c_cmd_addr, .c_wdata_valid, .c_wdata_ready,
     .c_wdata_data, .c_wdata_we, .c_rdata_valid, .c_rdata_data);
-  // ---- the HBM adapters: channel j at j x 2 GiB, its AXI port a on the IP's AXI_(8j + 4k + p)
-  localparam logic [NP-1:0] HP_USED = 32'h3333_3333;
+  // ---- the HBM adapters: channel j at j x 1 GiB, its AXI port a on the IP's AXI_(4j + a) (without DUAL: j x 2 GiB,
+  // AXI_(8j + 4k + p))
+  localparam logic [NP-1:0] HP_USED = DUAL ? 32'hFFFF_FFFF : 32'h3333_3333;
   for (genvar j = 0; j < NC; j++) begin : g_hbm
     logic [3:0][32:0]  awaddr, araddr;
     logic [3:0][5:0]   awid, arid, bid, rid;
@@ -178,7 +193,7 @@ module otpu_fpga_top_fk35 #(
     logic [3:0]        arvalid, arready, rvalid, rready, rlast;
     logic [3:0][255:0] wdata, rdata;
     logic [3:0][31:0]  wstrb, wpar;
-    otpu_hbm_port #(.CH_BASE(33'(j) << 31), .PCB(3), .NS(2), .RD(32)) u_port (
+    otpu_hbm_port #(.CH_BASE(33'(j) << CHW), .PCB(PCB), .NS(2), .RD(64)) u_port (
       .uclk, .urst(u_rst),
       .c_cmd_valid(c_cmd_valid[j]), .c_cmd_ready(c_cmd_ready[j]), .c_cmd_we(c_cmd_we[j]),
       .c_cmd_addr(c_cmd_addr[j]), .c_wdata_valid(c_wdata_valid[j]), .c_wdata_ready(c_wdata_ready[j]),
@@ -194,7 +209,7 @@ module otpu_fpga_top_fk35 #(
       .st_rcmd(), .st_wcmd(), .st_rout(), .st_wout(), .st_dep(), .st_busy(), .st_err_cnt(), .st_err(),
       .st_perr());
     for (genvar a = 0; a < 4; a++) begin : g_ax
-      localparam int H = 8 * j + 4 * (a / 2) + a % 2;
+      localparam int H = DUAL ? 4 * j + a : 8 * j + 4 * (a / 2) + a % 2;
       assign h_awaddr[H] = awaddr[a];   assign h_awid[H] = awid[a];     assign h_awlen[H] = awlen[a];
       assign h_awsize[H] = awsize[a];   assign h_awburst[H] = awburst[a]; assign h_awvalid[H] = awvalid[a];
       assign awready[a] = h_awready[H];

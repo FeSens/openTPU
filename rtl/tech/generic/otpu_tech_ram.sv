@@ -87,6 +87,16 @@ module otpu_ram_1r1w_ra #(
 `ifndef SYNTHESIS
     initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
 `endif
+  end else if (STYLE == "ultra") begin : g_uram
+    // UltraRAM (72 bits x 4096 a cell): the same one-cycle read, from its unregistered output
+    (* ram_style = "ultra" *) logic [W-1:0] mem [N];
+    always_ff @(posedge clk) begin
+      if (we) mem[wa] <= wd;
+      q <= mem[ra_n];
+    end
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
   end else begin : g_bram
     (* ram_style = "block" *) logic [W-1:0] mem [N];
     always_ff @(posedge clk) begin

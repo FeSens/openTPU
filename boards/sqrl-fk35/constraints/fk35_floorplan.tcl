@@ -11,10 +11,10 @@
 #     block, collective unit, trace and the slices' crossings, otpu_board g_xs), and the u_tx halves.
 # Slice 0, the shell and the memory side in SLR0 (the BCU1525's split: the shell with the PCIe block) filled ~93% of
 # SLR0's usable CLBs in the openTPU_FK FK35 build and did not route; this way SLR0 is about a quarter full and SLR1 about
-# two thirds.
+# two thirds (the two-channel slices; with DUAL's eight channels SLR0 about half).
 #
-# What crosses SLR1 -> SLR0 (core_clk): each channel's native port, through two otpu_native_reg (otpu_fk35_sys SLL =
-# 4'b1111): u_tx with the slice, u_rx with otpu_mem_ch; the read data, write count and error flags leave u_rx from
+# What crosses SLR1 -> SLR0 (core_clk): each channel's native port (eight with DUAL), through two otpu_native_reg
+# (otpu_fk35_sys SLL, all ones): u_tx with the slice, u_rx with otpu_mem_ch; the read data, write count and error flags leave u_rx from
 # flip-flops into u_tx's (flop to flop: USER_SLL_REG on both puts them in the Laguna sites), the commands and write
 # data leave u_tx from its skid buffers' output registers (Laguna TX) into u_rx's skid entry. The core reset crosses
 # as otpu_fk35_sys's copies (rst_b with the slices, rst_c[j] with each channel). The control registers (the block
@@ -32,18 +32,52 @@ proc fk35_pb {name slr cells} {
   if {[llength $found]} { add_cells_to_pblock $pb [join $found] }
   puts "fk35_floorplan.tcl: $name in $slr, [llength $found] of [llength $cells] cells"
 }
+#
+# MEMX (the top's, OTPU_MEMX=1): the slices' memory adapters (otpu_native_xdram2: u_dram and the crossing's memory
+# side u_m) in SLR0 with the channels, the crossing's slice side (u_s) in SLR1 with the rest of otpu_board; the
+# crossing is on the slices' ports (u_s / u_m sll_* registers, Laguna), the native ports stay in SLR0
+set xm [list u_sys/u_board/g_memx.u_mem "u_sys/u_board/g_slice\[1\].g_memx.u_mem"]
+set memx [llength [get_cells -quiet [lindex $xm 0]]]
 set mem {}
-set cmp [list u_sys/u_board u_sys/rst_b_reg]
-foreach j {0 1 2 3} {
-  lappend mem "u_sys/g_ch\[$j\].u_ch" "u_sys/g_ch\[$j\].g_sll.u_rx" "g_hbm\[$j\].u_port" "u_sys/rst_c_reg\[$j\]"
-  lappend cmp "u_sys/g_ch\[$j\].g_sll.u_tx"
+if {$memx} {
+  # otpu_board's cells but the adapters (kept as cells: otpu_native_xdram2, otpu_board), by name
+  set cmp [list u_sys/rst_b_reg]
+  foreach c [get_cells u_sys/u_board/* -filter {NAME !~ "*g_memx.u_mem"}] { lappend cmp [get_property NAME $c] }
+  foreach x $xm { lappend mem "$x/u_m" "$x/u_dram"; lappend cmp "$x/u_s" }
+} else {
+  set cmp [list u_sys/u_board u_sys/rst_b_reg]
+}
+foreach j {0 1 2 3 4 5 6 7} {
+  lappend mem "u_sys/g_ch\[$j\].u_ch" "g_hbm\[$j\].u_port" "u_sys/rst_c_reg\[$j\]"
+  if {!$memx} {
+    lappend mem "u_sys/g_ch\[$j\].g_sll.u_rx"
+    lappend cmp "u_sys/g_ch\[$j\].g_sll.u_tx"
+  }
 }
 fk35_pb pb_mem SLR0 $mem
 fk35_pb pb_cmp SLR1 $cmp
 
+if {$memx} {
+  # Laguna registers on the slices' port crossings: each side's sll_* registers (u_s's requests out and replies in,
+  # u_m's requests in and replies out)
+  foreach x $xm {
+    set sll {}
+    foreach pat [list "$x/u_s/sll_*_reg*" "$x/u_m/sll_*_reg*"] {
+      set sll [concat $sll [get_cells -quiet $pat -filter {REF_NAME =~ FD*}]]
+    }
+    if {[llength $sll]} {
+      set_property USER_SLL_REG TRUE $sll
+      puts "fk35_floorplan.tcl: $x, [llength $sll] Laguna registers"
+    } else {
+      puts "CRITICAL WARNING: \[fk35_floorplan.tcl\] $x: no crossing registers found"
+    }
+  }
+}
+
 # Laguna registers on the flop-to-flop crossings, per channel: the read data, write count and error flags (u_rx's
-# s_* registers drive u_tx's directly) and the commands' / write data's output registers (u_tx's m_* registers)
-foreach j {0 1 2 3} {
+# s_* registers drive u_tx's directly) and the commands' / write data's output registers (u_tx's m_* registers).
+# (Not with MEMX, whose channels do not cross; a return does not end a script read as a constraint.)
+foreach j [expr {$memx ? {} : {0 1 2 3 4 5 6 7}}] {
   set sll {}
   set g "u_sys/g_ch\[$j\].g_sll"
   foreach pat [list "$g.u_rx/s_rdata_reg*" "$g.u_rx/s_wdone_reg*" "$g.u_rx/s_err_reg" "$g.u_tx/s_rdata_reg*" \

@@ -81,7 +81,8 @@ module otpu_slice
   parameter int TMEM_SDM   = -1,      // TMEM_TDP: the read ports' RAM sides (bit p: port p on
                                       //   port A; -1: TM_SIDED, below)
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait counts (WAITC, docs/seq_vpu.md)
-  parameter bit DUAL       = 1'b0     // port B chunk pairs (b_two, b_rdata2): int8 MM PAIR (otpu_mxu)
+  parameter bit DUAL       = 1'b0,    // port B chunk pairs (b_two, b_rdata2): int8 MM PAIR (otpu_mxu)
+  parameter bit QUAD       = 1'b0     // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_mxu, otpu_actram)
 ) (
   input  logic          clk,
   input  logic          clk_f,      // TMEM_PMP 1: 2 x clk, rising with it (the MMCM's); else unused
@@ -442,18 +443,20 @@ module otpu_slice
   logic                   act_dup;
   logic [31:0]            act_idx;
   logic [63:0]            asc_data;     // {da3, da2, da1, da0, Sa}
-  logic [15:0]            asc_blk, act_rblk, act_rblk2;
-  logic [MCOLS-1:0]       act_rhi;
+  logic [15:0]            asc_blk, act_rblk, act_rblk2, act_rblk3, act_rblk4;
+  logic [MCOLS-1:0]       act_rhi, act_rq;
   logic [7:0]             act_rgrp;
   logic [MCOLS-1:0]       act_ren;       // per column (otpu_mxu: the MM's columns)
   logic                   mxu_pop;       // the MXU consumes a block this cycle (its ACT read)
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*64-1:0]    act_rscale;
-  otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
+  otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES),
+                .QUAD(QUAD)) u_act (
     .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .w_dup(act_dup),
     .w_off(act_off), .swe(asc_we),
     .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_use(mxu_pop), .r_blk(act_rblk),
-    .r_blk2(act_rblk2), .r_hi(act_rhi), .r_grp(act_rgrp),
+    .r_blk2(act_rblk2), .r_blk3(act_rblk3), .r_blk4(act_rblk4), .r_q(act_rq), .r_hi(act_rhi),
+    .r_grp(act_rgrp),
     .r_data(act_rdata), .r_scale(act_rscale));
 
   // ---- units
@@ -524,11 +527,11 @@ module otpu_slice
     .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
 
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
-             .CL(MXU_CL), .E(MXU_E), .DUAL(DUAL), .TQ(MXU_TQ), .SID(SID), .TLANES(LANES)) u_mxu (
+             .CL(MXU_CL), .E(MXU_E), .DUAL(DUAL), .QUAD(QUAD), .TQ(MXU_TQ), .SID(SID), .TLANES(LANES)) u_mxu (
     .clk, .rst(rst_mxu), .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
     .pf_u(mxu_u), .pf_uv(mxu_uv),
-    .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
+    .act_blk(act_rblk), .act_blk2(act_rblk2), .act_blk3(act_rblk3), .act_blk4(act_rblk4), .act_q(act_rq), .act_hi(act_rhi), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
     .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_two(mxu_btwo), .b_gnt(mxu_bgnt),
     .b_rvalid(b_rvalid_i && !b_rtag_i), .b_rdata2(b_rdata2_i),

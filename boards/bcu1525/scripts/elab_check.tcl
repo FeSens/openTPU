@@ -14,8 +14,8 @@ foreach f {otpu_bd_wrapper_stub.sv otpu_ld4_stub.sv unisim_dsp48e2_stub.sv} {
 }
 synth_design -rtl -top otpu_fpga_top_bcu -part $part -verilog_define SYNTHESIS
 set bad 0
-foreach c {u_sys/u_board/u_slice u_sys/u_board/u_mem {u_sys/g_ch[0].u_ch} {u_sys/g_ch[1].g_sll.u_tx}
-           u_ld0 {g_csr[0].u_iso} {u_sys/u_board/g_slice[1].u_slice} {u_sys/u_board/g_slice[1].u_mem}
+foreach c {u_sys/u_board/u_slice u_sys/u_board/g_mem.u_mem {u_sys/g_ch[0].u_ch} {u_sys/g_ch[1].g_sll.u_tx}
+           u_ld0 {g_csr[0].u_iso} {u_sys/u_board/g_slice[1].u_slice} {u_sys/u_board/g_slice[1].g_mem.u_mem}
            {u_sys/g_ch[2].u_ch} {u_sys/g_ch[3].g_sll.u_tx} u_ld3 {g_csr[3].u_iso} u_bd
            u_sys/u_board/u_ctrl u_sys/u_board/g_coll.u_coll u_sys/u_board/g_trace.u_trace u_sys/u_board/u_iso
            {u_sys/g_ch[1].u_ch} {u_sys/g_ch[1].g_sll.u_rx} {u_sys/g_ch[3].u_ch}

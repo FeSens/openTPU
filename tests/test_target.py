@@ -75,6 +75,7 @@ def _hash_without_numerics(cfg) -> int:
     d = dataclasses.asdict(cfg)
     d.pop("SEQ_WC")                     # (fields that host's Config does not have)
     d.pop("DUAL")
+    d.pop("QUAD")
     d.pop("DAW")
     s = json.dumps({k: (int(v) if isinstance(v, bool) else v) for k, v in sorted(d.items())},
                    separators=(",", ":"))
@@ -222,9 +223,10 @@ def test_bad_target_files(tmp_path):
 def test_cfg_register_codec():
     c = dict(S=2, TMEM_WORDS=1 << 16, IMEM_WORDS=1 << 15, ACT_BLOCKS=128, DRAM_BYTES=1 << 32,
              channels=2, channel_bytes=1 << 31, MXU_IMPL=2, TMEM_IMPL=1, VPU_CL=2, ULANES=8,
-             SEQ_WC=1, platform=2, hash=0x8B699C81)
+             SEQ_WC=1, QUAD=1, platform=2, hash=0x8B699C81)
     assert R.cfg(R.cfg_words(c)) == c
     assert R.cfg(R.cfg_words(dict(c, SEQ_WC=0)))["SEQ_WC"] == 0
+    assert R.cfg(R.cfg_words(dict(c, QUAD=0))) == dict(c, QUAD=0)
 
 
 def test_device_config_from_the_cfg_registers(no_env):
@@ -333,7 +335,8 @@ def test_rtl_file_lists_agree():
     assert make == [f for f in card if not f.endswith("otpu_fpga_top_ld.sv")]
     sim = [f for f in rtlsim.RTL_SOURCES
            if f not in ("mem/otpu_dram.sv", "mem/otpu_native_dram.sv",
-                        "mem/otpu_native_dram2.sv", "top/otpu_top.sv",
+                        "mem/otpu_native_dram2.sv", "mem/otpu_native_xdram2.sv",
+                        "top/otpu_top.sv",
                         "exp/tmem_nocopy/otpu_tmem_model.sv")]
     assert sim == T.sources("nangate45", "generic")
     for f in T.CORE + T.SHELL + sum(T.TECH.values(), []) + sum(T.BOARDS.values(), []):
@@ -461,9 +464,10 @@ def test_the_board_counts_the_port_registers_as_requests_pending():
     the adapter's wr_idle and rd_idle (m_wr_idle, m_rd_idle) go to the slice alone, for slice 0 and
     the others. sim/verilator/tb_board.sv checks the same in every board simulation."""
     code = re.sub(r"//.*", "", (ROOT / "rtl/shell/otpu_board.sv").read_text())
-    # (5: slice 0's adapter is otpu_native_dram or, DUAL, otpu_native_dram2)
-    assert re.findall(r"\.wr_idle\(([^)]*)\)", code) == ["m_wr_idle"] * 5
-    assert re.findall(r"\.rd_idle\(([^)]*)\)", code) == ["m_rd_idle"] * 5
+    # (8: each slice's adapter is otpu_native_dram or, DUAL, otpu_native_dram2 or, MEMX,
+    # otpu_native_xdram2)
+    assert re.findall(r"\.wr_idle\(([^)]*)\)", code) == ["m_wr_idle"] * 8
+    assert re.findall(r"\.rd_idle\(([^)]*)\)", code) == ["m_rd_idle"] * 8
     assert re.findall(r"assign\s+q_wr_idle\[(\w+)\]\s*=\s*([^;]*);", code) == \
         [(k, "m_wr_idle && !sw_req && !(b_req && b_we)") for k in ("0", "s")]
     assert re.findall(r"assign\s+q_rd_idle\[(\w+)\]\s*=\s*([^;]*);", code) == \
@@ -602,7 +606,8 @@ def test_late_pushes_reach_no_lut_ram_write_enable():
     assert re.search(r"qam \[2 \* QD\];", nd)
     assert re.search(r"always_ff @\(posedge clk\) qam\[", nd)
     af = src("rtl/shell/otpu_afifo.sv")
-    assert "if (OOO ? wput : wready) mem[waddr] <= wdata;" in af
+    assert "assign mwe = OOO ? wput : wready;" in af
+    assert re.search(r"if \(mwe && STYLE != \"block\"\) mem\[waddr\] <= wdata;", af)
     mxu = src("rtl/mxu/otpu_mxu.sv")
     load = mxu[mxu.index("if (!rst && al_st == 2'd3)"):]
     assert "alpha[j] <= t_rdata" in load.split("`ifndef SYNTHESIS")[0]

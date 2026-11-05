@@ -59,7 +59,8 @@ def _target_cfg(D: int, MCOLS: int, LANES: int, pair: bool, dstep: bool, stream:
                ACT_BLOCKS=a["ACT_BLOCKS"], DRAM_BYTES=a["DRAM_BYTES"],
                channels=p["channels_per_slice"], channel_bytes=p["channel_bytes"],
                MXU_IMPL=u["MXU_IMPL"], TMEM_IMPL=u["TMEM_IMPL"], VPU_CL=u["VPU_CL"],
-               ULANES=u["ULANES"], SEQ_WC=int(seq_wc), platform=t.platform_id)
+               ULANES=u["ULANES"], SEQ_WC=int(seq_wc), QUAD=int(bool(a.get("QUAD"))),
+               platform=t.platform_id)
     from ..isasim import Config
     full = Config(**{**a, "D": D, "MCOLS": MCOLS, "LANES": LANES,
                      "ACT_ROWS": act_rows if act_rows > MCOLS else 0, "PAIR": pair,

@@ -174,7 +174,10 @@ def main(argv=None) -> int:
         i = board.info()
         c = i.get("cfg")
         if c and not a.sim:             # the card's channels (CFG_DRAM) and its slice's DRAM: a
-            ch_bytes = c["channel_bytes"]   # wide (DAW > 32) bitstream's every byte is tested
+            # wide (DAW > 32) bitstream's every byte is tested; of a channel the bytes its slice
+            # reaches (DUAL at DAW 32: 1 GiB of each, the FK35's whole 1 GiB channel, whose 2 GiB
+            # window aliases above it)
+            ch_bytes = min(c["channel_bytes"], c["DRAM_BYTES"] // c["channels"])
             top = c["DRAM_BYTES"]
         cfg = device_config(i, DRAM_BYTES=top)
         msg = config_summary(i)

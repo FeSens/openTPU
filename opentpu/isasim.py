@@ -27,6 +27,9 @@ class Config:
     LANES: int = 8           # VPU lanes == TMEM banks (timing only; results do not depend on it)
     PAIR: bool = False       # MM PAIR / QACT DUP: 4-bit MMs of M <= MCOLS/2 rows at full rate
     DUAL: bool = False       # port B chunk pairs: int8 MM PAIR too (two chunks an advance)
+    QUAD: bool = False       # (DUAL) a 4-bit MM PAIR of M == MCOLS/4 rows takes four blocks an
+    #                          advance (two chunks: the DUAL port's pair), QACT DUP of rows <=
+    #                          MCOLS/4 fills four copies (docs/isa.md "Column reuse")
     DAW: int = 32            # DRAM address width per slice, 32..36 (4..64 GiB): above 32 an
     #                          instruction's DRAM operands lie in its 4 GiB region REG (isa.py
     #                          "DRAM address width"); at 32 a region past 0 is a SimError, as the
@@ -77,6 +80,7 @@ def board_config(**kw) -> Config:
                 DRAM_BYTES=a["DRAM_BYTES"], DAW=a.get("DAW", 32),
                 PAIR=bool(int(env.get("OTPU_PAIR", 0))),
                 DUAL=bool(int(env.get("OTPU_DUAL", 0))),
+                QUAD=bool(int(env.get("OTPU_QUAD", 0))),
                 DSTEP=bool(int(env.get("OTPU_DSTEP", 0))),
                 STREAM=bool(int(env.get("OTPU_STREAM", 0))),
                 SEQ_WC=bool(int(env.get("OTPU_SEQ_WC", 0))))
@@ -527,7 +531,12 @@ class Slice:
         srs = w[6]
         unit, accf = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_ACC)
         pair, rsc = bool(ins.flags & I.F_PAIR), bool(ins.flags & I.F_RSC)
-        R = 2 * M if pair else M                          # ACT rows read
+        wf = (ins.flags >> I.WF_SHIFT) & 3
+        # the blocks an advance takes: PAIR two; QUAD's 4-bit PAIR four (two chunks) at
+        # 4*M == MCOLS, not UNIT or RSC (else two)
+        pg = 4 if (pair and cfg.QUAD and wf != I.W8 and 4 * M == cfg.MCOLS and not unit
+                   and not rsc) else 2 if pair else 1
+        R = pg * M                                        # ACT rows read
         if not N or not KB:
             raise SimError("MM: N and KB must be at least 1")
         if not (0 < R <= cfg.act_rows) or ab + KB > cfg.ACT_BLOCKS:
@@ -536,7 +545,6 @@ class Slice:
             raise SimError("MM: RMAX and ASCALE need M <= MCOLS")
         if pair and R > cfg.MCOLS:
             raise SimError("MM: PAIR needs 2*M <= MCOLS")
-        wf = (ins.flags >> I.WF_SHIFT) & 3
         if pair and wf == I.W8 and not cfg.DUAL:
             raise SimError("MM: PAIR needs 4-bit weights (int8: a DUAL configuration)")
         if pair and k0 % 2:
@@ -560,9 +568,10 @@ class Slice:
             wel = Q.DEC["int4" if wf == I.W4I else "fp4"][Q.unpack4(wv)]
         sw, dw, mw = self._mx_scales(wf, ssa, srs, N, KB, k0, unit, rsc, r)
         G = dw.shape[2]
-        # the ACT row of each (output row, block): PAIR takes the odd blocks from row j + M
+        # the ACT row of each (output row, block): PAIR takes the odd blocks from row j + M,
+        # QUAD block 4c + g from row j + g*M
         kk = np.arange(KB)
-        rsel = np.arange(M)[:, None] + np.where(pair & (kk % 2 == 1), M, 0)[None, :]   # [M, KB]
+        rsel = np.arange(M)[:, None] + ((kk % pg) * M)[None, :]                       # [M, KB]
         sa_rows = self.ascale[:R, ab:ab + KB]
         if np.any(sa_rows.view(np.uint32) != sa_rows[np.arange(R) % M][:, :1].view(np.uint32)):
             raise SimError("MM: the ACT rows' blocks hold different Sa (more than one QACT)")
@@ -619,7 +628,9 @@ class Slice:
         rsc = (w[4] & 0xFFFFFFFF) if ins.flags & I.F_RSCALE else None
         q, s, d = self._quant_rows(src, rows, KB, srs, cfg.D // Q.NSUB,
                                    bool(ins.flags & I.F_ROW), cs, rsc)
-        for r0 in ((0, rows) if dup else (0,)):     # DUP: rows r and r + rows, same bytes
+        # DUP: rows r and r + rows, same bytes; QUAD with 4*rows <= MCOLS also r + 2 rows, r + 3 rows
+        copies = (4 if cfg.QUAD and 4 * rows <= cfg.MCOLS else 2) if dup else 1
+        for r0 in range(0, copies * rows, rows):
             self.act[r0:r0 + rows, ab * cfg.D:(ab + KB) * cfg.D] = q
             self.ascale[r0:r0 + rows, ab:ab + KB] = s[:, None]
             self.adoff[r0:r0 + rows, ab:ab + KB] = d.reshape(rows, KB, Q.NSUB)

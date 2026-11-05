@@ -5,6 +5,9 @@
 #   MCOLS=4 VPU_CL=2 LANES=8 ACT_ROWS=MCOLS DSTEP=1   the accelerator (one slice, two HBM channels)
 #   CORE_MHZ=250 UCLK_MHZ=250 (FAST=1: Vivado's default strategies)   TMEM_URAM=1|0   BUILD_ID   OUT_DIR   JOBS   STEP=impl
 #   IMPL_STRATEGY   PREFLIGHT=1|0
+#   RQS=<file.rqs> (STEP=impl: QoR suggestions of an earlier routed run, read before opt_design: build.tcl)
+#   PRE_OPT=<file.tcl> (sourced before opt_design: suggestions done by hand, e.g. CLOCK_BUFFER_TYPE on a net)
+#   QUAD=1|0 (the target's arch QUAD: a 4-bit MM PAIR four blocks an advance; in the CFG_HASH)
 # Vivado 2019.2 builds it (its HBM and XDMA IPs; the VU33P needs a license that covers it). The bitstream is loaded
 # over JTAG (Vivado's hardware manager) and the card's PCIe device rescanned; otpu_primary.mcs / otpu_secondary.mcs
 # are the flash image (SPI x8, the card's two MT25QU256).
@@ -29,14 +32,18 @@ platform="${T_PLATFORM:-5}"
 # the DRAM address width per slice (the target's DAW, 32..36: create_project.tcl's verilog_define OTPU_DAW, otpu_pkg;
 # 33: the slice on all 8 GB)
 daw="${T_DAW:-32}"
+quad="${QUAD:-${T_QUAD:-0}}"
 arch_hash="$(PYTHONPATH="$root" python3 -m opentpu.target hash sqrl-fk33 MCOLS="$mcols" \
-  LANES="$lanes" ACT_ROWS="$act_rows" DSTEP="$dstep" SEQ_WC="$seq_wc" 2>/dev/null || echo 0)"
+  LANES="$lanes" ACT_ROWS="$act_rows" DSTEP="$dstep" SEQ_WC="$seq_wc" QUAD="$quad" 2>/dev/null || echo 0)"
 build_id="${BUILD_ID:-$(git -C "$root" rev-parse HEAD 2>/dev/null | cut -c1-8)}"
 build_id="${build_id:-0}"
 mkdir -p "$out"
 export OTPU_IP_CACHE="${OTPU_IP_CACHE-$HOME/.cache/otpu-vivado-ip}"
 export OTPU_FAST="${FAST:-0}"
 export OTPU_SEQ_WC_GEN="$seq_wc"
+export OTPU_RQS="${RQS:-}"
+export OTPU_PRE_OPT="${PRE_OPT:-}"
+export OTPU_QUAD="$quad"
 export TMEM_URAM="${TMEM_URAM:-1}"
 run() { local script="$1"; shift
   vivado -mode batch -nojournal -log "$out/$(basename "$script" .tcl).log" -source "$script" -tclargs "$@"; }

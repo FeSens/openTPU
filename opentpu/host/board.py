@@ -602,6 +602,12 @@ class SimTransport:
             p["SEQ_WC"] = 1
         if self.ncps == 4:                          # DUAL: the slice on four channels
             p["DUAL"] = 1
+            if self.target.arch.get("QUAD"):         # (4-bit MM PAIR four blocks an advance)
+                p["QUAD"] = 1
+            if rtlsim.MEMX:                         # (behind the slice-port crossing: OTPU_MEMX)
+                p["MEMX"] = 1
+        if rtlsim.MCH_FAST and native == "ld":     # (the bridges' options: OTPU_MCH_FAST bits)
+            p["MCH_FAST"] = rtlsim.MCH_FAST
         if "COLL_GATHER" in rtlsim.UARCH:           # the board's: BAR alone at S = 1 (gather)
             p["COLL_GATHER"] = int(rtlsim.UARCH["COLL_GATHER"])
         # the TMEM as the target builds it (TMEM_IMPL 3: the one copy and its knobs, pumped on
@@ -621,7 +627,8 @@ class SimTransport:
         p.setdefault("PLATFORM", t.platform_id)
         p.setdefault("ARCH_HASH", "32'h%08x" % arch_hash(build_config(
             t, MCOLS=p["MCOLS"], LANES=p["LANES"], ACT_ROWS=p["ACT_ROWS"],
-            TMEM_WORDS=p["TMEM_WORDS"], DSTEP=p.get("DSTEP", 1), SEQ_WC=p.get("SEQ_WC", 0))))
+            TMEM_WORDS=p["TMEM_WORDS"], DSTEP=p.get("DSTEP", 1), SEQ_WC=p.get("SEQ_WC", 0),
+            QUAD=p.get("QUAD", 0))))
         exe = rtlsim.build("tb_board", srcs, p)
         with simtmp.tempdir("otpu_board_") as d:
             for c in range(len(self.ch)):
@@ -1406,7 +1413,7 @@ def device_config(info: dict, **kw):
     """The Config of the bitstream that `info` (Board.info()) describes: MCOLS and LANES come
     from its VERSION register, PAIR from CAPS bit5, DSTEP from bit6 and STREAM from bit26, and
     with register map 4 the slices, TMEM, IMEM, ACT RAM and DRAM sizes from its CFG_* registers
-    and SEQ_WC (the sequencer's wait entries, EXPERIMENTAL) from CFG_UARCH bit24
+    and SEQ_WC (the sequencer's wait entries, EXPERIMENTAL) from CFG_UARCH bit24, QUAD from bit25
     (before map 4: the YPCB-00338's, the current target's) and DAW from CFG_DRAM (device_daw:
     above 32, a slice's DRAM past 4 GiB, docs/wide_dram_hbm.md), so the card needs no OTPU_MCOLS /
     OTPU_LANES / OTPU_PAIR / OTPU_DSTEP / OTPU_STREAM. When one is set in the environment it must
@@ -1437,6 +1444,7 @@ def device_config(info: dict, **kw):
     c = info.get("cfg")
     if c:                                         # register map 4: the device says the rest
         dev.update(D=info["D"], SEQ_WC=bool(c.get("SEQ_WC")), DUAL=c.get("channels") == 4,
+                   QUAD=bool(c.get("QUAD")),
                    DAW=device_daw(c),
                    **{k: c[k] for k in ("S", "TMEM_WORDS", "IMEM_WORDS", "ACT_BLOCKS",
                                         "DRAM_BYTES")})
@@ -1501,7 +1509,8 @@ def check_hash(info: dict, cfg=None) -> None:
         cfg = board_config(D=info["D"], MCOLS=info["MCOLS"], LANES=info["LANES"],
                            PAIR=bool(caps.get("pair")), DSTEP=bool(caps.get("dstep")),
                            STREAM=bool(caps.get("stream")), SEQ_WC=bool(c.get("SEQ_WC")),
-                           DUAL=c.get("channels") == 4, DAW=device_daw(c),
+                           DUAL=c.get("channels") == 4, QUAD=bool(c.get("QUAD")),
+                           DAW=device_daw(c),
                            ACT_ROWS=rows if rows > info["MCOLS"] else 0, **sizes)
     if arch_hash(cfg) != c["hash"]:
         raise ConfigMismatch(f"the bitstream's CFG_HASH {c['hash']:08x} is not the hash of the "

@@ -47,7 +47,9 @@ module otpu_fpga_top_fk33 #(
   parameter bit SEQ_WC     = 1'b0,
   parameter int PLATFORM   = 5,             // targets/sqrl-fk33.toml (CFG_PLATFORM)
   parameter logic [31:0] ARCH_HASH = 32'h0, // its arch_hash (CFG_HASH; run_vivado.sh)
-  parameter int PCIE_LANES = 8
+  parameter int PCIE_LANES = 8,
+  parameter bit QUAD       = 1'b0           // the target's QUAD: 4-bit MM PAIR four blocks an advance
+                                            // (otpu_mxu; run_vivado.sh OTPU_QUAD from targets/sqrl-fk33.toml)
 ) (
   output logic [6:0]  led,                  // 0..3 green, 4..6 the RGB LED (high: on)
   output logic        pcie_clkreq,
@@ -159,7 +161,7 @@ module otpu_fpga_top_fk33 #(
                  .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .TRACE_DEPTH(TRACE_DEPTH),
                  .PQ_WIN(PQ_WIN), .CHASH(CHASH), .DSTEP(DSTEP), .CORE_KHZ(CORE_KHZ),
                  .BUILD_ID(BUILD_ID), .SEQ_WC(SEQ_WC), .DDR_MTS(DDR_MTS), .PLATFORM(PLATFORM),
-                 .ARCH_HASH(ARCH_HASH), .TMEM_IMPL(TMEM_IMPL), .DUAL(DUAL), .BAW(BAW)) u_sys (
+                 .ARCH_HASH(ARCH_HASH), .TMEM_IMPL(TMEM_IMPL), .DUAL(DUAL), .QUAD(QUAD), .BAW(BAW)) u_sys (
     .clk(core_clk), .clk_f(1'b0), .rst(core_rst), .ctl_mrst(lrs2), .xclk(xdma_aclk), .xrst,
     .calib({NC{&hbm_calib && !(|hbm_cattrip)}}), .ded('0), .temp({device_temp, 2'b00}),
     .led(board_led), .i2c_lo(), .i2c_pin(5'h1F),

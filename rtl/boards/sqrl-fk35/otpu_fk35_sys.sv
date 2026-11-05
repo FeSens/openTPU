@@ -1,13 +1,14 @@
 // The accelerator and XDMA's DMA on the SQRL FK35's HBM (otpu_fpga_top_fk35: one otpu_hbm_port per channel on
-// the HBM IP's AXI ports): otpu_board with S = 2 slices (slice s on board channels 2s and 2s + 1, otpu_native_dram
-// each) and one otpu_mem_ch per channel in front of that channel's controller ports c_* in uclk (the adapters' and
-// the HBM AXI ports' clock), meeting XDMA's master for that channel there (the block design's SmartConnect sc_dma
-// splits XDMA's DMA by card address bits 32:31, channel j at j * 2 GiB, and converts it to 128 bits). A copy of the
+// the HBM IP's AXI ports): otpu_board with S = 2 slices (DUAL: slice s on board channels 4s .. 4s + 3,
+// otpu_native_dram2 each; else on 2s and 2s + 1, otpu_native_dram) and one otpu_mem_ch per channel in front of that
+// channel's controller ports c_* in uclk (the adapters' and the HBM AXI ports' clock), meeting XDMA's master for that
+// channel there (the block design's SmartConnect sc_dma splits XDMA's DMA by card address bits from 31 up, channel j
+// at j * 2 GiB, and converts it to 128 bits). A copy of the
 // BCU1525's otpu_bcu_sys for this board: its two SLRs put the HBM, XDMA and the channels in SLR0 and otpu_board (both
 // slices and the shell) in SLR1, so every channel's native port crosses (SLL; boards/sqrl-fk35/constraints/
 // fk35_floorplan.tcl).
-//   calib: each channel's calibration flag in its controller's clock (STATUS CALIB0 / CALIB1: every
-//        slice's first / second channel; synchronized in otpu_board). ded: each channel's ECC has
+//   calib: each channel's calibration flag in its controller's clock (STATUS CALIB0 / CALIB1: the even /
+//        odd channels; synchronized in otpu_board). ded: each channel's ECC has
 //        counted an uncorrectable word (STATUS ECC_DED; the same).
 // The parameters are the target's (targets/sqrl-fk35.toml through opentpu.target rtl_params; the defaults are its
 // values, tests/test_target.py).
@@ -49,11 +50,16 @@ module otpu_fk35_sys #(
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
   parameter int PLATFORM   = 4,
   parameter logic [31:0] ARCH_HASH = 32'h0,
+  parameter bit DUAL       = 1'b1,          // every slice on four channels, port B pairs (otpu_board DUAL)
+  parameter bit QUAD       = 1'b0,          // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_board QUAD)
+  parameter int NQMEM      = 0,             // the adapters' queue memories (otpu_native_dram QMEM)
+  parameter bit MEMX       = 1'b0,          // the adapters in SLR0 behind a crossing of the slices' ports
+                                            // (otpu_board MEMX): the native ports then stay in SLR0
+  parameter int NC         = (DUAL ? 4 : 2) * S,  // memory channels (two per slice; DUAL four)
   // bit j: board channel j's native port crosses an SLR (both slices in SLR1, every channel in SLR0 with the HBM:
   // boards/sqrl-fk35/constraints/fk35_floorplan.tcl): two otpu_native_reg, u_tx with the slice and u_rx with the
-  // channel, flip-flop to flip-flop across
-  parameter logic [3:0] SLL = 4'b1111,
-  parameter int NC         = 2 * S          // memory channels (two per slice)
+  // channel, flip-flop to flip-flop across; none with MEMX
+  parameter logic [NC-1:0] SLL = {NC{!MEMX}}
 ) (
   // core clock and reset (synchronous, high), XDMA's clock and reset
   input  logic                    clk,
@@ -180,7 +186,13 @@ module otpu_fk35_sys #(
       assign b_wdone[j] = n_wdone[j];   assign b_err[j] = n_err[j];
     end
     logic bid, rid;                   // (XIDW 1: XDMA's IDs stay in the SmartConnect)
-    otpu_mem_ch #(.XIDW(1)) u_ch (
+    // ARD 256: read credits for the HBM path's round trip at 250 MHz (and the SLR crossing), with otpu_hbm_port's
+    // RD 64 and otpu_board's NRD 256, as the FK33's (otpu_fk33_sys: decode +24% over 64 credits each)
+    // BRAM: the read data's clock-crossing FIFO (u_ar, 256 x 520 bits) and the order FIFO in block RAM, not LUT
+    // RAM: SLR0's CLBs were 93% used, 86k LUTs of LUT RAM (u_ar some 2,300 a channel), its block RAM 35% (f35d0004;
+    // QUAD's f35d0009 missed timing there, docs/sqrl-fk35.md). (RQ, AREG: for a fast uclk, off at 250 MHz; the
+    // 400 MHz builds did not close)
+    otpu_mem_ch #(.XIDW(1), .ARD(256), .BRAM(1'b1)) u_ch (
       .clk, .rst(rst_c[j]),
       .n_cvalid(n_cvalid[j]), .n_cready(n_cready[j]), .n_cwe(n_cwe[j]), .n_caddr(n_caddr[j]),
       .n_wvalid(n_wvalid[j]), .n_wready(n_wready[j]), .n_wdata(n_wdata[j]),
@@ -211,11 +223,12 @@ module otpu_fk35_sys #(
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
                .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH),
-               .PQ_WIN(PQ_WIN), .HAS_I2C(1'b0), .CHASH(CHASH), .DSTEP(DSTEP),
+               .PQ_WIN(PQ_WIN), .HAS_I2C(1'b0), .CHASH(CHASH), .NRD(256), .DSTEP(DSTEP),
                .HOSTCAL(1'b0), .SEQ_WC(SEQ_WC), .PLATFORM(PLATFORM), .ARCH_HASH(ARCH_HASH),
                .TMEM_IMPL(TMEM_IMPL), .TMEM_RQ(TMEM_RQ),
                .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH), .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP),
-               .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM)) u_board (
+               .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM),
+               .DUAL(DUAL), .QUAD(QUAD), .NQMEM(NQMEM), .MEMX(MEMX)) u_board (
     .clk, .clk_f, .rst(rst_b), .ctl_mrst, .calib, .ded, .temp, .led, .i2c_lo, .i2c_pin,
     .s_ctl_awaddr, .s_ctl_awvalid, .s_ctl_awready, .s_ctl_wdata, .s_ctl_wstrb, .s_ctl_wvalid,
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,

@@ -5,7 +5,8 @@
 #     PLATFORM ARCH_HASH DAW
 # (run_vivado.sh takes them from the target, targets/sqrl-fk33.toml; the RTL list below is opentpu.target
 # sources("sqrl-fk33")). Environment: UCLK_MHZ (default 250), OTPU_FAST (Vivado's default strategies), OTPU_IP_CACHE, TMEM_URAM (default 1:
-# the TMEM in UltraRAM, boards/sqrl-fk33/vivado/tmem_uram.xdc).
+# the TMEM in UltraRAM, boards/sqrl-fk33/vivado/tmem_uram.xdc), OTPU_QUAD (default 0: the top's QUAD, the target's
+# arch QUAD: a 4-bit MM PAIR four blocks an advance; run_vivado.sh sets it from the target).
 # Built and run with Vivado 2019.2 (the VU33P needs a license that covers it; the HBM IP 1.0, XDMA 4.1).
 
 set here [file normalize [file dirname [info script]]]
@@ -55,7 +56,7 @@ set rtl [list \
   rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_comp.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv \
   rtl/top/otpu_coll.sv rtl/top/otpu_slice.sv \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
-  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_native_dram2.sv \
+  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_native_dram2.sv rtl/mem/otpu_native_xdram2.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
   rtl/shell/otpu_axi_split2.sv rtl/boards/sqrl-fk33/otpu_fk33_sys.sv \
   rtl/boards/sqrl-fk33/otpu_hbm_port.sv rtl/boards/sqrl-fk33/otpu_hbm.sv \
@@ -92,7 +93,9 @@ add_files -norecurse [lindex [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_b
 set_property top otpu_fpga_top_fk33 [current_fileset]
 set CORE_KHZ [expr {round($CORE_HZ / 1000.0)}]
 set SEQ_WC [expr {[info exists ::env(OTPU_SEQ_WC_GEN)] && $::env(OTPU_SEQ_WC_GEN) eq "1" ? 1 : 0}]
-set_property generic "SEQ_WC=1'b$SEQ_WC MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DSTEP=1'b$DSTEP PLATFORM=$PLATFORM ARCH_HASH=32'h$ARCH_HASH" [current_fileset]
+set QUAD [expr {[info exists ::env(OTPU_QUAD)] && $::env(OTPU_QUAD) eq "1" ? 1 : 0}]
+puts "QUAD $QUAD"
+set_property generic "QUAD=1'b$QUAD SEQ_WC=1'b$SEQ_WC MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DSTEP=1'b$DSTEP PLATFORM=$PLATFORM ARCH_HASH=32'h$ARCH_HASH" [current_fileset]
 
 # ---- constraints: the pins and configuration; the TMEM in UltraRAM (a synthesis property); then, as unmanaged Tcl
 # on the synthesized netlist, otpu_mem_ch's crossings (fk33_mem_ch.tcl, scoped to the module) and the top's

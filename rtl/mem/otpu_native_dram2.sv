@@ -23,7 +23,8 @@ module otpu_native_dram2 #(
   parameter int RD = 128,                            // B read beats in flight per channel
   parameter int OQ = 512,                            // reads in flight a port (order FIFO), 2^k
   parameter int AW = 32,                             // the slice's word addresses (otpu_pkg AWW)
-  parameter int BAW = 25                             // the channel beat address bits
+  parameter int BAW = 25,                            // the channel beat address bits
+  parameter int QMEM = 0                             // the adapters' queue memories (otpu_native_dram)
 ) (
   input  logic              clk,
   input  logic              rst,
@@ -172,7 +173,7 @@ module otpu_native_dram2 #(
   assign rd_idle  = &p_rd_idle && bq_n == 0 && aq_n == 0;
 
   for (genvar p = 0; p < 2; p++) begin : g_ad
-    otpu_native_dram #(.D(D), .CHASH(CHASH), .RD(RD), .AW(AW), .BAW(BAW)) u_ad (
+    otpu_native_dram #(.D(D), .CHASH(CHASH), .RD(RD), .AW(AW), .BAW(BAW), .QMEM(QMEM)) u_ad (
       .clk, .rst, .a_flush,
       .a_rdy_x(p_a_rdy[p]), .a_req_x(p_a_req[p]), .a_we_x(a_we_x), .a_addr_x(inner(a_addr_x)),
       .a_wdata_x, .a_be_x, .a_rvalid(p_a_rvalid[p]), .a_rdata(p_a_rdata[p]),

@@ -82,7 +82,9 @@ set_max_delay -datapath_only -from $c_ucl -to [get_cells {u_ar/wgray_r1_reg[*]}]
 set_bus_skew -from [get_cells {u_ar/wgray_reg[*] u_ar/wbin_reg[*]}] -to [get_cells {u_ar/wgray_r1_reg[*]}] $k_cu
 set_max_delay -datapath_only -from $c_clk -to [get_cells {u_ar/rgray_w1_reg[*]}] $t_clk
 set_bus_skew -from [get_cells {u_ar/rgray_reg[*] u_ar/rbin_reg[*]*}] -to [get_cells {u_ar/rgray_w1_reg[*]}] $k_cu
-set_max_delay -datapath_only -from $c_ucl -through [get_pins -quiet -filter {DIRECTION == OUT && IS_LEAF} -of_objects [get_cells -quiet -hierarchical -filter {NAME =~ *u_ar/mem_reg*}]] -to $c_clk $t_clk
+# (otpu_mem_ch BRAM: u_ar in block RAMs, written in uclk and read in clk at their own ports, no path across: none)
+set p_ar [get_pins -quiet -filter {DIRECTION == OUT && IS_LEAF} -of_objects [get_cells -quiet -hierarchical -filter {NAME =~ *u_ar/mem_reg*}]]
+if {[llength $p_ar]} { set_max_delay -datapath_only -from $c_ucl -through $p_ar -to $c_clk $t_clk }
 
 # u_xq (commands) and u_xd (write data): XDMA's, xclk -> uclk
 set_max_delay -datapath_only -from $c_xcl -to [get_cells {u_xq/wgray_r1_reg[*]}] $t_xcl

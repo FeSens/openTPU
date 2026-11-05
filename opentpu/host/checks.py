@@ -175,23 +175,29 @@ def run_demo(board, cfg, prog: list | None = None,
     prog = [I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + (prog or demo_program())
     ref = np.zeros(min(cfg.DRAM_BYTES, 1 << 23), np.uint8)
     ref[:len(img)] = img
-    sl = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog], [ref]).run().slices[0]
-    board.write(ZERO_AT, np.zeros(4 * cfg.TMEM_WORDS, np.uint8))
-    board.write(0, img)
-    board.load(PROG_AT, prog)
+    # every slice runs the program from its own copy of the image (a BAR waits for all of them)
+    S = cfg.S
+    m = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog] * S,
+                [ref.copy() for _ in range(S)]).run()
+    for s in range(S):
+        board.write(ZERO_AT, np.zeros(4 * cfg.TMEM_WORDS, np.uint8), s)
+        board.write(0, img, s)
+    board.load(PROG_AT, [prog] * S if S > 1 else prog)
     st = board.run(timeout=10.0)
-    got = board.read(0, PROG_AT)
-    want = sl.dram[:PROG_AT]
-    if st["instructions"][0] != sl.icount:
-        return False, f"retired {st['instructions'][0]} of {sl.icount} instructions", st
-    bad = np.nonzero(got != want)[0]
-    if len(bad):
-        words = sorted({int(b) // 4 * 4 for b in bad[:64]})[:3]
-        gw, ww = got.view("<u4"), want.view("<u4")
-        diff = "; ".join(f"{a:#x}: got {int(gw[a // 4]):#010x} want {int(ww[a // 4]):#010x}"
-                         for a in words)
-        return False, f"{len(bad)} DRAM bytes differ from the ISA simulator, first at " \
-                      f"{[hex(int(b)) for b in bad[:6]]} ({diff})", st
+    for s, sl in enumerate(m.slices):
+        at = f"slice {s}: " if S > 1 else ""
+        if st["instructions"][s] != sl.icount:
+            return False, f"{at}retired {st['instructions'][s]} of {sl.icount} instructions", st
+        got = board.read(0, PROG_AT, s)
+        want = sl.dram[:PROG_AT]
+        bad = np.nonzero(got != want)[0]
+        if len(bad):
+            words = sorted({int(b) // 4 * 4 for b in bad[:64]})[:3]
+            gw, ww = got.view("<u4"), want.view("<u4")
+            diff = "; ".join(f"{a:#x}: got {int(gw[a // 4]):#010x} want {int(ww[a // 4]):#010x}"
+                             for a in words)
+            return False, f"{at}{len(bad)} DRAM bytes differ from the ISA simulator, first at " \
+                          f"{[hex(int(b)) for b in bad[:6]]} ({diff})", st
     return True, f"{st['cycles']} cycles", st
 
 

@@ -38,6 +38,25 @@ if {!$impl_only} {
 
 if {$strategy ne ""} { set_property strategy $strategy [get_runs impl_1] }
 if {!$fast} { set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED true [get_runs impl_1] }
+# OTPU_RQS: a QoR suggestions file (write_qor_suggestions of an earlier routed run) read before opt_design, its
+# automatic implementation suggestions then applied by opt / place / phys_opt (synthesis ones need a new
+# synthesis). OTPU_PRE_OPT: a Tcl file sourced there too (the suggestions that are not automatic, done by hand)
+set pre {}
+if {[info exists ::env(OTPU_RQS)] && $::env(OTPU_RQS) ne ""} {
+  lappend pre "read_qor_suggestions {[file normalize $::env(OTPU_RQS)]}"
+  puts "QoR suggestions: $::env(OTPU_RQS)"
+}
+if {[info exists ::env(OTPU_PRE_OPT)] && $::env(OTPU_PRE_OPT) ne ""} {
+  lappend pre "source {[file normalize $::env(OTPU_PRE_OPT)]}"
+  puts "before opt_design: $::env(OTPU_PRE_OPT)"
+}
+if {[llength $pre]} {
+  set hook $out/rqs_pre_opt.tcl
+  set fh [open $hook w]; puts $fh [join $pre "\n"]; close $fh
+  set_property STEPS.OPT_DESIGN.TCL.PRE $hook [get_runs impl_1]
+} else {
+  set_property STEPS.OPT_DESIGN.TCL.PRE {} [get_runs impl_1]
+}
 reset_run impl_1
 launch_runs impl_1 -jobs $jobs
 wait_on_run impl_1

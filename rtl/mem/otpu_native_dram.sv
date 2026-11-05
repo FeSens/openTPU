@@ -113,7 +113,11 @@ module otpu_native_dram #(
   // DAW 35 / 36); the channel beat address n_caddr: BAW bits (25: 2 GiB a channel; DAW - 7 for a
   // 2^DAW-byte slice on two channels), the chunk index's low BAW bits
   parameter int AW = 32,
-  parameter int BAW = 25
+  parameter int BAW = 25,
+  // the SW queue's memories (u_qwd, u_wrm: 512 bits x WQD) and the B FIFO's (u_rbm): 0 block RAMs,
+  // 1 the SW queue's in LUT RAM, 2 that and the B FIFO's in UltraRAM (the FK35, whose SLR1 the
+  // block RAMs filled: docs/sqrl-fk35.md)
+  parameter int QMEM = 0
 ) (
   input  logic              clk,
   input  logic              rst,
@@ -335,6 +339,8 @@ module otpu_native_dram #(
   // per piece (110ec6d at 133.33 MHz: rb_t_rep -> rbm WADR, fanout 577, 0 levels, 6.9 ns of
   // route, +0.195 ns); on block RAMs each reaches RBP of them
   localparam int RBP = 8;
+  localparam QSTYLE = QMEM >= 1 ? "distributed" : "block";   // (untyped: Vivado 2019.2)
+  localparam RSTYLE = QMEM >= 2 ? "ultra" : "block";
   logic [RW-1:0] rb_hn [2];
   logic [AW_:0] ra_n [2], ra_res [2];
   logic [AW_-1:0] ra_h [2], ra_t [2];
@@ -421,7 +427,7 @@ module otpu_native_dram #(
     // data goes into last cycle's tail slot (ql_t, ql_v) a cycle later, as gd has it: a slot
     // pushed last cycle is at the read point or before it, and its data is read (hw) only past it
     always_ff @(posedge clk) if (!qw_n[c][WW]) qwm[WW'(qw_f[c] + qw_n[c])] <= gb[c];
-    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE("block")) u_qwd (
+    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE(QSTYLE)) u_qwd (
       .clk, .we(ql_v[c]), .wa(ql_t[c]), .wd(gd[c]), .ra_n(qw_fn[c]), .rd(hw_d));
     always_ff @(posedge clk) if (!qw_n[c][WW]) wam[WW'(qw_f[c] + qw_n[c])] <= gb[c].m;
     always_ff @(posedge clk) if (!qw_n[c][WW]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(gb[c].m);
@@ -436,14 +442,14 @@ module otpu_native_dram #(
     assign wh_f[c] = whm[qw_f[c]];
     for (genvar k = 0; k < RBP; k++) begin : g_rb
       localparam int PB = 512 / RBP;
-      otpu_ram_1r1w_ra #(.W(PB), .N(RD), .STYLE("block")) u_rbm (
+      otpu_ram_1r1w_ra #(.W(PB), .N(RD), .STYLE(RSTYLE)) u_rbm (
         .clk, .we(n_rvalid[c] && tgh[c].k == K_B), .wa(rb_t[c]), .wd(n_rdata[c][PB * k +: PB]),
         .ra_n(rb_hn[c]), .rd(rb_head[c][PB * k +: PB]));
     end
     always_ff @(posedge clk)
       if (n_rvalid[c] && tgh[c].k == K_A) ram[ra_t[c]] <= n_rdata[c];
     // the SW queue's fill data, per slot
-    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE("block")) u_wrm (
+    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE(QSTYLE)) u_wrm (
       .clk, .we(n_rvalid[c] && tgh[c].k == K_W), .wa(tgh[c].slot), .wd(n_rdata[c]),
       .ra_n(qw_fn[c]), .rd(wr_head[c]));
     assign hb[c] = qb_t'(qbm[qb_h[c]]);

@@ -22,7 +22,8 @@ BUILD = ROOT / "build" / "verilator"
 
 RTL_SOURCES = [
     "vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv", "mem/otpu_dram.sv", "mem/otpu_tmem.sv",
-    "mem/otpu_native_dram.sv", "mem/otpu_native_dram2.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
+    "mem/otpu_native_dram.sv", "mem/otpu_native_dram2.sv", "mem/otpu_native_xdram2.sv",
+    "mem/otpu_actram.sv", "seq/otpu_seq.sv",
     "vpu/otpu_vtree.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv", "tech/generic/otpu_tech_dsp.sv",
     "tech/generic/otpu_tech_ram.sv",
     "vpu/otpu_quant.sv", "vpu/otpu_se_comp.sv", "vpu/otpu_se_tail.sv", "vpu/otpu_vpu.sv",
@@ -216,6 +217,12 @@ if os.environ.get("OTPU_TMEM_NCP"):
 # set by +tm_* plusargs: OTPU_SIM_PLUSARGS; docs/tmem_nocopy.md)
 if os.environ.get("OTPU_TMEM_IMPL"):
     UARCH["TMEM_IMPL"] = BOARD_UARCH["TMEM_IMPL"] = int(os.environ["OTPU_TMEM_IMPL"])
+# The board model's DUAL adapters behind the crossing of the slices' ports (otpu_board MEMX, the
+# FK35's OTPU_MEMX build): OTPU_MEMX=1 (tb_board only). Its channels' bridges with registered
+# arbiter inputs and block-RAM FIFOs: OTPU_MCH_FAST, otpu_mem_ch's options as bits (1 RQ, 2 BRAM:
+# the FK35's block-RAM read FIFOs, 4 AREG; 7 all three, the 400 MHz experiment's)
+MEMX = int(os.environ.get("OTPU_MEMX") or 0)
+MCH_FAST = int(os.environ.get("OTPU_MCH_FAST") or 0)
 # ... OTPU_TMEM_IMPL=3: one copy of sub-banked RAMs (otpu_tmem IMPL 3), OTPU_TMEM_NSB RAMs a bank
 # with the sub-bank at word-address bit OTPU_TMEM_SBP, hashed by OTPU_TMEM_SBH (1, 2); with
 # OTPU_TMEM_RPL=1 lost reads are replayed under the board's arbiter (otpu_slice TMEM_RPL); with
@@ -338,6 +345,8 @@ def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool | in
          "AXI": int(axi)}                                # otpu_top's memory path (2: LDC)
     if getattr(cfg, "DUAL", False):
         p["DUAL"] = 1                                    # port B chunk pairs (int8 MM PAIR)
+    if getattr(cfg, "QUAD", False):
+        p["QUAD"] = 1                                    # 4-bit MM PAIR four blocks an advance
     p.update(UARCH)
     p.update(uarch or {})
     if p.get("TMEM_IMPL") == 3 and "TMEM_SBP" not in p:

@@ -79,7 +79,8 @@ TECH = {"generic": ["tech/generic/otpu_tech_dsp.sv", "tech/generic/otpu_tech_ram
         # the RAMs on SRAM macros: the leaves (otpu_sram_*) come from tools/asic/flow.py
         "asic": ["tech/generic/otpu_tech_dsp.sv", "tech/asic/otpu_tech_ram.sv"]}
 SHELL = ["shell/otpu_ctrl.sv", "shell/otpu_trace.sv", "shell/otpu_board.sv",
-         "mem/otpu_native_dram.sv", "mem/otpu_native_dram2.sv", "shell/otpu_afifo.sv",
+         "mem/otpu_native_dram.sv", "mem/otpu_native_dram2.sv", "mem/otpu_native_xdram2.sv",
+         "shell/otpu_afifo.sv",
          "shell/otpu_mem_ch.sv",
          "shell/otpu_axi_split2.sv"]
 BOARDS = {"ypcb-00338": ["boards/ypcb-00338/otpu_native_sys.sv",
@@ -107,6 +108,10 @@ class Target:
     platform: dict
     path: Path
     variant: str = ""                   # the [variants.<name>] applied ("": none)
+    # [mixes]: the recommended mixes where this target's own speeds choose otherwise than
+    # formats.MIXES (docs/formats.md), by the same key: {(model_type, layers, hidden, vocab):
+    # formats string, "" for int8}
+    mixes: dict = dataclasses.field(default_factory=dict)
 
     @property
     def family(self) -> str:
@@ -203,16 +208,25 @@ def load(name: str | None = None) -> Target:
     if raw["arch"]["SEQ_WC"] and raw["uarch"]["WIN"] > 16:
         raise TargetError(f"{path}: SEQ_WC (otpu_seq's wait entries) needs WIN <= 16: 4-bit "
                           f"counts name a unit's last 15 instructions")
+    if a["QUAD"] and not a["DUAL"]:
+        raise TargetError(f"{path}: QUAD (port B chunk quads) needs DUAL")
     if not 32 <= a["DAW"] <= 36:
         raise TargetError(f"{path}: DAW {a['DAW']}: the DRAM address width per slice is 32..36")
     if a["DRAM_BYTES"] > 1 << a["DAW"]:
         raise TargetError(f"{path}: DRAM_BYTES over {1 << (a['DAW'] - 30)} GiB at DAW {a['DAW']}: "
                           f"DRAM addresses are {a['DAW']} bits per slice (DAW up to 36: a 4 GiB "
                           f"region per instruction, docs/wide_dram_hbm.md; or more slices)")
+    mixes = {}
+    for k, v in raw.get("mixes", {}).items():
+        mt, *num = k.split("/")
+        if len(num) != 3 or not all(n.isdigit() for n in num) or not isinstance(v, str):
+            raise TargetError(f"{path}: [mixes] {k!r}: the key is model_type/layers/hidden/vocab "
+                              f"(formats.MIXES'), the value a formats string (\"\": int8)")
+        mixes[(mt, *map(int, num))] = v
     return Target(name=path.stem, kind=t["kind"], platform_id=int(t.get("platform_id", 0)),
                   description=t.get("description", ""), arch=dict(a), uarch=dict(raw["uarch"]),
                   tech=dict(raw["tech"]), platform=dict(raw["platform"]), path=path,
-                  variant=var)
+                  variant=var, mixes=mixes)
 
 
 def by_platform(pid: int) -> Target | None:
@@ -252,7 +266,7 @@ def arch_hash(cfg) -> int:
     build without it stays, and a host that writes no entries refuses a build with it (its
     hash leaves it out: opentpu/host/board.py check_hash)."""
     d = dict(dataclasses.asdict(cfg), NUMERICS=NUMERICS)
-    for k in ("SEQ_WC", "DUAL"):          # (DUAL, port B chunk pairs, likewise)
+    for k in ("SEQ_WC", "DUAL", "QUAD"):  # (DUAL, port B chunk pairs, and QUAD likewise)
         if not d.get(k):
             d.pop(k, None)
     if d.get("DAW", 32) == 32:            # (DAW, the DRAM address width, only when wide)
@@ -303,7 +317,7 @@ def rtl_params(t: Target | str | None = None) -> dict:
         "DRAM_LOG2": (a["DRAM_BYTES"] - 1).bit_length(),
         "PLATFORM": t.platform_id,
         "ARCH_HASH": arch_hash(cfg),
-    }
+    } | ({"QUAD": 1} if a.get("QUAD") else {})   # (QUAD only when on)
 
 
 def sources(t: Target | str | None = None, family: str | None = None) -> list[str]:
@@ -320,7 +334,7 @@ def sources(t: Target | str | None = None, family: str | None = None) -> list[st
 
 def build_config(t: Target | str | None = None, **knobs):
     """The Config of an FPGA build of `t` with the board flow's knobs (run_vivado.sh MCOLS,
-    LANES, ACT_ROWS, TMEM_WORDS, DSTEP, SEQ_WC; the CFG_HASH it reports): ACT_ROWS equal to
+    LANES, ACT_ROWS, TMEM_WORDS, DSTEP, SEQ_WC, QUAD; the CFG_HASH it reports): ACT_ROWS equal to
     MCOLS is 0 (no replay), DSTEP 0 leaves out the stream engine too (STREAM)."""
     t = t if isinstance(t, Target) else load(t)
     a = dict(t.arch)
@@ -333,6 +347,8 @@ def build_config(t: Target | str | None = None, **knobs):
         a["DSTEP"] = a["STREAM"] = bool(int(knobs["DSTEP"]))
     if knobs.get("SEQ_WC") is not None:
         a["SEQ_WC"] = bool(int(knobs["SEQ_WC"]))
+    if knobs.get("QUAD") is not None:
+        a["QUAD"] = bool(int(knobs["QUAD"]))
     return config(t, **a)
 
 
@@ -372,7 +388,7 @@ def main(argv: list[str]) -> int:
         print(" ".join(f"{k}={_fmt(v)}" for k, v in rtl_params(t).items()))
     elif cmd == "files":                        # files NAME [FAMILY]: rtl/ paths, one a line
         print("\n".join(f"rtl/{f}" for f in sources(t, argv[2] if len(argv) > 2 else None)))
-    elif cmd == "hash":                  # hash NAME [MCOLS=4 LANES=8 ACT_ROWS=4 DSTEP=1 SEQ_WC=0]
+    elif cmd == "hash":                  # hash NAME [MCOLS=4 LANES=8 ACT_ROWS=4 DSTEP=1 SEQ_WC=0 QUAD=0]
         print(f"{arch_hash(build_config(t, **_knobs(argv[2:]))):08x}")
     elif cmd == "env":                           # shell assignments T_<PARAM>=<value>
         for k, v in rtl_params(t).items():

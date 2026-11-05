@@ -1,11 +1,12 @@
 # Block design "otpu_bd" for the SQRL FK35 (create_project.tcl; boards/bcu1525/vivado/bd.tcl is its model): PCIe
-# (XDMA), the clocks, resets, the SYSMON, the control interconnect and XDMA's DMA split onto the four channels. No
-# memory controller: the HBM IP, its adapters and the accelerator are outside, in the top
-# (rtl/boards/sqrl-fk35/otpu_fpga_top_fk35.sv). External interfaces:
+# (XDMA), the clocks, resets, the SYSMON, the control interconnect and XDMA's DMA split onto the NCH channels (8:
+# DUAL, two slices on four HBM channels each). No memory controller: the HBM IP, its adapters and the accelerator are
+# outside, in the top (rtl/boards/sqrl-fk35/otpu_fpga_top_fk35.sv). External interfaces:
 #   M_AXI_CTL      AXI4-Lite master -> the accelerator's control registers (BAR0 0x00000, core_clk)
 #   M_AXI_DMA<j>   AXI4 masters, 128 bits, no IDs, xdma_aclk -> channel j's bridge (otpu_mem_ch): XDMA's DMA
-#                  through the SmartConnect sc_dma, which decodes card address bits 32:31 (channel j at j x 2 GiB;
-#                  opentpu.host.board.channel_map) and converts the width
+#                  through the SmartConnect sc_dma, which decodes card address bits 33:31 (channel j at j x 2 GiB,
+#                  a DUAL channel's 1 GiB at the window's start; opentpu.host.board.channel_map) and converts the
+#                  width
 # and device_temp (the SYSMON's die temperature, 10 bits, core_clk; BAR0 0x30000: its registers).
 #
 # PCIe: the FK33's (boards/sqrl-fk33/vivado/bd.tcl; the openTPU_FK FK33 / FK35 builds' settings: XDMA on
@@ -15,7 +16,7 @@
 # wizard runs from XDMA's axi_aclk (250 MHz): core_clk (CORE_MHZ), uclk (UCLK_MHZ: the HBM's AXI ports, the adapters,
 # otpu_mem_ch's controller side) and clk100 (the HBM's reference and APB clock); each resets until its lock and with
 # axi_aresetn.
-# Variables (set before sourcing): CORE_MHZ, UCLK_MHZ (default 250 both).
+# Variables (set before sourcing): CORE_MHZ, UCLK_MHZ (default 250 both), NCH (the channels, default 8).
 proc ip_vlnv {name} {
   set defs [lsort -decreasing [get_ipdefs -all "xilinx.com:ip:${name}:*"]]
   if {[llength $defs] == 0} { error "IP $name not found in this Vivado installation" }
@@ -25,6 +26,7 @@ create_bd_design otpu_bd
 current_bd_design otpu_bd
 if {![info exists CORE_MHZ]} { set CORE_MHZ 250 }
 if {![info exists UCLK_MHZ]} { set UCLK_MHZ 250 }
+if {![info exists NCH]} { set NCH 8 }
 set XDMA_MHZ 250
 set XDMA_HZ [expr {$XDMA_MHZ * 1000000}]
 set AXI_BITS 256
@@ -91,16 +93,17 @@ set UCLK_HZ [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/uclk]]
 puts "core_clk $CORE_HZ Hz, uclk $UCLK_HZ Hz (clock wizard on XDMA's axi_aclk)"
 set_property -dict [list CONFIG.FREQ_HZ $CORE_HZ CONFIG.ASSOCIATED_BUSIF M_AXI_CTL CONFIG.ASSOCIATED_RESET core_rstn] \
   [get_bd_ports core_clk]
-# ------------------------------------------------------------------ XDMA's DMA onto the four channels
-set dmas {M_AXI_DMA0 M_AXI_DMA1 M_AXI_DMA2 M_AXI_DMA3}
+# ------------------------------------------------------------------ XDMA's DMA onto the channels
+set dmas {}
+for {set j 0} {$j < $NCH} {incr j} { lappend dmas M_AXI_DMA$j }
 set scd [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_dma]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {4} CONFIG.NUM_CLKS {1}] $scd
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI $NCH CONFIG.NUM_CLKS {1}] $scd
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_dma/aclk]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins sc_dma/aresetn]
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins sc_dma/S00_AXI]
 foreach p $dmas {
   set m [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
-  set_property -dict [list CONFIG.PROTOCOL AXI4 CONFIG.DATA_WIDTH 128 CONFIG.ADDR_WIDTH 33 \
+  set_property -dict [list CONFIG.PROTOCOL AXI4 CONFIG.DATA_WIDTH 128 CONFIG.ADDR_WIDTH 34 \
     CONFIG.HAS_BURST 0 CONFIG.HAS_LOCK 0 CONFIG.HAS_PROT 0 CONFIG.HAS_CACHE 0 \
     CONFIG.HAS_QOS 0 CONFIG.HAS_REGION 0 CONFIG.FREQ_HZ $XDMA_HZ] $m
   connect_bd_intf_net [get_bd_intf_pins sc_dma/M0[string index $p end]_AXI] $m
@@ -129,12 +132,13 @@ connect_bd_intf_net [get_bd_intf_pins sc_ctl/M00_AXI] [get_bd_intf_ports M_AXI_C
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M01_AXI] [get_bd_intf_pins sysmon/S_AXI_LITE]
 # ------------------------------------------------------------------ address map
 # BAR0 (1 MB): 0x00000 the control registers, 0x30000 the SYSMON (the YPCB's and BCU1525's layout). XDMA's DMA:
-# 8 GiB, M_AXI_DMA<j> at j x 2 GiB (explicit offsets: 2019.2's Tcl 8.5 format %X truncates to 32 bits)
+# NCH x 2 GiB, M_AXI_DMA<j> at j x 2 GiB (explicit offsets: 2019.2's Tcl 8.5 format %X truncates to 32 bits)
 set lite [get_bd_addr_spaces xdma_0/M_AXI_LITE]
 assign_bd_address -offset 0x00000000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_CTL/Reg] -force
 assign_bd_address -offset 0x00030000 -range 64K -target_address_space $lite \
   [get_bd_addr_segs -of [get_bd_intf_pins sysmon/S_AXI_LITE]] -force
-foreach {j off} {0 0x000000000 1 0x080000000 2 0x100000000 3 0x180000000} {
+foreach {j off} [lrange {0 0x000000000 1 0x080000000 2 0x100000000 3 0x180000000
+                         4 0x200000000 5 0x280000000 6 0x300000000 7 0x380000000} 0 [expr {2 * $NCH - 1}]] {
   assign_bd_address -offset $off -range 2G \
     -target_address_space [get_bd_addr_spaces xdma_0/M_AXI] [get_bd_addr_segs M_AXI_DMA$j/Reg] -force
 }
