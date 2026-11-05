@@ -12,11 +12,13 @@
 # PCIe: the FK33's (boards/sqrl-fk33/vivado/bd.tcl; the openTPU_FK FK33 / FK35 builds' settings: XDMA on
 # PCIE4C_X1Y0, the GTY lanes of the card's edge connector, SQRL's identity 1E24:1533 / 1E24:0001 rev A3, which the
 # Windows driver sqrlfk.sys binds to) without their Tandem PCIe: the bitstream is loaded over JTAG (or from the flash)
-# whole. Gen3 x8, 256-bit AXI at 250 MHz. The card has no clock input besides the PCIe reference, so the clock
+# whole. Gen4 x8 (PCIE_GEN 4: 512-bit AXI at 250 MHz, the SQRL_FK33 builds' default) or Gen3 x8 (PCIE_GEN 3: 256-bit
+# AXI at 250 MHz); either way axi_aclk is 250 MHz. The card has no clock input besides the PCIe reference, so the clock
 # wizard runs from XDMA's axi_aclk (250 MHz): core_clk (CORE_MHZ), uclk (UCLK_MHZ: the HBM's AXI ports, the adapters,
 # otpu_mem_ch's controller side) and clk100 (the HBM's reference and APB clock); each resets until its lock and with
 # axi_aresetn.
-# Variables (set before sourcing): CORE_MHZ, UCLK_MHZ (default 250 both), NCH (the channels, default 8).
+# Variables (set before sourcing): CORE_MHZ, UCLK_MHZ (default 250 both), NCH (the channels, default 8), PCIE_GEN
+# (4 or 3, default 4).
 proc ip_vlnv {name} {
   set defs [lsort -decreasing [get_ipdefs -all "xilinx.com:ip:${name}:*"]]
   if {[llength $defs] == 0} { error "IP $name not found in this Vivado installation" }
@@ -27,9 +29,17 @@ current_bd_design otpu_bd
 if {![info exists CORE_MHZ]} { set CORE_MHZ 250 }
 if {![info exists UCLK_MHZ]} { set UCLK_MHZ 250 }
 if {![info exists NCH]} { set NCH 8 }
+if {![info exists PCIE_GEN]} { set PCIE_GEN 4 }
 set XDMA_MHZ 250
 set XDMA_HZ [expr {$XDMA_MHZ * 1000000}]
-set AXI_BITS 256
+# the link and XDMA's AXI width at 250 MHz (Gen4 x8 needs 512 bits there); Gen3's transceivers on QPLL1 as before,
+# Gen4's on the IP's default PLL
+switch -- $PCIE_GEN {
+  3 { set LINK_SPEED 8.0_GT/s;  set AXI_BITS 256; set PLL [list CONFIG.plltype {QPLL1}] }
+  4 { set LINK_SPEED 16.0_GT/s; set AXI_BITS 512; set PLL {} }
+  default { error "PCIE_GEN $PCIE_GEN: 3 or 4" }
+}
+puts "PCIe Gen$PCIE_GEN x8 ($LINK_SPEED), XDMA AXI $AXI_BITS bits at $XDMA_MHZ MHz"
 # ------------------------------------------------------------------ external ports
 set pcie_refclk [create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 pcie_refclk]
 set_property CONFIG.FREQ_HZ 100000000 $pcie_refclk
@@ -51,7 +61,7 @@ set xdma [create_bd_cell -type ip -vlnv [ip_vlnv xdma] xdma_0]
 set_property -dict [list CONFIG.mode_selection {Advanced} CONFIG.pcie_blk_locn {PCIE4C_X1Y0}] $xdma
 set_property -dict [list \
   CONFIG.cfg_mgmt_if {false} \
-  CONFIG.pl_link_cap_max_link_width {X8} CONFIG.pl_link_cap_max_link_speed {8.0_GT/s} \
+  CONFIG.pl_link_cap_max_link_width {X8} CONFIG.pl_link_cap_max_link_speed $LINK_SPEED \
   CONFIG.axi_data_width "${AXI_BITS}_bit" CONFIG.axisten_freq $XDMA_MHZ CONFIG.ref_clk_freq {100_MHz} \
   CONFIG.vendor_id {1E24} CONFIG.pf0_device_id {1533} \
   CONFIG.pf0_revision_id {A3} CONFIG.pf0_subsystem_vendor_id {1E24} CONFIG.pf0_subsystem_id {0001} \
@@ -59,7 +69,7 @@ set_property -dict [list \
   CONFIG.xdma_rnum_chnl {1} CONFIG.xdma_wnum_chnl {1} CONFIG.xdma_rnum_rids {8} \
   CONFIG.axilite_master_en {true} CONFIG.axilite_master_size {1} CONFIG.axilite_master_scale {Megabytes} \
   CONFIG.pciebar2axibar_axil_master {0x00000000} \
-  CONFIG.xdma_axi_intf_mm {AXI_Memory_Mapped} CONFIG.plltype {QPLL1} \
+  CONFIG.xdma_axi_intf_mm {AXI_Memory_Mapped} {*}$PLL \
 ] $xdma
 connect_bd_net [get_bd_pins refclk_buf/IBUF_DS_ODIV2] [get_bd_pins xdma_0/sys_clk]
 connect_bd_net [get_bd_pins refclk_buf/IBUF_OUT] [get_bd_pins xdma_0/sys_clk_gt]
@@ -147,7 +157,8 @@ foreach p [concat {pcie_mgt pcie_refclk M_AXI_CTL} $dmas] {
   if {[get_bd_intf_ports $p] eq ""} { error "block design port $p missing: [get_bd_intf_ports]" }
 }
 foreach {k want} [list vendor_id 1E24 pf0_device_id 1533 pcie_blk_locn PCIE4C_X1Y0 axisten_freq $XDMA_MHZ \
-                       pl_link_cap_max_link_width X8 axi_data_width ${AXI_BITS}_bit] {
+                       pl_link_cap_max_link_width X8 pl_link_cap_max_link_speed $LINK_SPEED \
+                       axi_data_width ${AXI_BITS}_bit] {
   set got [get_property CONFIG.$k [get_bd_cells xdma_0]]
   if {$got ne $want} { error "xdma_0: $k is $got, expected $want" }
 }

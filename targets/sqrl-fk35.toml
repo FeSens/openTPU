@@ -61,7 +61,7 @@ channel_bytes = 2147483648      # the host's DMA reaches channel j = 4s + c at j
 channel_phys_bytes = 1073741824 # 1 GiB of HBM per channel, all of it the slice's
 beat_bytes = 64
 host = "pcie"
-pcie_gen = 3
+pcie_gen = 4                    # Gen4 x8 (bd.tcl PCIE_GEN; Gen3 x8 before build f35d000c)
 pcie_lanes = 8
 
 # The recommended mixes on this card: formats.MIXES (docs/formats.md), no mixes table of its own. Without QUAD (build f35d0004)

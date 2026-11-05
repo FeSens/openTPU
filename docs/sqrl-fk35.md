@@ -8,7 +8,7 @@ The SQRL Forest Kitten 35: Virtex UltraScale+ HBM xcvu35p-fsvh2104-2-e (two SLRs
 |---|---|
 | target | `targets/sqrl-fk35.toml` (platform 4, S = 2, DUAL) |
 | top | `rtl/boards/sqrl-fk35/otpu_fpga_top_fk35.sv` |
-| block design | `boards/sqrl-fk35/vivado/bd.tcl`: XDMA (Gen3 x8 on PCIE4C_X1Y0), clocks, SYSMON, BAR0 and DMA interconnects |
+| block design | `boards/sqrl-fk35/vivado/bd.tcl`: XDMA (Gen4 x8 on PCIE4C_X1Y0, 512-bit AXI at 250 MHz; PCIE_GEN=3: Gen3 x8, 256-bit, the builds before f35d000c), clocks, SYSMON, BAR0 and DMA interconnects |
 | memory | `otpu_hbm.sv` (the HBM IP, all 32 AXI ports as arrays) and one `otpu_hbm_port.sv` per channel |
 | floorplan | `boards/sqrl-fk35/constraints/fk35_floorplan.tcl`: the memory side (and the slices' memory adapters: MEMX) in SLR0, the slices and the shell in SLR1 |
 | build | `boards/sqrl-fk35/run_vivado.sh` (Vivado 2019.2), with this board's `vivado/build.tcl`, `scripts/preflight.tcl` and `vivado/tmem_uram.xdc` |

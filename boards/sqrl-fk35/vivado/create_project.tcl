@@ -4,7 +4,7 @@
 #   vivado -mode batch -source create_project.tcl -tclargs OUT_DIR MCOLS CORE_MHZ BUILD_ID VPU_CL LANES ACT_ROWS DSTEP
 #     PLATFORM ARCH_HASH
 # (run_vivado.sh takes them from the target, targets/sqrl-fk35.toml; the RTL list below is opentpu.target
-# sources("sqrl-fk35")). Environment: UCLK_MHZ (default 250), OTPU_FAST (Vivado's default strategies), OTPU_IP_CACHE, TMEM_URAM (default 1:
+# sources("sqrl-fk35")). Environment: UCLK_MHZ (default 250), PCIE_GEN (default 4: Gen4 x8; 3: Gen3 x8), OTPU_FAST (Vivado's default strategies), OTPU_IP_CACHE, TMEM_URAM (default 1:
 # the TMEM in UltraRAM, boards/sqrl-fk35/vivado/tmem_uram.xdc), OTPU_QMEM (default 0: the memory adapters' queues in
 # block RAM; 1 LUT RAM, 2 and their B FIFOs in UltraRAM: the top's QMEM), OTPU_MEMX (default 1: the adapters in SLR0
 # behind a crossing of the slices' ports, otpu_board MEMX; 0: the channels' native ports cross), OTPU_QUAD (default 0:
@@ -37,7 +37,10 @@ if {![regexp {^[0-9a-fA-F]{1,8}$} $BUILD_ID]} { error "BUILD_ID $BUILD_ID: 1 to 
 set PART xcvu35p-fsvh2104-2-e
 # uclk: the HBM's AXI ports, its adapters and otpu_mem_ch's controller side (UCLK_MHZ in the environment)
 set UCLK_MHZ [expr {[info exists ::env(UCLK_MHZ)] && $::env(UCLK_MHZ) ne "" ? $::env(UCLK_MHZ) : 250}]
-puts "BUILD_ID $BUILD_ID, PLATFORM $PLATFORM, ARCH_HASH $ARCH_HASH, core $CORE_MHZ MHz, uclk $UCLK_MHZ MHz"
+# the PCIe link (bd.tcl): Gen4 x8 by default, PCIE_GEN=3 in the environment for Gen3 x8
+set PCIE_GEN [expr {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) ne "" ? $::env(PCIE_GEN) : 4}]
+puts "BUILD_ID $BUILD_ID, PLATFORM $PLATFORM, ARCH_HASH $ARCH_HASH, core $CORE_MHZ MHz, uclk $UCLK_MHZ MHz,\
+ PCIe Gen$PCIE_GEN x8"
 
 create_project -force otpu $out -part $PART
 if {[info exists ::env(OTPU_IP_CACHE)] && $::env(OTPU_IP_CACHE) ne ""} {
@@ -81,7 +84,7 @@ set_property -dict $cfg $hbm
 generate_target {instantiation_template synthesis} $hbm
 
 # ---- block design
-source $here/bd.tcl   ;# CORE_MHZ, UCLK_MHZ in; CORE_HZ out
+source $here/bd.tcl   ;# CORE_MHZ, UCLK_MHZ, PCIE_GEN in; CORE_HZ out
 make_wrapper -files [get_files otpu_bd.bd] -top
 add_files -norecurse [lindex [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v \
                                    $out/otpu.srcs/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v] 0]
@@ -129,4 +132,4 @@ if {[info exists ::env(OTPU_FAST)] && $::env(OTPU_FAST) eq "1"} {
 }
 set_property report_strategy {No Reports} [get_runs synth_1]
 set_property report_strategy {No Reports} [get_runs impl_1]
-puts "project created in $out (SQRL FK35, S=2 DUAL, HBM 8 x 1 GiB, Gen3 x8)"
+puts "project created in $out (SQRL FK35, S=2 DUAL, HBM 8 x 1 GiB, PCIe Gen$PCIE_GEN x8)"

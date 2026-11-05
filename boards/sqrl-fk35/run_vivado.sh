@@ -9,6 +9,7 @@
 #   RQS=<file.rqs> (STEP=impl: QoR suggestions of an earlier routed run, read before opt_design: build.tcl)
 #   PRE_OPT=<file.tcl> (sourced before opt_design: suggestions done by hand, e.g. CLOCK_BUFFER_TYPE on a net)
 #   QUAD=1|0 (the target's arch QUAD: a 4-bit MM PAIR four blocks an advance; in the CFG_HASH)
+#   PCIE_GEN=4|3 (the XDMA link: Gen4 x8, 512-bit AXI at 250 MHz, the default; or Gen3 x8, 256-bit: bd.tcl)
 # Vivado 2019.2 builds it (its HBM and XDMA IPs; the VU35P needs a license that covers it). The bitstream is loaded
 # over JTAG (Vivado's hardware manager) and the card's PCIe device rescanned; otpu_primary.mcs / otpu_secondary.mcs
 # are the flash image (SPI x8, the card's two MT25QU256).
