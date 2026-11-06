@@ -405,6 +405,34 @@ def test_generate_matches_the_host_loop(tiny, S, split):
     assert a.pos == 248 + j + 1                      # the stop id is not fed
 
 
+def test_generate_chains_a_bucket_a_run(tiny, monkeypatch):
+    """GEN_AHEAD buckets a chained run: with 1, a reply from 248 across 256 and 512 is three
+    runs (the later buckets' programs compiled on the thread while the earlier one runs), each
+    stopping at its bucket's end though the chain table holds the next bucket from a reply
+    before (S_LEFT the run's own tokens); the tokens are the host loop's."""
+    import opentpu.llm.qwen3 as Q
+    name, W, spec = tiny
+    monkeypatch.setattr(Q, "GEN_AHEAD", 1)
+    cfg = Q.device_config(spec, 768, rows=Q.PREFILL_ROWS, lookup=True)
+    a, b = (Q.Engine(spec, W, cap=768, cfg=cfg, resident=True) for _ in range(2))
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 248)]
+    t0 = int(np.argmax(a.prefill(toks)))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref, t = [], t0
+    for _ in range(300):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    n0 = len(a.stats)
+    got = a.generate_card(t0, 300, stop_ids=[])
+    assert got == ref and a.pos == 248 + 300
+    assert len(a.stats) - n0 == 3                       # buckets 1, 2, 3: a run each
+    assert sorted(k[0] for k in a._gens) == [1, 2, 3] and a._gen_next is None
+    a.reset()                                           # the same reply again: the chain
+    assert int(np.argmax(a.prefill(toks))) == t0        # table holds 2 and 3 already
+    n1 = len(a.stats)
+    assert a.generate_card(t0, 300, stop_ids=[]) == ref and len(a.stats) - n1 == 3
+
+
 def test_generate_at_a_partial_last_bucket(guarded, tiny):
     """A KV capacity of 384 (a multiple of D, not of the attention block): the decode loop on
     the device runs bucket 2 with its masked block over the cache's last 128 tokens and gives

@@ -1448,6 +1448,9 @@ PREFILL_ROWS = 8
 COMPILE_AHEAD = 3    # decode programs compiled ahead by the worker processes (Engine)
 DECODE_LEAD = 16     # resident decode: the next bucket's program is compiled from this many
                      # positions before the current bucket ends (Engine)
+GEN_AHEAD = 8        # generate_card with HALT CHAIN: the attention buckets one run chains over
+                     # (2048 positions); the next ones compile on a thread while it runs, so a
+                     # long reply never waits for its whole range's programs first
 HEAD_CHUNK = 8192     # LM head rows per MM (the fp32 logits of one chunk must fit TMEM)
 AHEAD_PART = 1 << 20  # layer_ahead "hint" and expert_major: an idle poll's part of a queued expert
                       # (docs/offload.md 13.9: 1 MiB parts against 13.8's 512 KiB, the per-part
@@ -2470,6 +2473,7 @@ class Engine:
         self.gen_split = None               # split generate programs: None when a bucket's
                                             # does not fit, True always, False never
         self._chained: dict = {}            # mode -> (key, its buckets in the chain area)
+        self._gen_next = None               # the thread compiling the next buckets' programs
         self.gen_debug = False              # generate_card: the logits too (gen_logits)
         self.gen_logits = None
         self.poss = [0] * batch
@@ -3319,6 +3323,28 @@ class Engine:
                 k: w if isinstance(w, tuple) else (w,) for k, w in words.items()}, mode,
                 split=True))
 
+    def _gen_ahead(self, b0: int, b1: int, samp=None) -> None:
+        """Compile buckets b0 .. b1's generate programs on a thread while the card runs the
+        current ones (the compile, the program cache and backend.prepare are host work; the
+        chain area is written by the next run's _generate_chain, after _gen_wait)."""
+        need = [k for k in range(b0, b1 + 1)
+                if (k, None if samp is None else samp.key, self.gen_debug) not in self._gens]
+        if not need:
+            return
+        import threading
+
+        def work():
+            for k in need:
+                self._generate_prog(k, samp)
+        self._gen_next = threading.Thread(target=work, name="otpu-gen-ahead", daemon=True)
+        self._gen_next.start()
+
+    def _gen_wait(self) -> None:
+        """Wait for _gen_ahead's compiles (their programs are then in self._gens)."""
+        if self._gen_next is not None:
+            self._gen_next.join()
+            self._gen_next = None
+
     def _generate_inputs(self, samp, p: int, nb: int, context, rng) -> None:
         """The sampled loop's per-run inputs: the uniforms of positions p + 1 .. p + nb (the
         host's generator), and, with the repetition penalty, its factors for the context's ids
@@ -3372,8 +3398,11 @@ class Engine:
                 b0 = p // self.block + 1
                 b1 = b0
                 if getattr(self.backend, "chains", False):     # the whole run on the device
-                    b1 = (p + n - 1) // self.block + 1
+                    end = (p + n - 1) // self.block + 1          # (up to GEN_AHEAD buckets)
+                    b1 = min(end, b0 + GEN_AHEAD - 1)
+                    self._gen_wait()
                     self._generate_chain(b0, b1, samp)
+                    self._gen_ahead(b1 + 1, min(end, b1 + GEN_AHEAD), samp)
                 progs = self._generate_prog(b0, samp)
                 if isinstance(progs, tuple):      # split: the run starts at the first part
                     progs = progs[0]
@@ -3382,7 +3411,9 @@ class Engine:
                     self._generate_inputs(samp, p, nb, ctx, rng)
                 self._write_host_rows([tok])        # the first token's rows (then the loop's
                 for s in range(self.cfg.S):         # requests, served while it runs)
-                    self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, n, ids,
+                    # the run's own tokens: it stops at b1's end even where the chain table
+                    # holds later buckets (an earlier reply's; GEN_AHEAD); nb == n before
+                    self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, nb, ids,
                                                                     self.block, samp))
                     self.backend.write(s, g["out"] + 4 * (p + 1),
                                        np.full(nb, G.OUT_MARK, np.uint32))
