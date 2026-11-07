@@ -80,6 +80,7 @@ module otpu_seq
   localparam int NROW = IMEM_WORDS / (8 * IPR);
   localparam int RW = $clog2(NROW);
   initial if (D % 32 != 0) $fatal(1, "otpu_seq: D must be a multiple of 32");
+  initial if (DAW < 32 || DAW > 36) $fatal(1, "otpu_seq: DAW %0d (OTPU_DAW) is 32 .. 36", DAW);
   logic [D*8-1:0] irow;           // the RAM output: the row holding fa
   logic [255:0]   ir;             // the instruction at pc
   logic           ir_v;           // ir is valid (0 only in the first cycle after reset)
@@ -99,10 +100,21 @@ module otpu_seq
   logic [31:0] stk_start [4];
   logic [31:0] stk_end   [4];
   logic [31:0] stk_rem   [4];
-  // LOOP takes two cycles: the first registers the trip count and body length (pc holds), the
-  // second enters or skips the loop from registers -- keeps the add off the fetch-address path
-  logic        lp;
-  logic [31:0] lp_cnt, lp_len;
+  // ... its top two entries (stk[sp-1], stk[sp-2]) also in flip-flops, with their rem > 1 / > 2
+  // flags, and at_end (pc ends the top loop) registered as R moves on (250 MHz, FK35: sp -> the
+  // stack's LUT RAM -> stk_end == fa -> the fetch address, 9 levels, -0.86 ns). The arrays stay
+  // the stack's record for the entries below.
+  logic [31:0] t_start, t_end, t_rem, n_start, n_end, n_rem;
+  logic        t_gt1, t_gt2, n_gt1;
+  logic        at_end_q;
+  // LOOP takes three cycles: the first registers the trip count, the body length and the skip
+  // target (pc holds), the second fetches the target (enter: pc + 1, skip: pc + 1 + len) from
+  // registers and registers the count's flags, the third enters or skips the loop -- keeps the
+  // register read and the adds off the fetch-address path (250 MHz, FK35: ir -> R[ra] -> the
+  // trip count's zero test -> the fetch address, 10 levels, -0.87 ns)
+  logic [1:0]  lp;
+  logic [31:0] lp_cnt, lp_len, lp_skip;
+  logic        lp_nz, lp_gt1, lp_gt2, lp_len1;
 
   // The footprint as the window keeps it: ranges stored by space, so ranges in different
   // spaces, and two reads, are never compared. No valid bits: an invalid range has hi = 0,
@@ -120,14 +132,16 @@ module otpu_seq
   // (the row maxima, the spare row after the output tile) is folded into its output range: the
   // hull [min lo, max hi) covers both, so every dependency on either is kept (ovr() is monotone
   // in the range); it adds only the output tile's padding words between them (ors - N).
-  // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
+  // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. Their ends are
+  // DAW bits, {REG, 32 bits} (otpu_pkg mkr): ranges of different regions never overlap, and
+  // WAITW's one range [0, 2^DAW - 1] is every region's. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
   // TMEM ranges keep TAW/TAW+1 bits: TMEM holds 2^16 words (more in a configuration with a
   // larger TMEM: TAW follows it), so every access the ISA allows has lo < 2^TAW, hi <= 2^TAW.
   // A valid TMEM range that does not fit raises all instead (the instruction then conflicts
   // with everything, like BAR) -- conservative, never wrong.
   localparam int TAW = (TMEM_WORDS > (1 << 16)) ? $clog2(TMEM_WORDS) : 16;
-  typedef struct packed { logic [31:0] lo, hi; } r32_t;
+  typedef struct packed { logic [DAW-1:0] lo, hi; } r32_t;     // DRAM (DAW bits: the name is old)
   typedef struct packed { logic [TAW-1:0] lo; logic [TAW:0] hi; } rt_t;
   typedef struct packed { logic w; rt_t r; } rtw_t;     // TMEM, may be written
   typedef struct packed {
@@ -325,9 +339,9 @@ module otpu_seq
     o = r;
     if (r.hi != '0 && g > 0) begin
       m = (64'd1 << g) - 1;
-      h = ({32'd0, r.hi} + m) & ~m;
-      o.lo = r.lo & ~m[31:0];
-      o.hi = (h > 64'hFFFF_FFFF) ? 32'hFFFF_FFFF : h[31:0];
+      h = (64'(r.hi) + m) & ~m;
+      o.lo = r.lo & ~DAW'(m);
+      o.hi = ((h >> DAW) != 0) ? '1 : DAW'(h);
     end
     return o;
   endfunction
@@ -388,12 +402,17 @@ module otpu_seq
   // IMEM: a technology RAM (rtl/tech), one row write (the loader) and one row read per cycle
   otpu_ram_1r1w #(.W(D*8), .N(NROW), .STYLE("auto"), .ZERO(1'b0)) u_imem (
     .clk, .we(im_we), .wa(RW'(im_row)), .wd(im_data), .re(fe), .ra(RW'(fa_n / IPR)), .rd(irow));
+  // LI / ADDI and rd, decoded as ir loads: R's write enables start at flip-flops (R's process)
+  logic        ir_rw;
+  logic [15:0] ir_rdh;
   always_ff @(posedge clk) begin
     fa <= fa_d;
     if (rst) ir_v <= 1'b0;
     else if (ld) begin
       ir <= irow[256 * (fa % IPR) +: 256];
       ir_v <= 1'b1;
+      ir_rw <= irow[256 * (fa % IPR) +: 8] == OP_LI || irow[256 * (fa % IPR) +: 8] == OP_ADDI;
+      ir_rdh <= (16'd1 << irow[256 * (fa % IPR) + 20 +: 4]) & ~16'd1;
     end
   end
   // WAITC: the sidecar RAM of wait entries, read beside IMEM: rows of 4 entries of SWW bits
@@ -491,54 +510,137 @@ module otpu_seq
     dcmd.w5 = iw[5] + (is_str ? rv(rc) : 32'd0);
     dcmd.w6 = iw[6] + (is_str ? rv(rd) : 32'd0);
     dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
+    // DAW > 32: the instruction's DRAM region REG from its spare bits (isa.py "DRAM address
+    // width"): rd[RGN-1:0] (rd names no register of these ops: only LI, ADDI, RLD, VOP's w7
+    // and STREAM's k use it) and STREAM's flags[7:4] (its flags 3:0 are the DMA's). Straight from
+    // ir, off the adders' path; at DAW 32 a constant 0 (the bits are ignored)
+    dcmd.rg = '0;
+    if (WIDE)
+      case (op)
+        OP_LD, OP_ST, OP_DSTEP, OP_WAITW, OP_MM, OP_QST: dcmd.rg = RGW'(rd);
+        OP_STREAM: dcmd.rg = RGW'(flags[7:4]);
+        default: ;
+      endcase
   end
   int dunit;
   always_comb dunit = (!STREAMS && (op == OP_DSTEP || op == OP_STREAM)) ? -1 : unit_of(op);
 
-  // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
-  // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,
-  // slot allocation). In order; a stage holds while the next cannot take its instruction (C:
-  // the window is full). The stages stream, so they add latency only at the program start.
-  logic        p_v, s_v, q_v, c_v;
-  cmd_t        p_cmd, s_cmd, q_cmd, c_cmd;
-  logic [2:0]  p_unit, s_unit, q_unit, c_unit;
-  logic [31:0] p_pc, s_pc, q_pc, c_pc;
+  // R's writes: LI / ADDI here, with enables from flip-flops decoded as ir loaded (ir_rw, ir_rdh;
+  // 250 MHz, FK35: ir's opcode -> the decode -> R's enables, 4 levels, 87% routing, -0.74 ns),
+  // and an RLD's value, which lands while R holds (rl_wait), so never beside an LI / ADDI
+  wire        r_wr = !stopping && !halted && ir_v && !rl_wait && ir_rw;
+  wire [31:0] r_wd = (op == OP_LI) ? iw[1] : rv(ra) + iw[1];
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      for (int i = 0; i < 8; i++) R[i] <= '0;
+      for (int i = 0; i < 8; i++) R[8 + i] <= rinit[i];
+    end else
+      for (int k = 1; k < 16; k++)
+        if (rl_v && rl_rd == 4'(k)) R[k] <= rl_val;
+        else if (r_wr && ir_rdh[k]) R[k] <= r_wd;
+  end
+
+  // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P -> O (the
+  // footprint's multiplications' operands) -> S (partial products) -> Q (products) -> F
+  // (footprint ranges) -> Y (the window's form, fp_seg) -> a FIFO -> K (dependencies on the window,
+  // registered) -> C (slot allocation). In order. P .. Y never stall (no enable on their
+  // registers): R hands an instruction to P only while the stages and the FIFO together hold
+  // fewer than NF (credits, cnt), so the FIFO always has room for what they carry; K and C hold
+  // while the window is full. The stages stream, so they add latency only at the program start
+  // and after a full window. (250 MHz, FK35: the stalls rippled from the window through C, Q, S
+  // and P into R's ld, ir's enable and IMEM's read enable, sv -> ir CE, 6 levels, -0.79 ns; and
+  // Q's ranges and fp_seg in one cycle, q_cmd -> c_fp, 17-19 levels, -0.82 ns.) WAITC: P -> C,
+  // no footprint stages, as before.
+  localparam int NF = 8;                        // the FIFO's entries: R's credits
+  logic        p_v, o_v, s_v, q_v, f_v, y_v, k_v, c_v;
+  cmd_t        p_cmd, o_cmd, s_cmd, q_cmd, f_cmd, y_cmd, k_cmd, c_cmd;
+  logic [2:0]  p_unit, o_unit, s_unit, q_unit, f_unit, y_unit, k_unit, c_unit;
+  logic [31:0] p_pc, o_pc, s_pc, q_pc, f_pc, y_pc, k_pc, c_pc;
+  fpo_t        o_ops;
   fpp_t        s_pp;
   fpm_t        q_pr;
   fp_t         q_fp;             // Q's footprint ranges (otpu_pkg form)
-  fps_t        c_fp;
+  fp_t         f_fp;
+  fps_t        y_fp, k_fp, c_fp;
+  logic [3:0]  cnt;              // instructions in O .. Y and the FIFO (P's is p_v)
+  logic [3:0]  fw, fr;           // the FIFO's write and read pointers (a wrap bit above 3)
+  wire         f_ne = fw != fr;
   logic        have_free;
   logic        wc_hold;          // WAITC: a VPU instruction waits for the one VMW back
   wire         c_go = c_v && have_free && !wc_hold;
-  wire         q_adv = !c_v || c_go;            // Q hands its instruction to C
-  wire         s_adv = !q_v || q_adv;           // S hands its instruction to Q
-  // P hands its instruction to S (WAITC: to C, no footprint stages)
-  wire         p_adv = WAITC ? (!c_v || c_go) : (!s_v || s_adv);
+  wire         kc = !c_v || c_go;               // K hands its instruction to C
+  wire         k_pop = !WAITC && f_ne && (!k_v || kc);   // K takes the FIFO's head
+  wire         p_adv = WAITC ? (!c_v || c_go) : 1'b1;    // P hands its instruction on
   logic [SWW-1:0] p_sync, c_sync;               // WAITC: the instruction's wait entry
-  wire         r_take = !p_v || p_adv;          // P can take the instruction at R
-  wire         pipe_empty = !p_v && !s_v && !q_v && !c_v;
+  // P can take the instruction at R (credits: P's own and those in O .. the FIFO below NF)
+  wire         r_take = WAITC ? (!p_v || p_adv) : (p_v ? cnt < 4'(NF - 1) : cnt < 4'(NF));
+  wire         pipe_empty = WAITC ? (!p_v && !c_v) : (!p_v && cnt == '0 && !k_v && !c_v);
+  // K's dependencies on the window and on C's instruction, registered as K hands to C: C's
+  // slot is the free slot of that cycle if it dispatched then (c_xg), and a slot of the window
+  // whose instruction completed since has sv low. Nothing else enters the window meanwhile (C is
+  // its only writer), so they stay exact while C waits for a free slot.
+  logic [1:0]  c_cf [WIN];
+  logic [1:0]  c_cx;
+  logic [SW-1:0] c_xs;
+  logic        c_xg;
   // R retires a control instruction this cycle (NOP, HALT, LI, ADDI, a LOOP's second cycle)
   logic        r_ret;
 
-  // ---- completions this cycle
-  logic [WIN-1:0] fin;
+  // ---- completions: the slots whose units reported done a cycle ago (registered: 250 MHz, FK35:
+  // uq_h -> the unit queue's read -> fin -> sdep, 6 levels, -0.56 ns). A slot is freed, and its
+  // dependents' bits cleared, a cycle after its udone; both in the same cycle, as before.
+  logic [WIN-1:0] fin, fin_c;
   always_comb begin
-    fin = '0;
+    fin_c = '0;
     for (int u = 0; u < NUNITS; u++)
-      if (udone[u]) fin[uq[u][uq_h[u][SW-1:0]]] = 1'b1;
+      if (udone[u]) fin_c[uq[u][uq_h[u][SW-1:0]]] = 1'b1;
   end
+  always_ff @(posedge clk) fin <= rst ? '0 : fin_c;
 
   // ---- free slot and the new instruction's dependencies
   logic [SW-1:0]   free_slot;
   logic [WIN-1:0]  ndep, ndepd;
   always_comb q_fp = fp_ranges(q_cmd, q_pr, D, S);
+
+  // P .. Y's data: no enable, no reset (their valid bits are in the main process)
+  always_ff @(posedge clk) begin
+    o_cmd <= p_cmd; o_unit <= p_unit; o_pc <= p_pc; o_ops <= fp_ops(p_cmd, D, S);
+    s_cmd <= o_cmd; s_unit <= o_unit; s_pc <= o_pc; s_pp <= fp_part(o_ops);
+    q_cmd <= s_cmd; q_unit <= s_unit; q_pc <= s_pc; q_pr <= fp_sum(s_pp);
+    f_cmd <= q_cmd; f_unit <= q_unit; f_pc <= q_pc; f_fp <= q_fp;
+    y_cmd <= f_cmd; y_unit <= f_unit; y_pc <= f_pc; y_fp <= hz_coarse(fp_seg(f_cmd.op, f_fp));
+  end
+  // the FIFO between Y and K: distributed RAM (one write, one asynchronous read at fr, a flip-flop);
+  // R's credits keep it from overflowing
+  typedef struct packed { cmd_t cmd; logic [2:0] unit; logic [31:0] pc; fps_t fp; } fqe_t;
+  (* ram_style = "distributed" *) fqe_t fq [NF];
+  localparam int FW = $clog2(NF);
+  always_ff @(posedge clk) if (!WAITC && y_v) fq[fw[FW-1:0]] <= {y_cmd, y_unit, y_pc, y_fp};
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      fw <= '0; fr <= '0;
+    end else begin
+      if (!WAITC && y_v) fw <= fw + 1'b1;
+      if (k_pop) fr <= fr + 1'b1;
+    end
+    if (k_pop) begin
+      k_cmd <= fq[fr[FW-1:0]].cmd; k_unit <= fq[fr[FW-1:0]].unit;
+      k_pc <= fq[fr[FW-1:0]].pc; k_fp <= fq[fr[FW-1:0]].fp;
+    end
+`ifndef SYNTHESIS
+    if (!rst && !WAITC && y_v && 4'(fw - fr) == 4'(NF))
+      $fatal(1, "otpu_seq: the dispatch FIFO overflows (credits)");
+`endif
+  end
   always_comb begin
     have_free = 1'b0; free_slot = '0;
     for (int i = WIN - 1; i >= 0; i--)
       if (!sv[i]) begin have_free = 1'b1; free_slot = SW'(i); end
+    // (K's conf_s, registered: c_cf, c_cx; 250 MHz, FK35: c_fp -> conf_s -> ndep -> sdep, 7 levels,
+    // -0.56 ns)
     for (int i = 0; i < WIN; i++) begin
       logic [1:0] cf;
-      cf = conf_s(c_fp, sfp[i]);
+      cf = (c_xg && c_xs == SW'(i)) ? c_cx : c_cf[i];
       ndep[i] = sv[i] && !fin[i] && cf[1];
       ndepd[i] = sv[i] && !fin[i] && cf[0];
     end
@@ -665,63 +767,67 @@ module otpu_seq
       w_dram_q <= w_dram & ~(c_go ? WIN'(1) << free_slot : '0);
     end
 
-  // ---- loop-end handling for the instruction at pc
+  // ---- loop-end handling for the instruction at pc: at_end_q is (sp != 0) && stk_end[sp-1] ==
+  // pc, registered as R moves on (with the stack as it leaves the move; below)
   logic        at_end;
-  always_comb at_end = (sp != 0) && (stk_end[sp-1] == pc);
+  always_comb at_end = at_end_q;
 
   task automatic advance();
     if (at_end) begin
-      if (stk_rem[sp-1] > 1) stk_rem[sp-1] <= stk_rem[sp-1] - 1;
-      else sp <= sp - 1;
+      if (t_gt1) begin
+        stk_rem[sp-1] <= t_rem - 1;
+        t_rem <= t_rem - 1; t_gt1 <= t_gt2; t_gt2 <= t_rem > 32'd3;
+      end else begin
+        sp <= sp - 1;
+        t_start <= n_start; t_end <= n_end; t_rem <= n_rem; t_gt1 <= n_gt1; t_gt2 <= n_rem > 32'd2;
+        n_start <= stk_start[sp-3]; n_end <= stk_end[sp-3]; n_rem <= stk_rem[sp-3];
+        n_gt1 <= stk_rem[sp-3] > 32'd1;
+      end
     end
   endtask
 
   always_comb
     r_ret = ir_v && !stopping && !halted && !rl_wait &&
             (op == OP_NOP || op == OP_HALT || op == OP_LI || op == OP_ADDI ||
-             (op == OP_LOOP && lp));
+             (op == OP_LOOP && lp == 2'd2));
 
   // ---- the next fetch address (mirrors the fetch/dispatch below). fa is the successor of pc
   // under the loop stack as it stands while R holds pc; when R moves on, fa_d is the successor
   // of fa under the stack as R's instruction leaves it:
-  //   A: a LOOP's second cycle pushes (fa == pc + 1 then) -- a one-instruction body repeats
+  //   A: a LOOP's third cycle pushes (fa == pc + 1 then) -- a one-instruction body repeats
   //   B: advance() at a loop end decrements the top      -- repeats if the top keeps rem > 1
   //   C: advance() at a loop end pops                    -- the next entry decides
   //   D: the stack is unchanged (also the load after reset and a skipped LOOP)
-  // A LOOP's first cycle picks the enter/skip target a cycle ahead (pc holds, the RAM reads it).
+  // A LOOP's second cycle fetches the enter/skip target a cycle ahead (pc holds, the RAM reads
+  // it). The stack's top two entries and their flags are flip-flops (t_*, n_*).
   logic        adv;              // R's instruction retires or is handed over this cycle
   logic        hit1, hit2;       // fa ends the loop on top of the stack / the one below it
   logic        hit;              // fa's successor is a loop start ...
   logic [31:0] hit_pc;           // ... this one
-  logic        lp_z;             // the LOOP's trip count (R[ra] + iw[2]) is 0
-  logic [31:0] lp_a;
   logic [31:0] succ;
   always_comb begin
     case (op)
       OP_NOP, OP_LI, OP_ADDI: adv = 1'b1;
       OP_HALT: adv = 1'b0;
-      OP_LOOP: adv = lp;
+      OP_LOOP: adv = lp == 2'd2;
       default: adv = dunit >= 0 && r_take;
     endcase
     ld = !ir_v || (!stopping && !halted && !rl_wait && adv);
-    hit1 = (sp != 0) && (stk_end[sp-1] == fa);
-    hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
-    hit = hit1 && stk_rem[sp-1] > 1;                                          // D
-    hit_pc = stk_start[sp-1];
+    hit1 = (sp != 0) && (t_end == fa);
+    hit2 = (sp >= 2) && (n_end == fa);
+    hit = hit1 && t_gt1;                                                      // D
+    hit_pc = t_start;
     if (ir_v && op == OP_LOOP) begin
-      if (lp_cnt != 0) begin hit = lp_len == 1 && lp_cnt > 1; hit_pc = fa; end  // A
+      if (lp_nz) begin hit = lp_len1 && lp_gt1; hit_pc = fa; end              // A
     end else if (ir_v && at_end) begin
-      if (stk_rem[sp-1] > 1) hit = hit1 && stk_rem[sp-1] > 2;                // B
-      else begin hit = hit2 && stk_rem[sp-2] > 1; hit_pc = stk_start[sp-2]; end // C
+      if (t_gt1) hit = hit1 && t_gt2;                                         // B
+      else begin hit = hit2 && n_gt1; hit_pc = n_start; end                   // C
     end
     succ = hit ? hit_pc : fa + 1;
-    // a + b == 0 without the carry chain: every sum bit is 0 iff a ^ b is the carry, (a | b) << 1
-    lp_a = rv(ra);
-    lp_z = (lp_a ^ iw[2]) == ((lp_a | iw[2]) << 1);
     if (rst) fa_n = '0;
-    else if (ir_v && op == OP_LOOP && !lp) fa_n = lp_z ? pc + 1 + iw[1] : pc + 1;
+    else if (ir_v && op == OP_LOOP && lp == 2'd1) fa_n = (lp_cnt == '0) ? lp_skip : pc + 1;
     else fa_n = succ;
-    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted && !rl_wait) || ld;
+    fe = rst || (ir_v && op == OP_LOOP && lp == 2'd1 && !stopping && !halted && !rl_wait) || ld;
     fa_d = fe ? fa_n : fa;
   end
 
@@ -747,31 +853,64 @@ module otpu_seq
   // (the oldest of a set: the member none of whose older slots is in the set -- an age matrix
   // instead of comparing dispatch numbers, so the choice is parallel logic). older is a strict
   // total order over the valid slots, so sel has at most one bit; readiness is tested per slot
-  // in parallel with the selection and AND-ORed with sel -- no slot id on the can_start path
+  // in parallel with the selection and AND-ORed with sel -- no slot id on the can_start path.
+  // The choice is made from flip-flops (250 MHz, FK35: sv / sstarted -> same_started -> every
+  // slot's readiness -> the age matrix -> start_slot -> the command store's read -> g_cmd q,
+  // 8 levels, -0.95 ns at 4 ns): a slot's readiness as each unit sees it (rdy_q: the MXU's the
+  // stream start's, sdepd; rrdy_q: the MXU release's, sdep), then each unit's candidates (cand_q)
+  // and, per candidate, whether an older candidate exists (blk_q) are registered, and the start
+  // only masks out what started meanwhile (sstarted). Neither is ever wrong a cycle late:
+  //  - readiness only rises while a slot holds its instruction (sdep / sdepd bits clear as their
+  //    producers complete; a producer that started on the same unit counts as clear and stays
+  //    so until it completes, which clears the bit in the same cycle; a later dispatch never
+  //    adds a dependency to an older slot). A free slot's is 0 (sv), so a slot written this
+  //    cycle starts with its readiness clear, and its own is registered a cycle after.
+  //  - cand_q only loses members by starting (masked by sstarted) and gains them a cycle late:
+  //    a younger member can only start earlier, which is always safe (the oldest READY one is
+  //    a performance choice; a dependent never becomes ready before its producer); the strictly
+  //    in-order MXU and collective unit take all their unstarted slots as candidates, and a slot
+  //    dispatched later is younger than all of them, so their order holds.
+  //  - blk_q[i] counts the candidates of a cycle ago: one that started since (the unit then has
+  //    ustart this cycle and cannot start anyway) only delays i by a cycle; one dispatched since
+  //    is younger. So sel still has at most one bit: the oldest of cand_q, if not started.
+  // An instruction now starts two cycles after its dependencies clear or after its dispatch at
+  // the earliest (the MXU and the collective unit one), instead of the same cycle.
+  logic [WIN-1:0] rdy_q [NUNITS], rrdy_q, cand_q [NUNITS], blk_q [NUNITS];
+  always_ff @(posedge clk) begin
+    logic [WIN-1:0] cn;
+    for (int u = 0; u < NUNITS; u++) begin
+      for (int i = 0; i < WIN; i++) begin
+        rdy_q[u][i] <= !rst && sv[i] &&
+                       (((u == U_MXU) ? sdepd[i] : sdep[i]) & ~same_started[u]) == '0;
+        cn[i] = sv[i] && !sstarted[i] && soh[i][u] &&
+                (u == U_COLL || u == U_MXU || (WAITC ? (u != U_VPU || w_all_q[i]) : rdy_q[u][i]));
+      end
+      cand_q[u] <= rst ? '0 : cn;
+      for (int i = 0; i < WIN; i++) blk_q[u][i] <= (older[i] & cn) != '0;
+    end
+    for (int i = 0; i < WIN; i++)
+      rrdy_q[i] <= !rst && sv[i] && (sdep[i] & ~same_started[U_MXU]) == '0;
+  end
   always_comb begin
     for (int i = 0; i < WIN; i++) begin
-      mrdy[i] = WAITC ? w_dram_q[i] : (sdepd[i] & ~same_started[U_MXU]) == '0;
-      crdy[i] = WAITC ? w_all_q[i] : (sdep[i] & ~same_started[U_COLL]) == '0;
+      mrdy[i] = WAITC ? w_dram_q[i] : rdy_q[U_MXU][i];
+      crdy[i] = WAITC ? w_all_q[i] : rdy_q[U_COLL][i];
     end
     for (int u = 0; u < NUNITS; u++) begin
-      logic [WIN-1:0] cand;
       start_slot[u] = '0;
       // collectives pair up across slices, so the collective unit stays strictly in order:
       // it only considers its oldest instruction
-      for (int i = 0; i < WIN; i++)
-        cand[i] = sv[i] && !sstarted[i] && soh[i][u] &&
-                  ((sdep[i] & ~same_started[u]) == '0 || u == U_COLL || u == U_MXU);
       for (int i = 0; i < WIN; i++) begin
-        sel[u][i] = cand[i] && (older[i] & cand) == '0;
+        sel[u][i] = cand_q[u][i] && !sstarted[i] && !blk_q[u][i];
         if (sel[u][i]) start_slot[u] |= SW'(i);
       end
-      cand_any[u] = |cand;
+      cand_any[u] = |(cand_q[u] & ~sstarted);
       if (u == U_MXU)
         can_start[u] = |(sel[u] & mrdy) && urdy[u] && !ustart[u];
       else if (u == U_COLL)
         can_start[u] = |(sel[u] & crdy) && urdy[u] && !ustart[u];
       else    // cand already requires readiness
-        can_start[u] = cand_any[u] && urdy[u] && !ustart[u];
+        can_start[u] = |sel[u] && urdy[u] && !ustart[u];
     end
     // WAITC: the VPU starts its oldest ready instruction (its waits met), the others their
     // oldest only
@@ -812,10 +951,10 @@ module otpu_seq
   end
 
 
-  // MXU release: the oldest started, unreleased MM once all its dependencies are clear
+  // MXU release: the oldest started, unreleased MM once all its dependencies are clear (rrdy_q:
+  // registered as the start's readiness is; a started slot has been valid for cycles)
   wire [SW-1:0] rel_slot = uq[U_MXU][uq_r[SW-1:0]];
-  wire          can_rel  = (uq_r != uq_t[U_MXU]) &&
-                           (WAITC ? w_all_q[rel_slot] : (sdep[rel_slot] & ~same_started[U_MXU]) == '0);
+  wire          can_rel  = (uq_r != uq_t[U_MXU]) && (WAITC ? w_all_q[rel_slot] : rrdy_q[rel_slot]);
 
   // Each unit's command is read from the window as the unit starts, at the slot it starts, into a
   // register (ucmd): a slot's command is written only at dispatch and stays until the slot
@@ -896,6 +1035,24 @@ module otpu_seq
   endfunction
 `endif
 
+  // the window's footprints: written at dispatch, read only for valid slots, so outside the
+  // reset (250 MHz, FK35: otpu_slice to_err -> srst -> sfp's enable, 2 levels, 93% routing,
+  // -0.55 ns)
+  always_ff @(posedge clk) if (c_go) sfp[free_slot] <= c_fp;
+
+  // readiness (for the profiler: when did the dependencies clear; ev.s_rdy). Outside the reset:
+  // a slot's flag clears at its dispatch, so these 16 x 33 flip-flops' enables do not include the
+  // slice's reset (250 MHz, FK35: otpu_slice to_err -> srst -> srdy_c's enable, 2 levels, 92%
+  // routing, -0.70 ns)
+  always_ff @(posedge clk) begin
+    for (int i = 0; i < WIN; i++)
+      if (sv[i] && !sready[i] && (WAITC ? w_all_q[i] : sdep[i] == '0)) begin
+        sready[i] <= 1'b1;
+        srdy_c[i] <= cyc;
+      end
+    if (c_go) sready[free_slot] <= 1'b0;
+  end
+
   always_ff @(posedge clk) begin
     ustart <= '0;
     urel <= 1'b0;
@@ -904,11 +1061,10 @@ module otpu_seq
       pc <= '0; sp <= '0; cyc <= '0;
       halted <= 1'b0; error <= 1'b0; stopping <= 1'b0;
       rl_wait <= 1'b0; ch_req <= 1'b0;
-      p_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; c_v <= 1'b0; lp <= 1'b0;
+      p_v <= 1'b0; o_v <= 1'b0; s_v <= 1'b0; q_v <= 1'b0; f_v <= 1'b0; y_v <= 1'b0;
+      k_v <= 1'b0; c_v <= 1'b0; cnt <= '0; lp <= 2'd0; at_end_q <= 1'b0;
       icount <= '0;
-      sv <= '0; sstarted <= '0; sready <= '0;
-      for (int i = 0; i < 8; i++) R[i] <= '0;
-      for (int i = 0; i < 8; i++) R[8 + i] <= rinit[i];
+      sv <= '0; sstarted <= '0;
       for (int u = 0; u < NUNITS; u++) begin uq_h[u] <= '0; uq_t[u] <= '0; end
       for (int u = 0; u < NUNITS; u++) begin wd_n[u] <= '0; wc_n[u] <= '0; end
       vout <= '0;
@@ -920,6 +1076,25 @@ module otpu_seq
     end else begin
       cyc <= cyc + 1;
       if (ld) pc <= fa;
+      // at_end for the instruction at fa, under the stack as this move leaves it: a LOOP that
+      // enters pushes [pc + 1, pc + len) and fa is pc + 1; advance() at a loop end that pops
+      // leaves the entry below on top; otherwise the top stays (decremented or not)
+      if (ld)
+        at_end_q <= (ir_v && op == OP_LOOP) ? (lp_nz ? lp_len1 : hit1) :
+                    (ir_v && at_end && !t_gt1) ? hit2 : hit1;
+`ifndef SYNTHESIS
+      // the stack's top two entries in flip-flops are the arrays'
+      if (ir_v && at_end != ((sp != 0) && stk_end[sp-1] == pc))
+        $fatal(1, "otpu_seq: at_end %b at pc %0d, the stack's %b", at_end, pc,
+               (sp != 0) && stk_end[sp-1] == pc);
+      if (sp >= 1 && (t_start != stk_start[sp-1] || t_end != stk_end[sp-1] ||
+                      t_rem != stk_rem[sp-1] || t_gt1 != (stk_rem[sp-1] > 1) ||
+                      t_gt2 != (stk_rem[sp-1] > 2)))
+        $fatal(1, "otpu_seq: the loop stack's top in flip-flops differs (sp %0d)", sp);
+      if (sp >= 2 && (n_start != stk_start[sp-2] || n_end != stk_end[sp-2] ||
+                      n_rem != stk_rem[sp-2] || n_gt1 != (stk_rem[sp-2] > 1)))
+        $fatal(1, "otpu_seq: the loop stack's second entry in flip-flops differs (sp %0d)", sp);
+`endif
 `ifndef SYNTHESIS
       // fa is the pc the one-instruction-per-cycle fetch would move to (the next_pc rule)
       if (ld && ir_v &&
@@ -933,6 +1108,11 @@ module otpu_seq
         for (int i = 0; i < WIN; i++) begin
           logic [1:0] cs;
           cs = conf_s(c_fp, sfp[i]);
+          // K's registered dependencies are exactly those of C's footprint on the window now
+          if (!hz_rob && !hz_wc && (ndep[i] != (sv[i] && !fin[i] && cs[1]) ||
+                                    ndepd[i] != (sv[i] && !fin[i] && cs[0])))
+            $fatal(1, "otpu_seq: pc %0d: registered dependency on slot %0d %b, conf_s %b", c_pc, i,
+                   {ndep[i], ndepd[i]}, {sv[i] && !fin[i] && cs[1], sv[i] && !fin[i] && cs[0]});
           if (sv[i] && !hz_cs && (c_fp.all == c_ref.all && sfp[i].all == sfp_ref[i].all ?
                         cs != {conflict(c_ref, sfp_ref[i]), conflict_dram(c_ref, sfp_ref[i])} :
                         cs != 2'b11))
@@ -943,7 +1123,7 @@ module otpu_seq
                    c_pc, i);
         end
       // fp_seg's assumptions: ACT ranges fit [alo, ahi), DRAM ranges share their write role
-      if (q_v && q_adv) begin
+      if (q_v) begin
         logic dr, dwr;
         dr = 1'b0; dwr = 1'b0;
         for (int i = 0; i < 4; i++) begin
@@ -1039,17 +1219,12 @@ module otpu_seq
         end
         for (int i = 0; i < WIN; i++) vpend[i] <= vpend[i] & ~v_fin;
       end
-      // readiness (for the profiler: when did the dependencies clear)
-      for (int i = 0; i < WIN; i++)
-        if (sv[i] && !sready[i] && (WAITC ? w_all_q[i] : sdep[i] == '0)) begin
-          sready[i] <= 1'b1;
-          srdy_c[i] <= cyc;
-        end
       // starts
       for (int u = 0; u < NUNITS; u++) begin
 `ifndef SYNTHESIS
-        // the age matrix orders every pair of candidates: exactly one oldest when any
-        if (!$onehot0(sel[u]) || cand_any[u] != |sel[u])
+        // the age matrix orders every pair of candidates: at most one oldest (none for a cycle
+        // when the oldest of a cycle ago has just started)
+        if (!$onehot0(sel[u]) || (|sel[u] && !cand_any[u]))
           $fatal(1, "otpu_seq: unit %0d oldest-candidate select %b is not one-hot", u, sel[u]);
 `endif
         for (int i = 0; i < WIN; i++)
@@ -1068,10 +1243,8 @@ module otpu_seq
         for (int i = 0; i < WIN; i++) older[i][free_slot] <= 1'b0;
         soh[free_slot] <= NUNITS'(1) << c_unit;
         sstarted[free_slot] <= 1'b0;
-        sready[free_slot] <= 1'b0;
         sdep[free_slot] <= ndep;
         sdepd[free_slot] <= ndepd;
-        sfp[free_slot] <= c_fp;
         if (WAITC) begin
           logic [VN-1:0] m;
           for (int j = 0; j < NWT; j++) begin
@@ -1103,55 +1276,48 @@ module otpu_seq
         sfp_raw[free_slot] <= c_raw;
 `endif
       end
-      // ---- Q: footprint ranges
-      if (!WAITC && q_adv) begin
-        c_v <= q_v;
-        if (q_v) begin
-          c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
-          c_fp <= hz_coarse(fp_seg(q_cmd.op, q_fp));
+      // ---- K -> C: C takes K's instruction and its dependencies (K's conf_s on the window and
+      // on C's instruction, which takes free_slot now if it dispatches)
+      if (!WAITC && kc) begin
+        c_v <= k_v;
+        if (k_v) begin
+          c_cmd <= k_cmd; c_unit <= k_unit; c_pc <= k_pc; c_fp <= k_fp;
+          for (int i = 0; i < WIN; i++) c_cf[i] <= conf_s(k_fp, sfp[i]);
+          c_cx <= conf_s(k_fp, c_fp);
+          c_xs <= free_slot;
+          c_xg <= c_go;
 `ifndef SYNTHESIS
-          c_fpx <= fp_seg(q_cmd.op, q_fp);
-`endif
-`ifndef SYNTHESIS
-          c_ref <= fp_hull(q_fp);
-          c_raw <= q_fp;
+          c_fpx <= fp_seg(k_cmd.op, footprint(k_cmd, D, S));
+          c_ref <= fp_hull(footprint(k_cmd, D, S));
+          c_raw <= footprint(k_cmd, D, S);
 `endif
         end
       end
-      // ---- S: products
-      if (!WAITC && s_adv) begin
-        q_v <= s_v;
-        if (s_v) begin
-          q_cmd <= s_cmd; q_unit <= s_unit; q_pc <= s_pc;
-          q_pr <= fp_sum(s_pp);
-        end
+      // ---- the FIFO's head -> K
+      if (k_pop) k_v <= 1'b1;
+      else if (!WAITC && kc) k_v <= 1'b0;
+      // ---- P -> O -> S -> Q -> F -> Y -> the FIFO: valid bits (the data stages below have no
+      // enable); the credits: one in at P -> O, one out at the FIFO -> K
+      if (!WAITC) begin
+        o_v <= p_v; s_v <= o_v; q_v <= s_v; f_v <= q_v; y_v <= f_v;
+        cnt <= cnt + 4'(p_v) - 4'(k_pop);
       end
-      // ---- P: partial products (WAITC: the instruction goes to C)
-      if (p_adv) begin
-        if (WAITC) begin
-          c_v <= p_v;
-          if (p_v) begin
-            c_cmd <= p_cmd; c_unit <= p_unit; c_pc <= p_pc; c_sync <= p_sync;
+      // ---- P (WAITC: the instruction goes to C)
+      if (WAITC && p_adv) begin
+        c_v <= p_v;
+        if (p_v) begin
+          c_cmd <= p_cmd; c_unit <= p_unit; c_pc <= p_pc; c_sync <= p_sync;
 `ifndef SYNTHESIS
-            c_ref <= fp_hull(footprint(p_cmd, D, S));
-            c_raw <= footprint(p_cmd, D, S);
-            c_fpx <= fp_seg(p_cmd.op, footprint(p_cmd, D, S));
+          c_ref <= fp_hull(footprint(p_cmd, D, S));
+          c_raw <= footprint(p_cmd, D, S);
+          c_fpx <= fp_seg(p_cmd.op, footprint(p_cmd, D, S));
 `endif
-          end
-        end else begin
-          s_v <= p_v;
-          if (p_v) begin
-            s_cmd <= p_cmd; s_unit <= p_unit; s_pc <= p_pc;
-            s_pp <= fp_part(fp_ops(p_cmd, D, S));
-          end
         end
       end
-      if (r_take) p_v <= 1'b0;
-      // ---- RLD's value (R holds meanwhile, so nothing below writes R this cycle)
-      if (rl_v) begin
-        if (rl_rd != 0) R[rl_rd] <= rl_val;
-        rl_wait <= 1'b0;
-      end
+      if (r_take || !WAITC) p_v <= 1'b0;      // (P -> O every cycle: R refills it below)
+      // ---- RLD's value (R holds meanwhile, so nothing below writes R this cycle; the write is
+      // in R's own process)
+      if (rl_v) rl_wait <= 1'b0;
       // ---- R: fetch / execute control / hand over
       if (stopping) begin
         if (sv == '0 && pipe_empty) halted <= 1'b1;
@@ -1164,26 +1330,29 @@ module otpu_seq
             ch_addr <= rv(ra);
             ch_n <= rv(rb);
           end
-          OP_LI: begin
-            if (rd != 0) R[rd] <= iw[1];
-            advance();
-          end
-          OP_ADDI: begin
-            if (rd != 0) R[rd] <= rv(ra) + iw[1];
-            advance();
-          end
+          OP_LI, OP_ADDI: advance();   // (R[rd] in R's own process)
           OP_LOOP: begin
-            if (!lp) begin
-              lp <= 1'b1;
+            if (lp == 2'd0) begin
+              lp <= 2'd1;
               lp_cnt <= rv(ra) + iw[2];
               lp_len <= iw[1];
+              lp_skip <= pc + 1 + iw[1];
+            end else if (lp == 2'd1) begin
+              lp <= 2'd2;
+              lp_nz <= lp_cnt != '0;
+              lp_gt1 <= lp_cnt > 32'd1;
+              lp_gt2 <= lp_cnt > 32'd2;
+              lp_len1 <= lp_len == 32'd1;
             end else begin
-              lp <= 1'b0;
-                if (lp_cnt != 0) begin
+              lp <= 2'd0;
+              if (lp_nz) begin
                 stk_start[sp] <= pc + 1;
                 stk_end[sp]   <= pc + lp_len;
                 stk_rem[sp]   <= lp_cnt;
                 sp <= sp + 1;
+                n_start <= t_start; n_end <= t_end; n_rem <= t_rem; n_gt1 <= t_gt1;
+                t_start <= pc + 1; t_end <= pc + lp_len; t_rem <= lp_cnt;
+                t_gt1 <= lp_gt1; t_gt2 <= lp_gt2;
               end
             end
           end

@@ -18,7 +18,8 @@ module otpu_chmem #(
   parameter int PHYS  = 0,
   parameter int LAT   = 20,              // minimum read latency (controller cycles)
   parameter int SID   = 0,               // the slice: its channels' files are ch<2 SID + c>
-  parameter bit CHASH = 1'b1             // (otpu_native_mem's; unused: the images are physical)
+  parameter bit CHASH = 1'b1,            // (otpu_native_mem's; unused: the images are physical)
+  parameter int FAST  = 0                // otpu_mem_ch's options, bits: 1 RQ, 2 BRAM (the FK35's), 4 AREG
 ) (
   input  logic                  clk,
   input  logic                  rst,
@@ -59,7 +60,7 @@ module otpu_chmem #(
     logic [1:0][511:0] wd, rd;
     logic [1:0][63:0]  we;
     always @(posedge uclk) {urst, ur1} <= {ur1, rst};
-    otpu_mem_ch #(.XIDW(4)) u_ch (
+    otpu_mem_ch #(.XIDW(4), .RQ(FAST[0]), .BRAM(FAST[1]), .AREG(FAST[2])) u_ch (
       .clk, .rst,
       .n_cvalid(n_cvalid[c]), .n_cready(n_cready[c]), .n_cwe(n_cwe[c]), .n_caddr(n_caddr[c]),
       .n_wvalid(n_wvalid[c]), .n_wready(n_wready[c]), .n_wdata(n_wdata[c]), .n_wmask(n_wmask[c]),

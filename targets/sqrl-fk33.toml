@@ -1,0 +1,64 @@
+# The SQRL FK33 (Forest Kitten 33): Virtex UltraScale+ HBM xcvu33p-fsvh2104-2-e (one SLR), 8 GB HBM2 (two stacks),
+# PCIe (XDMA, PCIE4C_X1Y0, x8). One slice on four channels, both HBM stacks (DUAL): channel j at j x 2 GiB of HBM
+# through otpu_hbm_port (rtl/boards/sqrl-fk33), the slice's chunks alternating between the channel pairs
+# (otpu_native_dram2), so its 32-bit DRAM addresses reach 4 GiB of the 8 GB, 1 GiB of each channel (docs/sqrl-fk33.md).
+# The card's XDMA identity is SQRL's (1E24:1533). platform_id 5 as the openTPU_FK port's fk33 target (3 and 4 are taken
+# there by the VCU128 and the FK35).
+
+[target]
+name = "sqrl-fk33"
+kind = "fpga"
+platform_id = 5
+description = "SQRL FK33: xcvu33p, HBM2 8 GB (4 GiB addressed), XDMA x8; 1 slice x 4 channels (DUAL)"
+
+[arch]
+S = 1
+D = 128
+MCOLS = 4
+ACT_BLOCKS = 128
+ACT_ROWS = 0
+TMEM_WORDS = 65536
+IMEM_WORDS = 32768
+DRAM_BYTES = 4294967296         # per slice: 1 GiB of each of its four channels (DUAL)
+LANES = 8
+PAIR = true
+DUAL = true                     # four channels, port B chunk pairs (int8 MM PAIR, otpu_native_dram2)
+QUAD = true                     # (DUAL) 4-bit MM PAIR four blocks (two chunks) an advance
+DAW = 32                        # DRAM address width per slice, 32..36 (docs/wide_dram_hbm.md)
+DSTEP = true
+STREAM = true
+SEQ_WC = false
+
+[uarch]
+MXU_IMPL = 2
+MXU_CL = 16
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 0
+RPB = 0
+WPB = 1
+WIN = 16
+FIFO_DEPTH = 1024
+TRACE_DEPTH = 16384
+PQ_WIN = 1024
+CHASH = true
+
+[tech]
+family = "xilinxus"             # rtl/tech/xilinxus: DSP48E2 cells; the TEMP register's SYSMONE4 formula
+part = "xcvu33p-fsvh2104-2-e"
+vendor = "xilinx"
+
+[platform]
+board = "sqrl-fk33"
+core_mhz = 250.0                # the core clock (bd.tcl: from XDMA's 250 MHz axi_aclk); uclk (HBM AXI) 250 MHz
+mem = "hbm2"
+mem_mts = 1800                  # HBM2 at 900 MHz
+mem_ctrl = "xilinx_hbm"
+hostcal = false
+channels_per_slice = 4           # DUAL
+channel_bytes = 2147483648      # 2 GiB of HBM per channel; the host's DMA reaches channel j at j x this
+channel_phys_bytes = 2147483648
+beat_bytes = 64
+host = "pcie"
+pcie_gen = 3
+pcie_lanes = 8

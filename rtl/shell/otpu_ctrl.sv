@@ -69,7 +69,8 @@
 //   0x90 CFG_DRAM     RO  [7:0] log2 DRAM bytes per slice, [15:8] memory channels per slice,
 //                         [23:16] log2 bytes a slice addresses per channel
 //   0x94 CFG_UARCH    RO  [3:0] MXU_IMPL, [7:4] TMEM_IMPL, [15:8] VPU_CL, [23:16] ULANES,
-//                         [24] SEQ_WC (otpu_seq's wait entries: every program needs them, docs/isa.md)
+//                         [24] SEQ_WC (otpu_seq's wait entries: every program needs them, docs/isa.md),
+//                         [25] QUAD (a 4-bit MM PAIR of MCOLS/4 rows four blocks an advance, otpu_mxu)
 //   0x98 CFG_PLATFORM RO  the target's platform id (1 YPCB-00338, 2 BCU1525; 256 and up ASICs)
 //   0x9C CFG_HASH     RO  opentpu.target.arch_hash of the target's Config at build time
 //   0xA0 + 4s         (reserved: slice s's DRAM window, docs/targets.md)
@@ -89,8 +90,9 @@
 //                        (LM73 sensor bus), bit2 SCL1, bit3 SDA1 (PCIe edge SMBus); reset 0
 //   0x224 I2C_IN     RO  the pin levels (synchronized by otpu_board): bit0 SCL0, bit1 SDA0,
 //                        bit2 SCL1, bit3 SDA1, bit4 ALERT0 (LM73 ALERT, active low)
-// Reads answer three cycles after the address is taken (a registered address, a registered
-// multiplexer, the data register), which also gives the trace RAM time after TRACE_ADDR moves.
+// Reads answer four cycles after the address is taken (a registered address, a registered
+// multiplexer per register group, the group's choice registered, the data register), which also
+// gives the trace RAM time after TRACE_ADDR moves.
 module otpu_ctrl #(
   parameter int D     = 128,
   parameter int MCOLS = 2,
@@ -113,14 +115,16 @@ module otpu_ctrl #(
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 15,
   parameter int ACT_BLOCKS = 128,
-  parameter int DRAM_LOG2  = 32,         // log2 DRAM bytes per slice
+  parameter int DRAM_LOG2  = 32,         // log2 DRAM bytes per slice (otpu_board: DAW, 32 .. 36)
   parameter int NCH        = 2,          // memory channels per slice
-  parameter int CH_LOG2    = 31,         // log2 bytes a slice addresses per channel
+  parameter int CH_LOG2    = 31,         // log2 bytes a slice addresses per channel (DAW > 32:
+                                         // DAW - log2 NCH; 31 at DAW 32)
   parameter int MXU_IMPL   = 2,
   parameter int TMEM_IMPL  = 0,
   parameter int VPU_CL     = 2,
   parameter int ULANES     = 8,
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
+  parameter bit QUAD       = 1'b0,    // the MXU's QUAD (CFG_UARCH bit25: in the Config, so in CFG_HASH)
   parameter int PLATFORM   = 0,
   parameter logic [31:0] ARCH_HASH = 32'h0,
   // the free-running counters' increment widths (2 and 2 for the YPCB's one slice on two
@@ -251,9 +255,13 @@ module otpu_ctrl #(
     end
   end
 
-  // ---- per-run counters
+  // ---- per-run counters. Their clear is a register of its own, rst or a CLEAR write (in the
+  // cycle clear rises; rst a cycle late), replicated by synthesis over their 224 flip-flops
+  // (250 MHz, FK35: rst -> the rst || clear LUT -> n_bwr's reset pins, 1 level, 96% route, -0.45 ns)
+  (* max_fanout = 64 *) logic pc_clr;
+  always_ff @(posedge clk) pc_clr <= rst || (w_go && s_awaddr[11:2] == 10'h002 && s_wdata[2]);
   always_ff @(posedge clk) begin
-    if (rst || clear) begin
+    if (pc_clr) begin
       cycles <= '0; n_brd <= '0; n_bwr <= '0; n_ard <= '0; n_awr <= '0; n_bst <= '0;
     end else begin
       if (run && !halted) cycles <= cycles + 1;
@@ -276,6 +284,10 @@ module otpu_ctrl #(
   logic [FW-1:0] fr_inc [NFR];
   logic [63:0] fr [NFR], fr_s [NFR];
   logic [31:0] n_snap;
+  // their reset, a register per counter (and n_snap's), next to it, a cycle after rst (250 MHz,
+  // FK35: rst -> fr_s, fr, 0-1 levels, 98% route, -0.31 ns); keep: not merged back into one
+  (* keep = "true", shreg_extract = "no" *) logic [NFR:0] fr_rst;
+  always_ff @(posedge clk) fr_rst <= {(NFR + 1){rst}};
   always_ff @(posedge clk) begin
     fr_inc[0]  <= FW'(1);
     fr_inc[1]  <= FW'(run && !halted);
@@ -290,91 +302,115 @@ module otpu_ctrl #(
     fr_inc[10] <= FW'(dram_wait);
     fr_inc[11] <= FW'(instr);
     fr_inc[12] <= FW'(mxu_starve);
-    if (rst) begin
-      for (int k = 0; k < NFR; k++) begin fr[k] <= '0; fr_s[k] <= '0; fr_inc[k] <= '0; end
-      n_snap <= '0;
-    end else begin
-      for (int k = 0; k < NFR; k++) fr[k] <= fr[k] + 64'(fr_inc[k]);
-      if (snap) begin
-        for (int k = 0; k < NFR; k++) fr_s[k] <= fr[k];
-        n_snap <= n_snap + 1;
+    for (int k = 0; k < NFR; k++)
+      if (fr_rst[k]) begin
+        fr[k] <= '0; fr_s[k] <= '0; fr_inc[k] <= '0;
+      end else begin
+        fr[k] <= fr[k] + 64'(fr_inc[k]);
+        if (snap) fr_s[k] <= fr[k];
       end
-    end
+    if (fr_rst[NFR]) n_snap <= '0;
+    else if (snap) n_snap <= n_snap + 1;
   end
 
-  // ---- read channel: one read at a time; address, multiplexer and data registered
+  // ---- read channel: one read at a time; the address, a multiplexer per register group (r_g:
+  // 0x000-0x01F, 0x020-0x03F, 0x040-0x07F the counters' shadows, 0x080-0x08F), the group's choice
+  // (r_d) and the data registered (250 MHz, FK35: r_a -> r_d through one multiplexer over every
+  // register and the default's compares, 6 levels, -0.43 ns). TRACE_HI's increment (tr_inc) comes
+  // the cycle after its data is in r_g[3].
   logic [9:0]  r_a;
-  logic [1:0]  r_p;
+  logic [2:0]  r_p;
   logic [31:0] r_d;
-  assign s_arready = !s_rvalid && r_p == 2'b00;
+  logic [31:0] r_g [4];
+  logic [3:0]  r_gs;                    // r_a's group (one-hot; none: 0xDEADBEEF)
+  assign s_arready = !s_rvalid && r_p == 3'b000;
   assign s_rresp = 2'b00;
   assign tr_inc = r_p[1] && r_a == 10'h085;
   always_ff @(posedge clk) begin
     if (rst) begin
       s_rvalid <= 1'b0;
-      r_p <= 2'b00;
+      r_p <= 3'b000;
     end else begin
       if (s_rvalid && s_rready) s_rvalid <= 1'b0;
-      r_p <= {r_p[0], s_arvalid && s_arready};
-      if (r_p[1]) begin
+      r_p <= {r_p[1:0], s_arvalid && s_arready};
+      if (r_p[2]) begin
         s_rvalid <= 1'b1;
         s_rdata <= r_d;
       end
     end
     if (s_arvalid && s_arready) r_a <= s_araddr[11:2];
-    case (r_a)
-      10'h000: r_d <= 32'h4F54_5055;
-      10'h001: r_d <= {16'(D), 8'(MCOLS), 8'(LANES)};
-      10'h002: r_d <= {31'd0, run};
-      10'h003: r_d <= {22'd0, ecc_ded, wait_to, run, calib, axi_err, wr_idle, ld_busy || ld_pend,
-                       error, halted};
-      10'h004: r_d <= ld_addr;
-      10'h005: r_d <= ld_n;
-      10'h006: r_d <= cycles[31:0];
-      10'h007: r_d <= cycles[63:32];
-      10'h008: r_d <= icount[0];
-      10'h009: r_d <= n_brd;
-      10'h00A: r_d <= n_bwr;
-      10'h00B: r_d <= n_ard;
-      10'h00C: r_d <= n_awr;
-      10'h00D: r_d <= n_bst;
-      10'h00E: r_d <= scratch;
-      10'h00F: r_d <= 32'd5;
-      10'h010: r_d <= CAPS;
-      10'h011: r_d <= 32'(CORE_KHZ);
-      10'h012: r_d <= BUILD_ID;
-      10'h013: r_d <= {temp_v, 19'd0, temp};
-      10'h014: r_d <= n_snap;
-      10'h015: r_d <= 32'(DDR_MTS);
-      10'h016: r_d <= 32'(ACT_ROWS);
-      10'h017: r_d <= CAPS2;
-      10'h018, 10'h019, 10'h01A, 10'h01B, 10'h01C, 10'h01D, 10'h01E, 10'h01F:
-        r_d <= arg[r_a[2:0]];
-      10'h020: r_d <= 32'(S);
-      10'h021: r_d <= 32'(TMEM_WORDS);
-      10'h022: r_d <= 32'(IMEM_WORDS);
-      10'h023: r_d <= 32'(ACT_BLOCKS);
-      10'h024: r_d <= {8'd0, 8'(CH_LOG2), 8'(NCH), 8'(DRAM_LOG2)};
-      10'h025: r_d <= {7'd0, SEQ_WC, 8'(ULANES), 8'(VPU_CL), 4'(TMEM_IMPL), 4'(MXU_IMPL)};
-      10'h026: r_d <= 32'(PLATFORM);
-      10'h027: r_d <= ARCH_HASH;
-      10'h080: r_d <= {28'd0, tr_busy, tr_stop, 1'b0, tr_en};
-      10'h081: r_d <= tr_count;
-      10'h082: r_d <= tr_drop;
-      10'h083: r_d <= tr_addr;
-      10'h084: r_d <= tr_rdata[31:0];
-      10'h085: r_d <= tr_rdata[63:32];
-      10'h088: r_d <= {28'd0, i2c_lo};
-      10'h089: r_d <= {27'd0, i2c_in};
-      default:
-        if (S > 1 && r_a[9:4] == 6'h03 && 32'(r_a[3:0]) < 32'(S))
-          r_d <= ic_all[r_a[3:0]];
-        else if (r_a[9:6] == 4'h1 && r_a[5:1] < 5'(NFR))
-          r_d <= r_a[0] ? fr_s[r_a[5:1]][63:32] : fr_s[r_a[5:1]][31:0];
-        else
-          r_d <= 32'hDEAD_BEEF;
+    r_gs <= {r_a[9:4] == 6'h08, r_a[9:6] == 4'h1, r_a[9:5] == 5'h01, r_a[9:5] == 5'h00};
+    case (r_a[4:0])
+      5'h00: r_g[0] <= 32'h4F54_5055;
+      5'h01: r_g[0] <= {16'(D), 8'(MCOLS), 8'(LANES)};
+      5'h02: r_g[0] <= {31'd0, run};
+      5'h03: r_g[0] <= {22'd0, ecc_ded, wait_to, run, calib, axi_err, wr_idle, ld_busy || ld_pend,
+                        error, halted};
+      5'h04: r_g[0] <= ld_addr;
+      5'h05: r_g[0] <= ld_n;
+      5'h06: r_g[0] <= cycles[31:0];
+      5'h07: r_g[0] <= cycles[63:32];
+      5'h08: r_g[0] <= icount[0];
+      5'h09: r_g[0] <= n_brd;
+      5'h0A: r_g[0] <= n_bwr;
+      5'h0B: r_g[0] <= n_ard;
+      5'h0C: r_g[0] <= n_awr;
+      5'h0D: r_g[0] <= n_bst;
+      5'h0E: r_g[0] <= scratch;
+      5'h0F: r_g[0] <= 32'd5;
+      5'h10: r_g[0] <= CAPS;
+      5'h11: r_g[0] <= 32'(CORE_KHZ);
+      5'h12: r_g[0] <= BUILD_ID;
+      5'h13: r_g[0] <= {temp_v, 19'd0, temp};
+      5'h14: r_g[0] <= n_snap;
+      5'h15: r_g[0] <= 32'(DDR_MTS);
+      5'h16: r_g[0] <= 32'(ACT_ROWS);
+      5'h17: r_g[0] <= CAPS2;
+      default: r_g[0] <= arg[r_a[2:0]];                 // 0x18 .. 0x1F
     endcase
+    if (r_a[4]) begin                                   // 0x30 .. 0x3F: ICOUNT_s
+      if (S > 1 && 32'(r_a[3:0]) < 32'(S)) r_g[1] <= ic_all[r_a[3:0]];
+      else r_g[1] <= 32'hDEAD_BEEF;
+    end else begin
+      case (r_a[3:0])
+        4'h0: r_g[1] <= 32'(S);
+        4'h1: r_g[1] <= 32'(TMEM_WORDS);
+        4'h2: r_g[1] <= 32'(IMEM_WORDS);
+        4'h3: r_g[1] <= 32'(ACT_BLOCKS);
+        4'h4: r_g[1] <= {8'd0, 8'(CH_LOG2), 8'(NCH), 8'(DRAM_LOG2)};
+        4'h5: r_g[1] <= {6'd0, QUAD, SEQ_WC, 8'(ULANES), 8'(VPU_CL), 4'(TMEM_IMPL), 4'(MXU_IMPL)};
+        4'h6: r_g[1] <= 32'(PLATFORM);
+        4'h7: r_g[1] <= ARCH_HASH;
+        default: r_g[1] <= 32'hDEAD_BEEF;
+      endcase
+    end
+    if (r_a[5:1] < 5'(NFR)) r_g[2] <= r_a[0] ? fr_s[r_a[5:1]][63:32] : fr_s[r_a[5:1]][31:0];
+    else r_g[2] <= 32'hDEAD_BEEF;
+    case (r_a[3:0])
+      4'h0: r_g[3] <= {28'd0, tr_busy, tr_stop, 1'b0, tr_en};
+      4'h1: r_g[3] <= tr_count;
+      4'h2: r_g[3] <= tr_drop;
+      4'h3: r_g[3] <= tr_addr;
+      4'h4: r_g[3] <= tr_rdata[31:0];
+      4'h5: r_g[3] <= tr_rdata[63:32];
+      4'h8: r_g[3] <= {28'd0, i2c_lo};
+      4'h9: r_g[3] <= {27'd0, i2c_in};
+      default: r_g[3] <= 32'hDEAD_BEEF;
+    endcase
+    r_d <= r_gs[0] ? r_g[0] : r_gs[1] ? r_g[1] : r_gs[2] ? r_g[2] : r_gs[3] ? r_g[3] : 32'hDEAD_BEEF;
   end
+`ifndef SYNTHESIS
+  // the trace ring's record is three cycles behind TRACE_ADDR (otpu_trace: the RAM's read and
+  // two output registers): TRACE_LO / TRACE_HI take it three or more cycles after TRACE_ADDR moved
+  logic [31:0] ta_q;
+  int          ta_age;
+  always_ff @(posedge clk) begin
+    ta_q <= tr_addr;
+    ta_age <= (tr_addr != ta_q) ? 1 : (ta_age < 8 ? ta_age + 1 : ta_age);
+    if (!rst && r_p[0] && (r_a == 10'h084 || r_a == 10'h085) && (tr_addr != ta_q || ta_age < 3))
+      $fatal(1, "otpu_ctrl: a trace record taken %0d cycles after TRACE_ADDR moved", ta_age);
+  end
+`endif
 endmodule
 
 // AXI4-Lite between a master and a slave that reset apart (otpu_board: the control registers;

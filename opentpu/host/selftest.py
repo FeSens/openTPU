@@ -16,7 +16,8 @@ Stages stop at the first failure, with a hint. Each builds on the previous one:
   5 addr       walking address bits and random patterns on each channel (raw channel
                addresses: bottom, middle, top; every slice's channels)
   6 pattern    random data through the 64-byte channel interleave, unaligned edges, the top
-               of DRAM (logical addresses near 4 GiB); sub-beat host updates on each channel
+               of DRAM (logical addresses near its end; a wide bitstream's both sides of each
+               4 GiB boundary); sub-beat host updates on each channel
                (merged into whole beats on the host: XdmaTransport.mem_write)
   7 bandwidth  host <-> card DMA rate
   8 kernel     a program using every unit, and one of partial DRAM writes from the
@@ -169,9 +170,16 @@ def main(argv=None) -> int:
         return v == ID_OTPU, f"ID {v:#010x}" + ("" if v == ID_OTPU else f", want {ID_OTPU:#x}")
 
     def config():
-        nonlocal cfg
+        nonlocal cfg, ch_bytes, top
         i = board.info()
-        cfg = device_config(i, DRAM_BYTES=2 * ch_bytes)
+        c = i.get("cfg")
+        if c and not a.sim:             # the card's channels (CFG_DRAM) and its slice's DRAM: a
+            # wide (DAW > 32) bitstream's every byte is tested; of a channel the bytes its slice
+            # reaches (DUAL at DAW 32: 1 GiB of each, the FK35's whole 1 GiB channel, whose 2 GiB
+            # window aliases above it)
+            ch_bytes = min(c["channel_bytes"], c["DRAM_BYTES"] // c["channels"])
+            top = c["DRAM_BYTES"]
+        cfg = device_config(i, DRAM_BYTES=top)
         msg = config_summary(i)
         return True, msg
 
@@ -201,7 +209,10 @@ def main(argv=None) -> int:
     def scrub():
         t0 = time.time()
         if board.scrub():
-            return True, f"4 GiB written in {time.time() - t0:.1f}s (ECC check bits initialized)"
+            c = board.info().get("cfg")
+            n = c["S"] * c["channels"] * c["channel_bytes"] if c else 2 * ch_bytes
+            return True, (f"{n / 2**30:g} GiB written in {time.time() - t0:.1f}s (ECC check bits "
+                          f"initialized)")
         return True, "already done since configuration" if not a.sim else "no ECC on the model"
 
     def regs():
@@ -233,6 +244,8 @@ def main(argv=None) -> int:
         m = 1 << 20                                       # disjoint regions
         regions = [(0, m), (m + 12345, 1000), (2 * m + 60, 70), (top // 2 - 4096, 8192),
                    (top - 2 * m, m), (top - 100, 100)]
+        for g in range(1 << 32, top, 1 << 32):      # a wide DRAM: each 4 GiB boundary's sides
+            regions += [(g - 3 * m, 2 * m), (g + 3 * m + 77, 5000)]
         ok, msg = pattern_test(board, regions)
         for c in channels():
             if ok:

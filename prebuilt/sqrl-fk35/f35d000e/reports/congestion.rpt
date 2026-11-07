@@ -1,0 +1,68 @@
+Copyright 1986-2019 Xilinx, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2019.2.1 (win64) Build 2729669 Thu Dec  5 04:49:17 MST 2019
+| Date         : Sat Nov  7 03:28:30 2026
+| Host         : DI-PC running 64-bit major release  (build 9200)
+| Command      : report_design_analysis -congestion -file M:/fk35v/q8/build/vivado/reports/congestion.rpt
+| Design       : otpu_fpga_top_fk35
+| Device       : xcvu35p
+| Design State : Physopt postRoute
+----------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+2. Router Initial Congestion
+3. SLR Net Crossing Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+-------+------------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Direction | Level | Congestion |              Window             | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM | DSP | CARRY | SRL |                                                                                                                      Cell Names                                                                                                                      |
++-----------+-------+------------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| North     |     5 |       100% | (CLEL_R_X81Y399,CLEL_R_X96Y430) |            0% |         2.356 | 47% | 1%     |  35% |   2% | 100% | NA   | 57% |   13% | 14% | u_sys/u_board/g_slice[1].u_slice/u_mxu(50%),u_sys/u_board/g_slice[1].u_slice/u_seq(37%),u_sys/u_board/g_slice[1].u_slice(9%)                                                                                                                         |
+| South     |     5 |       121% | (CLEL_R_X129Y56,CLEM_R_X145Y87) |            4% |         3.220 | 64% | 18%    |  45% |   0% | 91%  | NA   | 0%  |    1% |  6% | g_hbm[7].u_port(30%),u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/pcie_4_0_pipe_inst/pcie4_0_512b_intfc_mod/pcie_4_0_512b_intfc_int_mod/pcie_4_0_512b_rc_intfc_mod(21%),u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(17%) |
++-----------+-------+------------+---------------------------------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+
+2. Router Initial Congestion
+----------------------------
+
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Direction |  Type  | Level |             Window             | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM | DSP | CARRY | SRL |                                                                                                                        Cell Names                                                                                                                       |
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| North     | Global |     5 | (CLEM_X128Y32,CLEM_R_X143Y111) |            8% |         3.347 | 78% |    23% |  44% |   1% |  96% |   NA |  0% |    0% |  4% | u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(21%),g_hbm[7].u_port(18%),u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/pcie_4_0_pipe_inst/pcie4_0_512b_intfc_mod/pcie_4_0_512b_intfc_int_mod/pcie_4_0_512b_rc_intfc_mod(17%)    |
+| North     | Global |     5 | (CLEM_X120Y24,CLEM_R_X143Y111) |           11% |         3.296 | 75% |    22% |  45% |   1% |  97% |   NA |  0% |    0% |  2% | g_hbm[7].u_port(18%),u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(17%),u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/pcie_4_0_pipe_inst/pcie4_0_512b_intfc_mod/pcie_4_0_512b_intfc_int_mod/pcie_4_0_512b_rc_intfc_mod(12%)    |
+| North     | Global |     5 | (CLEM_X96Y112,CLEM_X111Y143)   |            3% |         3.214 | 81% |    47% |  34% |   1% |   NA |   0% |  0% |   14% |  0% | u_sys/u_board/g_slice[1].g_memx.u_mem/u_dram/g_ad[1].u_ad(50%),u_sys/u_board/g_slice[1].g_memx.u_mem/u_m(12%),u_sys/g_ch[6].u_ch(8%)                                                                                                                    |
+| South     | Global |     5 | (CLEM_X120Y56,CLEM_X135Y95)    |            3% |         3.953 | 87% |    21% |  34% |   0% |   NA |   NA |  0% |    0% |  5% | u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(53%),g_hbm[7].u_port(18%),u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/pcie_4_0_pipe_inst/pcie4_0_512b_intfc_mod/pcie_4_0_512b_intfc_int_mod/pcie_4_0_512b_rc_intfc_mod(16%)    |
+| East      | Global |     5 | (CLEL_R_X118Y82,CLEM_X133Y113) |            6% |         4.380 | 91% |    19% |  36% |   0% |   NA |   NA |  0% |    0% |  0% | u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(50%),u_sys/g_ch[7].u_ch(17%),u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_enable.aximm.dma_aximm/axi4mm_axi_mm_master_wr(11%)                                           |
+| North     | Long   |     6 | (CLEM_X82Y13,CLEM_R_X145Y108)  |            5% |         3.159 | 80% |    38% |  39% |   0% |  93% |   0% |  0% |    0% |  2% | u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(19%),g_hbm[5].u_port(12%),g_hbm[6].u_port(12%)                                                                                                                                 |
+| North     | Long   |     6 | (CLEM_X82Y13,CLEM_R_X145Y76)   |            5% |         2.965 | 79% |    44% |  39% |   0% |  92% |   0% |  0% |    0% |  2% | g_hbm[5].u_port(16%),g_hbm[6].u_port(15%),u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(14%)                                                                                                                                 |
+| South     | Long   |     5 | (NULL_X477Y331,CLEM_X119Y314)  |            0% |         2.751 | 63% |    11% |  31% |   0% |  94% | 100% | 44% |    6% |  8% | u_sys/u_board/g_slice[1].u_slice/u_vpu/g_comp.u_comp(26%),u_sys/u_board/g_slice[1].u_slice/u_vpu(24%),u_sys/u_board/g_slice[1].u_slice/u_vpu/g_se.u_tail(20%)                                                                                           |
+| West      | Long   |     5 | (CLEM_X19Y275,CLEL_L_X50Y322)  |            0% |         2.515 | 63% |    13% |  27% |   1% | 100% |   0% | 84% |    3% | 14% | u_sys/u_board/u_slice/u_mxu(33%),u_sys/u_board/u_slice/u_dma(24%),u_sys/u_board/u_slice/u_vpu(16%)                                                                                                                                                      |
+| West      | Long   |     5 | (CLEM_X19Y283,CLEL_L_X50Y314)  |            0% |         2.368 | 63% |    15% |  30% |   1% | 100% |   0% | 86% |    3% | 16% | u_sys/u_board/u_slice/u_mxu(36%),u_sys/u_board/u_slice/u_dma(30%),u_sys/u_board/u_slice/u_vpu/g_se.u_tail(9%)                                                                                                                                           |
+| North     | Short  |     5 | (CLEL_R_X81Y104,CLEM_X112Y135) |            4% |         3.330 | 82% |    51% |  29% |   2% | 100% |   0% |  0% |    6% |  0% | u_sys/u_board/g_slice[1].g_memx.u_mem/u_dram/g_ad[1].u_ad(53%),u_sys/u_board/g_slice[1].g_memx.u_mem/u_dram/g_ad[0].u_ad(16%),u_bd/otpu_bd_i/sc_dma/inst(10%)                                                                                           |
+| South     | Short  |     5 | (CLEM_X120Y74,CLEM_X135Y105)   |            6% |         4.253 | 89% |    15% |  37% |   0% |   NA |   NA |  0% |    0% |  3% | u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(56%),u_sys/g_ch[7].u_ch(14%),u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/pcie_4_0_pipe_inst/pcie4_0_512b_intfc_mod/pcie_4_0_512b_intfc_int_mod/pcie_4_0_512b_rc_intfc_mod(11%) |
+| East      | Short  |     5 | (CLEM_X120Y75,CLEM_X135Y122)   |            6% |         4.264 | 90% |    19% |  36% |   1% |   NA |   NA |  0% |    2% |  2% | u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_pcie_req/dma_pcie_rc(42%),u_sys/g_ch[7].u_ch(16%),u_bd/otpu_bd_i/xdma_0/inst/udma_wrapper/dma_top/dma_enable.aximm.dma_aximm/axi4mm_axi_mm_master_wr(9%)                                            |
++-----------+--------+-------+--------------------------------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+
+3. SLR Net Crossing Reporting
+-----------------------------
+
++------------------+-----------------------------+-------------+
+|    Cell Names    | Number of Nets crossing SLR | 0 - 1 Cuts  |
++------------------+-----------------------------+-------------+
+| core_rst_reg     | 1                           | 1           |
+| led_OBUF[0]_inst | 1                           | 1           |
+| led_OBUF[2]_inst | 1                           | 1           |
+| lrs2_reg         | 1                           | 1           |
+| u_bd             | 58                          | 58          |
+| u_bd/otpu_bd_i   | 1                           | 1           |
+| u_sys            | 7091                        | 7091        |
++------------------+-----------------------------+-------------+
+
+

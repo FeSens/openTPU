@@ -11,7 +11,8 @@ In short:
 - **Mechanism.** A formats string sets the format per kind of weight and per layer range over
   the image's `wformat` (`opentpu/llm/formats.py`): `OTPU_FORMATS`, a caller's `formats=`, or
   the named choice `wformat="mix"`, which is int8 with the model's recommended string
-  (`Spec.mix`, from `formats.MIXES`). int8, int4, fp4 and nvfp4 stay uniform.
+  (`Spec.mix`, from `formats.MIXES`, or the target's `[mixes]` where its speeds choose
+  otherwise). int8, int4, fp4 and nvfp4 stay uniform.
 - **Measure.** dKL: the mean KL divergence of the variant's next-token distribution from the
   float model's, beyond int8's, with its standard error paired over the tokens
   (`tools/formats_scan.py`). It is about ΔNLL against int8 (its % is about the perplexity
@@ -26,7 +27,10 @@ In short:
   1 SE, and MX's own accuracy gain makes no new, faster mix ([The rule](#the-rule)).
 - **Choices** (the MX formats: the per-kind scan of [mx_mxu.md](mx_mxu.md) 3.6, int8 kinds in
   int8x, fp4 fp4x6). Phi-4-mini: `gateup@4-29=nvfp4,down@4-29=fp4`. Qwen3.5-4B:
-  `delta=fp4,mlp=nvfp4` (the attention layers int8). SmolLM3-3B: `gateup@9-35=nvfp4`.
+  `delta=fp4,mlp=nvfp4` (the attention layers int8). Qwen3.5-9B: `attn=fp4,delta=nvfp4,mlp=fp4`.
+  On the SQRL FK35 with DUAL alone a target `[mixes]` made both Qwen3.5 int8; with QUAD it takes
+  these again ([The rule](#the-rule)).
+  SmolLM3-3B: `gateup@9-35=nvfp4`.
   LFM2-2.6B: `conv=nvfp4,gateup=nvfp4,down=fp4` (the attention layers int8). Qwen3-0.6B,
   LFM2.5-230M, Qwen3.5-0.8B and 2B, Gemma 4 E2B-it: none, so int8 (E2B's fp4 PLE table stays).
   Gemma 4 E4B: the head and gate / up 0-11 in fp4 as below. The streamed MoE models
@@ -160,6 +164,18 @@ mixes: a mix puts no more weights in 4-bit than its choice before MX. The per-ki
 [mx_mxu.md](mx_mxu.md) 3.6 (`tools/exp/mx_formats.py`); the choices are in "In short" above,
 the sections below are the scans before MX.
 
+The speeds are a card's, and a card whose speeds choose otherwise says so in its target's
+`[mixes]` table (`targets/<name>.toml`: the key `model_type/layers/hidden/vocab` as MIXES',
+the value a formats string, `""` for int8; `formats.mix_for` takes it over MIXES for the
+current target, `OTPU_TARGET`; the user's decision, 2026-11-02). A DUAL card without QUAD
+streams int8 at two chunks an advance and 4-bit at one, so int8 decodes about as fast as 4-bit
+and a mix gains a few percent: on the SQRL FK35's build f35d0004 no mix qualified and its
+`[mixes]` made the Qwen3.5-4B and 9B int8. With QUAD (build f35d000b, 2026-11-04) 4-bit streams
+two chunks an advance too and the bytes decide again (4B int8 25.29 tok/s, its mix 35.90, fp4
+43.08; 9B int8 14.29, its mix 21.96, fp4 24.48): the FK35 has no `[mixes]` and takes MIXES
+([sqrl-fk35.md](sqrl-fk35.md)). The FK33 keeps the MIXES choice: at its DAW 32 the 4B's int8
+image (4142 MiB) does not fit its slice.
+
 ## Choices
 
 ### Phi-4-mini
@@ -217,6 +233,41 @@ instructions.
 int8 8.02 tok/s, fp4 12.09 (card, build B). No single layout qualifies at 900 tokens: the
 closest, `gateup=fp4`, is +2.06% (SE 0.07) for +17% (bar 1.74), 4.6 SE over; `down=fp4` +1.35%
 for +8% (bar 0.79); fp4 +7.79% for +51% (bar 5.07). The 2B has no mix: int8 or fp4.
+
+### Qwen3.5-9B
+
+Its image does not fit the YPCB card; the speeds are the SQRL FK35's (250 MHz, two slices). The
+MX formats against MX int8, 2000 tokens on docs/isa.md (`tools/formats_scan.py ppl`, 2026-11-02;
+MiB with an int8 head):
+
+| Formats | dKL % (SE) | Perplexity vs int8 % | MiB |
+|:--|--:|--:|--:|
+| fp4 (`attn=fp4,delta=fp4,mlp=fp4`) | +6.16 (0.19) | +4.77 | 4495 |
+| `attn=fp4,delta=fp4,mlp=nvfp4` | +5.77 (0.19) | +4.01 | 4646 |
+| `delta=fp4,gateup=nvfp4,down=nvfp4` | +4.77 (0.19) | +4.48 | 4859 |
+| `delta=nvfp4,gateup=nvfp4,down=nvfp4` | +4.31 (0.17) | +4.40 | 4910 |
+| `attn=fp4,mlp=fp4` | +4.25 (0.13) | +4.00 | 5228 |
+| `mlp=fp4` | +2.84 (0.10) | +3.88 | 5441 |
+| `gateup=fp4` | +1.83 (0.06) | +2.16 | 6173 |
+| int8 | 0 | 0 | 7634 |
+
+Where int8 costs its bytes (the FK35 before DUAL, build f35e0001: the 4B's int8 13.99 tok/s
+against fp4 24.36, +74%; the 9B's int8 was not measured there, fp4 13.34) decode time goes with
+the bytes, so fp4's gain is about +70% (bar about 7.0) and fp4 qualifies 4.4 SE under it, the
+fastest layout. Per kind, NVFP4 over fp4x6 (the delta / gateup / down factorial's main effects):
+delta -0.40 points (SE 0.10) for about 2.3% of decode time (bar 0.23), 1.7 SE: NVFP4; gate / up
+-0.35 (0.07) for 4.6% (bar 0.46) and down -0.10 (0.06) for 2.2% (bar 0.22): fp4x6; attention
+-0.15 (0.10) for 0.7% (bar 0.07), 0.8 SE (one pair): fp4x6. The MIXES entry is
+`attn=fp4,delta=nvfp4,mlp=fp4`, every layer's weights in 4-bit, the head int8.
+
+On the FK35 with DUAL (build f35d0004) int8 costs about what 4-bit does, in tok/s on the device:
+int8 14.28, `gateup=fp4` 14.35, `mlp=fp4` 14.41, `attn=fp4,delta=nvfp4,mlp=fp4` 14.57,
+`delta=fp4,mlp=nvfp4` 14.59, fp4 14.66: gains of 0.5-2.7% (bars 0.05-0.27) for dKL 1.8-6.2%,
+so no mix qualified and the FK35's `[mixes]` made the 9B int8 (the 4B likewise: its mix
+25.79 tok/s against int8 25.29, +2.0% for dKL +5.3%). With QUAD (build f35d000b) the bytes
+decide again: int8 14.29, `gateup=fp4` 17.21, `mlp=fp4` 18.59, `delta=fp4,mlp=nvfp4` 19.42,
+`attn=fp4,delta=nvfp4,mlp=fp4` 21.96, fp4 24.48 (+71%), and the FK35 takes the MIXES entry (the
+user's choice, 2026-11-04; the 4B's mix 35.90 against int8 25.29, +42%).
 
 ### SmolLM3-3B
 

@@ -8,7 +8,10 @@
 //
 // Address map: the slice's byte address space is interleaved over the channels in 64-byte beats:
 // logical beat b = addr / 64 (chunk m = b / 2) is channel beat m (n_caddr: the channel address's
-// bits 30:6, 2 GiB per channel) on channel c = b % 2, or with CHASH on c = (b % 2) ^ parity(m). A
+// bits BAW+5:6; BAW 25: bits 30:6, 2 GiB per channel; a slice of more than 4 GiB, DAW > 32: BAW
+// up to DAW - 7, the slice's word address AW bits wide, otpu_pkg AWW, its region in the chunk
+// index's top bits) on channel c = b % 2, or with CHASH on c = (b % 2) ^ parity(m), m all of the
+// chunk index's bits. A
 // D = 128-byte chunk (port B; requests are chunk aligned) is therefore one beat on each channel,
 // and a streamed operand uses both channels evenly. CHASH swaps the chunks' halves by the parity
 // of the chunk index, so the beats at a power-of-two stride of chunks (a transposed V's column:
@@ -105,7 +108,16 @@ module otpu_native_dram #(
   // A read run (prefetch), beats. 32: decode's knee (docs/litedram.md section 11; 8 -> 32 is
   // 0.9-1.3% fewer cycles per token, 64 no better): fewer runs, so fewer row and bank changes
   // between the scale stream and the others
-  parameter int APF = 32
+  parameter int APF = 32,
+  // the slice's word addresses (a_addr_x, sw_addr, b_addr): AW bits (otpu_pkg AWW: 32, DAW - 2 at
+  // DAW 35 / 36); the channel beat address n_caddr: BAW bits (25: 2 GiB a channel; DAW - 7 for a
+  // 2^DAW-byte slice on two channels), the chunk index's low BAW bits
+  parameter int AW = 32,
+  parameter int BAW = 25,
+  // the SW queue's memories (u_qwd, u_wrm: 512 bits x WQD) and the B FIFO's (u_rbm): 0 block RAMs,
+  // 1 the SW queue's in LUT RAM, 2 that and the B FIFO's in UltraRAM (the FK35, whose SLR1 the
+  // block RAMs filled: docs/sqrl-fk35.md)
+  parameter int QMEM = 0
 ) (
   input  logic              clk,
   input  logic              rst,
@@ -114,14 +126,14 @@ module otpu_native_dram #(
   output logic              a_rdy_x,
   input  logic              a_req_x,
   input  logic              a_we_x,
-  input  logic [31:0]       a_addr_x,   // word address
+  input  logic [AW-1:0]     a_addr_x,   // word address
   input  logic [31:0]       a_wdata_x,
   input  logic [3:0]        a_be_x,
   output logic              a_rvalid,
   output logic [255:0]      a_rdata,    // the aligned 32 bytes holding word a_addr (half a beat)
   output logic              sw_rdy,
   input  logic              sw_req,
-  input  logic [31:0]       sw_addr,    // word address
+  input  logic [AW-1:0]     sw_addr,    // word address
   input  logic [31:0]       sw_wdata,
   input  logic [3:0]        sw_be,
   output logic              b_rdy,
@@ -130,18 +142,25 @@ module otpu_native_dram #(
   input  logic              b_we,
   input  logic [D/4-1:0]    b_wmask,
   input  logic [D*8-1:0]    b_wdata,
-  input  logic [31:0]       b_addr,     // word address (chunk aligned)
-  input  logic              b_par,      // ^b_addr[31:5] (the channel hash; see b_sw)
+  input  logic [AW-1:0]     b_addr,     // word address (chunk aligned)
+  input  logic              b_par,      // ^b_addr[AW-1:5] (the channel hash; see b_sw)
   output logic              b_rvalid,
   output logic              b_rtag,
   output logic [D*8-1:0]    b_rdata,
+  // read data held until taken (otpu_native_dram2, which merges two adapters in request order;
+  // 1'b1 alone: out as soon as it is in): the oldest B / A read's data is in (registers only),
+  // and it goes out (b_rvalid this cycle; a_rvalid the next) only with its rrdy
+  output logic              b_ravail,
+  input  logic              b_rrdy,
+  output logic              a_ravail,
+  input  logic              a_rrdy,
   output logic              wr_idle,
   output logic              rd_idle,    // no A or B read in flight (taken, its data not yet out)
   // native memory masters, one per channel ([1:0] = channel)
   output logic [1:0]        n_cvalid,
   input  logic [1:0]        n_cready,
   output logic [1:0]        n_cwe,
-  output logic [1:0][24:0]  n_caddr,    // the beat in the channel (channel address bits 30:6)
+  output logic [1:0][BAW-1:0] n_caddr,  // the beat in the channel (channel address bits BAW+5:6)
   output logic [1:0]        n_wvalid,   // write data: one beat per write command, in order
   input  logic [1:0]        n_wready,
   output logic [1:0][511:0] n_wdata,
@@ -151,6 +170,8 @@ module otpu_native_dram #(
   input  logic [1:0][15:0]  n_wdone     // write beats taken by the controller (mod 2^16)
 );
   initial if (D != 128) $fatal(1, "otpu_native_dram: D must be 128 (one beat per channel)");
+  initial if (AW < 32 || BAW < 25 || BAW + 5 > AW)
+    $fatal(1, "otpu_native_dram: AW %0d, BAW %0d (AW >= 32, 25 <= BAW <= AW - 5)", AW, BAW);
   // (AD >= 2 APF - 1: a run can start while the previous run's untaken beats are stored)
   initial if (APF < 1 || APF > 64 || AD < 2 * APF - 1) $fatal(1, "otpu_native_dram: bad APF");
   localparam int QW = $clog2(QD);
@@ -169,9 +190,10 @@ module otpu_native_dram #(
   localparam logic [1:0] S_A = 2'd0, S_WR = 2'd1, S_WW = 2'd2, S_B = 2'd3;  // a command's
 
   // the hazard bucket of a channel beat: an XOR fold, so that the strided beats of a transposed
-  // V column spread over the buckets
-  function automatic logic [HW-1:0] whash(input logic [24:0] a);
-    return a[5:0] ^ a[11:6] ^ a[17:12] ^ a[23:18] ^ {5'd0, a[24]};
+  // V column spread over the buckets (the beat's bits above 23 fold into the last term: a[24]
+  // alone at BAW 25, as before)
+  function automatic logic [HW-1:0] whash(input logic [BAW-1:0] a);
+    return a[5:0] ^ a[11:6] ^ a[17:12] ^ a[23:18] ^ HW'(a[BAW-1:24]);
   endfunction
 
   // n + inc - dec as a choice among n - 1, n and n + 1: the counts the slice's requests move
@@ -181,27 +203,27 @@ module otpu_native_dram #(
   endfunction
 
   // the channel of a word address's beat
-  function automatic logic chan_of(input logic [31:0] word_addr);
-    return word_addr[4] ^ (CHASH && ^word_addr[31:5]);
+  function automatic logic chan_of(input logic [AW-1:0] word_addr);
+    return word_addr[4] ^ (CHASH && ^word_addr[AW-1:5]);
   endfunction
 
   // ------------------------------------------------------------------ request queues
   // per channel: qb (port B beats), qa (port A beats), qw (gathered SW beats); m: the channel beat
   typedef struct packed {
     logic         we;
-    logic [24:0]  m;
+    logic [BAW-1:0] m;
     logic [511:0] data;
     logic [15:0]  wmask;       // word enables
   } qb_t;
   typedef struct packed {
     logic         we;
-    logic [24:0]  m;
+    logic [BAW-1:0] m;
     logic [3:0]   idx;         // word in the beat
     logic [31:0]  data;
     logic [3:0]   be;
   } qa_t;
   typedef struct packed {      // a gathered SW beat
-    logic [24:0]  m;
+    logic [BAW-1:0] m;
     logic [511:0] data;
     logic [63:0]  strb;
   } qw_t;
@@ -243,7 +265,7 @@ module otpu_native_dram #(
   // sleft -> gb data, 2048 endpoints); a gathered beat's data goes into the SW queue a cycle
   // after it is pushed (u_qwd)
   typedef struct packed {
-    logic [24:0]  m;
+    logic [BAW-1:0] m;
     logic [63:0]  strb;
   } gs_t;
   logic [1:0]   gv;
@@ -269,9 +291,9 @@ module otpu_native_dram #(
   logic [OW:0]  ao_n;
   logic [OW-1:0] ao_h;
 
-  // A beat reuse: the logical beat (bits 29:4 of the word address) and channel of the last A read
+  // A beat reuse: the logical beat (bits BAW+4:4 of the word address) and channel of the last A read
   logic         al_v, al_c;
-  logic [25:0]  al_beat;
+  logic [BAW:0] al_beat;
 
   assign b_rdy = (qb_n[0] < QD) && (qb_n[1] < QD) && (bt_n < OD);
   // Port A's requests come from the slice's port A register (otpu_slice; this adapter's own, on
@@ -279,7 +301,8 @@ module otpu_native_dram #(
   // the MXU's issue -> the scale address) does not run on into the channel hash, the run compare
   // and the queue writes in one cycle.
   logic        a_req, a_we, a_rdy;
-  logic [31:0] a_addr, a_wdata;
+  logic [AW-1:0] a_addr;
+  logic [31:0] a_wdata;
   logic [3:0]  a_be;
   assign a_req = a_req_x; assign a_we = a_we_x; assign a_addr = a_addr_x;
   assign a_wdata = a_wdata_x; assign a_be = a_be_x;
@@ -288,7 +311,7 @@ module otpu_native_dram #(
   assign sw_rdy = (qw_n[0] < WQD) && (qw_n[1] < WQD);
   wire sw_take = sw_req && sw_rdy;
   wire sw_ch = chan_of(sw_addr);
-  wire [24:0] sw_m = sw_addr[29:5];
+  wire [BAW-1:0] sw_m = sw_addr[BAW+4:5];
   wire b_take = b_req && b_rdy;
   wire a_take = a_req && a_rdy;
   wire a_ch = chan_of(a_addr);
@@ -297,14 +320,14 @@ module otpu_native_dram #(
   // then ran into every queue write (b_par: the slice muxes its sources' parities instead)
   wire b_sw = CHASH && b_par;
   wire [1:0] b_hnz = {b_wmask[31:16] != 0, b_wmask[15:0] != 0};   // the halves a B write writes
-  wire [25:0] a_beat = a_addr[29:4];
+  wire [BAW:0] a_beat = a_addr[BAW+4:4];
   wire a_reuse = !a_we && al_v && al_beat == a_beat;
   // A runs per channel: the next channel beat of the run, valid (no write since), beats not
   // yet taken (in flight or stored)
-  logic [24:0]  pnx [2];
+  logic [BAW-1:0] pnx [2];
   logic [1:0]   pv;
   logic [RNW-1:0] pfl [2];
-  wire  [24:0]  a_cb = a_addr[29:5];              // the channel beat
+  wire  [BAW-1:0] a_cb = a_addr[BAW+4:5];          // the channel beat
   wire  a_hit = !a_we && !a_reuse && pv[a_ch] && a_cb == pnx[a_ch] && pfl[a_ch] != 0;
 
   // ------------------------------------------------------------------ response FIFOs
@@ -316,6 +339,8 @@ module otpu_native_dram #(
   // per piece (110ec6d at 133.33 MHz: rb_t_rep -> rbm WADR, fanout 577, 0 levels, 6.9 ns of
   // route, +0.195 ns); on block RAMs each reaches RBP of them
   localparam int RBP = 8;
+  localparam QSTYLE = QMEM >= 1 ? "distributed" : "block";   // (untyped: Vivado 2019.2)
+  localparam RSTYLE = QMEM >= 2 ? "ultra" : "block";
   logic [RW-1:0] rb_hn [2];
   logic [AW_:0] ra_n [2], ra_res [2];
   logic [AW_-1:0] ra_h [2], ra_t [2];
@@ -330,11 +355,11 @@ module otpu_native_dram #(
   qw_t          hw [2];
   // slot qw_r (the read point): its beat, bucket and whether it is partial, registered (wadr_r,
   // wh_r, wp_r; see their process); the next slot's beat and bucket; the bucket of slot qw_f
-  logic [24:0]  wadr_r [2], wadr_n [2];
+  logic [BAW-1:0] wadr_r [2], wadr_n [2];
   logic [HW-1:0] wh_r [2], wh_n [2], wh_f [2];
   logic [1:0]   wp_r;
 `ifndef SYNTHESIS
-  logic [24:0]  wadr_o [2];
+  logic [BAW-1:0] wadr_o [2];
   logic [HW-1:0] wh_o [2];
 `endif
   logic [511:0] rb_head [2], ra_head [2], wr_head [2];
@@ -344,7 +369,7 @@ module otpu_native_dram #(
       // channel c holds the chunk's half c ^ b_sw
       qb_push[c] = b_take && (!b_we || b_hnz[c ^ b_sw]);
       qb_e[c].we = b_we;
-      qb_e[c].m = b_addr[29:5];
+      qb_e[c].m = b_addr[BAW+4:5];
       qb_e[c].data = b_wdata[512 * (c ^ b_sw) +: 512];
       qb_e[c].wmask = b_we ? b_wmask[16 * (c ^ b_sw) +: 16] : '0;
       qa_push[c] = a_take && a_ch == c[0] && !a_reuse && !a_hit;
@@ -390,7 +415,7 @@ module otpu_native_dram #(
     logic [$bits(qa_t)-1:0] qam [2 * QD];
     logic [$bits(gs_t)-1:0] qwm [WQD];      // per slot: the beat and its bytes written
     logic [511:0] hw_d;                     // and their data (u_qwd, see gd)
-    logic [24:0] wam [WQD];                 // per slot: the beat
+    logic [BAW-1:0] wam [WQD];              // per slot: the beat
     logic [HW-1:0] whm [WQD];               // per slot: its hazard bucket
     logic [$bits(tg_t)-1:0] tgm [TD];       // the reads in flight
     logic [511:0] ram [AD];
@@ -402,7 +427,7 @@ module otpu_native_dram #(
     // data goes into last cycle's tail slot (ql_t, ql_v) a cycle later, as gd has it: a slot
     // pushed last cycle is at the read point or before it, and its data is read (hw) only past it
     always_ff @(posedge clk) if (!qw_n[c][WW]) qwm[WW'(qw_f[c] + qw_n[c])] <= gb[c];
-    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE("block")) u_qwd (
+    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE(QSTYLE)) u_qwd (
       .clk, .we(ql_v[c]), .wa(ql_t[c]), .wd(gd[c]), .ra_n(qw_fn[c]), .rd(hw_d));
     always_ff @(posedge clk) if (!qw_n[c][WW]) wam[WW'(qw_f[c] + qw_n[c])] <= gb[c].m;
     always_ff @(posedge clk) if (!qw_n[c][WW]) whm[WW'(qw_f[c] + qw_n[c])] <= whash(gb[c].m);
@@ -417,14 +442,14 @@ module otpu_native_dram #(
     assign wh_f[c] = whm[qw_f[c]];
     for (genvar k = 0; k < RBP; k++) begin : g_rb
       localparam int PB = 512 / RBP;
-      otpu_ram_1r1w_ra #(.W(PB), .N(RD), .STYLE("block")) u_rbm (
+      otpu_ram_1r1w_ra #(.W(PB), .N(RD), .STYLE(RSTYLE)) u_rbm (
         .clk, .we(n_rvalid[c] && tgh[c].k == K_B), .wa(rb_t[c]), .wd(n_rdata[c][PB * k +: PB]),
         .ra_n(rb_hn[c]), .rd(rb_head[c][PB * k +: PB]));
     end
     always_ff @(posedge clk)
       if (n_rvalid[c] && tgh[c].k == K_A) ram[ra_t[c]] <= n_rdata[c];
     // the SW queue's fill data, per slot
-    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE("block")) u_wrm (
+    otpu_ram_1r1w_ra #(.W(512), .N(WQD), .STYLE(QSTYLE)) u_wrm (
       .clk, .we(n_rvalid[c] && tgh[c].k == K_W), .wa(tgh[c].slot), .wd(n_rdata[c]),
       .ra_n(qw_fn[c]), .rd(wr_head[c]));
     assign hb[c] = qb_t'(qbm[qb_h[c]]);
@@ -467,7 +492,7 @@ module otpu_native_dram #(
       n_wvalid[c] = sv[c] && swr[c] && !d_done[c];
       n_cwe[c] = swr[c];
       case (src[c])
-        S_A:  n_caddr[c] = ha[c].m + 25'(a_iss[c]);
+        S_A:  n_caddr[c] = ha[c].m + BAW'(a_iss[c]);
         S_WR: n_caddr[c] = wadr_r[c];
         S_WW: n_caddr[c] = hw[c].m;
         default: n_caddr[c] = hb[c].m;
@@ -499,19 +524,20 @@ module otpu_native_dram #(
   // command select and the channel's readies, and still before any A read that depends on the
   // write is taken (that comes after wr_idle, and waits a cycle in the A register)
   logic [1:0] wk_v, wk_r, wk_a;
-  logic [24:0] wk_m [2];
+  logic [BAW-1:0] wk_m [2];
   always_ff @(posedge clk) begin
     wk_v <= rst ? '0 : wiss;
     for (int c = 0; c < 2; c++) wk_m[c] <= n_caddr[c];
   end
   always_comb
     for (int c = 0; c < 2; c++) begin
-      wk_r[c] = wk_v[c] && pv[c] && 25'(wk_m[c] - pnx[c]) < 25'(pfl[c]);
-      wk_a[c] = wk_v[c] && al_v && al_c == c[0] && al_beat[25:1] == wk_m[c];
+      wk_r[c] = wk_v[c] && pv[c] && BAW'(wk_m[c] - pnx[c]) < BAW'(pfl[c]);
+      wk_a[c] = wk_v[c] && al_v && al_c == c[0] && al_beat[BAW:1] == wk_m[c];
     end
 
   // ------------------------------------------------------------------ merge
-  wire b_out = (bt_n != 0) && (rb_n[0] != 0) && (rb_n[1] != 0);
+  assign b_ravail = (bt_n != 0) && (rb_n[0] != 0) && (rb_n[1] != 0);
+  wire b_out = b_ravail && b_rrdy;
   // the B FIFO's head's next value, as the state block below moves it (a pop of both channels)
   for (genvar c = 0; c < 2; c++) begin : g_rbh
     assign rb_hn[c] = rst ? '0 : b_out ? RW'(rb_h[c] + 1'b1) : rb_h[c];
@@ -528,7 +554,8 @@ module otpu_native_dram #(
   assign ao_in = '{c: a_ch, idx: a_addr[3:0], reuse: a_reuse,
                    drop: (a_reuse || a_hit) ? RNW'(0) : pfl[a_ch]};
   logic [511:0] a_last;                          // the beat of the last fetched A read
-  wire a_out = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
+  assign a_ravail = (ao_n != 0) && (aoh.reuse || ra_n[aoh.c] > (AW_ + 1)'(aoh.drop));
+  wire a_out = a_ravail && a_rrdy;
   wire [511:0] a_src = aoh.reuse ? a_last : ra_head[aoh.c];
   always_ff @(posedge clk)
     if (a_out) aoh <= (ao_n == (OW + 1)'(1)) ? ao_in : ao_nx1;
@@ -789,7 +816,7 @@ module otpu_native_dram #(
   // every cycle: the head of each (the entry a command or a read's data takes) is what a queue
   // written on a push only holds (qar, qbr, btr: the old write enables)
   always_ff @(posedge clk)
-    if (!rst && b_req && b_par != ^b_addr[31:5])
+    if (!rst && b_req && b_par != ^b_addr[AW-1:5])
       $fatal(1, "otpu_native_dram: b_par %0d, address %h", b_par, b_addr);
   logic [$bits(qb_t)-1:0] qbr [2][QD];
   logic [$bits(qa_t)-1:0] qar [2][QD];
@@ -866,7 +893,7 @@ module otpu_native_dram #(
   // once past the read point: see u_qwd); the read point's registers (wadr_r, wh_r, wp_r) are what
   // its slot holds
   logic [$bits(qw_t)-1:0] qwr [2][WQD];
-  logic [24:0] war [2][WQD];
+  logic [BAW-1:0] war [2][WQD];
   logic [WQD-1:0] wpr [2], wgr [2];
   always_ff @(posedge clk)
     for (int c = 0; c < 2; c++) begin

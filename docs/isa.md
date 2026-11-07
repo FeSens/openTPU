@@ -189,7 +189,8 @@ from `n = 0` like the `RMAX` VOP; the softmax row max comes for free from the MX
 `ASCALE` (needs `UNIT` and `ACC`; `ssa` is then the TMEM address of M per-row factors and the old
 accumulator is rescaled first: `y = T[out + j*ors + n] * T[ssa + j] + y` -- the
 flash-attention correction step, done in the MXU epilogue), bits 5:4 `WF`, the streamed
-weights' format ("Weight formats"), bit6 `PAIR` (4-bit weights at full rate, "Column reuse"),
+weights' format ("Weight formats"), bit6 `PAIR` (4-bit weights at full rate; on a DUAL target int8 weights at twice the rate,
+"Column reuse"),
 bit7 `RSC` (row scales only: each scale row is the one word `Sw[n]`, every `dw = 0` and `m = 1`;
 not with `WF = 3`). The streamed rows are D-byte aligned (`sa` and `rs` are multiples of D):
 the MXU streams whole D-byte DRAM chunks. `N >= 1`, `KB >= 1` and `0 < M <= ACT_ROWS`; RMAX,
@@ -266,6 +267,25 @@ together: `k0` is even and `ssa` and `srs` are multiples of 8 (WF 3: 16); with K
 chunk's second block word is read and ignored. ACC, RMAX and ASCALE are unchanged and write M
 rows.
 
+On a DUAL target (Config.DUAL: the slice's DRAM on four channels, port B reading two adjacent
+chunks a cycle, rtl/mem/otpu_native_dram2.sv) `PAIR` also takes int8 weights (`WF = 0`): an
+advance takes two chunks, block `2c` (columns `0..M-1`, ACT row `j`) and block `2c+1` (columns
+`M..2M-1`, ACT row `j + M`), so an MM of at most MCOLS/2 rows (decode) streams 256 bytes a
+cycle. The loop above is unchanged (the same integer); `k0` is even (the two blocks' offset
+bytes are adjacent in a scale line); with KB odd the last advance takes one chunk. Elsewhere an
+int8 `PAIR` is an error (the ISA simulator's; the encoder takes it).
+
+On a QUAD target (Config.QUAD, with DUAL, MCOLS a multiple of four) a 4-bit `PAIR` of
+`4*M == MCOLS` rows (not `UNIT`, not `RSC`) takes four blocks an advance, two chunks (the DUAL
+port's pair): block `4a+g` in columns `g*M..(g+1)*M-1` from ACT row `j + g*M`, so a decode MM
+streams 256 bytes of 4-bit weights a cycle, as int8's `PAIR`; the last advance of a row takes the
+`KB mod 4` blocks left. The advance's block data (16 bytes, NVFP4 32, at an even `k0` as `PAIR`'s;
+NVFP4's 16-byte aligned) may straddle two 32-byte scale lines: the MXU reads both (a row whose
+first advance does costs a cycle of its own). Any other 4-bit `PAIR` takes two blocks (one
+chunk); int8 `PAIR` takes two chunks as DUAL's. The result is the same integer. `QACT DUP` of `4*rows <= MCOLS` rows fills rows `r + rows`,
+`r + 2*rows` and `r + 3*rows` (of more rows, `r + rows` alone), so the operand of either `PAIR`
+is in place.
+
 ### QACT
 
 `src = R[ra]+w1` (TMEM words), `rows = w2[7:0]` (at most ACT_ROWS), `ab = w2[15:8]`,
@@ -278,7 +298,7 @@ per-row factor `T[w5 + r]`. With both, `x = (T[src + r*srs + c] * T[w5 + r]) * T
 `Sa[r][ab+k] = S`, `da[r][ab+k][b] = d` of sub-block `b` of block `k`. Flag bit0 `ROW`: every
 `d = 0` (the row's one scale). Flag bit3 `DUP` (`2*rows <= MCOLS`): row `r + rows` receives the
 same bytes and scale records as row `r` in the same cycles, the operand layout of `MM PAIR`
-("Column reuse").
+("Column reuse"); on a QUAD target with `4*rows <= MCOLS` rows `r + 2*rows` and `r + 3*rows` too.
 
 ### QST
 

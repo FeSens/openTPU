@@ -1096,7 +1096,7 @@ endmodule
 module otpu_pump_bank #(
   parameter int    N     = 8192,
   parameter int    W     = 32,       // the word's bits (otpu_tmem: a slice of the 32, one RAM)
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    FW    = 1'b1      // the phase from a fast-domain register (below)
 ) (
   input  logic                 clk,

@@ -60,6 +60,11 @@ module tb_board;
   parameter int TMEM_PMP   = 0;
   parameter int TMEM_PRK   = 0;
   parameter int TMEM_SDM   = -1;
+  parameter bit DUAL       = 1'b0;         // every slice on four channels (otpu_board DUAL)
+  parameter bit MEMX       = 1'b0;         // DUAL: the adapters behind a crossing (otpu_board MEMX)
+  parameter bit QUAD       = 1'b0;         // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_board)
+  parameter int MCH_FAST   = 0;            // MEM_NATIVE 2: otpu_mem_ch's options (otpu_chmem FAST: 1 RQ, 2 BRAM, 4 AREG)
+  localparam int NCPS      = DUAL ? 4 : 2; // channels a slice
 
   logic clk = 1'b0, clk_f = 1'b0, rst = 1'b1, dump = 1'b0;
   // TMEM_PMP 1: clk_f (2 x clk) rises with each edge of clk, in clk's own process (as tb_top);
@@ -82,19 +87,19 @@ module tb_board;
   logic [1:0]  bresp, rresp;
   logic [2:0]  led;
 
-  // native channels (slice s on 2s and 2s + 1)
-  logic [2*S-1:0] ncv, ncr, ncwe, nwv, nwr, nrv;
-  logic [2*S-1:0][24:0] nca;
-  logic [2*S-1:0][511:0] nwd, nrd;
-  logic [2*S-1:0][63:0] nwm;
-  logic [2*S-1:0][15:0] nwdone;
-  logic [2*S-1:0] nerr;
+  // native channels (slice s on 2s and 2s + 1; DUAL: 4s .. 4s + 3)
+  logic [NCPS*S-1:0] ncv, ncr, ncwe, nwv, nwr, nrv;
+  logic [NCPS*S-1:0][24:0] nca;
+  logic [NCPS*S-1:0][511:0] nwd, nrd;
+  logic [NCPS*S-1:0][63:0] nwm;
+  logic [NCPS*S-1:0][15:0] nwdone;
+  logic [NCPS*S-1:0] nerr;
 
   // I2C: wired AND of the board's drive-low bits and the outside's holds, pulled up
   logic [3:0] i2c_lo;
   logic [4:0] i2c_hold = '0;
   initial void'($value$plusargs("i2c_hold=%h", i2c_hold));
-  logic [2*S-1:0] calib = '1, ded = '0;
+  logic [NCPS*S-1:0] calib = '1, ded = '0;
   initial begin
     void'($value$plusargs("calib=%h", calib));
     void'($value$plusargs("ded=%h", ded));
@@ -107,7 +112,7 @@ module tb_board;
                .ARCH_HASH(ARCH_HASH), .COLL_GATHER(COLL_GATHER || S > 1), .TMEM_IMPL(TMEM_IMPL),
                .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH), .TMEM_RPL(TMEM_RPL),
                .TMEM_TDP(TMEM_TDP), .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK),
-               .TMEM_SDM(TMEM_SDM)) dut (
+               .TMEM_SDM(TMEM_SDM), .DUAL(DUAL), .QUAD(QUAD), .MEMX(MEMX)) dut (
     .clk, .clk_f, .rst, .ctl_mrst(1'b0), .calib, .ded, .temp(TEMP), .led,
     .i2c_lo, .i2c_pin(~({1'b0, i2c_lo} | i2c_hold)),
     .s_ctl_awaddr(awaddr), .s_ctl_awvalid(awvalid), .s_ctl_awready(awready),
@@ -119,12 +124,12 @@ module tb_board;
     .n_wdata(bwd), .n_wmask(bwm), .n_rvalid(brv), .n_rdata(brd), .n_wdone(bwdone), .n_err(berr));
 
   // the board's side of the channels, and the register slices where NREG asks for them
-  logic [2*S-1:0] bcv, bcr, bcwe, bwv, bwr, brv, berr;
-  logic [2*S-1:0][24:0] bca;
-  logic [2*S-1:0][511:0] bwd, brd;
-  logic [2*S-1:0][63:0] bwm;
-  logic [2*S-1:0][15:0] bwdone;
-  for (genvar j = 0; j < 2 * S; j++) begin : g_nreg
+  logic [NCPS*S-1:0] bcv, bcr, bcwe, bwv, bwr, brv, berr;
+  logic [NCPS*S-1:0][24:0] bca;
+  logic [NCPS*S-1:0][511:0] bwd, brd;
+  logic [NCPS*S-1:0][63:0] bwm;
+  logic [NCPS*S-1:0][15:0] bwdone;
+  for (genvar j = 0; j < NCPS * S; j++) begin : g_nreg
     if (NREG >> j & 1) begin : g_reg
       logic cv, cr, cwe, wv, wr, rv, err;
       logic [24:0] ca;
@@ -152,22 +157,27 @@ module tb_board;
   end
 
   for (genvar s = 0; s < S; s++) begin : g_slice
-    localparam int C = 2 * s;
+    localparam int C = NCPS * s;
     if (MEM_NATIVE == 2) begin : g_ch
-      otpu_chmem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .SID(s)) u_mem (
-        .clk, .rst,
-        .n_cvalid(ncv[C +: 2]), .n_cready(ncr[C +: 2]), .n_cwe(ncwe[C +: 2]),
-        .n_caddr(nca[C +: 2]), .n_wvalid(nwv[C +: 2]), .n_wready(nwr[C +: 2]),
-        .n_wdata(nwd[C +: 2]), .n_wmask(nwm[C +: 2]), .n_rvalid(nrv[C +: 2]),
-        .n_rdata(nrd[C +: 2]), .n_wdone(nwdone[C +: 2]), .n_err(nerr[C +: 2]), .dump);
+      // (DUAL: a pair of channels each, as two slices' files: ch<4s + 2p + c>)
+      for (genvar q = 0; q < NCPS / 2; q++) begin : g_q
+        otpu_chmem #(.WORDS(WORDS / (NCPS / 2)), .LAT(LAT), .PHYS(1), .SID(NCPS / 2 * s + q),
+                     .FAST(MCH_FAST)) u_mem (
+          .clk, .rst,
+          .n_cvalid(ncv[C + 2*q +: 2]), .n_cready(ncr[C + 2*q +: 2]), .n_cwe(ncwe[C + 2*q +: 2]),
+          .n_caddr(nca[C + 2*q +: 2]), .n_wvalid(nwv[C + 2*q +: 2]), .n_wready(nwr[C + 2*q +: 2]),
+          .n_wdata(nwd[C + 2*q +: 2]), .n_wmask(nwm[C + 2*q +: 2]), .n_rvalid(nrv[C + 2*q +: 2]),
+          .n_rdata(nrd[C + 2*q +: 2]), .n_wdone(nwdone[C + 2*q +: 2]), .n_err(nerr[C + 2*q +: 2]),
+          .dump);
+      end
     end else begin : g_native
-      assign nerr[C +: 2] = '0;
-      otpu_native_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .SID(s)) u_mem (
+      assign nerr[C +: NCPS] = '0;
+      otpu_native_mem #(.WORDS(WORDS), .LAT(LAT), .PHYS(1), .SID(s), .NC(NCPS)) u_mem (
         .clk, .rst, .run_rst(1'b0),     // (no pokeb lines: the host writes through the board)
-        .n_cvalid(ncv[C +: 2]), .n_cready(ncr[C +: 2]), .n_cwe(ncwe[C +: 2]),
-        .n_caddr(nca[C +: 2]), .n_wvalid(nwv[C +: 2]), .n_wready(nwr[C +: 2]),
-        .n_wdata(nwd[C +: 2]), .n_wmask(nwm[C +: 2]), .n_rvalid(nrv[C +: 2]),
-        .n_rdata(nrd[C +: 2]), .n_wdone(nwdone[C +: 2]), .dump);
+        .n_cvalid(ncv[C +: NCPS]), .n_cready(ncr[C +: NCPS]), .n_cwe(ncwe[C +: NCPS]),
+        .n_caddr(nca[C +: NCPS]), .n_wvalid(nwv[C +: NCPS]), .n_wready(nwr[C +: NCPS]),
+        .n_wdata(nwd[C +: NCPS]), .n_wmask(nwm[C +: NCPS]), .n_rvalid(nrv[C +: NCPS]),
+        .n_rdata(nrd[C +: NCPS]), .n_wdone(nwdone[C +: NCPS]), .dump);
     end
   end
 
@@ -221,12 +231,35 @@ module tb_board;
   for (genvar s = 0; s < S; s++) begin : g_pachk
     logic fl, fl_q, al_v;
     logic [1:0] pv;
-    if (s == 0) begin : g_0
+    if (s == 0 && MEMX) begin : g_0x
+      // MEMX: the flush as it reaches the adapter, through the crossing (otpu_native_xdram2)
+      assign fl = dut.g_memx.u_mem.m_flush;
+      assign al_v = dut.g_memx.u_mem.u_dram.g_ad[0].u_ad.al_v ||
+                    dut.g_memx.u_mem.u_dram.g_ad[1].u_ad.al_v;
+      assign pv = dut.g_memx.u_mem.u_dram.g_ad[0].u_ad.pv | dut.g_memx.u_mem.u_dram.g_ad[1].u_ad.pv;
+    end else if (s == 0) begin : g_0
       assign fl = dut.x_rst[0] || dut.x_ld_start[0] || dut.a_inval;
-      assign al_v = dut.u_mem.al_v; assign pv = dut.u_mem.pv;
+      if (DUAL) begin : g_d
+        assign al_v = dut.g_mem2.u_mem.g_ad[0].u_ad.al_v || dut.g_mem2.u_mem.g_ad[1].u_ad.al_v;
+        assign pv = dut.g_mem2.u_mem.g_ad[0].u_ad.pv | dut.g_mem2.u_mem.g_ad[1].u_ad.pv;
+      end else begin : g_1
+        assign al_v = dut.g_mem.u_mem.al_v; assign pv = dut.g_mem.u_mem.pv;
+      end
+    end else if (MEMX) begin : g_sx
+      assign fl = dut.g_slice[s].g_memx.u_mem.m_flush;
+      assign al_v = dut.g_slice[s].g_memx.u_mem.u_dram.g_ad[0].u_ad.al_v ||
+                    dut.g_slice[s].g_memx.u_mem.u_dram.g_ad[1].u_ad.al_v;
+      assign pv = dut.g_slice[s].g_memx.u_mem.u_dram.g_ad[0].u_ad.pv |
+                  dut.g_slice[s].g_memx.u_mem.u_dram.g_ad[1].u_ad.pv;
     end else begin : g_s
       assign fl = dut.x_rst[s] || dut.x_ld_start[s] || dut.g_slice[s].a_inval;
-      assign al_v = dut.g_slice[s].u_mem.al_v; assign pv = dut.g_slice[s].u_mem.pv;
+      if (DUAL) begin : g_d
+        assign al_v = dut.g_slice[s].g_mem2.u_mem.g_ad[0].u_ad.al_v ||
+                      dut.g_slice[s].g_mem2.u_mem.g_ad[1].u_ad.al_v;
+        assign pv = dut.g_slice[s].g_mem2.u_mem.g_ad[0].u_ad.pv | dut.g_slice[s].g_mem2.u_mem.g_ad[1].u_ad.pv;
+      end else begin : g_1
+        assign al_v = dut.g_slice[s].g_mem.u_mem.al_v; assign pv = dut.g_slice[s].g_mem.u_mem.pv;
+      end
     end
     always @(posedge clk) begin
       if (!rst && fl_q && (al_v || pv != '0))

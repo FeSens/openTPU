@@ -59,8 +59,9 @@
 // (from an odd one). Each port's count moves at most one a cycle, one bit; the master's side adds
 // its ports' counts as synchronized, each a value its count had, so the sum never runs ahead.
 //
-// Addresses: n_caddr and bits 30:6 of XDMA's byte address select the 64-byte beat in the channel
-// (2 GiB; XDMA's bit 31, the channel, is dropped by otpu_axi_split2). XDMA's bursts are INCR of
+// Addresses: n_caddr and bits BAW+5:6 of XDMA's byte address select the 64-byte beat in the channel
+// (BAW 25: bits 30:6, 2 GiB; XDMA's bit 31, the channel, is dropped by otpu_axi_split2; a larger
+// channel, BAW > 25 for a slice of more than 4 GiB: XAW = BAW + 6 address bits). XDMA's bursts are INCR of
 // 16-byte beats (AxSIZE 4) and may start anywhere in a 64-byte beat; narrow bursts are not
 // supported (XDMA issues none). Its reads return in order (legal for any IDs); responses are OKAY.
 //
@@ -92,7 +93,15 @@ module otpu_mem_ch #(
   parameter int OD   = 32,        // output write-data FIFO per port: writes issued, data not taken
   parameter int XQD  = 32,        // XDMA's command and write-data FIFOs, beats (a batch's room)
   parameter int XT   = 256,       // XDMA's batches: uclk cycles a ready X waits for one (0: none)
-  parameter int XB   = 24         // ... or until XB of its commands are queued (0: the wait alone)
+  parameter int XB   = 24,        // ... or until XB of its commands are queued (0: the wait alone)
+  parameter int BAW  = 25,        // the channel's beat address bits (otpu_native_dram's n_caddr)
+  parameter int XAW  = (BAW + 6 > 32) ? BAW + 6 : 32,  // XDMA's address bits
+  // a fast uclk (the FK35's HBM at 400 MHz): RQ the masters' command and write-data FIFOs give
+  // the arbiter registered heads (otpu_afifo RQ; the same cycles); BRAM the accelerator's
+  // read-data FIFO and the ports' write-data FIFOs in block RAMs
+  parameter bit RQ   = 1'b0,
+  parameter bit BRAM = 1'b0,
+  parameter bit AREG = 1'b0       // the arbiter's pushes into the port FIFOs through a register
 ) (
   // accelerator (otpu_native_dram), core clock
   input  logic            clk,
@@ -100,7 +109,7 @@ module otpu_mem_ch #(
   input  logic            n_cvalid,
   output logic            n_cready,
   input  logic            n_cwe,
-  input  logic [24:0]     n_caddr,    // 64-byte beat in the channel
+  input  logic [BAW-1:0]  n_caddr,    // 64-byte beat in the channel
   input  logic            n_wvalid,   // one beat per write command, in write-command order
   output logic            n_wready,
   input  logic [511:0]    n_wdata,
@@ -115,7 +124,7 @@ module otpu_mem_ch #(
   input  logic            x_awvalid,
   output logic            x_awready,
   input  logic [XIDW-1:0] x_awid,
-  input  logic [31:0]     x_awaddr,
+  input  logic [XAW-1:0]  x_awaddr,
   input  logic [7:0]      x_awlen,
   input  logic            x_wvalid,
   output logic            x_wready,
@@ -129,7 +138,7 @@ module otpu_mem_ch #(
   input  logic            x_arvalid,
   output logic            x_arready,
   input  logic [XIDW-1:0] x_arid,
-  input  logic [31:0]     x_araddr,
+  input  logic [XAW-1:0]  x_araddr,
   input  logic [7:0]      x_arlen,
   output logic            x_rvalid,
   input  logic            x_rready,
@@ -143,7 +152,7 @@ module otpu_mem_ch #(
   output logic [1:0]      c_cmd_valid,
   input  logic [1:0]      c_cmd_ready,
   output logic [1:0]      c_cmd_we,
-  output logic [1:0][24:0] c_cmd_addr,
+  output logic [1:0][BAW-1:0] c_cmd_addr,
   output logic [1:0]      c_wdata_valid,
   input  logic [1:0]      c_wdata_ready,
   output logic [1:0][511:0] c_wdata_data,
@@ -152,7 +161,7 @@ module otpu_mem_ch #(
                                           //   one port at a time
   input  logic [1:0][511:0] c_rdata_data  // one bus: port 1's is port 0's (only port 0's is read)
 );
-  localparam int QW = 26;                  // command: {write, beat[24:0]}
+  localparam int QW = BAW + 1;             // command: {write, beat[BAW-1:0]}
   localparam int DW = 577;                 // write data: {partial, byte enables[63:0], data[511:0]}
   localparam int CW = 16;                  // write-accept counters (beats, modulo 2^16)
   localparam int AOW = $clog2(ARD) + 1;
@@ -237,21 +246,24 @@ module otpu_mem_ch #(
   logic [$clog2(XRD)-1:0] xr_slot;
   logic ar_cmt, xr_cmt;
 
-  otpu_afifo #(.W(QW), .DEPTH(32)) u_aq (.wclk(clk), .wrst(a_hs2), .wvalid(aq_wv), .wready(aq_wr),
+  // the masters' commands and write data reach the arbiter from flip-flops (RQ: the FIFOs' rvalid
+  // and head registered); the accelerator's read data in a block RAM (BRAM)
+  otpu_afifo #(.W(QW), .DEPTH(32), .RQ(RQ)) u_aq (.wclk(clk), .wrst(a_hs2), .wvalid(aq_wv), .wready(aq_wr),
     .wdata(aq_wd), .wslot('0), .wcommit(), .wused(unused_aq), .rclk(uclk), .rrst(a_hold),
     .rvalid(aq_rv), .rready(aq_rr), .rdata(aq_rd), .rused());
-  otpu_afifo #(.W(DW), .DEPTH(32)) u_ad (.wclk(clk), .wrst(a_hs2), .wvalid(ad_wv), .wready(ad_wr),
+  otpu_afifo #(.W(DW), .DEPTH(32), .RQ(RQ)) u_ad (.wclk(clk), .wrst(a_hs2), .wvalid(ad_wv), .wready(ad_wr),
     .wdata(ad_wd), .wslot('0), .wcommit(), .wused(unused_ad), .rclk(uclk), .rrst(a_hold),
     .rvalid(ad_rv), .rready(ad_rr), .rdata(ad_rd), .rused());
   // the read data, written out of order at each read's slot (the two ports return independently)
-  otpu_afifo #(.W(512), .DEPTH(ARD), .OOO(1'b1)) u_ar (.wclk(uclk), .wrst(a_hold), .wvalid(ar_wv),
+  otpu_afifo #(.W(512), .DEPTH(ARD), .OOO(1'b1), .RQ(BRAM), .STYLE(BRAM ? "block" : "distributed"))
+    u_ar (.wclk(uclk), .wrst(a_hold), .wvalid(ar_wv),
     .wready(ar_wr), .wdata(ar_wd), .wslot(ar_slot), .wcommit(ar_cmt), .wused(ar_used), .rclk(clk),
     .rrst(a_hs2), .rvalid(ar_rv), .rready(ar_rr), .rdata(ar_rd), .rused());
   // the XDMA side's write enables start from flip-flops (RWR: a registered wready)
-  otpu_afifo #(.W(QW), .DEPTH(XQD), .RWR(1'b1)) u_xq (.wclk(xclk), .wrst(x_hs2), .wvalid(xq_wv),
+  otpu_afifo #(.W(QW), .DEPTH(XQD), .RWR(1'b1), .RQ(RQ)) u_xq (.wclk(xclk), .wrst(x_hs2), .wvalid(xq_wv),
     .wready(xq_wr), .wdata(xq_wd), .wslot('0), .wcommit(), .wused(unused_xq), .rclk(uclk),
     .rrst(x_hold), .rvalid(xq_rv), .rready(xq_rr), .rdata(xq_rd), .rused(xq_used));
-  otpu_afifo #(.W(DW), .DEPTH(XQD), .RWR(1'b1)) u_xd (.wclk(xclk), .wrst(x_hs2), .wvalid(xd_wv),
+  otpu_afifo #(.W(DW), .DEPTH(XQD), .RWR(1'b1), .RQ(RQ)) u_xd (.wclk(xclk), .wrst(x_hs2), .wvalid(xd_wv),
     .wready(xd_wr), .wdata(xd_wd), .wslot('0), .wcommit(), .wused(unused_xd), .rclk(uclk),
     .rrst(x_hold), .rvalid(xd_rv), .rready(xd_rr), .rdata(xd_rd), .rused());
   otpu_afifo #(.W(512), .DEPTH(XRD), .OOO(1'b1)) u_xr (.wclk(uclk), .wrst(x_hold), .wvalid(xr_wv),
@@ -303,19 +315,19 @@ module otpu_mem_ch #(
   // Read bursts: one command per 64-byte beat touched; the R channel hands out the 16-byte lanes
   // from the burst's first lane. Write bursts: 16-byte beats packed into 64-byte beats.
   localparam int XRQ = XIDW + 10;
-  logic       xai_wv, xai_wr, xai_rv, xai_rr;  logic [31:0] xai_rd;      // {n - 1, beat}
-  logic       xwi_wv, xwi_wr, xwi_rv, xwi_rr;  logic [26:0] xwi_rd;      // {lane, beat}
+  logic       xai_wv, xai_wr, xai_rv, xai_rr;  logic [BAW+6:0] xai_rd;   // {n - 1, beat}
+  logic       xwi_wv, xwi_wr, xwi_rv, xwi_rr;  logic [BAW+1:0] xwi_rd;   // {lane, beat}
   logic       xrq_wv, xrq_wr, xrq_rv, xrq_rr;  logic [XRQ-1:0] xrq_rd;   // {id, len, lane}
   logic       xbq_wv, xbq_wr, xbq_rv, xbq_rr;  logic [XIDW+6:0] xbq_rd;  // {id, n - 1}
   logic [6:0] x_arn, x_awn;                // 64-byte beats of the burst, minus one
   assign x_arn = 7'(({1'b0, x_arlen} + {7'b0, x_araddr[5:4]}) >> 2);
   assign x_awn = 7'(({1'b0, x_awlen} + {7'b0, x_awaddr[5:4]}) >> 2);
   // their heads from registers (RO): the R, B and write-packing logic starts from flip-flops
-  otpu_sfifo #(.W(32), .DEPTH(4), .RO(1'b1)) u_xai (.clk(xclk), .rst(x_crst), .wvalid(xai_wv),
-    .wready(xai_wr), .wdata({x_arn, x_araddr[30:6]}), .rvalid(xai_rv), .rready(xai_rr),
+  otpu_sfifo #(.W(BAW + 7), .DEPTH(4), .RO(1'b1)) u_xai (.clk(xclk), .rst(x_crst), .wvalid(xai_wv),
+    .wready(xai_wr), .wdata({x_arn, x_araddr[BAW+5:6]}), .rvalid(xai_rv), .rready(xai_rr),
     .rdata(xai_rd));
-  otpu_sfifo #(.W(27), .DEPTH(4), .RO(1'b1)) u_xwi (.clk(xclk), .rst(x_crst), .wvalid(xwi_wv),
-    .wready(xwi_wr), .wdata({x_awaddr[5:4], x_awaddr[30:6]}), .rvalid(xwi_rv), .rready(xwi_rr),
+  otpu_sfifo #(.W(BAW + 2), .DEPTH(4), .RO(1'b1)) u_xwi (.clk(xclk), .rst(x_crst), .wvalid(xwi_wv),
+    .wready(xwi_wr), .wdata({x_awaddr[5:4], x_awaddr[BAW+5:6]}), .rvalid(xwi_rv), .rready(xwi_rr),
     .rdata(xwi_rd));
   otpu_sfifo #(.W(XRQ), .DEPTH(16), .RO(1'b1)) u_xrq (.clk(xclk), .rst(x_crst), .wvalid(xrq_wv),
     .wready(xrq_wr), .wdata({x_arid, x_arlen, x_araddr[5:4]}), .rvalid(xrq_rv), .rready(xrq_rr),
@@ -339,10 +351,10 @@ module otpu_mem_ch #(
   logic [63:0]  x_wstb, x_wstb_full;
   logic [3:0]   x_wsfull;                // the lanes of x_wstb with every strobe set
   logic         x_wfull;                 // x_wstb_full all set (no AND over its 64 bits)
-  assign x_wlane  = x_wfirst ? xwi_rd[26:25] : x_wlane_r;
+  assign x_wlane  = x_wfirst ? xwi_rd[BAW+1:BAW] : x_wlane_r;
   assign x_wpush  = x_wlane == 2'd3 || x_wlast;
   assign x_selw   = xwi_rv && x_wvalid && x_wpush;
-  assign x_rlastb = x_roff == xai_rd[31:25];
+  assign x_rlastb = x_roff == xai_rd[BAW+6:BAW];
   always_comb begin
     x_wdata_full = x_wbuf;
     x_wstb_full  = x_wstb;
@@ -350,7 +362,7 @@ module otpu_mem_ch #(
     x_wstb_full[x_wlane * 16 +: 16]    = x_wstrb;
   end
   assign xq_wv    = !x_crst && xq_wr && (x_selw ? xd_wr : xai_rv);
-  assign xq_wd    = x_selw ? {1'b1, 25'(xwi_rd[24:0] + x_woff)} : {1'b0, 25'(xai_rd[24:0] + x_roff)};
+  assign xq_wd    = x_selw ? {1'b1, BAW'(xwi_rd[BAW-1:0] + x_woff)} : {1'b0, BAW'(xai_rd[BAW-1:0] + x_roff)};
   assign x_wready = !x_crst && xwi_rv && (!x_wpush || (xq_wr && xd_wr));
   assign xd_wv    = x_wvalid && x_wready && x_wpush;
   assign x_wfull  = &x_wstrb && &(x_wsfull | (4'b1 << x_wlane));
@@ -455,7 +467,7 @@ module otpu_mem_ch #(
   logic          a_ok, x_ok, pick_x, cur_x, sel_x, go, we, part, rmw, tp;
   logic          a_room, x_room, a_rgo, x_rgo;
   logic [5:0]    run;
-  logic [24:0]   addr;
+  logic [BAW-1:0] addr;
   logic [DW-1:0] wd;
   logic [1:0]    oq_wv, oq_wr, of_wv, of_wr, tg_wr, tg_rv;
   logic [511:0]  of_wd;
@@ -495,13 +507,13 @@ module otpu_mem_ch #(
   end
   assign sel_x = rm_busy ? rm_x : pick_x;  // a read-modify-write: its master's heads
   assign we    = sel_x ? xq_rd[QW-1] : aq_rd[QW-1];
-  assign addr  = sel_x ? xq_rd[24:0] : aq_rd[24:0];
+  assign addr  = sel_x ? xq_rd[BAW-1:0] : aq_rd[BAW-1:0];
   assign wd    = sel_x ? xd_rd : ad_rd;
   assign tp    = addr[7];                  // the port: the beat's bank parity
   assign part  = we && wd[DW-1];
   assign rmw   = part;
-  assign a_room = oq_wr[aq_rd[7]] && (!aq_rd[QW-1] || of_wr[aq_rd[7]]);
-  assign x_room = oq_wr[xq_rd[7]] && (!xq_rd[QW-1] || of_wr[xq_rd[7]]);
+  assign a_room = oq_rm[aq_rd[7]] && (!aq_rd[QW-1] || of_rm[aq_rd[7]]);
+  assign x_room = oq_rm[xq_rd[7]] && (!xq_rd[QW-1] || of_rm[xq_rd[7]]);
   assign go    = !rm_busy && (pick_x ? x_ok && x_room : a_ok && a_room);
   assign a_rgo = !rm_busy && !pick_x && a_ok && a_room && !aq_rd[QW-1];
   assign x_rgo = !rm_busy && pick_x && x_ok && x_room && !xq_rd[QW-1];
@@ -546,30 +558,80 @@ module otpu_mem_ch #(
   // per port: the output command queue (a FIFO behind a register: the crossbar's inputs come from
   // flip-flops; a command bypasses the empty FIFO), the output write-data FIFO (pushed with the
   // write's command) and the read tags ({read-modify-write, xdma, slot}, in the port's order)
-  logic [26:0]   ocn;
+  logic [BAW+1:0] ocn;
   logic [1:0]    opop, opw_a, opw_x, opc_a, opc_x;
   assign ocn = {rm_busy || (we && !rmw), sel_x, addr};
+  // the pushes as the arbiter makes them (p_*), and as they reach the port FIFOs: AREG through a
+  // register, so that go ends at flip-flops beside it, not at the FIFOs' RAMs (uclk 400 MHz: a_hold
+  // -> u_of's block-RAM write enables, 7 levels, 1.9 ns of route); the command, its data and its
+  // tag a cycle later together. The room the arbiter sees (oq_rm, of_rm) then leaves a slot for the
+  // push still in the register; a read-modify-write's merged write finds its own (its read has
+  // left the queue before its data comes back, and go waits for it)
+  logic [1:0]    p_oqv, p_ofv, p_tgv, tg_wv, oq_rm, of_rm;
+  logic [TW-1:0] p_tgd, f_tgd;
+  logic [BAW+1:0] f_ocn;
+  logic [511:0]  f_ofd;
+  logic [1:0][$clog2(OQ):0] oq_used;
+  logic [1:0][$clog2(OD):0] of_used;
+  for (genvar p = 0; p < 2; p++) begin : g_push
+    assign p_oqv[p] = (go || rm_ok) && tp == 1'(p);
+    assign p_ofv[p] = ((go && we && !rmw) || rm_ok) && tp == 1'(p);
+    assign p_tgv[p] = go && (!we || rmw) && tp == 1'(p);
+    if (AREG) begin : g_rm
+      // registered: next cycle's entries are at most this cycle's plus the push in the register
+      // (a pop only lowers them), so a slot is left for the push the register holds then
+      // (uclk 400 MHz: u_of's read pointer -> its count -> the room compare -> go, 10 levels)
+      logic oq_rq = 1'b1, of_rq = 1'b1;
+      always_ff @(posedge uclk) begin
+        oq_rq <= urq || oq_used[p] + ($clog2(OQ) + 1)'(oq_wv[p]) <= ($clog2(OQ) + 1)'(OQ - 2);
+        of_rq <= urq || of_used[p] + ($clog2(OD) + 1)'(of_wv[p]) <= ($clog2(OD) + 1)'(OD - 2);
+      end
+      assign oq_rm[p] = oq_rq;
+      assign of_rm[p] = of_rq;
+    end else begin : g_rw
+      assign oq_rm[p] = oq_wr[p];
+      assign of_rm[p] = of_wr[p];
+    end
+  end
+  assign p_tgd = {rmw, pick_x, pick_x ? ASW'(x_seq) : a_seq};
+  if (AREG) begin : g_areg
+    always_ff @(posedge uclk) begin
+      oq_wv <= urq ? '0 : p_oqv;
+      of_wv <= urq ? '0 : p_ofv;
+      tg_wv <= urq ? '0 : p_tgv;
+      f_ocn <= ocn;
+      f_ofd <= of_wd;
+      f_tgd <= p_tgd;
+    end
+  end else begin : g_acomb
+    assign oq_wv = p_oqv;
+    assign of_wv = p_ofv;
+    assign tg_wv = p_tgv;
+    assign f_ocn = ocn;
+    assign f_ofd = of_wd;
+    assign f_tgd = p_tgd;
+  end
   for (genvar p = 0; p < 2; p++) begin : g_port
     logic        oq_rv, oq_rr, byp, oc_v;
-    logic [26:0] oq_rd, oc;
-    assign oq_wv[p] = (go || rm_ok) && tp == 1'(p);
+    logic [BAW+1:0] oq_rd, oc;
     assign byp      = oq_wv[p] && !oq_rv && (!oc_v || c_cmd_ready[p]);
     assign oq_rr    = oq_rv && (!oc_v || c_cmd_ready[p]);
-    otpu_sfifo #(.W(27), .DEPTH(OQ)) u_oq (.clk(uclk), .rst(urq), .wvalid(oq_wv[p] && !byp),
-      .wready(oq_wr[p]), .wdata(ocn), .rvalid(oq_rv), .rready(oq_rr), .rdata(oq_rd));
+    otpu_sfifo #(.W(BAW + 2), .DEPTH(OQ)) u_oq (.clk(uclk), .rst(urq), .wvalid(oq_wv[p] && !byp),
+      .wready(oq_wr[p]), .wdata(f_ocn), .rvalid(oq_rv), .rready(oq_rr), .rdata(oq_rd),
+      .used(oq_used[p]));
     always_ff @(posedge uclk) begin
       if (urq) oc_v <= 1'b0;
       else if (!oc_v || c_cmd_ready[p]) oc_v <= oq_rv || byp;
-      if (!oc_v || c_cmd_ready[p]) oc <= oq_rv ? oq_rd : ocn;
+      if (!oc_v || c_cmd_ready[p]) oc <= oq_rv ? oq_rd : f_ocn;
     end
     assign c_cmd_valid[p] = oc_v;
-    assign c_cmd_we[p]    = oc[26];
-    assign c_cmd_addr[p]  = oc[24:0];
+    assign c_cmd_we[p]    = oc[BAW+1];
+    assign c_cmd_addr[p]  = oc[BAW-1:0];
     assign opop[p]  = oc_v && c_cmd_ready[p];
-    assign opw_a[p] = opop[p] && oc[26] && !oc[25];      // a write taken, per master (n_wdone, B)
-    assign opw_x[p] = opop[p] && oc[26] && oc[25];
-    assign opc_a[p] = opop[p] && !oc[25];                // a command taken, per master
-    assign opc_x[p] = opop[p] && oc[25];
+    assign opw_a[p] = opop[p] && oc[BAW+1] && !oc[BAW];  // a write taken, per master (n_wdone, B)
+    assign opw_x[p] = opop[p] && oc[BAW+1] && oc[BAW];
+    assign opc_a[p] = opop[p] && !oc[BAW];               // a command taken, per master
+    assign opc_x[p] = opop[p] && oc[BAW];
 
     // the port's write beats taken, per master (n_wdone, B): at most one a cycle, so the gray
     // code (registered) moves one bit per uclk cycle; synchronized and decoded in the master's
@@ -608,16 +670,20 @@ module otpu_mem_ch #(
         x_wacc_s2 <= x_wacc_s1; x_wb <= g2b(x_wacc_s2);
       end
 
-    assign of_wv[p] = ((go && we && !rmw) || rm_ok) && tp == 1'(p);
-    otpu_sfifo #(.W(512), .DEPTH(OD)) u_of (.clk(uclk), .rst(urq), .wvalid(of_wv[p]),
-      .wready(of_wr[p]), .wdata(of_wd), .rvalid(c_wdata_valid[p]), .rready(c_wdata_ready[p]),
-      .rdata(c_wdata_data[p]));
+    otpu_sfifo #(.W(512), .DEPTH(OD), .STYLE(BRAM ? "block" : "distributed")) u_of (.clk(uclk),
+      .rst(urq), .wvalid(of_wv[p]),
+      .wready(of_wr[p]), .wdata(f_ofd), .rvalid(c_wdata_valid[p]), .rready(c_wdata_ready[p]),
+      .rdata(c_wdata_data[p]), .used(of_used[p]));
     assign c_wdata_we[p] = '1;
 
     otpu_sfifo #(.W(TW), .DEPTH(TGD)) u_tag (.clk(uclk), .rst(urq),
-      .wvalid(go && (!we || rmw) && tp == 1'(p)), .wready(tg_wr[p]),
-      .wdata({rmw, pick_x, pick_x ? ASW'(x_seq) : a_seq}), .rvalid(tg_rv[p]),
-      .rready(c_rdata_valid[p]), .rdata(tg_rd[p]));
+      .wvalid(tg_wv[p]), .wready(tg_wr[p]), .wdata(f_tgd), .rvalid(tg_rv[p]),
+      .rready(c_rdata_valid[p]), .rdata(tg_rd[p]), .used());
+`ifndef SYNTHESIS
+    always @(posedge uclk)
+      if (!urq && ((oq_wv[p] && !byp && !oq_wr[p]) || (of_wv[p] && !of_wr[p]) || (tg_wv[p] && !tg_wr[p])))
+        $error("otpu_mem_ch: port %0d: a push into a full output FIFO", p);
+`endif
   end
   // each master's commands in the output queues (a hold waits for its own to leave)
   logic [5:0] a_nq, x_nq;
@@ -683,7 +749,7 @@ module otpu_mem_ch #(
       $fatal(1, "otpu_mem_ch: a queue write or read data in the bridge's last reset cycle");
   always_ff @(posedge uclk) if (!urq) begin
     if (&c_rdata_valid) $error("otpu_mem_ch: read data from both ports in one cycle");
-    if (go != (!rm_busy && (pick_x ? x_ok : a_ok) && oq_wr[tp] && (!we || of_wr[tp])))
+    if (go != (!rm_busy && (pick_x ? x_ok : a_ok) && oq_rm[tp] && (!we || of_rm[tp])))
       $error("otpu_mem_ch: go is not the chosen head's");
     if (a_rgo != (go && !we && !pick_x) || x_rgo != (go && !we && pick_x))
       $error("otpu_mem_ch: a read's issue is not go's");
@@ -692,8 +758,9 @@ module otpu_mem_ch #(
     for (int p = 0; p < 2; p++)
       if (c_rdata_valid[p] && !tg_rv[p]) $error("otpu_mem_ch: port %0d read data without a tag", p);
     if (rm_ret && !rm_busy) $error("otpu_mem_ch: read-modify-write data without its read");
-    if (rm_ok && (!oq_wr[tp] || !of_wr[tp])) $error("otpu_mem_ch: no room for the merged write");
-    if (go && (!we || rmw) && !tg_wr[tp]) $error("otpu_mem_ch: tag FIFO full");
+    // (AREG: the pushes reach the FIFOs a cycle later, checked there: g_port)
+    if (!AREG && rm_ok && (!oq_wr[tp] || !of_wr[tp])) $error("otpu_mem_ch: no room for the merged write");
+    if (!AREG && go && (!we || rmw) && !tg_wr[tp]) $error("otpu_mem_ch: tag FIFO full");
     if (a_pend + ar_used > AOW'(ARD)) $error("otpu_mem_ch: accelerator read slots overrun");
     if (x_pend + xr_used > XOW'(XRD)) $error("otpu_mem_ch: XDMA read slots overrun");
   end
@@ -716,11 +783,14 @@ endmodule
 // Synchronous FIFO, first-word fall-through, distributed RAM (the channel bridge's queues).
 // RO = 1: rvalid, wready and the head entry from registers (their next values), so no path from
 // them starts at the pointers or goes through the RAM; the same cycles (rdata differs only while
-// rvalid is low).
+// rvalid is low). STYLE "block" / "ultra" (RO = 0): the RAM a block RAM / UltraRAM read a cycle
+// ahead (otpu_ram_1r1w_ra: the head is next cycle's read address, a write to it bypassed), the
+// same cycles: its write enable reaches a few RAMs, not every LUT RAM cell of the width.
 module otpu_sfifo #(
   parameter int W = 8,
   parameter int DEPTH = 16,
-  parameter bit RO = 1'b0
+  parameter bit RO = 1'b0,
+  parameter STYLE = "distributed"          // (untyped: Vivado 2019.2)
 ) (
   input  logic         clk,
   input  logic         rst,
@@ -729,10 +799,12 @@ module otpu_sfifo #(
   input  logic [W-1:0] wdata,
   output logic         rvalid,
   input  logic         rready,
-  output logic [W-1:0] rdata
+  output logic [W-1:0] rdata,
+  output logic [$clog2(DEPTH):0] used      // entries in it (the pointers' difference)
 );
   localparam int AW = $clog2(DEPTH);
-  (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
+  initial if (STYLE != "distributed" && (RO || DEPTH != (1 << AW)))
+    $fatal(1, "otpu_sfifo: a block RAM needs RO = 0 and a power-of-two DEPTH");
   logic [AW:0] wp, rp;
   always_ff @(posedge clk) begin
     if (rst) begin wp <= '0; rp <= '0; end
@@ -741,7 +813,20 @@ module otpu_sfifo #(
       if (rvalid && rready) rp <= rp + 1'b1;
     end
   end
-  always_ff @(posedge clk) if (wvalid && wready) mem[wp[AW-1:0]] <= wdata;
+  assign used = wp - rp;
+  // the LUT RAM written at the module's top, so that synthesis names it mem_reg (the boards'
+  // crossing waivers find it by that name; written in a generate block it is g_*.mem_reg)
+  (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
+  always_ff @(posedge clk) if (wvalid && wready && STYLE == "distributed") mem[wp[AW-1:0]] <= wdata;
+  if (STYLE != "distributed") begin : g_bram
+    logic [AW:0] rp_n;
+    assign rp_n   = rp + (AW + 1)'(rvalid && rready && !rst);
+    assign wready = (wp - rp) != (AW + 1)'(DEPTH);
+    assign rvalid = wp != rp;
+    otpu_ram_1r1w_ra #(.W(W), .N(DEPTH), .STYLE(STYLE)) u_m (
+      .clk, .we(wvalid && wready && !rst), .wa(wp[AW-1:0]), .wd(wdata),
+      .ra_n(rst ? '0 : rp_n[AW-1:0]), .rd(rdata));
+  end else begin : g_lut
   if (RO) begin : g_ro
     // the next head: on a pop the entry after it (this cycle's write if there is none), into an
     // empty FIFO this cycle's write; the flags from the pointers after this cycle's push and pop
@@ -766,5 +851,6 @@ module otpu_sfifo #(
     assign wready = (wp - rp) != (AW + 1)'(DEPTH);
     assign rvalid = wp != rp;
     assign rdata  = mem[rp[AW-1:0]];
+  end
   end
 endmodule

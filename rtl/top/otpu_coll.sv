@@ -6,12 +6,22 @@
 // request register (stage a), a cycle after they form, as every unit's do, and a read's data is
 // taken one granted cycle later than without it. For the slices' TMEMs on the unit's own ports
 // (otpu_top; otpu_board at S = 1); otpu_board's hub at S > 1 takes RQ 0 (the ports present).
+// UG (otpu_board's hub at S > 1): r_addr, w_addr and w_data are not gated by their enables (the
+// hub's crossing registers take them as they are and its ports use them only with a read or a
+// write), so they come from the unit's registers alone (250 MHz, FK35: u_coll's state -> the
+// enables gating 2 x 520 address and data bits into g_x[].u_dn_tx, synthesized as their reset
+// pins, 1 level, 95% route, -0.61 ns). UG 0: zero without their enable, for the TMEM ports.
+// The issue stage's next position is decided from flags kept with it (c_l, r_l: the row's last
+// chunk, the slice's last row; ssel: the slice), the next read address from adders beside each
+// other, not the compares and two chained adders behind s (250 MHz, FK35: s -> ra, 11 levels,
+// -0.43 ns); a read's position past the issue stage is just whether it is the last (plast).
 module otpu_coll
   import otpu_pkg::*;
 #(
   parameter int S     = 1,
   parameter int LANES = 8,
-  parameter bit RQ    = 1'b1
+  parameter bit RQ    = 1'b1,
+  parameter bit UG    = 1'b0
 ) (
   input  logic                            clk,
   input  logic                            rst,
@@ -30,8 +40,14 @@ module otpu_coll
   st_t st;
   logic [31:0] dst, drs, seg;
   logic [15:0] rows, cols;
-  logic [31:0] s, r, c, ps, pr, pcl;
+  logic [31:0] s, r, c;
   logic        pv, issuing;
+  // the issue stage's flags: c_l c + LANES >= cols (the row's last chunk), r_l r + 1 == rows (the
+  // slice's last row; s's last is ssel[S-1]), and their values at c = 0 / r = 0 (cl0, rl0) and rm's
+  // (rm0); stage p's (and a's) slice one-hot (psel, asel) and last-read flag (plast, alast)
+  logic             c_l, r_l, cl0, rl0, plast, alast;
+  logic [LANES-1:0] rm0;
+  logic [S-1:0]     psel;
   // row base addresses kept by adding the strides (no multipliers):
   // rrow = w1[s] + r*w4[s], wrow = dst + s*seg + r*drs, wseg = dst + s*seg
   logic [31:0] rrow, wrow, wseg;
@@ -65,26 +81,34 @@ module otpu_coll
   logic [S-1:0]           asel;
   logic [LANES-1:0]       am;
   logic [LANES-1:0][31:0] aal;
-  logic [31:0]            as_, ar, acl, awa;
+  logic [31:0]            awa;
 
+  // (qv is set only in C_RUN and cleared on leaving it: checked below)
   always_comb begin
     ack = (st == C_ACK);
     r_en = '0; r_addr = '0;
     w_en = '0; w_addr = '0; w_data = '0;
     for (int k = 0; k < S; k++)
-      for (int l = 0; l < LANES; l++)
-        if (RQ ? av && asel[k] && am[l] : rd_on && ssel[k] && rm[l]) begin
-          r_en[k][l] = 1'b1;
-          r_addr[k][l] = RQ ? aal[l] : ra + 32'(l);
-        end
-    if (st == C_RUN && qv) begin
-      for (int l = 0; l < LANES; l++)
-        if (qm[l]) begin
-          w_en[l] = 1'b1;
-          w_addr[l] = qwl[l];
-          w_data[l] = qd[l];
-        end
+      for (int l = 0; l < LANES; l++) begin
+        if (RQ ? av && asel[k] && am[l] : rd_on && ssel[k] && rm[l]) r_en[k][l] = 1'b1;
+        if (UG || r_en[k][l]) r_addr[k][l] = RQ ? aal[l] : ra + 32'(l);
+      end
+    for (int l = 0; l < LANES; l++) begin
+      if (qv && qm[l]) w_en[l] = 1'b1;
+      if (UG || w_en[l]) begin
+        w_addr[l] = qwl[l];
+        w_data[l] = qd[l];
+      end
     end
+  end
+
+  // the issue stage's next read: its slice's stride (w4s), the next slice's first row (w1n)
+  logic [31:0] w4s, w1n;
+  always_comb begin
+    w4s = '0;
+    w1n = '0;
+    for (int k = 0; k < S; k++) if (ssel[k]) w4s |= cmds[k].w4;
+    for (int k = 1; k < S; k++) if (ssel[k - 1]) w1n |= cmds[k].w1;
   end
 
 `ifndef SYNTHESIS
@@ -121,7 +145,14 @@ module otpu_coll
             ssel <= S'(1);
             rrow <= cmds[0].w1;
             ra <= cmds[0].w1;
-            for (int l = 0; l < LANES; l++) rm[l] <= (l < int'(cmds[0].w3[31:16]));
+            for (int l = 0; l < LANES; l++) begin
+              rm[l] <= (l < int'(cmds[0].w3[31:16]));
+              rm0[l] <= (l < int'(cmds[0].w3[31:16]));
+            end
+            c_l <= LANES >= int'(cmds[0].w3[31:16]);
+            cl0 <= LANES >= int'(cmds[0].w3[31:16]);
+            r_l <= cmds[0].w3[15:0] == 16'd1;
+            rl0 <= cmds[0].w3[15:0] == 16'd1;
             wrow <= cmds[0].w2; wseg <= cmds[0].w2;
             pv <= 1'b0;
             qv <= 1'b0;
@@ -135,55 +166,66 @@ module otpu_coll
           qv <= pv;
           for (int l = 0; l < LANES; l++) qwl[l] <= pwa + 32'(l);
           qm <= pm;
-          for (int l = 0; l < LANES; l++)
-            for (int k = 0; k < S; k++) if (k == int'(ps)) qd[l] <= r_data[k][l];
-          qlast <= pv && ps + 1 == S && pr + 1 == 32'(rows) && pcl + LANES >= 32'(cols);
+          for (int l = 0; l < LANES; l++) begin
+            logic [31:0] d;
+            d = '0;
+            for (int k = 0; k < S; k++) if (psel[k]) d |= r_data[k][l];
+            qd[l] <= d;
+          end
+          qlast <= pv && plast;
           if (RQ) begin                                 // the read granted is stage a's
             av <= issuing;
             asel <= ssel; am <= rm;
             for (int l = 0; l < LANES; l++) aal[l] <= ra + 32'(l);
-            as_ <= s; ar <= r; acl <= c;
+            alast <= c_l && r_l && ssel[S-1];
             awa <= wrow + c;
             pv <= av;
-            ps <= as_; pr <= ar; pcl <= acl;
+            psel <= asel; plast <= alast;
             pwa <= awa;
             pm <= am;                                   // (rm[l] is c + l < cols)
           end else begin
             pv <= issuing;
-            ps <= s; pr <= r; pcl <= c;
+            psel <= ssel; plast <= c_l && r_l && ssel[S-1];
             pwa <= wrow + c;
-            for (int l = 0; l < LANES; l++) pm[l] <= (c + 32'(l) < 32'(cols));
+            pm <= rm;
           end
+          // the next read (ra is rrow + c): the row's next chunk, the slice's next row, the next
+          // slice's first row, or none
           if (issuing) begin
-            logic [31:0] nc, nrrow;
-            nc = c; nrrow = rrow;
-            if (c + LANES >= 32'(cols)) begin
-              nc = '0;
-              if (r + 1 == 32'(rows)) begin
+            if (c_l) begin
+              c <= '0;
+              c_l <= cl0;
+              rm <= rm0;
+              if (r_l) begin
                 r <= '0;
-                if (s + 1 == S) begin
+                r_l <= rl0;
+                if (ssel[S-1]) begin
                   issuing <= 1'b0;
                   rd_on <= 1'b0;
+                  ra <= rrow;
                 end else begin
                   s <= s + 1;
                   ssel <= ssel << 1;
-                  for (int k = 0; k < S; k++) if (k == int'(s) + 1) nrrow = cmds[k].w1;
+                  rrow <= w1n;
+                  ra <= w1n;
                   wseg <= wseg + seg;
                   wrow <= wseg + seg;
                 end
               end else begin
                 r <= r + 1;
-                for (int k = 0; k < S; k++) if (k == int'(s)) nrrow = rrow + cmds[k].w4;
+                r_l <= r + 2 == 32'(rows);
+                rrow <= rrow + w4s;
+                ra <= rrow + w4s;
                 wrow <= wrow + drs;
               end
             end else begin
-              nc = c + LANES;
+              c <= c + LANES;
+              c_l <= c + 2 * LANES >= 32'(cols);
+              ra <= ra + LANES;
+              for (int l = 0; l < LANES; l++) rm[l] <= (c + 32'(LANES + l) < 32'(cols));
             end
-            c <= nc; rrow <= nrrow;
-            ra <= nrrow + nc;
-            for (int l = 0; l < LANES; l++) rm[l] <= (nc + 32'(l) < 32'(cols));
           end
-          if (pv && ps + 1 == S && pr + 1 == 32'(rows) && pcl + LANES >= 32'(cols))
+          if (pv && plast)
             pv <= 1'b0;                                 // the last read's data moves to q
           if (qv && qlast) begin                         // the last write is taken this cycle
             qv <= 1'b0;
@@ -213,6 +255,20 @@ module otpu_coll
         if (qwl[l] != qwa + 32'(l))
           $fatal(1, "otpu_coll: lane %0d's write address %0d is not %0d", l, qwl[l], qwa + 32'(l));
   end
+  // the gating's qv without st (qv only in C_RUN); the issue stage's flags and ra as they stand
+  // for (c_l, r_l, rm: c + LANES >= cols, r + 1 == rows, c + l < cols; ra: rrow + c)
+  always @(posedge clk)
+    if (!rst && rst_seen) begin
+      if (qv && st != C_RUN) $fatal(1, "otpu_coll: qv outside C_RUN (st %0d)", st);
+      if (st == C_RUN && issuing)
+        if (c_l != (c + LANES >= 32'(cols)) || r_l != (r + 1 == 32'(rows)) || ra != rrow + c)
+          $fatal(1, "otpu_coll: c %0d r %0d (cols %0d rows %0d): c_l %0d r_l %0d, ra %0d rrow %0d",
+                 c, r, cols, rows, c_l, r_l, ra, rrow);
+      if (st == C_RUN && issuing)
+        for (int l = 0; l < LANES; l++)
+          if (rm[l] != (c + 32'(l) < 32'(cols)))
+            $fatal(1, "otpu_coll: lane %0d's mask %0d at c %0d (cols %0d)", l, rm[l], c, cols);
+    end
 `endif
 endmodule
 
@@ -387,6 +443,15 @@ endmodule
 // FIFO of F) presented on the slice's collective TMEM port and granted by the slice's own TMEM
 // arbiter (gnt = gnt_local: the collective group's grant, reads and writes together), the read
 // data returned the cycle after it is fresh, each written entry returned as a pop.
+// Everything the slice's arbiter sees comes from flip-flops: the held read's lanes (hr, the
+// read's enables, registered with hv / hq) and address, and the write FIFO's head (h_*: its lanes,
+// zero while there is none, its addresses and data), loaded from the LUT RAM or, the FIFO empty,
+// straight from the hub's write (250 MHz, FK35: u_cport/rp -> the LUT RAM's read -> the slice's
+// TMEM bank masks and priority -> its MXU grant, fanout 2,096). The grant clears the head's valid
+// and lanes only; its addresses and data load from flip-flop state (the head empty), so a taken
+// entry's successor shows a cycle later than from the RAM before (a write every other cycle at
+// most, against one read in flight per GATHER beat: no GATHER is slower for it). The FIFO with
+// its head holds F entries, as the hub's credits count.
 module otpu_coll_port #(
   parameter int LANES = 8,
   parameter int F     = 8
@@ -420,21 +485,26 @@ module otpu_coll_port #(
   // docs/tmem_nocopy.md 7: every unit's read goes to TMEM a cycle after it forms, the writes a
   // cycle after their grant), and held there until granted, with no replay
   logic                   hv, hq, got;
-  logic [LANES-1:0]       hm;
+  logic [LANES-1:0]       hm, hr;           // hr: coll_ren, (hv && hq) ? hm : 0
   logic [LANES-1:0][31:0] ha;
   logic [LANES-1:0]       fm [F];
   logic [LANES-1:0][31:0] fa [F];
   logic [LANES-1:0][31:0] fd [F];
   logic [PW-1:0]          wp, rp;
-  logic [PW:0]            n;
-  wire                    wtake = n != '0 && gnt_local;
+  logic [PW:0]            n;                // entries in the RAM (the head's not counted)
+  logic                   h_v;              // the head
+  logic [LANES-1:0]       h_wen;
+  logic [LANES-1:0][31:0] h_wa, h_wd;
+  wire                    wtake = h_v && gnt_local;
+  wire                    hload = !h_v && (n != '0 || wv);   // the head takes the next entry
+  wire                    hbyp = n == '0;                    // ... the hub's write itself
 
   assign gnt = gnt_local;
-  assign coll_ren = (hv && hq) ? hm : '0;
+  assign coll_ren = hr;
   assign coll_raddr = ha;
-  assign coll_wen = n != '0 ? fm[rp] : '0;
-  assign coll_waddr = fa[rp];
-  assign coll_wdata = fd[rp];
+  assign coll_wen = h_wen;
+  assign coll_waddr = h_wa;
+  assign coll_wdata = h_wd;
 
   always_ff @(posedge clk) begin
     if (got) dd <= coll_rdata;          // fresh the cycle after the granted read
@@ -442,20 +512,27 @@ module otpu_coll_port #(
       hm <= rm;
       ha <= ra;
     end
-    if (wv) begin
+    if (wv && !(hload && hbyp)) begin
       fm[wp] <= wm;
       fa[wp] <= wa;
       fd[wp] <= wd;
     end
+    if (hload) begin
+      h_wa <= hbyp ? wa : fa[rp];
+      h_wd <= hbyp ? wd : fd[rp];
+    end
     if (rst) begin
       hv <= 1'b0;
       hq <= 1'b0;
+      hr <= '0;
       got <= 1'b0;
       dv <= 1'b0;
       pop <= 1'b0;
       wp <= '0;
       rp <= '0;
       n <= '0;
+      h_v <= 1'b0;
+      h_wen <= '0;
     end else begin
       got <= hv && hq && gnt_local;
       dv <= got;
@@ -463,14 +540,26 @@ module otpu_coll_port #(
       if (rv) hv <= 1'b1;
       else if (hv && hq && gnt_local) hv <= 1'b0;
       hq <= hv && !(hq && gnt_local);
-      if (wv) wp <= wp + 1'b1;
-      if (wtake) rp <= rp + 1'b1;
-      n <= n + (PW+1)'(wv) - (PW+1)'(wtake);
+      // the read's lanes next cycle: hv and hq both then (rv only with hv low: hq low then)
+      hr <= (hv && !(hq && gnt_local)) ? hm : '0;
+      if (wv && !(hload && hbyp)) wp <= wp + 1'b1;
+      if (hload && !hbyp) rp <= rp + 1'b1;
+      n <= n + (PW+1)'(wv && !(hload && hbyp)) - (PW+1)'(hload && !hbyp);
+      if (wtake) begin
+        h_v <= 1'b0;
+        h_wen <= '0;
+      end else if (hload) begin
+        h_v <= 1'b1;
+        h_wen <= hbyp ? wm : fm[rp];
+      end
     end
   end
 `ifndef SYNTHESIS
   always @(posedge clk)
-    if (!rst && ((rv && hv) || (wv && n == (PW+1)'(F) && !wtake)))
-      $fatal(1, "otpu_coll_port: a read while one is held (%0d) or a write into a full FIFO", hv);
+    if (!rst && ((rv && hv) || (wv && !(hload && hbyp) && n == (PW+1)'(F) && !hload) ||
+                 n + (PW+1)'(h_v) > (PW+1)'(F) || hr != ((hv && hq) ? hm : '0) ||
+                 (!h_v && h_wen != '0)))
+      $fatal(1, "otpu_coll_port: a read while one is held (%0d), a write into a full FIFO (%0d + %0d) or a stale head",
+             hv, n, h_v);
 `endif
 endmodule

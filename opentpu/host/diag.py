@@ -1,7 +1,7 @@
 """otpu-diag: the full hardware diagnostic of the openTPU card (or its board model, --sim).
 
     otpu-diag                             # every check on /dev/xdma0, about a minute
-    otpu-diag --mem full                  # plus a march C- over all 4 GiB (both channels)
+    otpu-diag --mem full                  # plus a march C- over all of channels 0 and 1
     otpu-diag --soak 20                   # rerun the kernel set 20 times, count intermittents
     otpu-diag --model qwen3               # plus the model check of otpu-selftest
     otpu-diag --json diag.json            # the report as JSON too
@@ -305,6 +305,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     d = Diag()
     want = set(a.only.split(",")) if a.only else set(SECTIONS)
     ch_bytes = len(t.ch[0]) if hasattr(t, "ch") else CH_BYTES
+    top = 2 * ch_bytes                  # the slice's logical DRAM (the card's: config())
     ctx = {"cfg": None, "board": None, "info": None}
     link, calib = "ID register", ["DDR3 calibration channel 0", "DDR3 calibration channel 1"]
     core = [link, "configuration (VERSION)"] + calib + ["DRAM initialized (ECC)"]
@@ -331,8 +332,13 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     d.check("platform", link, ident)
 
     def config():
+        nonlocal ch_bytes, top
         i = ctx["info"] = ctx["board"].info()
-        ctx["cfg"] = device_config(i, DRAM_BYTES=2 * ch_bytes)
+        c = i.get("cfg")
+        if c and not hasattr(t, "ch"):      # the card's channels (CFG_DRAM), its slice's DRAM: a
+            ch_bytes = c["channel_bytes"]   # wide (DAW > 32) bitstream's every byte is tested
+            top = c["DRAM_BYTES"]
+        ctx["cfg"] = device_config(i, DRAM_BYTES=top)
         msg = config_summary(i)
         return True, msg, {"info": {k: v for k, v in i.items() if k != "caps"}}
     d.check("platform", "configuration (VERSION)", config, [link])
@@ -350,7 +356,10 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     def scrub():
         t0 = time.time()
         if ctx["board"].scrub():
-            return True, f"4 GiB written in {time.time() - t0:.1f}s (ECC check bits initialized)"
+            c = (ctx["info"] or {}).get("cfg")
+            n = c["S"] * c["channels"] * c["channel_bytes"] if c else 2 * ch_bytes
+            return True, (f"{n / 2**30:g} GiB written in {time.time() - t0:.1f}s (ECC check bits "
+                          f"initialized)")
         return True, "already done since configuration" if not sim else "no ECC on the model"
     d.check("platform", "DRAM initialized (ECC)", scrub, [link] + calib)
 
@@ -439,7 +448,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                 pow2 = lambda x: x > 0 and not x & (x - 1)
                 if not (1 <= c["S"] <= 64 and pow2(c["TMEM_WORDS"]) and pow2(c["IMEM_WORDS"])
                         and c["ACT_BLOCKS"] > 0 and 1 <= c["channels"] <= 16
-                        and c["DRAM_BYTES"] <= 1 << 32 and c["platform"]):
+                        and c["DRAM_BYTES"] <= 1 << 36 and c["platform"]):    # (DAW <= 36)
                     bad.append(f"CFG {c}")
             if v[6] & ~0xFF:
                 bad.append(f"STATUS reserved bits {v[6]:#x}")
@@ -503,12 +512,13 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             else:
                 d.check("mem", f"channel {c} DMA bandwidth",
                         lambda c=c: res(M.bandwidth(t, c, a.bw_mib << 20)), need, g)
-        top = 2 * ch_bytes
 
         def interleave():
             m = 1 << 20
             regions = [(0, m), (m + 12345, 1000), (2 * m + 60, 70), (top // 2 - 4096, 8192),
                        (top - 2 * m, m), (top - 100, 100)]
+            for g in range(1 << 32, top, 1 << 32):  # a wide DRAM: each 4 GiB boundary's sides
+                regions += [(g - 3 * m, 2 * m), (g + 3 * m + 77, 5000)]
             return pattern_test(b, regions)
         d.check("mem", "interleave patterns", interleave, [link] + calib)
         if a.mem == "full":

@@ -160,24 +160,63 @@ package otpu_fp;
   // bit coarser than mm's 2^-150), then the flush keeps only a result of 2^-126. That is every
   // product >= 2^-126 - 2^-150 (the tie goes to 2^-126, the even one), i.e. mm all ones whatever
   // g and st say; rounding at 24 bits would need g too (0x3F000000 * 0x00FFFFFF is 2^-126).
-  function automatic f32_t fp_mul_s2(input fmul_mid_t m);
-    logic g, st, c;
-    logic signed [10:0] e0;
+  // Written so that nothing waits on another carry chain (250 MHz, FK35: the product's top bit
+  // h (fo ~60) -> the mm mux -> the rounding adder with rnd as its carry-in -> c -> the e0 tests,
+  // 10 levels, -0.77 ns in the MXU's g_rmw): the increment mm + 1 runs beside the rounding
+  // decision, which then picks (mr) and gives the carry-out as rnd && all-ones (c); the exponent
+  // tests are on m.e with h choosing, and the field is e + h, or e + h + 1 picked by c. The same
+  // function as before, bit for bit.
+  // It is two steps, fp_mul_s2a (everything but the picks) and fp_mul_s2b (the picks), which
+  // otpu_fmul SPLIT registers apart (a 3-stage multiplier); fp_mul_s2 is their composition.
+  typedef struct packed {
+    logic        sp;
+    logic [31:0] sv;
+    logic        s;
+    logic        rnd;      // round up
+    logic        a1;       // mm all ones (rnd && a1: the rounding carries out)
+    logic        ge255, eq254, lt0, eq0;   // e0 = e + h >= 255, == 254, < 0, == 0
+    logic [22:0] mm, mi;   // the significand's fraction, and it + 1
+    logic [7:0]  eh, eh1;  // 8'(e0), and it + 1
+  } fmul_rnd_t;
+
+  function automatic fmul_rnd_t fp_mul_s2a(input fmul_mid_t m);
+    fmul_rnd_t r;
+    logic h, g, st;
+    logic signed [10:0] e;
     logic [23:0] mm;
-    logic [24:0] mr;
-    if (m.sp) return m.sv;
-    if (m.p[47]) begin
-      mm = m.p[47:24]; g = m.p[23]; st = |m.p[22:0];
-    end else begin
-      mm = m.p[46:23]; g = m.p[22]; st = |m.p[21:0];
-    end
-    e0 = m.e + 11'(m.p[47]);
-    mr = {1'b0, mm} + ((g && (st || mm[0])) ? 25'd1 : 25'd0);
-    c = mr[24];
-    if (e0 >= 11'sd255 || (e0 == 11'sd254 && c)) return {m.s, 8'hFF, 23'd0};
-    if (e0 < 11'sd0) return {m.s, 31'd0};
-    if (e0 == 11'sd0) return (&mm) ? {m.s, 8'd1, 23'd0} : {m.s, 31'd0};
-    return {m.s, 8'(e0) + 8'(c), mr[22:0]};
+    h = m.p[47];
+    e = m.e;
+    mm = h ? m.p[47:24] : m.p[46:23];
+    g = h ? m.p[23] : m.p[22];
+    st = (|m.p[21:0]) || (h && m.p[22]);
+    r.sp = m.sp;
+    r.sv = m.sv;
+    r.s = m.s;
+    r.rnd = g && (st || mm[0]);
+    r.a1 = (&m.p[46:24]) && (h || m.p[23]);      // &mm
+    r.mm = mm[22:0];
+    r.mi = mm[22:0] + 23'd1;
+    r.ge255 = h ? (e >= 11'sd254) : (e >= 11'sd255);
+    r.eq254 = h ? (e == 11'sd253) : (e == 11'sd254);
+    r.lt0   = h ? (e < -11'sd1) : (e < 11'sd0);
+    r.eq0   = h ? (e == -11'sd1) : (e == 11'sd0);
+    r.eh  = 8'(e) + 8'(h);
+    r.eh1 = 8'(e) + 8'(h) + 8'd1;
+    return r;
+  endfunction
+
+  function automatic f32_t fp_mul_s2b(input fmul_rnd_t r);
+    logic c;
+    c = r.rnd && r.a1;                           // mm + rnd carries out
+    if (r.sp) return r.sv;
+    if (r.ge255 || (r.eq254 && c)) return {r.s, 8'hFF, 23'd0};
+    if (r.lt0) return {r.s, 31'd0};
+    if (r.eq0) return r.a1 ? {r.s, 8'd1, 23'd0} : {r.s, 31'd0};
+    return {r.s, c ? r.eh1 : r.eh, r.rnd ? r.mi : r.mm};   // 8'(e0) + 8'(c), mm + rnd
+  endfunction
+
+  function automatic f32_t fp_mul_s2(input fmul_mid_t m);
+    return fp_mul_s2b(fp_mul_s2a(m));
   endfunction
 
   function automatic f32_t fp_mul(input f32_t a_in, input f32_t b_in);
@@ -222,26 +261,40 @@ package otpu_fp;
     return {sv[2], {8{sv[1]}}, sv[0], 22'd0};
   endfunction
 
+  // The swap (the larger magnitude first) is the compare of the flushed magnitudes, made from the
+  // raw ones: the flush only zeroes a zero-exponent operand, whose raw magnitude is already below
+  // every normal one, so the raw compare orders every pair the same except two flushed zeros
+  // (no swap). Both exponent differences are formed beside the compare, which then picks one:
+  // compare -> swap -> subtract was the serial path (250 MHz, FK35: u_vt q_cap -> u_tree s1.d,
+  // the flush's zero tests, the compare, the swap (fo 64), the subtract, 9 levels, -0.87 ns).
+  // The same fields as before, bit for bit.
   function automatic fadd_p1_t fp_add_s1(input f32_t a_in, input f32_t b_in);
     fadd_p1_t r;
-    f32_t a, b, t;
-    a = ftz(a_in);
-    b = ftz(b_in);
+    logic za, zb, sw;
+    logic [7:0] ea, eb, dab, dba;
+    logic [26:0] xa, xb;
+    ea = a_in[30:23];
+    eb = b_in[30:23];
+    za = (ea == 8'd0);
+    zb = (eb == 8'd0);
     // inf/NaN; the datapath fields below are don't-care when sp. A zero operand is not special:
     // its significand is 0 (hidden bit = exponent nonzero), and align/add/round return the other.
-    r.sp = (a[30:23] == 8'hFF || b[30:23] == 8'hFF);
-    if (is_nan(a) || is_nan(b)) r.sv = FADD_SV_NAN;
-    else if (a[30:23] == 8'hFF && b[30:23] == 8'hFF && a[31] != b[31]) r.sv = FADD_SV_NAN;
-    else r.sv = {(a[30:23] == 8'hFF) ? a[31] : b[31], 2'b10};
-    if (b[30:0] > a[30:0]) begin
-      t = a; a = b; b = t;
-    end
-    r.sa = a[31];
-    r.sub = a[31] ^ b[31];
-    r.e = a[30:23];
-    r.d = a[30:23] - b[30:23];
-    r.ma = {a[30:23] != 8'd0, a[22:0], 3'b000};
-    r.mb = {b[30:23] != 8'd0, b[22:0], 3'b000};
+    // (The flush leaves inf and NaN alone, so these read the raw operands.)
+    r.sp = (ea == 8'hFF || eb == 8'hFF);
+    if (is_nan(a_in) || is_nan(b_in)) r.sv = FADD_SV_NAN;
+    else if (ea == 8'hFF && eb == 8'hFF && a_in[31] != b_in[31]) r.sv = FADD_SV_NAN;
+    else r.sv = {(ea == 8'hFF) ? a_in[31] : b_in[31], 2'b10};
+    sw = (b_in[30:0] > a_in[30:0]) && !(za && zb);
+    dab = ea - eb;
+    dba = eb - ea;
+    xa = {!za, za ? 23'd0 : a_in[22:0], 3'b000};
+    xb = {!zb, zb ? 23'd0 : b_in[22:0], 3'b000};
+    r.sa = sw ? b_in[31] : a_in[31];
+    r.sub = a_in[31] ^ b_in[31];
+    r.e = sw ? eb : ea;
+    r.d = sw ? dba : dab;
+    r.ma = sw ? xb : xa;
+    r.mb = sw ? xa : xb;
     return r;
   endfunction
 
@@ -258,20 +311,59 @@ package otpu_fp;
     return q;
   endfunction
 
+  // norm28's count and shift with the count as a tree (the zero flags and counts of 4-bit groups,
+  // combined pairwise), so all five bits come in a few levels instead of each after the shifts
+  // before it (norm28: n0 after four shift stages); the shift takes n4 and n3 as they come (the
+  // 16- and 8-bit zero tests) and n1, n0 together last. The same {n, y} as norm28 (m == 0: 31, 0).
+  function automatic norm28_t norm28t(input logic [27:0] m);
+    norm28_t r;
+    logic [31:0] x;
+    logic [7:0]  z4;
+    logic [1:0]  c4 [8];
+    logic [3:0]  z8;
+    logic [2:0]  c8 [4];
+    logic [1:0]  z16;
+    logic [3:0]  c16 [2];
+    logic [27:0] y1, y2, y3;
+    x = {m, 4'b0000};
+    for (int g = 0; g < 8; g++) begin
+      z4[g] = (x[4*g +: 4] == 4'd0);
+      c4[g] = x[4*g + 3] ? 2'd0 : x[4*g + 2] ? 2'd1 : x[4*g + 1] ? 2'd2 : 2'd3;
+    end
+    for (int h = 0; h < 4; h++) begin
+      z8[h] = z4[2*h + 1] && z4[2*h];
+      c8[h] = z4[2*h + 1] ? {1'b1, c4[2*h]} : {1'b0, c4[2*h + 1]};
+    end
+    for (int k = 0; k < 2; k++) begin
+      z16[k] = z8[2*k + 1] && z8[2*k];
+      c16[k] = z8[2*k + 1] ? {1'b1, c8[2*k]} : {1'b0, c8[2*k + 1]};
+    end
+    r.n = z16[1] ? {1'b1, c16[0]} : {1'b0, c16[1]};
+    y1 = r.n[4] ? (m << 16) : m;
+    y2 = r.n[3] ? (y1 << 8) : y1;
+    y3 = r.n[2] ? (y2 << 4) : y2;
+    r.y = y3 << r.n[1:0];
+    return r;
+  endfunction
+
   // One normalize for add and sub over the 28-bit sum, counted and shifted together by norm28.
   // An add carry-out gives n = 0 (the sticky OR folds sum[1:0]); otherwise sum[26] is set, n = 1,
   // and y[0] is 0. A sub never carries out, so n = lzc27(sum[26:0]) + 1, which the
   // +1 folded into s4's constants absorbs. A zero add (0+0) leaves mn = 0 and e0 = 1 - 31 < 0:
   // s4 returns {sa, 0}, keeping the -0 of (-0)+(-0). A zero sub is the cancellation special;
-  // norm28 moves any nonzero sum up to y[27] (16+8+4+2+1 >= 27), so !y[27] is sum == 0.
+  // norm28 moves any nonzero sum up to y[27] (16+8+4+2+1 >= 27), so !y[27] is sum == 0, tested
+  // on the sum directly. The count is norm28t's tree (250 MHz, FK35: the tail's Q adders s2.sum
+  // -> norm28's serial count -> e = e - n, 9 levels, -0.67 ns; -> mn 7 levels, -0.57 ns).
   function automatic fadd_nm_t fp_add_s3(input fadd_p2_t q);
     fadd_nm_t n;
     norm28_t nz;
-    nz = norm28(q.sum);
+    logic zs;
+    nz = norm28t(q.sum);
+    zs = (q.sum == 28'd0);
     n.sp = q.sp;
     n.sv = q.sv;
     n.s = q.sa;
-    if (q.sub && !nz.y[27] && !q.sp) begin
+    if (q.sub && zs && !q.sp) begin
       n.sp = 1'b1;
       n.sv = FADD_SV_ZERO;
     end

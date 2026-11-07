@@ -1,0 +1,135 @@
+# Create the Vivado project for openTPU on the SQRL FK35 (xcvu35p-fsvh2104-2-e; docs/sqrl-fk35.md): the HBM IP (hbm_0,
+# both stacks, 8 GB; rtl/boards/sqrl-fk35/otpu_hbm.sv instantiates it), the block design (bd.tcl: XDMA, the clocks,
+# the SYSMON) and the board top (rtl/boards/sqrl-fk35/otpu_fpga_top_fk35.sv: two slices, each on four HBM channels: DUAL).
+#   vivado -mode batch -source create_project.tcl -tclargs OUT_DIR MCOLS CORE_MHZ BUILD_ID VPU_CL LANES ACT_ROWS DSTEP
+#     PLATFORM ARCH_HASH
+# (run_vivado.sh takes them from the target, targets/sqrl-fk35.toml; the RTL list below is opentpu.target
+# sources("sqrl-fk35")). Environment: UCLK_MHZ (default 250), PCIE_GEN (default 4: Gen4 x8; 3: Gen3 x8), OTPU_FAST (Vivado's default strategies), OTPU_IP_CACHE, TMEM_URAM (default 1:
+# the TMEM in UltraRAM, boards/sqrl-fk35/vivado/tmem_uram.xdc), OTPU_QMEM (default 0: the memory adapters' queues in
+# block RAM; 1 LUT RAM, 2 and their B FIFOs in UltraRAM: the top's QMEM), OTPU_MEMX (default 1: the adapters in SLR0
+# behind a crossing of the slices' ports, otpu_board MEMX; 0: the channels' native ports cross), OTPU_QUAD (default 0:
+# the top's QUAD, the target's arch QUAD: a 4-bit MM PAIR four blocks an advance; run_vivado.sh sets it from the target).
+# Built and run with Vivado 2019.2 (the VU35P needs a license that covers it; the HBM IP 1.0, XDMA 4.1).
+
+set here [file normalize [file dirname [info script]]]
+set root [file normalize $here/../../..]
+proc hexarg {i} {
+  if {[llength $::argv] > $i} { return [lindex $::argv $i] }
+  return ""
+}
+set out [expr {[llength $argv] > 0 ? [file normalize [lindex $argv 0]] : "$root/build/vivado_sqrl-fk35"}]
+set MCOLS [expr {[llength $argv] > 1 ? [lindex $argv 1] : 4}]
+set CORE_MHZ [expr {[llength $argv] > 2 ? [lindex $argv 2] : 250}]
+set BUILD_ID [hexarg 3]
+set VPU_CL [expr {[llength $argv] > 4 ? [lindex $argv 4] : 2}]
+set LANES [expr {[llength $argv] > 5 ? [lindex $argv 5] : 8}]
+set ACT_ROWS [expr {[llength $argv] > 6 ? [lindex $argv 6] : $MCOLS}]
+set DSTEP [expr {[llength $argv] > 7 ? [lindex $argv 7] : 1}]
+set PLATFORM [expr {[llength $argv] > 8 ? [lindex $argv 8] : 4}]
+set ARCH_HASH [hexarg 9]
+if {$ARCH_HASH eq ""} { set ARCH_HASH 0 }
+if {![regexp {^[0-9a-fA-F]{1,8}$} $ARCH_HASH]} { error "ARCH_HASH $ARCH_HASH: 1 to 8 hex digits" }
+if {$BUILD_ID eq ""} {
+  if {[catch {exec git -C $root rev-parse HEAD} BUILD_ID]} { set BUILD_ID 0 }
+  set BUILD_ID [string range $BUILD_ID 0 7]
+}
+if {![regexp {^[0-9a-fA-F]{1,8}$} $BUILD_ID]} { error "BUILD_ID $BUILD_ID: 1 to 8 hex digits" }
+set PART xcvu35p-fsvh2104-2-e
+# uclk: the HBM's AXI ports, its adapters and otpu_mem_ch's controller side (UCLK_MHZ in the environment)
+set UCLK_MHZ [expr {[info exists ::env(UCLK_MHZ)] && $::env(UCLK_MHZ) ne "" ? $::env(UCLK_MHZ) : 250}]
+# the PCIe link (bd.tcl): Gen4 x8 by default, PCIE_GEN=3 in the environment for Gen3 x8
+set PCIE_GEN [expr {[info exists ::env(PCIE_GEN)] && $::env(PCIE_GEN) ne "" ? $::env(PCIE_GEN) : 4}]
+puts "BUILD_ID $BUILD_ID, PLATFORM $PLATFORM, ARCH_HASH $ARCH_HASH, core $CORE_MHZ MHz, uclk $UCLK_MHZ MHz,\
+ PCIe Gen$PCIE_GEN x8"
+
+create_project -force otpu $out -part $PART
+if {[info exists ::env(OTPU_IP_CACHE)] && $::env(OTPU_IP_CACHE) ne ""} {
+  file mkdir $::env(OTPU_IP_CACHE)
+  config_ip_cache -use_cache_location $::env(OTPU_IP_CACHE)
+}
+set_property target_language Verilog [current_project]
+
+# ---- RTL: the core and its UltraScale+ cells, the shell, the board's system (otpu_fk35_sys), the HBM path, the top
+set rtl [list \
+  rtl/vpu/otpu_fp.sv rtl/vpu/otpu_fpipe.sv rtl/top/otpu_pkg.sv \
+  rtl/mem/otpu_tmem.sv rtl/mem/otpu_actram.sv \
+  rtl/seq/otpu_seq.sv rtl/vpu/otpu_vtree.sv rtl/dma/otpu_dma.sv \
+  rtl/mxu/otpu_mxu.sv rtl/tech/xilinxus/otpu_tech_dsp.sv rtl/tech/generic/otpu_tech_ram.sv \
+  rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_comp.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv \
+  rtl/top/otpu_coll.sv rtl/top/otpu_slice.sv \
+  rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
+  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_native_dram2.sv rtl/mem/otpu_native_xdram2.sv \
+  rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
+  rtl/shell/otpu_axi_split2.sv rtl/boards/sqrl-fk35/otpu_fk35_sys.sv \
+  rtl/boards/sqrl-fk35/otpu_hbm_port.sv rtl/boards/sqrl-fk35/otpu_hbm.sv \
+  rtl/boards/sqrl-fk35/otpu_fpga_top_fk35.sv]
+foreach f $rtl {
+  add_files -norecurse $root/$f
+  set_property file_type SystemVerilog [get_files $root/$f]
+}
+set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
+
+# ---- the HBM IP: both stacks (8 GB), global switches on, all 32 AXI ports (the top ties off the unused ones), the
+# AXI ports on uclk, the reference and APB clocks 100 MHz; temperature-compensated refresh (2019.2's default is off)
+create_ip -name hbm -vendor xilinx.com -library ip -version 1.0 -module_name hbm_0
+set hbm [get_ips hbm_0]
+set_property -dict [list CONFIG.USER_HBM_DENSITY {8GB} CONFIG.USER_HBM_STACK {2} CONFIG.USER_MEMORY_DISPLAY {8192}] $hbm
+set cfg [list CONFIG.USER_SWITCH_ENABLE_00 {TRUE} CONFIG.USER_SWITCH_ENABLE_01 {TRUE} \
+  CONFIG.USER_HBM_REF_CLK_0 {100} CONFIG.USER_HBM_REF_CLK_1 {100} \
+  CONFIG.USER_APB_PCLK_0 {100} CONFIG.USER_APB_PCLK_1 {100} CONFIG.USER_MC_ENABLE_APB_01 {TRUE} \
+  CONFIG.USER_AXI_CLK_FREQ $UCLK_MHZ CONFIG.USER_AXI_CLK1_FREQ $UCLK_MHZ]
+for {set i 0} {$i < 32} {incr i} { lappend cfg CONFIG.USER_SAXI_[format %02d $i] {true} }
+for {set i 0} {$i < 16} {incr i} { lappend cfg CONFIG.USER_MC${i}_REF_TEMP_COMP {true} }
+set_property -dict $cfg $hbm
+generate_target {instantiation_template synthesis} $hbm
+
+# ---- block design
+source $here/bd.tcl   ;# CORE_MHZ, UCLK_MHZ, PCIE_GEN in; CORE_HZ out
+make_wrapper -files [get_files otpu_bd.bd] -top
+add_files -norecurse [lindex [glob $out/otpu.gen/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v \
+                                   $out/otpu.srcs/sources_1/bd/otpu_bd/hdl/otpu_bd_wrapper.v] 0]
+set_property top otpu_fpga_top_fk35 [current_fileset]
+set CORE_KHZ [expr {round($CORE_HZ / 1000.0)}]
+set SEQ_WC [expr {[info exists ::env(OTPU_SEQ_WC_GEN)] && $::env(OTPU_SEQ_WC_GEN) eq "1" ? 1 : 0}]
+set QMEM [expr {[info exists ::env(OTPU_QMEM)] && $::env(OTPU_QMEM) ne "" ? $::env(OTPU_QMEM) : 0}]
+set MEMX [expr {[info exists ::env(OTPU_MEMX)] && $::env(OTPU_MEMX) eq "0" ? 0 : 1}]
+set QUAD [expr {[info exists ::env(OTPU_QUAD)] && $::env(OTPU_QUAD) eq "1" ? 1 : 0}]
+puts "memory adapters' queues: QMEM $QMEM; the adapters in SLR0 (MEMX): $MEMX; QUAD $QUAD"
+set_property generic "QMEM=$QMEM MEMX=1'b$MEMX QUAD=1'b$QUAD SEQ_WC=1'b$SEQ_WC MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU_CL=$VPU_CL LANES=$LANES CORE_KHZ=$CORE_KHZ BUILD_ID=32'h$BUILD_ID DSTEP=1'b$DSTEP PLATFORM=$PLATFORM ARCH_HASH=32'h$ARCH_HASH" [current_fileset]
+
+# ---- constraints: the pins and configuration; the TMEM in UltraRAM (a synthesis property); then, as unmanaged Tcl
+# on the synthesized netlist, otpu_mem_ch's crossings (fk35_mem_ch.tcl, scoped to the module), the top's and, in
+# implementation only, the SLR floorplan (fk35_floorplan.tcl)
+set cons $root/boards/sqrl-fk35/constraints
+add_files -fileset constrs_1 -norecurse $cons/fk35_pins.xdc
+if {![info exists ::env(TMEM_URAM)] || $::env(TMEM_URAM) ne "0"} {
+  set uram $here/tmem_uram.xdc
+  add_files -fileset constrs_1 -norecurse $uram
+  set_property USED_IN_IMPLEMENTATION false [get_files $uram]
+  puts "TMEM in UltraRAM (tmem_uram.xdc)"
+}
+set memch $cons/fk35_mem_ch.tcl
+set floor $cons/fk35_floorplan.tcl
+set late [list $memch $cons/fk35_top.tcl $floor]
+add_files -fileset constrs_1 -norecurse $late
+set_property SCOPED_TO_REF otpu_mem_ch [get_files $memch]
+set_property PROCESSING_ORDER LATE [get_files $late]
+set_property USED_IN_SYNTHESIS false [get_files $late]
+
+# The FK33's directives: placement spreads the logic, physical optimization and routing use AggressiveExplore. The
+# openTPU_FK FK35 build met 250 / 250 MHz with the Explore ones but routed at congestion level 4 (slices in SLR1, the
+# HBM side in SLR0 as fk35_floorplan.tcl).
+if {[info exists ::env(OTPU_FAST)] && $::env(OTPU_FAST) eq "1"} {
+  set_property strategy {Vivado Synthesis Defaults} [get_runs synth_1]
+  set_property strategy {Vivado Implementation Defaults} [get_runs impl_1]
+} else {
+  set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
+  set_property strategy Performance_ExplorePostRoutePhysOpt [get_runs impl_1]
+  set_property STEPS.PLACE_DESIGN.ARGS.DIRECTIVE AltSpreadLogic_high [get_runs impl_1]
+  set_property STEPS.PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+  set_property STEPS.ROUTE_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+  set_property STEPS.POST_ROUTE_PHYS_OPT_DESIGN.ARGS.DIRECTIVE AggressiveExplore [get_runs impl_1]
+}
+set_property report_strategy {No Reports} [get_runs synth_1]
+set_property report_strategy {No Reports} [get_runs impl_1]
+puts "project created in $out (SQRL FK35, S=2 DUAL, HBM 8 x 1 GiB, PCIe Gen$PCIE_GEN x8)"

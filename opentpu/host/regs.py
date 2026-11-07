@@ -105,7 +105,8 @@ def cfg(vals: list[int]) -> dict:
             "DRAM_BYTES": 1 << (dram & 0xFF), "channels": (dram >> 8) & 0xFF,
             "channel_bytes": 1 << ((dram >> 16) & 0xFF),
             "MXU_IMPL": ua & 0xF, "TMEM_IMPL": (ua >> 4) & 0xF, "VPU_CL": (ua >> 8) & 0xFF,
-            "ULANES": (ua >> 16) & 0xFF, "SEQ_WC": (ua >> 24) & 1, "platform": plat, "hash": h}
+            "ULANES": (ua >> 16) & 0xFF, "SEQ_WC": (ua >> 24) & 1, "QUAD": (ua >> 25) & 1,
+            "platform": plat, "hash": h}
 
 
 def cfg_words(c: dict) -> list[int]:
@@ -114,7 +115,7 @@ def cfg_words(c: dict) -> list[int]:
             (c["DRAM_BYTES"] - 1).bit_length() | c["channels"] << 8
             | (c["channel_bytes"] - 1).bit_length() << 16,
             c["MXU_IMPL"] | c["TMEM_IMPL"] << 4 | c["VPU_CL"] << 8 | c["ULANES"] << 16
-            | c.get("SEQ_WC", 0) << 24,
+            | c.get("SEQ_WC", 0) << 24 | c.get("QUAD", 0) << 25,
             c["platform"], c["hash"]]
 
 

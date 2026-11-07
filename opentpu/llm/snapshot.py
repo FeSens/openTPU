@@ -21,20 +21,22 @@ from __future__ import annotations
 import numpy as np
 
 from .. import isa as I
+from .regions import REGION, dram_low, tail_at
 
 CHUNK = 16384           # words an LD / ST pair moves (64 KiB; two buffers in TMEM)
 
 
 def merged(regions) -> list[tuple[int, int]]:
     """The regions (DRAM address, bytes) in their order, each joined to the one before when it
-    starts where that one ends. A snapshot holds them in this order, so the bytes of a region
-    sit at the same place in it for every DeltaNet state slot (the slots' regions are the same
-    sizes in the same order; their joins may differ)."""
+    starts where that one ends (not at a 4 GiB boundary: no LD / ST crosses one). A snapshot
+    holds them in this order, so the bytes of a region sit at the same place in it for every
+    DeltaNet state slot (the slots' regions are the same sizes in the same order; their joins
+    may differ)."""
     out: list[list[int]] = []
     for a, n in ((int(a), int(n)) for a, n in regions if n):
         if a % 4 or n % 4:
             raise ValueError(f"state region {a:#x} + {n} is not word-aligned")
-        if out and out[-1][0] + out[-1][1] == a:
+        if out and out[-1][0] + out[-1][1] == a and a % REGION:
             out[-1][1] += n
         else:
             out.append([a, n])
@@ -48,14 +50,19 @@ def merged(regions) -> list[tuple[int, int]]:
 def copy_programs(pairs, cfg) -> list[list]:
     """Programs (one list per slice, each fitting IMEM) that copy [(src, dst, bytes)] DRAM to
     DRAM: per chunk of up to CHUNK words an LD into TMEM and an ST out of it, the chunks in
-    two TMEM buffers in turn (an LD does not wait for the ST before it to leave the buffer)."""
+    two TMEM buffers in turn (an LD does not wait for the ST before it to leave the buffer).
+    Above 4 GiB (DAW > 32) each takes its address's region, and a chunk ends at a 4 GiB boundary
+    (no DRAM range of an instruction crosses one)."""
     ch = min(CHUNK, cfg.TMEM_WORDS // 2)
     body = []
     for src, dst, n in pairs:
-        for o in range(0, n // 4, ch):
-            w = min(ch, n // 4 - o)
+        o, total = 0, n // 4
+        while o < total:
+            a, d = src + 4 * o, dst + 4 * o
+            w = min(ch, total - o, (REGION - a % REGION) // 4, (REGION - d % REGION) // 4)
             t = ch * (len(body) // 2 % 2)
-            body += [I.ld(src + 4 * o, t, w), I.st(dst + 4 * o, t, w)]
+            body += [I.ld(a, t, w, reg=a // REGION), I.st(d, t, w, reg=d // REGION)]
+            o += w
     per = (cfg.IMEM_WORDS // 8 - 1) // 2 * 2       # whole pairs, and the HALT
     progs = [body[i:i + per] + [I.halt()] for i in range(0, len(body), per)] or [[I.halt()]]
     return [[p] * cfg.S for p in progs]
@@ -79,15 +86,17 @@ class Snapshots:
 
     @staticmethod
     def area(image, cfg, n: int) -> int | None:
-        """Where the device area of n snapshots goes (after the image, page-aligned), or None
-        when it and the program area after it (BoardBackend's) do not fit the DRAM."""
+        """Where the device area of n snapshots goes (after the image, page-aligned; of an image
+        laid out over regions, after its region-0 areas: regions.tail_at), or None when it and
+        the program area after it (BoardBackend's) do not fit the DRAM (above DAW 32: region 0,
+        whose addresses the programs' registers hold)."""
         if not n or not stateful(image):
             return None
         need = n * sum(b for _, b in merged(image.state_regions(0)))
-        base = -(-image.nbytes // 4096) * 4096
+        base = tail_at(image)
         from .. import waits as W
         if -(-(base + need) // 4096) * 4096 + W.area(cfg.IMEM_WORDS, getattr(cfg, "SEQ_WC", False)) \
-                > cfg.DRAM_BYTES:
+                > dram_low(cfg):
             return None
         return base
 

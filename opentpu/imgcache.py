@@ -148,7 +148,8 @@ def build(image, W, layout) -> list[np.ndarray]:
     left = _left(before, _attrs(image, W), W)
     if left is None:
         stats["skip"] += 1
-    stored = left is not None and _store(d, f, images, left, secs)
+    stored = left is not None and _store(d, f, images, left, secs,
+                                         getattr(image, "spans", None))
     last = ("miss" if stored else "skip", time.perf_counter() - t0)
     return images
 
@@ -202,8 +203,17 @@ def _set(image, path: str, v) -> None:
 
 # ---- entries: MAGIC, the header's length (8 bytes), the header (JSON), then each slice's runs
 # and the arrays, one after the other
-def _runs(img: np.ndarray) -> list[tuple[int, int]]:
-    """The image's runs of pages with a nonzero byte: [(offset, bytes)]."""
+def _runs(img: np.ndarray, spans=None) -> list[tuple[int, int]]:
+    """The image's runs of pages with a nonzero byte: [(offset, bytes)]. spans: the byte
+    ranges that hold anything (an image laid out over a wide DRAM's regions, Image.spans,
+    opentpu/llm/regions.py: tens of GiB of extent, mostly never touched): only those are
+    scanned."""
+    if spans is not None:
+        out = []
+        for a, b in spans:
+            a, b = a // PAGE * PAGE, min(-(-b // PAGE) * PAGE, len(img))
+            out += [(a + o, k) for o, k in _runs(img[a:b])] if b > a else []
+        return out
     n = len(img)
     full = n // PAGE * PAGE
     nz = np.zeros(-(-n // PAGE), bool)
@@ -219,13 +229,14 @@ def _bytes(a) -> np.ndarray:
     return np.ascontiguousarray(a).view(np.uint8).reshape(-1)
 
 
-def _store(d: Path, f: Path, images: list, left: dict, build_s: float = 0.0) -> bool:
+def _store(d: Path, f: Path, images: list, left: dict, build_s: float = 0.0,
+           spans=None) -> bool:
     """Write the entry (True), or not: under the free-disk floor though the entries it outranks
     were dropped (_room), or a write that failed (the disk full, no permission: the image is
     built, not kept). build_s: the build's seconds (what a miss would cost again: the eviction's
-    weight)."""
+    weight). spans: the images' used ranges (_runs)."""
     images = [_bytes(img) for img in images]
-    slices = [{"nbytes": len(img), "runs": _runs(img)} for img in images]
+    slices = [{"nbytes": len(img), "runs": _runs(img, spans)} for img in images]
     arrays = {p: {"dtype": v.dtype.str, "shape": list(v.shape)}
               for p, (kind, v) in left.items() if kind == "array"}
     meta = {"build_s": round(build_s, 2), "src": PC.source(), "slices": slices, "arrays": arrays,

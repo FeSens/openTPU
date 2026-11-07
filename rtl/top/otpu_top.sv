@@ -5,6 +5,11 @@
 // adapter's counters. AXI = 2: the same adapter in front of the card's channels as they are
 // (sim/verilator/otpu_ldc_mem.sv: per channel the bridge otpu_mem_ch and LiteDRAM's own
 // controller, generated with the production core's settings, in the controller clock).
+// A slice of more than 4 GiB (DAW > 32, otpu_pkg): the ports' word addresses are AWW bits, the
+// native adapter's channel beats BAW bits (the slice's 2^DAW bytes on two channels, DAW - 7, or on
+// four with DUAL, DAW - 8; 25 at least), and the memory models hold a window of DRAM_WORDS words
+// per 4 GiB region (otpu_dram, otpu_native_mem NREG: images and dumps of NREG windows, in region
+// order); the LiteDRAM path (AXI 2) is DAW 32's only.
 module otpu_top
   import otpu_pkg::*;
 #(
@@ -42,8 +47,11 @@ module otpu_top
   parameter int TMEM_PRK   = 0,       // TMEM_IMPL 3: the read ports' ranks (otpu_slice)
   parameter int TMEM_SDM   = -1,      // TMEM_TDP: the read ports' RAM sides (otpu_slice)
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait counts (otpu_slice)
-  parameter bit COLL_GATHER = 1'b1    // 0 (S = 1 only): the collective unit runs BAR alone
+  parameter bit COLL_GATHER = 1'b1,   // 0 (S = 1 only): the collective unit runs BAR alone
                                       // (otpu_coll_bar), as the card builds it (otpu_board)
+  parameter bit DUAL       = 1'b0,    // port B chunk pairs: int8 MM PAIR (otpu_slice, otpu_mxu); the
+                                      // board's path (AXI 1) on four channels (otpu_native_dram2)
+  parameter bit QUAD       = 1'b0     // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_slice)
 ) (
   input  logic          clk,
   input  logic          clk_f,         // TMEM_PMP 1: 2 x clk, rising with it (otpu_slice)
@@ -59,6 +67,9 @@ module otpu_top
   output logic [31:0]   icount [S],
   input  logic          dump
 );
+  localparam int NREG = 1 << RGN;                   // DRAM windows (4 GiB regions) of the models
+  localparam int BAW1 = (DAW - 7 > 25) ? DAW - 7 : 25;   // channel beat bits: two channels
+  localparam int BAW2 = (DAW - 8 > 25) ? DAW - 8 : 25;   // ... four (DUAL)
   logic [S-1:0] halted, error, coll_req, coll_gl, ldb;
   assign ld_busy = |ldb;
   cmd_t         coll_cmd [S];
@@ -73,12 +84,14 @@ module otpu_top
     logic          a_req, a_we, a_rvalid, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag;
     logic [D/4-1:0] b_wmask;
     logic [D*8-1:0] b_wdata;
-    logic [31:0]   a_addr, a_wdata, b_addr;
+    logic [AWW-1:0] a_addr, b_addr, sw_addr;
+    logic [31:0]   a_wdata;
     logic [255:0]  a_rdata;
     logic [3:0]    a_be;
-    logic [D*8-1:0] b_rdata;
+    logic [D*8-1:0] b_rdata, b_rdata2;
+    logic          b_two;
     logic          a_rdy, b_rdy, wr_idle, rd_idle, sw_req, sw_rdy, a_inval;
-    logic [31:0]   sw_addr, sw_wdata;
+    logic [31:0]   sw_wdata;
     logic [3:0]    sw_be;
 
     if (AXI == 0) begin : g_dram
@@ -86,27 +99,53 @@ module otpu_top
       assign sw_rdy = 1'b1;
       assign b_rdy = 1'b1;
       assign wr_idle = 1'b1;
-      otpu_dram #(.WORDS(DRAM_WORDS), .D(D), .LAT(DRAM_LAT), .SID(s)) u_dram (
+      otpu_dram #(.WORDS(DRAM_WORDS), .D(D), .LAT(DRAM_LAT), .SID(s), .AW(AWW), .NREG(NREG)) u_dram (
         .clk, .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
         .sw_req, .sw_addr, .sw_wdata, .sw_be,
-        .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_rvalid, .b_rtag, .b_rdata, .rd_idle,
-        .dump);
+        .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_two, .b_rvalid, .b_rtag, .b_rdata,
+        .b_rdata2, .rd_idle, .dump);
+    end else if (DUAL) begin : g_native2
+      // four channels: otpu_native_dram2's two adapters, the model's NC 4 map
+      initial if (AXI == 2) $fatal(1, "otpu_top: DUAL has no LiteDRAM path (AXI 2)");
+      logic [3:0] cvalid, cready, cwe, wvalid, wready, rvalid;
+      logic [3:0][BAW2-1:0] caddr;
+      logic [3:0][511:0] wdata, rdata;
+      logic [3:0][63:0] wmask;
+      logic [3:0][15:0] wdone;
+      otpu_native_dram2 #(.D(D), .AW(AWW), .BAW(BAW2)) u_adapt (
+        .clk, .rst(sys_rst), .a_flush(rst || ld_start || a_inval),   // as otpu_board
+        .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+        .a_be_x(a_be), .a_rvalid, .a_rdata,
+        .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_two, .b_rvalid,
+        .b_rtag, .b_rdata, .b_rdata2, .wr_idle, .rd_idle,
+        .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
+        .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
+        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
+      otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s), .NC(4), .BAW(BAW2),
+                        .NREG(NREG)) u_mem (
+        .clk, .rst(sys_rst), .run_rst(rst),
+        .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
+        .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
+        .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
     end else begin : g_native
+      assign b_rdata2 = '0;
       logic [1:0] cvalid, cready, cwe, wvalid, wready, rvalid;
-      logic [1:0][24:0] caddr;
+      logic [1:0][BAW1-1:0] caddr;
       logic [1:0][511:0] wdata, rdata;
       logic [1:0][63:0] wmask;
       logic [1:0][15:0] wdone;
-      otpu_native_dram #(.D(D)) u_adapt (
+      otpu_native_dram #(.D(D), .AW(AWW), .BAW(BAW1)) u_adapt (
         .clk, .rst(sys_rst), .a_flush(rst || ld_start || a_inval),   // as otpu_board
         .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
         .a_be_x(a_be), .a_rvalid, .a_rdata,
         .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
         .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
-        .b_rdata, .wr_idle, .rd_idle,
+        .b_rdata, .b_ravail(), .b_rrdy(1'b1), .a_ravail(), .a_rrdy(1'b1), .wr_idle, .rd_idle,
         .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
         .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
         .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone));
+      initial if (AXI == 2 && WIDE) $fatal(1, "otpu_top: the LiteDRAM path (AXI 2) is DAW 32's");
       if (AXI == 2) begin : g_ldc
         otpu_ldc_mem #(.WORDS(DRAM_WORDS), .SID(s)) u_mem (
           .clk, .rst(sys_rst),
@@ -114,7 +153,7 @@ module otpu_top
           .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
           .n_rvalid(rvalid), .n_rdata(rdata), .n_wdone(wdone), .dump);
       end else begin : g_model
-        otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s)) u_mem (
+        otpu_native_mem #(.WORDS(DRAM_WORDS), .LAT(DRAM_LAT), .SID(s), .BAW(BAW1), .NREG(NREG)) u_mem (
           .clk, .rst(sys_rst), .run_rst(rst),
           .n_cvalid(cvalid), .n_cready(cready), .n_cwe(cwe), .n_caddr(caddr),
           .n_wvalid(wvalid), .n_wready(wready), .n_wdata(wdata), .n_wmask(wmask),
@@ -138,13 +177,15 @@ module otpu_top
                  .TMEM_IMPL(TMEM_IMPL), .TMEM_RQ(TMEM_RQ), .TMEM_NCP(TMEM_NCP),
                  .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH),
                  .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP), .TMEM_GST(TMEM_GST),
-                 .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM), .SEQ_WC(SEQ_WC))
+                 .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM), .SEQ_WC(SEQ_WC),
+                 .DUAL(DUAL), .QUAD(QUAD))
     u_slice (
       .clk, .clk_f, .sys_rst, .rst, .rinit, .ld_start, .ld_addr, .ld_n, .ld_busy(ldb[s]),
       .a_rdy, .b_rdy, .sw_rdy, .wr_idle, .rd_idle,
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
       .sw_req, .sw_addr, .sw_wdata, .sw_be,
-      .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
+      .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_two, .b_rvalid, .b_rtag,
+      .b_rdata, .b_rdata2,
       .coll_req(coll_req[s]), .coll_cmd(coll_cmd[s]), .coll_ack,
       .coll_ren(coll_ren[s]), .coll_raddr(coll_raddr[s]), .coll_rdata(coll_rdata[s]),
       .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl[s]), .coll_gnt,

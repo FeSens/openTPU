@@ -58,21 +58,35 @@ module otpu_board #(
   parameter int PQ_WIN      = 1024,    // cycles per P/Q counter window
   parameter bit HAS_I2C     = 1'b1,    // the I2C pins are wired (CAPS bit2)
   parameter bit CHASH       = 1'b1,    // hashed channel interleave (otpu_native_dram; CAPS bit7)
+  parameter int NRD         = 128,     // port B read beats in flight per channel (otpu_native_dram RD)
+  parameter int NQMEM       = 0,       // the adapters' queue memories (otpu_native_dram QMEM)
   parameter bit DSTEP       = 1'b1,    // the DMA's DSTEP datapath (CAPS bit6; 0 leaves it out)
   parameter bit HOSTCAL     = 1'b0,    // the host calibrates the DDR3 controllers (CAPS bit27: LiteDRAM)
   parameter bit COLL_GATHER = 1'b1,    // 0 (S = 1 only): the collective unit runs BAR alone, no
                                        // GATHER (otpu_coll_bar; CAPS2 bit0 = 0, docs/infra_hunt.md 5)
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
   parameter int PLATFORM    = 0,       // the target's platform id (CFG_PLATFORM; opentpu/target.py)
-  parameter logic [31:0] ARCH_HASH = 32'h0  // the target's arch_hash (CFG_HASH)
+  parameter logic [31:0] ARCH_HASH = 32'h0, // the target's arch_hash (CFG_HASH)
+  parameter bit DUAL        = 1'b0,    // every slice on four channels (otpu_native_dram2), its port B
+                                       // in chunk pairs (int8 MM PAIR; CFG_DRAM channels 4)
+  parameter bit QUAD        = 1'b0,    // (DUAL) 4-bit MM PAIR four blocks an advance (otpu_slice)
+  parameter bit MEMX        = 1'b0,    // DUAL: each slice's adapter behind a registered crossing of the
+                                       // slice's ports (otpu_native_xdram2: the FK35's adapters in SLR0)
+  parameter int NCPS        = DUAL ? 4 : 2,  // channels a slice
+  // log2 bytes a slice addresses on each channel (CFG_DRAM CH_LOG2): 31 at DAW 32 (otpu_pkg; the
+  // 4 GiB slice's map, DUAL too), else the slice's 2^DAW bytes over its NCPS channels; and the
+  // channels' beat address bits (n_caddr), 25 up to 2 GiB a channel. A board whose channels are
+  // smaller keeps BAW (their high beat bits stay 0) and the host keeps to DRAM_BYTES
+  parameter int CH_LOG2     = (otpu_pkg::DAW > 32) ? otpu_pkg::DAW - $clog2(NCPS) : 31,
+  parameter int BAW         = (CH_LOG2 - 6 > 25) ? CH_LOG2 - 6 : 25
 ) (
   input  logic         clk,
   input  logic         clk_f,          // TMEM_PMP 1: 2 x clk, rising with it (the MMCM's); else unused
   input  logic         rst,            // synchronous, active high
   input  logic         ctl_mrst,       // the control master's reset (the SmartConnect's, in clk:
                                        //   PCIe hot reset or link down too): otpu_axil_iso
-  input  logic [2*S-1:0] calib,        // memory controllers calibrated (any clock domain)
-  input  logic [2*S-1:0] ded,          // a channel's ECC counted an uncorrectable word (any clock
+  input  logic [NCPS*S-1:0] calib,        // memory controllers calibrated (any clock domain)
+  input  logic [NCPS*S-1:0] ded,          // a channel's ECC counted an uncorrectable word (any clock
                                        //   domain; STATUS ECC_DED)
   input  logic [11:0]  temp,           // XADC die-temperature code (any clock domain, slow)
   output logic [2:0]   led,
@@ -97,31 +111,46 @@ module otpu_board #(
   output logic [1:0]   s_ctl_rresp,
   output logic         s_ctl_rvalid,
   input  logic         s_ctl_rready,
-  // ---- memory channels 0 .. 2S-1: native masters (otpu_native_dram; slice s on 2s, 2s + 1)
-  output logic [2*S-1:0]        n_cvalid,
-  input  logic [2*S-1:0]        n_cready,
-  output logic [2*S-1:0]        n_cwe,
-  output logic [2*S-1:0][24:0]  n_caddr,   // the 64-byte beat in the channel (address bits 30:6)
-  output logic [2*S-1:0]        n_wvalid,  // write data: a beat per write command, in their order
-  input  logic [2*S-1:0]        n_wready,
-  output logic [2*S-1:0][511:0] n_wdata,
-  output logic [2*S-1:0][63:0]  n_wmask,   // 1 = write the byte
-  input  logic [2*S-1:0]        n_rvalid,  // read data in read-command order, no backpressure
-  input  logic [2*S-1:0][511:0] n_rdata,
-  input  logic [2*S-1:0][15:0]  n_wdone,   // write beats the controller has taken (mod 2^16)
-  input  logic [2*S-1:0]        n_err      // a channel's controller broke its port contract (sticky)
+  // ---- memory channels 0 .. NCPS*S-1: native masters (otpu_native_dram; slice s on 2s, 2s + 1; DUAL:
+  // slice s on 4s .. 4s + 3, otpu_native_dram2)
+  output logic [NCPS*S-1:0]        n_cvalid,
+  input  logic [NCPS*S-1:0]        n_cready,
+  output logic [NCPS*S-1:0]        n_cwe,
+  output logic [NCPS*S-1:0][BAW-1:0] n_caddr, // the 64-byte beat in the channel (address bits BAW+5:6)
+  output logic [NCPS*S-1:0]        n_wvalid,  // write data: a beat per write command, in their order
+  input  logic [NCPS*S-1:0]        n_wready,
+  output logic [NCPS*S-1:0][511:0] n_wdata,
+  output logic [NCPS*S-1:0][63:0]  n_wmask,   // 1 = write the byte
+  input  logic [NCPS*S-1:0]        n_rvalid,  // read data in read-command order, no backpressure
+  input  logic [NCPS*S-1:0][511:0] n_rdata,
+  input  logic [NCPS*S-1:0][15:0]  n_wdone,   // write beats the controller has taken (mod 2^16)
+  input  logic [NCPS*S-1:0]        n_err      // a channel's controller broke its port contract (sticky)
 );
   import otpu_pkg::*;
   localparam int XR = 2;              // register stages each way across an SLR (S > 1)
 
+  // ---- the reset tree: rst through a register per destination, each next to its loads (250
+  // MHz, FK35: the block design's reset -> the control block's counters and the trace's pointers
+  // in one net, 1 level, 95% route, -0.65 ns; otpu_bcu_sys registers it first): r_ctl the control
+  // block and its AXI-Lite isolator (one reset: the isolator hands the control block no access
+  // while it is in reset), r_trc the trace, r_sh the rest of the shell and the slices' system
+  // reset. keep: not merged back into one register. Everything here leaves reset a cycle after rst.
+  (* keep = "true", shreg_extract = "no", max_fanout = 128 *) logic r_ctl;
+  (* keep = "true", shreg_extract = "no", max_fanout = 64 *) logic r_trc, r_sh;
+  always_ff @(posedge clk) begin
+    r_ctl <= rst;
+    r_trc <= rst;
+    r_sh  <= rst;
+  end
+
   // ---- calibration and uncorrectable-ECC flags from the memory controllers' clock domains
   // (registers there; levels, each bit on its own)
-  (* ASYNC_REG = "TRUE" *) logic [2*S-1:0] cal_s1, cal_s2, ded_s1, ded_s2;
+  (* ASYNC_REG = "TRUE" *) logic [NCPS*S-1:0] cal_s1, cal_s2, ded_s1, ded_s2;
   // CALIB0 / CALIB1: every slice's first / second channel
   logic [1:0] cal_all;
   always_comb begin
     cal_all = 2'b11;
-    for (int k = 0; k < S; k++) cal_all &= cal_s2[2*k +: 2];
+    for (int c = 0; c < NCPS * S; c++) cal_all[c % 2] &= cal_s2[c];   // (DUAL: 0, 2 and 1, 3)
   end
   always_ff @(posedge clk) begin
     cal_s1 <= calib;
@@ -141,7 +170,7 @@ module otpu_board #(
     tmp_s1 <= temp;
     tmp_s2 <= tmp_s1;
     tmp_s3 <= tmp_s2;
-    if (rst) begin
+    if (r_sh) begin
       temp_q <= '0;
       temp_v <= 1'b0;
     end else if (tmp_s2 == tmp_s3 && tmp_s3 != '0) begin
@@ -170,24 +199,29 @@ module otpu_board #(
   logic [S-1:0][1:0] q_ret;
   logic [S-1:0][31:0] q_icount;
   logic [S-1:0] x_rst, x_srst, x_ld_start;
+  logic [S-1:0] x_frst, x_mrst;     // x_rst and x_srst for the adapter (its flush, its reset; at
+                                    //   S > 1 copies of their own, the same cycles)
   logic [S-1:0][31:0] x_ld_addr, x_ld_n;
   logic [31:0] x_arg [S][8];
   // the free-running counters' increments: every channel's beats, every slice's instructions
-  localparam int CW = $clog2(S * 2 + 1), IW = $clog2(2 * S + 1);
+  localparam int CW = $clog2(S * NCPS + 1), IW = $clog2(2 * S + 1);
   logic [CW-1:0] dram_rd, dram_wr;
   logic [IW-1:0] instr;
   logic [31:0] arg [8];               // the run's arguments (ARG0..7: R8..R15 at the start)
   logic a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag, b_rdy;
-  logic [31:0] a_addr, a_wdata, b_addr;
+  logic [AWW-1:0] a_addr, b_addr, sw_addr;      // word addresses (otpu_pkg AWW)
+  logic [31:0] a_wdata;
   logic [255:0] a_rdata;
   logic [3:0]  a_be, sw_be;
   logic        sw_req, sw_rdy;
   logic        m_wr_idle, m_rd_idle;   // slice 0's adapter's wr_idle and rd_idle (q_wr_idle[0],
   logic        m_rv;                   //   q_rd_idle[0]: with its SW and port registers, below);
                                        //   m_rv: a b_rvalid the cycle before
-  logic [31:0] sw_addr, sw_wdata;
+  logic [31:0] sw_wdata;
   logic [D/4-1:0] b_wmask;
   logic [D*8-1:0] b_wdata, b_rdata;
+  logic           b_two;               // DUAL: slice 0's port B pairs
+  logic [D*8-1:0] b_rdata2;
 
   perf_t pf, pf_c;                   // slice 0's, and as the control block sees it
   logic        tr_en, tr_stop, tr_clear, tr_busy;
@@ -203,7 +237,7 @@ module otpu_board #(
   logic c_awvalid, c_awready, c_wvalid, c_wready, c_bvalid, c_bready;
   logic c_arvalid, c_arready, c_rvalid, c_rready;
   otpu_axil_iso #(.AW(12)) u_iso (
-    .clk, .m_rst(ctl_mrst), .s_rst(rst),
+    .clk, .m_rst(ctl_mrst), .s_rst(r_ctl),
     .m_awaddr(s_ctl_awaddr), .m_awvalid(s_ctl_awvalid), .m_awready(s_ctl_awready),
     .m_wdata(s_ctl_wdata), .m_wstrb(s_ctl_wstrb), .m_wvalid(s_ctl_wvalid),
     .m_wready(s_ctl_wready), .m_bresp(s_ctl_bresp), .m_bvalid(s_ctl_bvalid),
@@ -216,17 +250,28 @@ module otpu_board #(
     .s_arready(c_arready), .s_rdata(c_rdata), .s_rresp(c_rresp), .s_rvalid(c_rvalid),
     .s_rready(c_rready));
 
+  // STATUS AXI_ERR (sticky, already two synchronizer stages from the channels' clocks): a register
+  // per channel and one for the OR, so the HBM channels' bridges reach the control block over two
+  // hops (f35d0009: g_ch[4]'s e_s2 -> the OR -> r_g, 3.7 ns of route, -0.19 ns)
+  logic [NCPS*S-1:0] n_err_q;
+  logic              axi_err_q;
+  always_ff @(posedge clk) begin
+    n_err_q <= n_err;
+    axi_err_q <= |n_err_q;
+  end
+
   otpu_ctrl #(.D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .LANES(LANES), .CORE_KHZ(CORE_KHZ), .BUILD_ID(BUILD_ID),
               .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH), .PQ_WIN(PQ_WIN), .HAS_TEMP(1'b1),
               .HAS_I2C(HAS_I2C), .CHASH(CHASH), .DSTEP(DSTEP), .HOSTCAL(HOSTCAL),
               .COLL_GATHER(COLL_GATHER),
               .LDP(S > 1 ? 2 + 2 * XR : 2),  // LOAD to a slice's busy and back
-              // each slice on its two channels' 2 GiB each (otpu_native_dram): 4 GiB
+              // each slice on its NCPS channels (otpu_native_dram / 2): 2^DAW bytes (otpu_pkg),
+              // 2^CH_LOG2 a channel
               .S(S), .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .ACT_BLOCKS(ACT_BLOCKS),
-              .DRAM_LOG2(32), .NCH(2), .CH_LOG2(31), .MXU_IMPL(MXU_IMPL), .TMEM_IMPL(TMEM_IMPL),
-              .VPU_CL(VPU_CL), .ULANES(ULANES), .SEQ_WC(SEQ_WC), .PLATFORM(PLATFORM),
+              .DRAM_LOG2(DAW), .NCH(NCPS), .CH_LOG2(CH_LOG2), .MXU_IMPL(MXU_IMPL), .TMEM_IMPL(TMEM_IMPL),
+              .VPU_CL(VPU_CL), .ULANES(ULANES), .SEQ_WC(SEQ_WC), .QUAD(QUAD), .PLATFORM(PLATFORM),
               .ARCH_HASH(ARCH_HASH)) u_ctrl (
-    .clk, .rst,
+    .clk, .rst(r_ctl),
     .s_awaddr(c_awaddr), .s_awvalid(c_awvalid), .s_awready(c_awready),
     .s_wdata(c_wdata), .s_wstrb(c_wstrb), .s_wvalid(c_wvalid),
     .s_wready(c_wready), .s_bresp(c_bresp), .s_bvalid(c_bvalid),
@@ -234,7 +279,7 @@ module otpu_board #(
     .s_arready(c_arready), .s_rdata(c_rdata), .s_rresp(c_rresp),
     .s_rvalid(c_rvalid), .s_rready(c_rready),
     .run, .ld_start, .arg, .ld_addr, .ld_n, .ld_busy, .halted, .error, .wait_to, .icount, .wr_idle,
-    .axi_err(|n_err),                  // the channels' bridges (otpu_mem_ch)
+    .axi_err(axi_err_q),               // the channels' bridges (otpu_mem_ch)
     .calib(cal_all), .ecc_ded(|ded_s2),
     .b_rd(b_req && b_rdy && !b_we), .b_wr(b_req && b_rdy && b_we),
     .a_rd(a_req && a_rdy && !a_we), .a_wr(sw_req && sw_rdy), .b_wait(pf_c.bwait),
@@ -251,7 +296,7 @@ module otpu_board #(
   // ---- hardware trace
   if (TRACE_DEPTH != 0) begin : g_trace
     otpu_trace #(.DEPTH(TRACE_DEPTH), .QD(TRACE_QD), .WIN(WIN)) u_trace (
-      .clk, .rst, .pf(pf_c), .en(tr_en && run), .stop(tr_stop), .clear(tr_clear), .raddr(tr_addr),
+      .clk, .rst(r_trc), .pf(pf_c), .en(tr_en && run), .stop(tr_stop), .clear(tr_clear), .raddr(tr_addr),
       .rdata(tr_rdata), .count(tr_count), .drop(tr_drop), .busy(tr_busy));
   end else begin : g_no_trace
     assign tr_rdata = '0;
@@ -269,8 +314,8 @@ module otpu_board #(
   (* max_fanout = 256 *) logic core_rst;
   logic go_ok;
   always_ff @(posedge clk) begin
-    go_ok <= !rst && ((run && go_ok) || (rd_idle && wr_idle));
-    core_rst <= rst || !run || !go_ok;
+    go_ok <= !r_sh && ((run && go_ok) || (rd_idle && wr_idle));
+    core_rst <= r_sh || !run || !go_ok;
   end
 
   // the run's status from every slice
@@ -303,7 +348,8 @@ module otpu_board #(
                .MXU_CL(MXU_CL), .MXU_E(MXU_E), .VPU_CL(VPU_CL), .ULANES(ULANES), .PQ_WIN(PQ_WIN),
                .SEQ_WC(SEQ_WC), .HAS_DSTEP(DSTEP), .TMEM_IMPL(TMEM_IMPL), .TMEM_RQ(TMEM_RQ),
                .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH), .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP),
-               .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM)) u_slice (
+               .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM),
+               .DUAL(DUAL), .QUAD(QUAD)) u_slice (
     .clk, .clk_f, .sys_rst(x_srst[0]), .rst(x_rst[0]), .rinit(x_arg[0]), .ld_start(x_ld_start[0]),
     .ld_addr(x_ld_addr[0]), .ld_n(x_ld_n[0]),
     .ld_busy(q_ld_busy[0]), .a_rdy, .b_rdy, .sw_rdy, .wr_idle(m_wr_idle),
@@ -311,6 +357,7 @@ module otpu_board #(
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
+    .b_two, .b_rdata2,
     .coll_req(sc_req[0]), .coll_cmd(sc_cmd[0]), .coll_ack(sc_ack[0]),
     .coll_ren(sc_ren[0]), .coll_raddr(sc_raddr[0]), .coll_rdata(sc_rdata[0]),
     .coll_wen(sc_wen[0]), .coll_waddr(sc_waddr[0]), .coll_wdata(sc_wdata[0]),
@@ -320,8 +367,10 @@ module otpu_board #(
 
   // the collective's reset through a register of its own, next to it: it leaves reset a cycle
   // after the slice, idle either way (133.33 MHz, 110ec6d: core_rst -> u_coll's state, 0 levels,
-  // 97% route, +0.162 ns); a request can only come many cycles after reset (checked)
-  logic coll_rst;
+  // 97% route, +0.162 ns); a request can only come many cycles after reset (checked). keep: the
+  // crossings' u_dn_tx register core_rst too, and merged with theirs it drove them from the unit
+  // (250 MHz, FK35: coll_rst -> g_x[].u_dn_rx, 0 levels, 98% route, -0.38 ns)
+  (* keep = "true" *) logic coll_rst;
   always_ff @(posedge clk) coll_rst <= core_rst;
 `ifndef SYNTHESIS
   always @(posedge clk)
@@ -330,8 +379,10 @@ module otpu_board #(
   initial if (S > 1 && !COLL_GATHER) $fatal(1, "otpu_board: COLL_GATHER 0 needs S = 1");
   if (COLL_GATHER) begin : g_coll
     // RQ: its reads from its own request register on the slice's port at S = 1; at S > 1 each
-    // slice's otpu_coll_port presents them a cycle later (TMEM's input stage)
-    otpu_coll #(.S(S), .LANES(LANES), .RQ(S == 1)) u_coll (
+    // slice's otpu_coll_port presents them a cycle later (TMEM's input stage). UG at S > 1: the
+    // hub's crossings take the addresses and data from the unit's registers as they are, valid
+    // with their enables (otpu_coll)
+    otpu_coll #(.S(S), .LANES(LANES), .RQ(S == 1), .UG(S > 1)) u_coll (
       .clk, .rst(coll_rst), .req(coll_req), .cmds(coll_cmds), .gnt(coll_gnt), .ack(coll_ack),
       .r_en(coll_ren), .r_addr(coll_raddr), .r_data(coll_rdata),
       .w_en(coll_wen), .w_addr(coll_waddr), .w_data(coll_wdata));
@@ -354,27 +405,70 @@ module otpu_board #(
   assign q_wr_idle[0] = m_wr_idle && !sw_req && !(b_req && b_we);
   assign q_rd_idle[0] = m_rd_idle && !a_req && !(b_req && !b_we) && !m_rv;
   always_ff @(posedge clk) m_rv <= !x_srst[0] && b_rvalid;
-  otpu_native_dram #(.D(D), .CHASH(CHASH)) u_mem (
-    .clk, .rst(x_srst[0]), .a_flush(x_rst[0] || x_ld_start[0] || a_inval),
-    .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
-        .a_be_x(a_be), .a_rvalid, .a_rdata,
-    .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
-    .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
-    .b_rdata, .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
-    .n_cvalid(n_cvalid[1:0]), .n_cready(n_cready[1:0]), .n_cwe(n_cwe[1:0]),
-    .n_caddr(n_caddr[1:0]), .n_wvalid(n_wvalid[1:0]), .n_wready(n_wready[1:0]),
-    .n_wdata(n_wdata[1:0]), .n_wmask(n_wmask[1:0]), .n_rvalid(n_rvalid[1:0]),
-    .n_rdata(n_rdata[1:0]), .n_wdone(n_wdone[1:0]));
+  initial if (MEMX && !DUAL) $fatal(1, "otpu_board: MEMX needs DUAL");
+  initial if (QUAD && !DUAL) $fatal(1, "otpu_board: QUAD needs DUAL");
+  // the channels' read beats and taken write beats this cycle (DRAM_RD / DRAM_WR, the slices'
+  // counts); MEMX: a cycle late, registered on the adapters' side of the crossing
+  logic [NCPS*S-1:0] n_rbt, n_wbt;
+  if (!MEMX) begin : g_nbt
+    assign n_rbt = n_rvalid;
+    assign n_wbt = n_wvalid & n_wready;
+  end
+  if (MEMX) begin : g_memx
+    // (the crossing's wr_idle / rd_idle cover what is in it: otpu_native_xdram2; kept as a cell,
+    // placed by name: boards/sqrl-fk35/constraints/fk35_floorplan.tcl)
+    (* KEEP_HIERARCHY = "YES" *)
+    otpu_native_xdram2 #(.D(D), .CHASH(CHASH), .RD(NRD), .AW(AWW), .BAW(BAW), .QMEM(NQMEM)) u_mem (
+      .clk, .rst(x_mrst[0]), .a_flush(x_frst[0] || x_ld_start[0] || a_inval),
+      .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+      .a_be_x(a_be), .a_rvalid, .a_rdata,
+      .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+      .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_two, .b_rvalid,
+      .b_rtag, .b_rdata, .b_rdata2, .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
+      .n_cvalid(n_cvalid[3:0]), .n_cready(n_cready[3:0]), .n_cwe(n_cwe[3:0]),
+      .n_caddr(n_caddr[3:0]), .n_wvalid(n_wvalid[3:0]), .n_wready(n_wready[3:0]),
+      .n_wdata(n_wdata[3:0]), .n_wmask(n_wmask[3:0]), .n_rvalid(n_rvalid[3:0]),
+      .n_rdata(n_rdata[3:0]), .n_wdone(n_wdone[3:0]), .n_rbeat(n_rbt[3:0]), .n_wbeat(n_wbt[3:0]));
+  end else if (DUAL) begin : g_mem2
+    otpu_native_dram2 #(.D(D), .CHASH(CHASH), .RD(NRD), .AW(AWW), .BAW(BAW), .QMEM(NQMEM)) u_mem (
+      .clk, .rst(x_mrst[0]), .a_flush(x_frst[0] || x_ld_start[0] || a_inval),
+      .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+      .a_be_x(a_be), .a_rvalid, .a_rdata,
+      .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+      .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_two, .b_rvalid,
+      .b_rtag, .b_rdata, .b_rdata2, .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
+      .n_cvalid(n_cvalid[3:0]), .n_cready(n_cready[3:0]), .n_cwe(n_cwe[3:0]),
+      .n_caddr(n_caddr[3:0]), .n_wvalid(n_wvalid[3:0]), .n_wready(n_wready[3:0]),
+      .n_wdata(n_wdata[3:0]), .n_wmask(n_wmask[3:0]), .n_rvalid(n_rvalid[3:0]),
+      .n_rdata(n_rdata[3:0]), .n_wdone(n_wdone[3:0]));
+  end else begin : g_mem
+    assign b_rdata2 = '0;
+    otpu_native_dram #(.D(D), .CHASH(CHASH), .RD(NRD), .AW(AWW), .BAW(BAW), .QMEM(NQMEM)) u_mem (
+      .clk, .rst(x_mrst[0]), .a_flush(x_frst[0] || x_ld_start[0] || a_inval),
+      .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+          .a_be_x(a_be), .a_rvalid, .a_rdata,
+      .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+      .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
+      .b_rdata, .b_ravail(), .b_rrdy(1'b1), .a_ravail(), .a_rrdy(1'b1),
+      .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
+      .n_cvalid(n_cvalid[1:0]), .n_cready(n_cready[1:0]), .n_cwe(n_cwe[1:0]),
+      .n_caddr(n_caddr[1:0]), .n_wvalid(n_wvalid[1:0]), .n_wready(n_wready[1:0]),
+      .n_wdata(n_wdata[1:0]), .n_wmask(n_wmask[1:0]), .n_rvalid(n_rvalid[1:0]),
+      .n_rdata(n_rdata[1:0]), .n_wdone(n_wdone[1:0]));
+  end
 
-  // ---- slices 1 .. S-1, each on its two channels
+  // ---- slices 1 .. S-1, each on its two channels (DUAL: four, as slice 0)
   for (genvar s = 1; s < S; s++) begin : g_slice
     logic           a_req, a_we, a_rvalid, a_rdy, b_req, b_tag, b_we, b_par, b_rvalid, b_rtag;
     logic           b_rdy, a_inval, sw_req, sw_rdy, m_wr_idle, m_rd_idle, m_rv;
-    logic [31:0]    a_addr, a_wdata, b_addr, sw_addr, sw_wdata;
+    logic [AWW-1:0] a_addr, b_addr, sw_addr;
+    logic [31:0]    a_wdata, sw_wdata;
     logic [255:0]   a_rdata;
     logic [3:0]     a_be, sw_be;
     logic [D/4-1:0] b_wmask;
     logic [D*8-1:0] b_wdata, b_rdata;
+    logic           b_two;
+    logic [D*8-1:0] b_rdata2;
     perf_t          pf;
     assign q_ret[s] = pf.sq.ret;
 
@@ -385,7 +479,8 @@ module otpu_board #(
                  .ULANES(ULANES), .PQ_WIN(PQ_WIN), .SEQ_WC(SEQ_WC), .HAS_DSTEP(DSTEP),
                  .TMEM_IMPL(TMEM_IMPL), .TMEM_RQ(TMEM_RQ),
                  .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH), .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP),
-                 .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM)) u_slice (
+                 .TMEM_GST(TMEM_GST), .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM),
+                 .DUAL(DUAL), .QUAD(QUAD)) u_slice (
       .clk, .clk_f, .sys_rst(x_srst[s]), .rst(x_rst[s]), .rinit(x_arg[s]), .ld_start(x_ld_start[s]),
       .ld_addr(x_ld_addr[s]), .ld_n(x_ld_n[s]),
       .ld_busy(q_ld_busy[s]), .a_rdy, .b_rdy, .sw_rdy, .wr_idle(m_wr_idle),
@@ -393,6 +488,7 @@ module otpu_board #(
       .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
       .sw_req, .sw_addr, .sw_wdata, .sw_be,
       .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
+      .b_two, .b_rdata2,
       .coll_req(sc_req[s]), .coll_cmd(sc_cmd[s]), .coll_ack(sc_ack[s]),
       .coll_ren(sc_ren[s]), .coll_raddr(sc_raddr[s]), .coll_rdata(sc_rdata[s]),
       .coll_wen(sc_wen[s]), .coll_waddr(sc_waddr[s]), .coll_wdata(sc_wdata[s]),
@@ -400,17 +496,47 @@ module otpu_board #(
       .halted(q_halted[s]), .error(q_error[s]), .wait_to(q_wait_to[s]), .a_inval,
       .icount(q_icount[s]), .pf, .dump(1'b0));
 
-    otpu_native_dram #(.D(D), .CHASH(CHASH)) u_mem (
-      .clk, .rst(x_srst[s]), .a_flush(x_rst[s] || x_ld_start[s] || a_inval),
-      .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
-          .a_be_x(a_be), .a_rvalid, .a_rdata,
-      .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
-      .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
-      .b_rdata, .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
-      .n_cvalid(n_cvalid[2*s +: 2]), .n_cready(n_cready[2*s +: 2]), .n_cwe(n_cwe[2*s +: 2]),
-      .n_caddr(n_caddr[2*s +: 2]), .n_wvalid(n_wvalid[2*s +: 2]),
-      .n_wready(n_wready[2*s +: 2]), .n_wdata(n_wdata[2*s +: 2]), .n_wmask(n_wmask[2*s +: 2]),
-      .n_rvalid(n_rvalid[2*s +: 2]), .n_rdata(n_rdata[2*s +: 2]), .n_wdone(n_wdone[2*s +: 2]));
+    if (MEMX) begin : g_memx
+      (* KEEP_HIERARCHY = "YES" *)
+      otpu_native_xdram2 #(.D(D), .CHASH(CHASH), .RD(NRD), .AW(AWW), .BAW(BAW), .QMEM(NQMEM)) u_mem (
+        .clk, .rst(x_mrst[s]), .a_flush(x_frst[s] || x_ld_start[s] || a_inval),
+        .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+        .a_be_x(a_be), .a_rvalid, .a_rdata,
+        .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_two, .b_rvalid,
+        .b_rtag, .b_rdata, .b_rdata2, .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
+        .n_cvalid(n_cvalid[4*s +: 4]), .n_cready(n_cready[4*s +: 4]), .n_cwe(n_cwe[4*s +: 4]),
+        .n_caddr(n_caddr[4*s +: 4]), .n_wvalid(n_wvalid[4*s +: 4]),
+        .n_wready(n_wready[4*s +: 4]), .n_wdata(n_wdata[4*s +: 4]), .n_wmask(n_wmask[4*s +: 4]),
+        .n_rvalid(n_rvalid[4*s +: 4]), .n_rdata(n_rdata[4*s +: 4]), .n_wdone(n_wdone[4*s +: 4]),
+        .n_rbeat(n_rbt[4*s +: 4]), .n_wbeat(n_wbt[4*s +: 4]));
+    end else if (DUAL) begin : g_mem2
+      otpu_native_dram2 #(.D(D), .CHASH(CHASH), .RD(NRD), .AW(AWW), .BAW(BAW), .QMEM(NQMEM)) u_mem (
+        .clk, .rst(x_mrst[s]), .a_flush(x_frst[s] || x_ld_start[s] || a_inval),
+        .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+        .a_be_x(a_be), .a_rvalid, .a_rdata,
+        .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_two, .b_rvalid,
+        .b_rtag, .b_rdata, .b_rdata2, .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
+        .n_cvalid(n_cvalid[4*s +: 4]), .n_cready(n_cready[4*s +: 4]), .n_cwe(n_cwe[4*s +: 4]),
+        .n_caddr(n_caddr[4*s +: 4]), .n_wvalid(n_wvalid[4*s +: 4]),
+        .n_wready(n_wready[4*s +: 4]), .n_wdata(n_wdata[4*s +: 4]), .n_wmask(n_wmask[4*s +: 4]),
+        .n_rvalid(n_rvalid[4*s +: 4]), .n_rdata(n_rdata[4*s +: 4]), .n_wdone(n_wdone[4*s +: 4]));
+    end else begin : g_mem
+      assign b_rdata2 = '0;
+      otpu_native_dram #(.D(D), .CHASH(CHASH), .RD(NRD), .AW(AWW), .BAW(BAW), .QMEM(NQMEM)) u_mem (
+        .clk, .rst(x_mrst[s]), .a_flush(x_frst[s] || x_ld_start[s] || a_inval),
+        .a_rdy_x(a_rdy), .a_req_x(a_req), .a_we_x(a_we), .a_addr_x(a_addr), .a_wdata_x(a_wdata),
+            .a_be_x(a_be), .a_rvalid, .a_rdata,
+        .sw_rdy, .sw_req, .sw_addr, .sw_wdata, .sw_be,
+        .b_rdy, .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag,
+        .b_rdata, .b_ravail(), .b_rrdy(1'b1), .a_ravail(), .a_rrdy(1'b1),
+        .wr_idle(m_wr_idle), .rd_idle(m_rd_idle),
+        .n_cvalid(n_cvalid[2*s +: 2]), .n_cready(n_cready[2*s +: 2]), .n_cwe(n_cwe[2*s +: 2]),
+        .n_caddr(n_caddr[2*s +: 2]), .n_wvalid(n_wvalid[2*s +: 2]),
+        .n_wready(n_wready[2*s +: 2]), .n_wdata(n_wdata[2*s +: 2]), .n_wmask(n_wmask[2*s +: 2]),
+        .n_rvalid(n_rvalid[2*s +: 2]), .n_rdata(n_rdata[2*s +: 2]), .n_wdone(n_wdone[2*s +: 2]));
+    end
     assign q_wr_idle[s] = m_wr_idle && !sw_req && !(b_req && b_we);     // as slice 0's
     assign q_rd_idle[s] = m_rd_idle && !a_req && !(b_req && !b_we) && !m_rv;
     always_ff @(posedge clk) m_rv <= !x_srst[s] && b_rvalid;
@@ -419,7 +545,9 @@ module otpu_board #(
   if (S == 1) begin : g_x1
     // ---- one slice: wired
     assign x_rst[0] = core_rst;
-    assign x_srst[0] = rst;
+    assign x_srst[0] = r_sh;
+    assign x_frst[0] = core_rst;
+    assign x_mrst[0] = r_sh;
     assign x_ld_start[0] = ld_start;
     assign x_ld_addr[0] = ld_addr;
     assign x_ld_n[0] = ld_n;
@@ -437,9 +565,9 @@ module otpu_board #(
       dram_rd = '0;
       dram_wr = '0;
       instr = '0;
-      for (int c = 0; c < 2 * S; c++) begin
-        dram_rd += CW'(n_rvalid[c]);
-        dram_wr += CW'(n_wvalid[c] && n_wready[c]);
+      for (int c = 0; c < NCPS * S; c++) begin
+        dram_rd += CW'(n_rbt[c]);
+        dram_wr += CW'(n_wbt[c]);
       end
       for (int k = 0; k < S; k++) instr += IW'(sl_ret[k]);
     end
@@ -467,14 +595,15 @@ module otpu_board #(
     localparam int DW = 3 + L + 32 * L + L + 64 * L + 3 + 64 + 256;
     // up, per slice: levels / pulses (request, read data, pop; cleared by reset), the data, the
     // command, the status, the channels' beats this cycle
-    localparam int UW = 3 + 32 * L + CB + 6 + 2 + 32 + 4;
+    localparam int DB = $clog2(NCPS + 1);   // a slice's channels' beats a cycle (0 .. NCPS)
+    localparam int UW = 3 + 32 * L + CB + 6 + 2 + 32 + 2 * DB;
     logic                   h_ack, h_wv;
     logic [S-1:0]           h_rv, h_req, h_dv, h_pop;
     logic [L-1:0]           h_rm, h_wm;
     logic [L-1:0][31:0]     h_ra, h_wa, h_wd;
     logic [S-1:0][L-1:0][31:0] h_dd;
     cmd_t                   h_cmd [S];
-    logic [S-1:0][1:0]      sl_drd, sl_dwr;
+    logic [S-1:0][DB-1:0]   sl_drd, sl_dwr;
 
     otpu_coll_hub #(.S(S), .LANES(L)) u_chub (
       .clk, .rst(coll_rst),
@@ -493,22 +622,39 @@ module otpu_board #(
       logic [L-1:0][31:0] p_dd;
       logic [L-1:0]       p_rm, p_wm;
       logic [L-1:0][31:0] p_ra, p_wa, p_wd;
-      logic          p_rv, p_wv, rx_crst;
-      logic [1:0]    drd, dwr;
+      logic          p_rv, p_wv, rx_crst, rx_srst;
+      logic [DB-1:0] drd, dwr;
       for (genvar k = 0; k < 8; k++) begin : g_arg
         assign arg_d[32*k +: 32] = arg[k];
         assign x_arg[s][k] = arg_q[32*k +: 32];
       end
-      assign dn_d = {arg_d, ld_n, ld_addr, ld_start, core_rst, rst, h_wd, h_wa, h_wm, h_ra, h_rm,
+      assign dn_d = {arg_d, ld_n, ld_addr, ld_start, core_rst, r_sh, h_wd, h_wa, h_wm, h_ra, h_rm,
                      h_wv, h_rv[s], h_ack};
       otpu_xr #(.W(DW), .RW(3)) u_dn_tx (.clk, .rst(coll_rst), .d(dn_d), .q(dn_m));
       otpu_xr #(.W(DW), .RW(3)) u_dn_rx (.clk, .rst(rx_crst), .d(dn_m), .q(dn_q));
-      assign {arg_q, x_ld_n[s], x_ld_addr[s], x_ld_start[s], rx_crst, x_srst[s], p_wd, p_wa,
+      assign {arg_q, x_ld_n[s], x_ld_addr[s], x_ld_start[s], rx_crst, rx_srst, p_wd, p_wa,
               p_wm, p_ra, p_rm, p_wv, p_rv, sc_ack[s]} = dn_q;
-      assign x_rst[s] = rx_crst;
+      // the slice's resets, a register per destination after the crossing, next to its loads
+      // (250 MHz, FK35: u_dn_rx's reset bits -> the slice's activity registers, its adapter's
+      // reply-tag RAM, 0-1 levels, 97% route, -0.59 ns): the core reset to the slice (x_rst), to its
+      // adapter's flush (x_frst), to the collective port and the up crossing; the system reset to
+      // the slice (x_srst) and to its adapter (x_mrst). They reach the slice a cycle after the rest
+      // of the crossing (LOAD, the arguments): LOAD comes only with RUN 0, the core reset held, and
+      // the system reset only at power-up; a stopped run's slice stops a cycle later (go_ok waits
+      // for its adapter as before). keep: equivalent flip-flops (and the other slice's), kept apart.
+      (* keep = "true", shreg_extract = "no", max_fanout = 64 *) logic [2:0] cr_q;
+      (* keep = "true", shreg_extract = "no", max_fanout = 64 *) logic [1:0] sr_q;
+      always_ff @(posedge clk) begin
+        cr_q <= {3{rx_crst}};
+        sr_q <= {2{rx_srst}};
+      end
+      assign x_rst[s]  = cr_q[0];
+      assign x_frst[s] = cr_q[1];
+      assign x_srst[s] = sr_q[0];
+      assign x_mrst[s] = sr_q[1];
 
       otpu_coll_port #(.LANES(L)) u_cport (
-        .clk, .rst(x_rst[s]), .rv(p_rv), .rm(p_rm), .ra(p_ra), .wv(p_wv), .wm(p_wm), .wa(p_wa),
+        .clk, .rst(cr_q[2]), .rv(p_rv), .rm(p_rm), .ra(p_ra), .wv(p_wv), .wm(p_wm), .wa(p_wa),
         .wd(p_wd), .dv(p_dv), .dd(p_dd), .pop(p_pop),
         .coll_ren(sc_ren[s]), .coll_raddr(sc_raddr[s]), .coll_rdata(sc_rdata[s]),
         .coll_wen(sc_wen[s]), .coll_waddr(sc_waddr[s]), .coll_wdata(sc_wdata[s]),
@@ -518,15 +664,15 @@ module otpu_board #(
       always_comb begin
         drd = '0;
         dwr = '0;
-        for (int c = 2 * s; c < 2 * s + 2; c++) begin
-          drd += 2'(n_rvalid[c]);
-          dwr += 2'(n_wvalid[c] && n_wready[c]);
+        for (int c = NCPS * s; c < NCPS * s + NCPS; c++) begin
+          drd += DB'(n_rbt[c]);
+          dwr += DB'(n_wbt[c]);
         end
       end
       assign up_d = {drd, dwr, q_icount[s], q_ret[s], q_ld_busy[s], q_halted[s], q_error[s],
                      q_wait_to[s], q_wr_idle[s], q_rd_idle[s], sc_cmd[s], p_dd, p_pop, p_dv,
                      sc_req[s]};
-      otpu_xr #(.W(UW), .RW(3)) u_up_tx (.clk, .rst(x_rst[s]), .d(up_d), .q(up_m));
+      otpu_xr #(.W(UW), .RW(3)) u_up_tx (.clk, .rst(cr_q[2]), .d(up_d), .q(up_m));
       otpu_xr #(.W(UW), .RW(3)) u_up_rx (.clk, .rst(coll_rst), .d(up_m), .q(up_q));
       assign {sl_drd[s], sl_dwr[s], icount[s], sl_ret[s], sl_ld_busy[s], sl_halted[s],
               sl_error[s], sl_wait_to[s], sl_wr_idle[s], sl_rd_idle[s], h_cmd[s], h_dd[s],
@@ -559,7 +705,10 @@ endmodule
 
 // One register stage of an SLR crossing (otpu_board at S > 1: a pair per direction and slice, one
 // stage on each side). The low RW bits (valid pulses, request levels) clear with rst; the others
-// are data. max_fanout: a stage's reset bit drives a slice's whole core reset (as core_rst).
+// are data. keep: every slice's stages hold the same control bits (the arguments, LOAD, the
+// resets, the collective's writes), and merged into one set they sat between the slices and drove
+// both (250 MHz, FK35: g_x[].u_dn_rx -> the slices' resets, -0.59 ns), so each slice keeps its own.
+// shreg_extract: two plain stages behind plain sources stay flip-flops (no SRL).
 module otpu_xr #(
   parameter int W  = 1,
   parameter int RW = 0
@@ -569,7 +718,8 @@ module otpu_xr #(
   input  logic [W-1:0] d,
   output logic [W-1:0] q
 );
-  (* max_fanout = 256 *) logic [W-1:0] r;     // r_reg: the floorplan's USER_SLL_REG cells
+  // r_reg: the BCU1525 floorplan's USER_SLL_REG cells
+  (* keep = "true", shreg_extract = "no", max_fanout = 256 *) logic [W-1:0] r;
   assign q = r;
   always_ff @(posedge clk) begin
     r <= d;

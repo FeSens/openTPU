@@ -2,9 +2,10 @@ name: otpu_native_dram
 description: 'Native DRAM adapter (the board''s): slice ports A (words), B (chunks) and the QST
   write port onto the two channels'' native ports, one command per 64-byte beat, 64-byte interleave (hashed),
   per-channel queues, in-order read merge, A-beat reuse, the SW queue''s read-fill with its hazard buckets,
-  write acknowledges (n_wdone, wr_idle).'
+  write acknowledges (n_wdone, wr_idle); otpu_native_dram2 (DUAL): two of them by chunk parity.'
 allowed:
 - rtl/mem/otpu_native_dram.sv
+- rtl/mem/otpu_native_dram2.sv
 synth:
   parts:
   - top: otpu_native_dram
@@ -40,4 +41,5 @@ tests:
   - tests/test_rtl.py::test_board_memory_path_stress[2-60]
   - tests/test_rtl.py::test_board_memory_path_fuzz[1-70]
   - tests/test_board.py
+  - tests/test_dual_rtl.py
 perf: true

@@ -1,0 +1,70 @@
+# The SQRL FK35 (Forest Kitten 35): Virtex UltraScale+ HBM xcvu35p-fsvh2104-2-e (two SLRs), 8 GB HBM2 (two stacks),
+# PCIe (XDMA, PCIE4C_X1Y0, x8); the FK33's PCB (targets/sqrl-fk33.toml) with the bigger FPGA. Two slices, each on four
+# channels (DUAL): board channel j = 4s + c is HBM bytes j x 1 GiB through otpu_hbm_port (rtl/boards/sqrl-fk35), the
+# four pseudo-channels of one mini-switch, all 32 AXI ports; slice 0 on the first stack and slice 1 on the second, so
+# the slices' 32-bit DRAM addresses reach all 8 GB (docs/sqrl-fk35.md). XDMA reaches channel j at j x 2 GiB.
+# The card's XDMA identity is SQRL's (1E24:1533). platform_id 4 as the openTPU_FK port's fk35 target (3 is taken there
+# by the VCU128, 5 is the FK33).
+
+[target]
+name = "sqrl-fk35"
+kind = "fpga"
+platform_id = 4
+description = "SQRL FK35: xcvu35p, HBM2 8 GB, XDMA x8; 2 slices x 4 channels (DUAL)"
+
+[arch]
+S = 2
+D = 128
+MCOLS = 4
+ACT_BLOCKS = 128
+ACT_ROWS = 0
+TMEM_WORDS = 65536
+IMEM_WORDS = 32768
+DRAM_BYTES = 4294967296         # per slice: 1 GiB of each of its four channels (DUAL)
+LANES = 8
+PAIR = true
+DUAL = true                     # four channels a slice, port B chunk pairs (int8 MM PAIR, otpu_native_dram2)
+QUAD = true                     # (DUAL) 4-bit MM PAIR four blocks (two chunks) an advance (MCOLS/4 rows: decode)
+DAW = 32                        # DRAM address width per slice, 32..36 (docs/wide_dram_hbm.md)
+DSTEP = true
+STREAM = true
+SEQ_WC = false
+
+[uarch]
+MXU_IMPL = 2
+MXU_CL = 16
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 0
+RPB = 0
+WPB = 1
+WIN = 16
+FIFO_DEPTH = 1024
+TRACE_DEPTH = 16384
+PQ_WIN = 1024
+CHASH = true
+
+[tech]
+family = "xilinxus"             # rtl/tech/xilinxus: DSP48E2 cells; the TEMP register's SYSMONE4 formula
+part = "xcvu35p-fsvh2104-2-e"
+vendor = "xilinx"
+
+[platform]
+board = "sqrl-fk35"
+core_mhz = 250.0                # the core clock (bd.tcl: from XDMA's 250 MHz axi_aclk); uclk (HBM AXI) 250 MHz
+mem = "hbm2"
+mem_mts = 1800                  # HBM2 at 900 MHz
+mem_ctrl = "xilinx_hbm"
+hostcal = false
+channels_per_slice = 4           # DUAL
+channel_bytes = 2147483648      # the host's DMA reaches channel j = 4s + c at j x this (bd.tcl's 2 GiB windows)
+channel_phys_bytes = 1073741824 # 1 GiB of HBM per channel, all of it the slice's
+beat_bytes = 64
+host = "pcie"
+pcie_gen = 4                    # Gen4 x8 (bd.tcl PCIE_GEN; Gen3 x8 before build f35d000c)
+pcie_lanes = 8
+
+# The recommended mixes on this card: formats.MIXES (docs/formats.md), no mixes table of its own. Without QUAD (build f35d0004)
+# int8 decoded about as fast as 4-bit and this table made the Qwen3.5-4B and 9B int8; with QUAD a 4-bit MM streams 256
+# bytes a cycle too (build f35d000b: 4B int8 25.29 tok/s, fp4 43.08; 9B int8 14.29, its mix 21.96, fp4 24.48), so the
+# mixes pay again

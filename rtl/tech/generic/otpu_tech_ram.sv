@@ -15,7 +15,7 @@
 module otpu_ram_1r1w #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -66,7 +66,7 @@ endmodule
 module otpu_ram_1r1w_ra #(
   parameter int    W     = 32,
   parameter int    N     = 64,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -80,6 +80,16 @@ module otpu_ram_1r1w_ra #(
   logic         by;
   if (STYLE == "distributed") begin : g_lut
     (* ram_style = "distributed" *) logic [W-1:0] mem [N];
+    always_ff @(posedge clk) begin
+      if (we) mem[wa] <= wd;
+      q <= mem[ra_n];
+    end
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
+  end else if (STYLE == "ultra") begin : g_uram
+    // UltraRAM (72 bits x 4096 a cell): the same one-cycle read, from its unregistered output
+    (* ram_style = "ultra" *) logic [W-1:0] mem [N];
     always_ff @(posedge clk) begin
       if (we) mem[wa] <= wd;
       q <= mem[ra_n];
@@ -111,7 +121,7 @@ endmodule
 module otpu_ram_1r1w_be #(
   parameter int    W     = 64,           // a multiple of 8
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -150,7 +160,7 @@ endmodule
 module otpu_ram_1rw #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,
@@ -189,7 +199,7 @@ endmodule
 module otpu_ram_1rw1r #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
-  parameter string STYLE = "block",
+  parameter STYLE = "block",        // untyped: Vivado 2019.2 has no string parameters
   parameter bit    ZERO  = 1'b1
 ) (
   input  logic                 clk,

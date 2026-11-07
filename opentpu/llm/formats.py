@@ -17,7 +17,8 @@ caller, else the OTPU_FORMATS environment variable, else the model's own default
 (Spec.formats).
 
 The Qwen3 / Llama-like, LFM2 and Qwen3.5 models also have a named choice, wformat "mix": int8
-with the model's recommended formats string (Spec.mix, from MIXES: docs/formats.md), unless
+with the model's recommended formats string (Spec.mix, from MIXES or the target's [mixes]:
+docs/formats.md), unless
 the caller or OTPU_FORMATS gives one. wformat int8, int4, fp4 and nvfp4 stay uniform. wformat
 "auto" (otpu-chat's default, auto()) is "mix" where the model has a mix, else int8.
 """
@@ -37,15 +38,23 @@ MIXES: dict = {
     ("qwen3_5_text", 32, 2560, 248320): "delta=fp4,mlp=nvfp4",       # Qwen3.5-4B
     ("smollm3", 36, 2048, 128256): "gateup@9-35=nvfp4",              # SmolLM3-3B
     ("lfm2", 30, 2048, 65536): "conv=nvfp4,gateup=nvfp4,down=fp4",   # LFM2-2.6B
+    ("qwen3_5_text", 32, 4096, 248320): "attn=fp4,delta=nvfp4,mlp=fp4",  # Qwen3.5-9B
     # Gemma 4 E2B: none. Its base checkpoint's mix (attn@15-24=fp4,mlp@15-34=fp4) fails on
     # gemma-4-E2B-it, the chat's, as every other mix (the same config: one entry for both)
 }
+# A target whose own speeds choose otherwise names its choice in its [mixes] (Target.mixes: on
+# a DUAL card without QUAD int8 decodes about as fast as 4-bit, so there int8 is the choice)
 
 
-def mix_for(config: dict) -> str:
-    """The recommended mix of a checkpoint's (text) config, "" for none."""
-    return MIXES.get((config.get("model_type"), config.get("num_hidden_layers"),
-                      config.get("hidden_size"), config.get("vocab_size")), "")
+def mix_for(config: dict, target=None) -> str:
+    """The recommended mix of a checkpoint's (text) config on `target` (a Target, or anything
+    with its `mixes`, or a name; None: the current one): the target's [mixes] entry, else
+    MIXES'; "" for none (int8)."""
+    from opentpu import target as T
+    t = T.current() if target is None else T.load(target) if isinstance(target, str) else target
+    key = (config.get("model_type"), config.get("num_hidden_layers"), config.get("hidden_size"),
+           config.get("vocab_size"))
+    return t.mixes[key] if key in t.mixes else MIXES.get(key, "")
 
 
 def auto(spec, wformat: str) -> str:
@@ -64,8 +73,8 @@ def named(spec, wformat: str, formats: str | None) -> tuple:
     if formats is None:
         formats = os.environ.get("OTPU_FORMATS", getattr(spec, "mix", ""))
     if not formats:
-        raise ValueError("wformat mix: this model has no recommended mix (Spec.mix, "
-                         "formats.MIXES)")
+        raise ValueError("wformat mix: this model has no recommended mix on this target "
+                         "(Spec.mix: formats.MIXES, the target's [mixes]); OTPU_FORMATS names one")
     return "int8", formats
 
 

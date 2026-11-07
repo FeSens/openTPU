@@ -70,10 +70,23 @@ def start(eng, sampling: dict | None = None):
     return p
 
 
+def _lowest_priority() -> None:
+    """nice 19; on Windows (no os.nice: the SQRL cards' hosts) the process's IDLE_PRIORITY_CLASS."""
+    if hasattr(os, "nice"):
+        os.nice(19)
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.SetPriorityClass(k.GetCurrentProcess(), 0x40)     # IDLE_PRIORITY_CLASS
+    except (AttributeError, OSError):
+        pass
+
+
 def _main(spec, cfg, cap, batch, rows, image_kw: dict, stream_fill: bool, layout, block: int,
           conv_lo: int, chain: bool, debug: bool, split, waitc: bool, samps) -> None:
     from opentpu.llm import generate as G
-    os.nice(19)
+    _lowest_priority()
     image = spec.image(cfg, cap, batch, rows, **image_kw)
     image.stream_fill = stream_fill
     for b in range(1, G.buckets(cap, block) + 1):

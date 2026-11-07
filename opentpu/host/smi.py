@@ -1,6 +1,6 @@
 """otpu-smi: the state of openTPU cards, like nvidia-smi.
 
-    otpu-smi                      one table per device (/dev/xdma*): bitstream, link, DDR3
+    otpu-smi                      one table per device (/dev/xdma*): bitstream, link, DDR3 / HBM2
                                   calibration, temperature, power (measured or estimated),
                                   DRAM, utilization over a short interval, the owning process
     otpu-smi -l 1                 again every second (utilization over each second)
@@ -73,14 +73,19 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
     d = {"device": dev, "time": time.time(), "id": ident, "ok": ident == R.ID_OTPU,
          "link": "ok" if ident == R.ID_OTPU else
          "down (registers read 0xffffffff)" if ident == 0xFFFFFFFF else
-         f"no openTPU (ID {ident:#010x})", "pcie": pcie_link(dev)}
+         f"no openTPU (ID {ident:#010x})",
+         # sysfs (Linux XDMA), else the transport's own (Windows' sqrlfk: the PnP properties)
+         "pcie": pcie_link(dev) or (t.pcie_link() if hasattr(t, "pcie_link") else None)}
     if not d["ok"]:
         return d
     i = b.info()
+    tg = _target(i)
     d.update(regmap=i["regmap"],
              bitstream={"D": i["D"], "MCOLS": i["MCOLS"], "LANES": i["LANES"],
                         "core_mhz": i["core_khz"] / 1e3 if i["core_khz"] else None,
-                        "build_id": i["build_id"], "ddr_mts": i["ddr_mts"]},
+                        "build_id": i["build_id"], "ddr_mts": i["ddr_mts"],
+                        "target": tg.name if tg else None,
+                        "mem": tg.platform.get("mem", "ddr3") if tg else "ddr3"},
              calib=i["calib"], status=i["status"], running=i["running"], caps=i["caps"],
              temp_c=i["temp_c"])
     if b.v2:
@@ -97,6 +102,18 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
     d["power"] = _power(d, power_json)
     d["measured"] = _measured(t, i["caps"]) if i2c else None
     return d
+
+
+def _target(info: dict):
+    """The target a register map 4+ bitstream names (CFG_PLATFORM: its memory, e.g. the SQRL FK33 /
+    FK35's HBM2), None before map 4 or for a platform this tree does not have."""
+    if not info.get("cfg"):
+        return None
+    from opentpu.target import by_platform
+    try:
+        return by_platform(info["cfg"]["platform"])
+    except Exception:           # (a malformed target file elsewhere in the tree)
+        return None
 
 
 def _measured(t, caps: dict | None) -> dict | None:
@@ -237,7 +254,8 @@ def _gen(pcie: str | None) -> str:
     """'2.5 GT/s PCIe x8' -> 'PCIe Gen1 x8'."""
     if not pcie:
         return "PCIe n/a"
-    gen = {"2.5": "Gen1", "5.0": "Gen2", "5": "Gen2", "8.0": "Gen3", "8": "Gen3"}
+    gen = {"2.5": "Gen1", "5.0": "Gen2", "5": "Gen2", "8.0": "Gen3", "8": "Gen3", "16.0": "Gen4",
+           "16": "Gen4", "32.0": "Gen5", "32": "Gen5"}
     sp, _, wd = pcie.partition(" x")
     return f"PCIe {gen.get(sp.split()[0], sp)} x{wd}" if wd else pcie
 
@@ -247,9 +265,19 @@ def bus_id(dev: str) -> str:
     return p.resolve().name if p.exists() else "n/a"
 
 
-def ddr_name(mts: int | None) -> str:
-    """"DDR3-1066" from the bitstream's DDR_MTS register, "DDR3" when it does not have one."""
-    return f"DDR3-{mts}" if mts else "DDR3"
+def ddr_name(mts: int | None, mem: str = "ddr3") -> str:
+    """"DDR3-1066" / "HBM2-1800" from the target's memory and the bitstream's DDR_MTS register,
+    the memory alone when it does not have one."""
+    return f"{mem.upper()}-{mts}" if mts else mem.upper()
+
+
+def calib_text(mem: str, calib) -> str:
+    """The calibration bits: a DDR channel each ("ch0 ok  ch1 ok"), or on HBM (the SQRL FK33 /
+    FK35) a stack each, both stacks' APB_COMPLETE ("stacks ok", else the stacks that failed)."""
+    if mem.startswith("hbm"):
+        bad = [str(k) for k, c in enumerate(calib) if not c]
+        return f"stack {','.join(bad)} FAIL" if bad else "stacks ok"
+    return "  ".join(f"ch{k} {'ok' if c else 'FAIL'}" for k, c in enumerate(calib))
 
 
 # capability bits shown in the default table (docs/observability.md CAPS); order is the
@@ -347,7 +375,10 @@ def table(devs: list[dict], history: dict | None = None) -> str:
             out += [_kv("Link", d["link"]), "╰" + "─" * (W - 2) + "╯"]
             continue
         bs, u = d["bitstream"], d.get("util")
-        c0, c1 = d["calib"]
+        if bs.get("target"):
+            out[-1] = _head(f"Device {n} · {d['device']} · {bs['target']}"
+                            + (f" · {bid}" if bid != "n/a" else ""), first=True)
+        mem = bs.get("mem") or "ddr3"
         bid = f"build {bs['build_id']:08x}" if bs["build_id"] is not None else "build n/a"
         mhz = f"{bs['core_mhz']:.0f} MHz" if bs["core_mhz"] else "clock n/a"
         out.append(_kv("Bitstream", f"D={bs['D']} MCOLS={bs['MCOLS']} LANES={bs['LANES']}",
@@ -356,8 +387,7 @@ def table(devs: list[dict], history: dict | None = None) -> str:
             out.append(_kv("Caps" if i == 0 else "", row))
         temp = "n/a" if d["temp_c"] is None else f"{d['temp_c']:.0f} °C"
         out.append(_kv("Link", _gen(d.get("pcie")),
-                       f"{ddr_name(bs.get('ddr_mts'))} ch0 {'ok' if c0 else 'FAIL'}  "
-                       f"ch1 {'ok' if c1 else 'FAIL'}",
+                       f"{ddr_name(bs.get('ddr_mts'), mem)} {calib_text(mem, d['calib'])}",
                        f"Temp {temp}"))
         pw, ms = d.get("power"), d.get("measured") or {}
         if ms.get("w") is not None:
@@ -490,14 +520,24 @@ def main(argv=None, open_transport=None) -> int:
     ap.add_argument("--samples", type=int, metavar="N",
                     help="stop after N samples (with -l; a CSV log without an infinite loop)")
     a = ap.parse_args(argv)
+    # -l on a terminal redraws in place (as watch, nvidia-smi -l): cursor home, the table, then
+    # clear what an older, longer one left below; JSON and redirected output still append
+    redraw = bool(a.loop) and not a.json and sys.stdout.isatty()
+    if redraw:
+        _vt_on()
+        sys.stdout.write("\x1b[2J")
 
     def emit(devs, hist=None):
+        if redraw:
+            sys.stdout.write("\x1b[H")
         if a.json:
             print(json.dumps(_jsonable(devs), indent=1))
         elif a.query:
             print("\n\n".join(details(d) for d in devs))
         else:
             print(table(devs, hist))
+        if redraw:
+            sys.stdout.write("\x1b[J")
         sys.stdout.flush()
 
     if a.sim:
@@ -527,6 +567,22 @@ def main(argv=None, open_transport=None) -> int:
         return _loop(a, devs, open_transport, emit)
     except KeyboardInterrupt:
         return 0
+
+
+def _vt_on() -> None:
+    """Windows' console: turn on its VT escape processing (cursor moves, clears), off by default
+    in a classic console window; elsewhere a terminal has it already."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.GetStdHandle(-11)                     # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if k.GetConsoleMode(h, ctypes.byref(mode)):
+            k.SetConsoleMode(h, mode.value | 0x0004)    # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    except (AttributeError, OSError):
+        pass
 
 
 def _loop(a, devs, open_transport, emit) -> int:

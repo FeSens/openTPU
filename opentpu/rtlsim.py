@@ -22,7 +22,8 @@ BUILD = ROOT / "build" / "verilator"
 
 RTL_SOURCES = [
     "vpu/otpu_fp.sv", "vpu/otpu_fpipe.sv", "top/otpu_pkg.sv", "mem/otpu_dram.sv", "mem/otpu_tmem.sv",
-    "mem/otpu_native_dram.sv", "mem/otpu_actram.sv", "seq/otpu_seq.sv",
+    "mem/otpu_native_dram.sv", "mem/otpu_native_dram2.sv", "mem/otpu_native_xdram2.sv",
+    "mem/otpu_actram.sv", "seq/otpu_seq.sv",
     "vpu/otpu_vtree.sv", "dma/otpu_dma.sv", "mxu/otpu_mxu.sv", "tech/generic/otpu_tech_dsp.sv",
     "tech/generic/otpu_tech_ram.sv",
     "vpu/otpu_quant.sv", "vpu/otpu_se_comp.sv", "vpu/otpu_se_tail.sv", "vpu/otpu_vpu.sv",
@@ -49,9 +50,11 @@ def verilator_version() -> str:
     return _VERSION
 
 
-def build_dir(top: str, sources: list[Path], params: dict | None = None) -> Path:
+def build_dir(top: str, sources: list[Path], params: dict | None = None,
+              defines: list | None = None) -> Path:
     """The build's directory: keyed on the sources' names (in the tree: OTPU_REMOTE_BUILD shares
-    build/ between trees) and contents, the parameters, VFLAGS and Verilator's version."""
+    build/ between trees) and contents, the parameters, VFLAGS and Verilator's version, and the
+    defines (-D; none: the key of a build without them, as before)."""
     h = hashlib.sha1()
     for s in sources:
         s = Path(s).resolve()
@@ -59,16 +62,21 @@ def build_dir(top: str, sources: list[Path], params: dict | None = None) -> Path
         h.update(name.encode() + b"\0" + s.read_bytes() + b"\0")
     h.update(repr(sorted((params or {}).items())).encode())
     h.update(repr(VFLAGS).encode() + b"\0" + verilator_version().encode())
+    if defines:
+        h.update(b"\0-D" + repr(list(defines)).encode())
     return BUILD / f"{top}_{h.hexdigest()[:12]}"
 
 
-def build(top: str, sources: list[Path], params: dict | None = None) -> Path:
+def build(top: str, sources: list[Path], params: dict | None = None,
+          defines: list | None = None) -> Path:
     """Compile `top` with Verilator (--binary); cached (build_dir). The build runs in a
     temporary directory, renamed into place once linked, under a lock per build: a concurrent
     build of the same waits for it instead of running a half-linked executable, and a build
-    killed or failed leaves no executable for the next to take."""
+    killed or failed leaves no executable for the next to take. defines: Verilator's -D, e.g.
+    daw_defines(34) = ["OTPU_DAW=34"]."""
     params = params or {}
-    out = build_dir(top, sources, params)
+    defines = list(defines or [])
+    out = build_dir(top, sources, params, defines)
     exe = out / f"V{top}"
     if exe.exists():
         return exe
@@ -84,6 +92,7 @@ def build(top: str, sources: list[Path], params: dict | None = None) -> Path:
         try:
             cmd = ["verilator", *VFLAGS, "--top-module", top, "-Mdir", str(tmp)]
             cmd += [f"-G{k}={v}" for k, v in params.items()]
+            cmd += [f"-D{d}" for d in defines]
             cmd += [str(s) for s in sources]
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0 and "linker command failed" in r.stdout + r.stderr:
@@ -208,6 +217,12 @@ if os.environ.get("OTPU_TMEM_NCP"):
 # set by +tm_* plusargs: OTPU_SIM_PLUSARGS; docs/tmem_nocopy.md)
 if os.environ.get("OTPU_TMEM_IMPL"):
     UARCH["TMEM_IMPL"] = BOARD_UARCH["TMEM_IMPL"] = int(os.environ["OTPU_TMEM_IMPL"])
+# The board model's DUAL adapters behind the crossing of the slices' ports (otpu_board MEMX, the
+# FK35's OTPU_MEMX build): OTPU_MEMX=1 (tb_board only). Its channels' bridges with registered
+# arbiter inputs and block-RAM FIFOs: OTPU_MCH_FAST, otpu_mem_ch's options as bits (1 RQ, 2 BRAM:
+# the FK35's block-RAM read FIFOs, 4 AREG; 7 all three, the 400 MHz experiment's)
+MEMX = int(os.environ.get("OTPU_MEMX") or 0)
+MCH_FAST = int(os.environ.get("OTPU_MCH_FAST") or 0)
 # ... OTPU_TMEM_IMPL=3: one copy of sub-banked RAMs (otpu_tmem IMPL 3), OTPU_TMEM_NSB RAMs a bank
 # with the sub-bank at word-address bit OTPU_TMEM_SBP, hashed by OTPU_TMEM_SBH (1, 2); with
 # OTPU_TMEM_RPL=1 lost reads are replayed under the board's arbiter (otpu_slice TMEM_RPL); with
@@ -257,14 +272,81 @@ def ldc_plusargs(mts: int, mhz: float = 0) -> list[str]:
     return [f"+ldc_ratio={round(1e6 * (mhz or ctl) / ctl)}"]
 
 
+# DRAM address width (isasim.Config.DAW, 32..36; isa.py "DRAM address width", docs/wide_dram_hbm.md):
+# the RTL is built with -DOTPU_DAW=cfg.DAW (otpu_pkg DAW; none at 32, so DAW 32's build keys are as
+# they were). Above 32 a slice's simulated DRAM is a WINDOW of `window` bytes per 4 GiB region
+# (2^(DAW - 32) windows: otpu_dram / otpu_native_mem NREG), each decoded by the low bits of the
+# address in its region, so an address and the one 4 GiB above it are different bytes, while
+# inside a region the window repeats (as DAW 32's one memory does through its 4 GiB). run()'s
+# images and results are then arrays [2^(DAW - 32), window] (region r's window in row r; an image
+# may also be a 1-D array, region 0's, or {region: 1-D array}); a test compares them with the ISA
+# simulator's DRAM at the window's place in each region (bases: wide_from_flat).
+WIDE_WINDOW = 1 << 20
+
+
+def daw_of(cfg) -> int:
+    """The configuration's DRAM address width (32 without the field)."""
+    d = int(getattr(cfg, "DAW", 32) or 32)
+    if not 32 <= d <= 36:
+        raise ValueError(f"DAW {d}: 32 .. 36")
+    return d
+
+
+def daw_defines(daw: int) -> list[str]:
+    """The RTL's defines at DRAM address width `daw` (32: none)."""
+    if not 32 <= daw <= 36:
+        raise ValueError(f"DAW {daw}: 32 .. 36")
+    return [f"OTPU_DAW={daw}"] if daw > 32 else []
+
+
+def wide_image(img, daw: int, window: int) -> np.ndarray:
+    """A DAW > 32 slice's DRAM image as the RTL's windows: uint8 [2^(DAW - 32), window] from a
+    2-D array (its rows the first regions'), {region: 1-D array} or a 1-D array (region 0's)."""
+    nreg = 1 << (daw - 32)
+    out = np.zeros((nreg, window), np.uint8)
+    if isinstance(img, dict):
+        rows = {int(r): np.asarray(v, np.uint8).reshape(-1) for r, v in img.items()}
+    else:
+        a = np.asarray(img, np.uint8)
+        rows = dict(enumerate(a)) if a.ndim == 2 else {0: a.reshape(-1)}
+    for r, v in rows.items():
+        if not 0 <= r < nreg or len(v) > window:
+            raise ValueError(f"wide image: region {r} ({len(v)} bytes) at DAW {daw}, window {window}")
+        out[r, :len(v)] = v
+    return out
+
+
+def wide_from_flat(flat: np.ndarray, daw: int, window: int, bases=None) -> np.ndarray:
+    """The windows [2^(DAW - 32), window] the RTL holds of a flat DRAM (the ISA simulator's
+    2^DAW-byte one, or any array that long, lazily allocated): region r's bytes from offset
+    bases[r] (a multiple of the window; default 0) of the region."""
+    nreg = 1 << (daw - 32)
+    out = np.zeros((nreg, window), np.uint8)
+    for r in range(nreg):
+        b = (bases or {}).get(r, 0) if isinstance(bases, dict) else (bases[r] if bases else 0)
+        if b % window or not 0 <= b <= (1 << 32) - window:
+            raise ValueError(f"wide_from_flat: base {b:#x} of region {r}")
+        lo = (r << 32) + b
+        if lo < len(flat):
+            v = flat[lo:lo + window]
+            out[r, :len(v)] = v
+    return out
+
+
 def top_params(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool | int = False,
                dram_bytes: int | None = None) -> dict:
+    if daw_of(cfg) > 32 and not dram_bytes:
+        dram_bytes = WIDE_WINDOW                          # (a window per region, not 2^DAW)
     p = {"S": cfg.S, "D": cfg.D, "MCOLS": cfg.MCOLS, "ACT_BLOCKS": cfg.ACT_BLOCKS,
          "ACT_ROWS": cfg.act_rows,
          "TMEM_WORDS": cfg.TMEM_WORDS, "IMEM_WORDS": cfg.IMEM_WORDS,
          "DRAM_WORDS": (dram_bytes or cfg.DRAM_BYTES) // 4, "DRAM_LAT": dram_lat,
          "LANES": cfg.LANES,
          "AXI": int(axi)}                                # otpu_top's memory path (2: LDC)
+    if getattr(cfg, "DUAL", False):
+        p["DUAL"] = 1                                    # port B chunk pairs (int8 MM PAIR)
+    if getattr(cfg, "QUAD", False):
+        p["QUAD"] = 1                                    # 4-bit MM PAIR four blocks an advance
     p.update(UARCH)
     p.update(uarch or {})
     if p.get("TMEM_IMPL") == 3 and "TMEM_SBP" not in p:
@@ -287,7 +369,8 @@ def build_top(cfg, dram_lat: int = 8, uarch: dict | None = None, axi: bool = Fal
     mem = ([shell / "otpu_afifo.sv", shell / "otpu_mem_ch.sv", TB / LDC_MODELS[ldc],
             TB / "otpu_ldc_mem.sv"] if ldc else [TB / "otpu_native_mem.sv"] if axi else [])
     return build("tb_top", [RTL / s for s in RTL_SOURCES] + mem + [TB / "tb_top.sv"],
-                 top_params(cfg, dram_lat, uarch, 2 if ldc else axi, dram_bytes))
+                 top_params(cfg, dram_lat, uarch, 2 if ldc else axi, dram_bytes),
+                 daw_defines(daw_of(cfg)))
 
 
 def run(cfg, programs: list, images: list, *args, keep: Path | None = None, **kw):
@@ -307,7 +390,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         seed: int | None = None, bw: int | None = None, lat: int | None = None,
         plusargs: list | None = None, args=None, ldc: int | None = None,
         pokes: dict | None = None, again: list | None = None, reload: bool = False,
-        error_ok: bool = False):
+        error_ok: bool = False, window: int | None = None):
     """Run the RTL; returns (drams as uint8 arrays, tmems as uint32 arrays, stats). args: the
     run's arguments (R8..R15 at the start, as isasim.Machine). ldc: MEMORY's LDC for this run
     (the core at MEMORY's LDC_MHZ unless `plusargs` set +ldc_ratio: ldc_plusargs). pokes:
@@ -319,7 +402,10 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     host's writes before it (the native memory model only)}; reload: the programs loaded again
     before each (boot only). error_ok: a run that stops with an error (an illegal instruction,
     a WAITW timeout) returns its state too, stats["error"] set. The result is the state after
-    the last run."""
+    the last run. cfg.DAW > 32 (see WIDE_WINDOW): the DRAM is a window of `window` bytes
+    (default WIDE_WINDOW, a power of two) per 4 GiB region, the images wide_image's forms and the
+    drams returned [2^(DAW - 32), window] arrays; pokes take the 2^DAW-byte addresses; no boot,
+    no LDC."""
     from . import isa as I
     run_args = args
     axi = MEMORY["AXI"] if axi is None else axi
@@ -328,6 +414,13 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     stall = MEMORY["STALL"] if stall is None else stall
     seed = MEMORY["SEED"] if seed is None else seed
     ldc = (MEMORY["LDC"] if ldc is None else ldc) if axi else 0
+    daw = daw_of(cfg)
+    win = window or WIDE_WINDOW
+    if daw > 32:
+        if win < 4096 or win & (win - 1) or win > 1 << 30:
+            raise ValueError(f"window {win}: a power of two, 4 KiB .. 1 GiB")
+        if boot or ldc:
+            raise ValueError("DAW > 32: no boot from DRAM, no LDC (the windows; see WIDE_WINDOW)")
     tmp = Path(keep) if keep else Path(tempfile.mkdtemp(prefix="otpu_"))
     tmp.mkdir(parents=True, exist_ok=True)
     imgs, progs = [], []
@@ -336,7 +429,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         if len(words) > cfg.IMEM_WORDS:
             raise ValueError("program does not fit IMEM")
         _write_hex(tmp / f"prog_{s}.hex", words)
-        img = np.asarray(images[s], np.uint8)
+        img = (wide_image(images[s], daw, win).reshape(-1) if daw > 32
+               else np.asarray(images[s], np.uint8))
         imgs.append(np.concatenate([img, np.zeros(-len(img) % 4, np.uint8)]))
         progs.append(np.asarray(words, "<u4"))
     # EXPERIMENTAL (docs/seq_vpu.md): the compiler's wait entries (opentpu.waits) for otpu_seq
@@ -373,7 +467,7 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
     if grow:
         at = cfg.DRAM_BYTES
     exe = build_top(cfg, 20 if axi else dram_lat, uarch, axi,
-                    2 * cfg.DRAM_BYTES if grow else None, ldc)
+                    win if daw > 32 else 2 * cfg.DRAM_BYTES if grow else None, ldc)
     for s in range(cfg.S):
         img = imgs[s]
         if boot:
@@ -437,6 +531,8 @@ def _run(cfg, programs: list, images: list, dram_lat: int = 8, max_cycles: int =
         if len(drams[s]) < len(imgs[s]):
             raise RuntimeError(f"dram_out_{s}.bin has {len(drams[s])} bytes, fewer than the "
                                f"{len(imgs[s])}-byte image: the dump was cut short")
+    if daw > 32:                       # the windows, a row a region
+        drams = [d[:len(imgs[s])].reshape(1 << (daw - 32), win) for s, d in enumerate(drams)]
     if boot:                           # the program is not part of the result
         drams = [d[:cfg.DRAM_BYTES] for d in drams]
         for s in range(cfg.S):

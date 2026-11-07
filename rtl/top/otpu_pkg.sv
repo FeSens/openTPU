@@ -1,6 +1,28 @@
 // openTPU ISA constants, the decoded command passed from the sequencer to the units, and the
 // memory footprints the sequencer's scoreboard uses to let units run concurrently.
+`ifndef OTPU_DAW
+`define OTPU_DAW 32
+`endif
 package otpu_pkg;
+  // DAW: a slice's DRAM byte-address width, 32 (4 GiB, the default) .. 36 (64 GiB): build with
+  // -DOTPU_DAW=N (Vivado: verilog_define OTPU_DAW=N; docs/wide_dram_hbm.md, isa.py "DRAM address
+  // width"). A DRAM byte address is {REG, (R[x] + imm) mod 2^32}: REG, the instruction's 4 GiB
+  // region (RGN = DAW - 32 bits), is in spare bits of its first word (rd[3:0] of LD, ST, DSTEP,
+  // WAITW, MM, QST; flags[7:4] of STREAM), and every DRAM operand of the instruction is in it.
+  // otpu_seq decodes it into the command (cmd_t rg); the units' running byte addresses stay 32
+  // bits and wrap inside the region (no instruction's range crosses a 4 GiB boundary: a contract
+  // of the programs, not checked here); REG leaves on the DRAM ports as the word address's top
+  // bits (waddr). The scoreboard's DRAM ranges have DAW-bit ends {REG, 32 bits}. At DAW 32 REG
+  // does not exist: rg is a constant 0 bit and the netlist is the one without it.
+  localparam int DAW = `OTPU_DAW;
+  localparam bit WIDE = DAW > 32;
+  localparam int RGN = WIDE ? DAW - 32 : 0;          // REG's bits
+  localparam int RGW = WIDE ? DAW - 32 : 1;          // ... as a field (1: a constant 0 at DAW 32)
+  // the slice's DRAM word-address ports (a_addr, b_addr, sw_addr): 32 bits up to DAW 34 (REG in
+  // bits 31:30 above the 30-bit word address in its region), DAW - 2 at 35 and 36
+  localparam int AWW = (DAW - 2 > 32) ? DAW - 2 : 32;
+  // (otpu_seq checks 32 <= DAW <= 36)
+
   localparam logic [7:0] OP_NOP = 8'h00, OP_HALT = 8'h01, OP_LI = 8'h02, OP_ADDI = 8'h03,
                          OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_RLD = 8'h06, OP_WAITW = 8'h07,
                          OP_LD = 8'h10,
@@ -64,19 +86,42 @@ package otpu_pkg;
   localparam int U_DMA = 0, U_MXU = 1, U_Q = 2, U_VPU = 3, U_COLL = 4, NUNITS = 5;
 
   // Instruction with register-relative fields already resolved: w1 += R[ra], w2 += R[rb],
-  // w3 += R[rc] (docs/isa.md).
+  // w3 += R[rc] (docs/isa.md). rg: the instruction's DRAM region REG (DAW > 32; 0 at 32 and for
+  // an instruction without DRAM operands), the high bits of every DRAM address in w1 .. w3 (the
+  // units take it for the DRAM fields only: MM's ssa with ASCALE is a TMEM address, STREAM's
+  // src / dst with SRC_T / DST_T are TMEM ones). (Above op, so w1 .. w7 stay 32-bit aligned in
+  // the packed struct for the testbenches that $fscanf into them.)
   typedef struct packed {
+    logic [RGW-1:0] rg;
     logic [7:0]  op;
     logic [7:0]  flags;
     logic [31:0] w1, w2, w3, w4, w5, w6, w7;
   } cmd_t;
 
-  // Address ranges [lo, hi) in one of three spaces.
+  // The DRAM word address on the slice's ports (a_addr, b_addr, sw_addr), AWW bits, of a unit's
+  // 32-bit word-address counter w in region rg: {rg, w[29:0]} (the counters run inside the region
+  // and never carry into bit 30 while they address it); w itself at DAW 32, as before. waddr: the
+  // same of the byte address {rg, b}.
+  function automatic logic [AWW-1:0] wport(input logic [RGW-1:0] rg, input logic [31:0] w);
+    return WIDE ? (AWW'(w[29:0]) | (AWW'(rg) << 30)) : AWW'(w);
+  endfunction
+  function automatic logic [AWW-1:0] waddr(input logic [RGW-1:0] rg, input logic [31:0] b);
+    return wport(rg, b >> 2);
+  endfunction
+
+  // A DRAM range's end: {rg, a}, DAW bits
+  function automatic logic [DAW-1:0] dext(input logic [RGW-1:0] rg, input logic [31:0] a);
+    return DAW'(a) | ((DAW'(rg) << 32) & {DAW{WIDE}});
+  endfunction
+
+  // Address ranges [lo, hi) in one of three spaces. The ends are DAW bits: a DRAM range's are
+  // {REG, 32 bits} (mkr), so ranges of different regions never overlap; TMEM and ACT ranges
+  // have zeros above bit 31.
   localparam logic [1:0] SP_TMEM = 0, SP_DRAM = 1, SP_ACT = 2;
   typedef struct packed {
     logic        v;
     logic [1:0]  sp;
-    logic [31:0] lo, hi;
+    logic [DAW-1:0] lo, hi;
   } rng_t;
   typedef struct packed {
     logic            all;       // BAR: conflicts with everything
@@ -100,15 +145,21 @@ package otpu_pkg;
   // never decides an overlap: every DRAM range starts at a word (DMA, MXU, WAITW) or covers its
   // beats' words (QST, beats()), so a range holding the last byte also holds the word 0xFFFFFFFC.
   // TMEM ranges that reach 2^32 do not fit the scoreboard's TAW bits anyway (otpu_seq: all).
-  function automatic rng_t mk(input logic [1:0] sp, input logic [31:0] lo, input logic [31:0] len);
+  // mkr: a DRAM range in region rg (DAW > 32): its ends {rg, lo} and {rg, the end clamped as
+  // above}, so it never leaves its region (opentpu.waits _mk); mk: region 0 (TMEM, ACT).
+  function automatic rng_t mkr(input logic [1:0] sp, input logic [RGW-1:0] rg,
+                               input logic [31:0] lo, input logic [31:0] len);
     rng_t r;
     logic [32:0] hi;
     hi = {1'b0, lo} + {1'b0, len};
     r.v = (len != 0);
     r.sp = sp;
-    r.lo = lo;
-    r.hi = hi[32] ? '1 : hi[31:0];
+    r.lo = dext(rg, lo);
+    r.hi = dext(rg, hi[32] ? '1 : hi[31:0]);
     return r;
+  endfunction
+  function automatic rng_t mk(input logic [1:0] sp, input logic [31:0] lo, input logic [31:0] len);
+    return mkr(sp, '0, lo, len);
   endfunction
 
   // A QST's DRAM range widened to every word of the 64-byte beats it touches: [lo & ~63,
@@ -120,8 +171,8 @@ package otpu_pkg;
   function automatic rng_t beats(input rng_t r);
     rng_t o;
     o = r;
-    o.lo = {r.lo[31:6], 6'd0};
-    o.hi = r.hi | 32'd63;
+    o.lo = {r.lo[DAW-1:6], 6'd0};
+    o.hi = r.hi | DAW'(63);
     return o;
   endfunction
 
@@ -265,12 +316,12 @@ package otpu_pkg;
     f = '0;
     case (c.op)
       OP_LD: begin
-        f.rd[0] = mk(SP_DRAM, c.w1, c.w3 << 2);
+        f.rd[0] = mkr(SP_DRAM, c.rg, c.w1, c.w3 << 2);
         f.wr[0] = mk(SP_TMEM, c.w2, c.w3);
       end
       OP_ST: begin
         f.rd[0] = mk(SP_TMEM, c.w2, c.w3);
-        f.wr[0] = mk(SP_DRAM, c.w1, c.w3 << 2);
+        f.wr[0] = mkr(SP_DRAM, c.rg, c.w1, c.w3 << 2);
       end
       OP_STREAM: begin
         // the shape is in the descriptor, which the sequencer cannot read: the hardware
@@ -278,8 +329,9 @@ package otpu_pkg;
         // place) and dst written (the same range, or one apart from it); o written; read: the
         // descriptor's first 8 words (w1 = desc | ks << 16), the 4 column slots, x, and the
         // constants K0 = T[k], K1 = T[k + ks]
-        f.wr[0] = mk(SP_DRAM, c.w2, 32'(4 * 256 * 256));
-        f.wr[2] = mk(SP_DRAM, c.w3, 32'(4 * 256 * 256));
+        // (both in the instruction's region, as opentpu.waits has them)
+        f.wr[0] = mkr(SP_DRAM, c.rg, c.w2, 32'(4 * 256 * 256));
+        f.wr[2] = mkr(SP_DRAM, c.rg, c.w3, 32'(4 * 256 * 256));
         f.wr[1] = mk(SP_TMEM, c.w7, 32'd256);
         f.rd[0] = mk(SP_TMEM, 32'(c.w1[15:0]), 32'd8);
         f.rd[1] = mk(SP_TMEM, c.w4, 32'(4 * 256));
@@ -291,7 +343,7 @@ package otpu_pkg;
         // are read, o written
         rows = 32'(c.w4[15:0]); cols = 32'(c.w4[31:16]);
         if (rows != 0 && cols != 0) begin
-          f.wr[0] = mk(SP_DRAM, c.w1, (p.p0 + cols) << 2);
+          f.wr[0] = mkr(SP_DRAM, c.rg, c.w1, (p.p0 + cols) << 2);
           f.wr[1] = mk(SP_TMEM, c.w6, rows);
           f.rd[0] = mk(SP_TMEM, c.w2, cols << 1);
           f.rd[1] = mk(SP_TMEM, c.w3, rows);
@@ -301,12 +353,12 @@ package otpu_pkg;
       OP_MM: begin
         n = 32'(c.w4[15:0]); kb = 32'(c.w4[23:16]); m = 32'(c.w6[23:16]);
         if (n != 0 && kb != 0 && m != 0) begin
-          f.rd[0] = mk(SP_DRAM, c.w1, p.p0 + kb * D);
+          f.rd[0] = mkr(SP_DRAM, c.rg, c.w1, p.p0 + kb * D);
           // a scale row's bytes up to block k0 + KB's (docs/isa.md "Weight formats"; PAIR's odd
           // KB: one block more): RSC Sw; int8x Sw and a byte a block; int4x / fp4x6 Sw, a
           // reserved word and a word a block; NVFP4 Sw, three reserved words and 8 bytes a block
           if (!c.flags[0])
-            f.rd[1] = mk(SP_DRAM, c.w2, p.p1 + (c.flags[7] ? 32'd4 :
+            f.rd[1] = mkr(SP_DRAM, c.rg, c.w2, p.p1 + (c.flags[7] ? 32'd4 :
                          (c.flags[5:4] == 2'd0) ? 32'd4 + 32'(c.w4[31:24]) + kb :
                          (c.flags[5:4] == 2'd3) ? 32'd24 + ((32'(c.w4[31:24]) + kb) << 3) :
                                                   32'd12 + ((32'(c.w4[31:24]) + kb) << 2)));
@@ -329,8 +381,8 @@ package otpu_pkg;
         rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
         if (rows != 0 && kb != 0) begin
           f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + kb * D);
-          f.wr[0] = beats(mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1));
-          f.wr[1] = beats(mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3)));
+          f.wr[0] = beats(mkr(SP_DRAM, c.rg, c.w2, p.p1 + p.p2 + 1));
+          f.wr[1] = beats(mkr(SP_DRAM, c.rg, c.w3, 4 * (c.flags[0] ? rows : p.p3)));
         end
       end
       OP_VOP: begin
@@ -370,9 +422,11 @@ package otpu_pkg;
       OP_RLD: f.rd[0] = mk(SP_TMEM, c.w1, 32'd1);
       // WAITW: all of DRAM as written (up to the last byte, see mk), so older stores land before
       // its first read and younger DRAM readers see what the host wrote before the word; the one
-      // TMEM word
+      // TMEM word. DAW > 32: all of DRAM is every region, one range [0, 2^DAW - 1] (the flag word's
+      // region does not say where the data it guards is; opentpu.waits)
       OP_WAITW: begin
         f.wr[0] = mk(SP_DRAM, 32'd0, 32'hFFFF_FFFF);
+        f.wr[0].hi = '1;
         f.wr[1] = mk(SP_TMEM, c.w2, 32'd1);
       end
       default: ;

@@ -76,18 +76,55 @@ def quantize_rows(a: np.ndarray, D: int, row: bool = False) -> tuple[np.ndarray,
     return q, Q.pack_scales("int8", S, dw=d)
 
 
+REGION = 1 << 32             # a DRAM region above DAW 32 (isa.py "DRAM address width")
+
+
 class _Dram:
-    def __init__(self, S: int, size: int):
-        self.size = size
+    """The host arguments' DRAM: bump allocation, 128-byte aligned. Above DAW 32 (`wide`) a
+    bump per 4 GiB region: an allocation goes to the region asked for (place's `regions`), else
+    after the one before, and one that would cross a region boundary starts at the next region
+    (no instruction's DRAM range crosses one). The images are np.zeros (lazy: a 64 GiB DRAM costs
+    what is written)."""
+
+    def __init__(self, S: int, size: int, wide: bool = False):
+        self.size, self.wide = size, wide
         self.next = 0
+        self.cur = 0                            # (wide: the region allocations go to)
+        self.tops: dict = {}                    # (wide: region -> its next free address)
         self.images = [np.zeros(size, dtype=np.uint8) for _ in range(S)]
 
-    def alloc(self, nbytes: int) -> int:
-        a = self.next
-        self.next = (a + nbytes + ALIGN - 1) // ALIGN * ALIGN
-        if self.next > self.size:
+    def alloc(self, nbytes: int, region: int | None = None) -> int:
+        return self.alloc_group([nbytes], region)[0]
+
+    def alloc_group(self, sizes, region: int | None = None) -> list[int]:
+        """Allocations one after the other (each aligned) in one region: an operand and its
+        scale rows (one instruction reads both: they share its region)."""
+        span, offs = 0, []
+        for n in sizes:
+            offs.append(span)
+            span = (span + n + ALIGN - 1) // ALIGN * ALIGN
+        if not self.wide:
+            if region:
+                raise ValueError(f"DRAM region {region}: a configuration with DAW > 32")
+            a = self.next
+            self.next = a + span
+            if self.next > self.size:
+                raise MemoryError("DRAM image does not fit")
+            return [a + o for o in offs]
+        r = self.cur if region is None else region
+        a = self.tops.get(r, r * REGION)
+        if a + span > (r + 1) * REGION:         # (it would cross the region's end)
+            if region is not None:
+                raise MemoryError(f"DRAM region {region} is full")
+            r += 1
+            a = self.tops.get(r, r * REGION)
+        if a + span > self.size:
             raise MemoryError("DRAM image does not fit")
-        return a
+        self.tops[r] = a + span
+        if region is None:
+            self.cur = r
+        self.next = max(self.next, a + span)
+        return [a + o for o in offs]
 
     def put(self, s: int, addr: int, data: np.ndarray) -> None:
         b = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
@@ -99,15 +136,24 @@ class Layout:
     params: dict = field(default_factory=dict)       # name -> (host arg, placement info)
 
 
-def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
-    """Lay out host args in DRAM. Returns images, layout and per-slice bound kernel arguments."""
+def place(cfg: Config, args: dict, regions=None) -> tuple[_Dram, Layout, list]:
+    """Lay out host args in DRAM. Returns images, layout and per-slice bound kernel arguments.
+    regions (DAW > 32): the 4 GiB region of every argument (an int), or of those a dict names
+    ({name: region}), the others after the one before; a Weight's rows and scale rows, and a KV
+    head's K, K scales, V^T and V scales, lie in one region (isa.py: an instruction's DRAM
+    operands share its region)."""
     S, D = cfg.S, cfg.D
-    dram = _Dram(S, cfg.DRAM_BYTES)
+    wide = getattr(cfg, "DAW", 32) > 32
+    if regions and not wide:
+        raise ValueError("place(regions=...): a configuration with DAW > 32")
+    dram = _Dram(S, cfg.DRAM_BYTES, wide)
     layout = Layout()
     bound = [dict() for _ in range(S)]
     for name, a in args.items():
+        reg = regions.get(name) if isinstance(regions, dict) else regions
+        alloc = (lambda n, reg=reg: dram.alloc(n, reg))                 # noqa: E731
         if isinstance(a, Input):
-            addr = dram.alloc(a.array.nbytes)
+            addr = alloc(a.array.nbytes)
             for s in range(S):
                 dram.put(s, addr, a.array)
             layout.params[name] = (a, addr)
@@ -116,7 +162,7 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
                 bound[s][name] = desc
         elif isinstance(a, Output):
             n = int(np.prod(a.shape))
-            addr = dram.alloc(4 * n)
+            addr = alloc(4 * n)
             layout.params[name] = (a, addr)
             for s in range(S):
                 bound[s][name] = _tensor(addr, a.shape, a)
@@ -135,8 +181,7 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
             else:
                 n_loc, parts = N, [a.array] * S
             rs, srs = Q.row_bytes(K, a.fmt, D), Q.scale_bytes(K, a.fmt, D)
-            daddr = dram.alloc(n_loc * rs)
-            saddr = dram.alloc(n_loc * srs)
+            daddr, saddr = dram.alloc_group([n_loc * rs, n_loc * srs], reg)
             for s, p in enumerate(parts):
                 q, sc = Q.quantize_mxu(p, a.fmt, D)
                 dram.put(s, daddr, q)
@@ -153,15 +198,15 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
                 raise ValueError("KV capacity must be a multiple of 4")
             per_slice = [[h for h in range(a.H) if h % S == s] for s in range(S)]
             nloc = max(len(p) for p in per_slice)
-            regions = []
             ksb = k_scale_bytes(d, D)
+            hregs = []
             for _ in range(nloc):
-                regions.append({"k": dram.alloc(cap * d), "ks": dram.alloc(cap * ksb),
-                                "vt": dram.alloc(d * cap), "vs": dram.alloc(4 * cap)})
+                k, ks, vt, vs = dram.alloc_group([cap * d, cap * ksb, d * cap, 4 * cap], reg)
+                hregs.append({"k": k, "ks": ks, "vt": vt, "vs": vs})
             heads = [dict() for _ in range(S)]
             for s in range(S):
                 for j, h in enumerate(per_slice[s]):
-                    r = regions[j]
+                    r = hregs[j]
                     heads[s][h] = r
                     kq, ks = quantize_rows(a.k[h], D, row=d == D)
                     vq, vs = F.quantize(a.v[h], axis=1)
@@ -195,13 +240,16 @@ def _tensor(addr: int, shape, host) -> Tensor:
     return Tensor(Affine(addr), shape, tuple(reversed(strides)), host, Affine(0))
 
 
-def compile_kernel(kernel: Kernel, cfg: Config, **args):
+def compile_kernel(kernel: Kernel, cfg: Config, *, regions=None, **args):
+    """The kernel's programs for `args` placed in each slice's DRAM (place; regions: the
+    arguments' 4 GiB regions, DAW > 32), and the images. No kernel argument is called
+    `regions`."""
     sig = inspect.signature(kernel.fn)
     missing = [p for p, v in sig.parameters.items()
                if p not in args and v.default is inspect.Parameter.empty]
     if missing:
         raise TypeError(f"{kernel.__name__}: missing arguments {missing}")
-    dram, layout, bound = place(cfg, args)
+    dram, layout, bound = place(cfg, args, regions)
     programs, stores = [], []
     for s in range(cfg.S):
         b = kernel.trace(cfg, s, bound[s])
@@ -258,14 +306,21 @@ def collect(compiled: Compiled, drams: list, tmems: list, stats: dict) -> Result
     return Result(outputs, drams, tmems, compiled, stats)
 
 
-def launch(kernel: Kernel, cfg: Config, backend: str = "isa", **args) -> Result:
-    compiled, images = compile_kernel(kernel, cfg, **args)
+def launch(kernel: Kernel, cfg: Config, backend: str = "isa", *, regions=None,
+           **args) -> Result:
+    compiled, images = compile_kernel(kernel, cfg, regions=regions, **args)
     return run(compiled, images, backend)
 
 
-def run(compiled: Compiled, images: list, backend: str = "isa") -> Result:
+def run(compiled: Compiled, images: list, backend: str = "isa",
+        adopt: bool | None = None) -> Result:
+    """adopt: the ISA simulator takes the image arrays as its DRAM (no copy; they hold the
+    run's results afterwards: the caller gives them up). Default: where the DRAM is over 4 GiB
+    (DAW > 32), whose copy would touch every page; else the images are copied."""
     if backend == "isa":
-        m = Machine(compiled.cfg, compiled.programs, images).run()
+        if adopt is None:
+            adopt = compiled.cfg.DRAM_BYTES > REGION
+        m = Machine(compiled.cfg, compiled.programs, images, adopt=adopt).run()
         stats = {"instructions": [s.icount for s in m.slices]}
         return collect(compiled, [s.dram for s in m.slices], [s.tmem for s in m.slices], stats)
     if backend == "rtl":

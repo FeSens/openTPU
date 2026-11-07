@@ -32,11 +32,20 @@
 // slot at the tail is free (wused is never under what the read side holds), and the read side
 // reads a slot as valid only once the write pointer, as synchronized, has passed it. (The room
 // is this cycle's wready, not one a cycle older: a write wready takes is always written.)
+//
+// RQ = 1: rvalid and rdata from registers, their values the cycle before (next cycle's pointers:
+// the read pointer after this cycle's pop, the write pointer as the second synchronizer stage will
+// hold it), so the reader's logic starts at flip-flops; the same values in the same cycles. The
+// head is read a cycle ahead: its slot was written at least a cycle of rclk before the
+// synchronized write pointer passes it, so the RAM may be a block RAM (STYLE "block": its read
+// registered, the write and read ports on their own clocks) as well as a LUT RAM.
 module otpu_afifo #(
   parameter int W = 32,
   parameter int DEPTH = 16,
   parameter bit OOO = 1'b0,
-  parameter bit RWR = 1'b0
+  parameter bit RWR = 1'b0,
+  parameter bit RQ = 1'b0,
+  parameter STYLE = "distributed"         // the RAM (RQ = 1: "block" too; untyped: Vivado 2019.2)
 ) (
   input  logic         wclk,
   input  logic         wrst,
@@ -55,8 +64,8 @@ module otpu_afifo #(
 );
   localparam int AW = $clog2(DEPTH);
   initial if (DEPTH != (1 << AW) || DEPTH < 4) $fatal(1, "otpu_afifo: DEPTH must be a power of two >= 4");
+  initial if (STYLE != "distributed" && !RQ) $fatal(1, "otpu_afifo: a block RAM needs RQ");
 
-  (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
   logic [AW:0] wbin, wgray, rbin, rgray;
   (* ASYNC_REG = "TRUE" *) logic [AW:0] rgray_w1, rgray_w2;   // read pointer, in wclk
   (* ASYNC_REG = "TRUE" *) logic [AW:0] wgray_r1, wgray_r2;   // write pointer, in rclk
@@ -105,7 +114,29 @@ module otpu_afifo #(
       end
     end
   end
-  always_ff @(posedge wclk) if (OOO ? wput : wready) mem[waddr] <= wdata;
+  logic mwe;
+  logic [AW-1:0] mra;                      // the head's slot (block RAM, RQ: next cycle's head)
+  logic [AW-1:0] mra1;                     // RQ: the slot after it (the head after a pop)
+  logic          mpop;                     // RQ: a pop this cycle
+  logic [W-1:0]  mrd;                      // the head's word (RQ: registered)
+  assign mwe = OOO ? wput : wready;
+  // The LUT RAM written and read at the module's top, as before RQ: synthesis names it mem_reg, and
+  // the boards' crossing constraints find it by that name (in a generate block it is g_*.mem_reg)
+  // RQ reads the head and the slot after it from registered addresses, the pop only choosing
+  // between the two words (the RAM's address bits do not wait for the reader's handshake)
+  (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
+  logic [W-1:0] mrd_a, mrd_1, mrd_q;
+  always_ff @(posedge wclk) if (mwe && STYLE != "block") mem[waddr] <= wdata;
+  assign mrd_a = mem[RQ ? rbin[AW-1:0] : mra];
+  assign mrd_1 = mem[mra1];
+  always_ff @(posedge rclk) mrd_q <= mpop ? mrd_1 : mrd_a;
+  if (STYLE == "block") begin : g_bram
+    (* ram_style = "block" *) logic [W-1:0] bmem [DEPTH];
+    always_ff @(posedge wclk) if (mwe) bmem[waddr] <= wdata;
+    always_ff @(posedge rclk) mrd <= bmem[mra];
+  end else begin : g_lut
+    assign mrd = RQ ? mrd_q : mrd_a;
+  end
   if (OOO) begin : g_ooo
     always_ff @(posedge wclk) begin
       if (wrst) wvld <= '0;
@@ -123,9 +154,36 @@ module otpu_afifo #(
   end
 
   // read side
-  assign rvalid = !rrst && (rgray != wgray_r2);
-  assign rdata  = mem[rbin[AW-1:0]];
+  logic rv;
+  assign rvalid = !rrst && rv;
+  assign rdata  = mrd;
   assign rused  = g2b(wgray_r2) - rbin;
+  if (RQ) begin : g_rq
+    // the pointer after a pop (rbin1, its gray code rgray1) kept in registers beside it, so the
+    // pop (the reader's late handshake) only selects: next cycle's head address and not-empty,
+    // each the pop's or the hold's, computed from registers
+    logic [AW:0] rbin1, rgray1;
+    logic        pop, rq_v = 1'b0;
+    assign pop  = rvalid && rready;
+    assign mpop = pop;
+    assign mra  = pop ? rbin1[AW-1:0] : rbin[AW-1:0];    // (block RAM: one read port)
+    assign mra1 = rbin1[AW-1:0];
+    always_ff @(posedge rclk) begin
+      if (rrst) begin
+        rbin1 <= (AW + 1)'(1); rgray1 <= (AW + 1)'(1);
+      end else if (pop) begin
+        rbin1  <= rbin1 + 1'b1;
+        rgray1 <= (rbin1 + 1'b1) ^ ((rbin1 + 1'b1) >> 1);
+      end
+      rq_v <= !rrst && (pop ? rgray1 != wgray_r1 : rgray != wgray_r1);
+    end
+    assign rv = rq_v;
+  end else begin : g_rc
+    assign mra  = rbin[AW-1:0];
+    assign mra1 = rbin[AW-1:0];
+    assign mpop = 1'b0;
+    assign rv  = rgray != wgray_r2;
+  end
   always_ff @(posedge rclk) begin
     if (rrst) begin
       rbin <= '0; rgray <= '0; wgray_r1 <= '0; wgray_r2 <= '0;

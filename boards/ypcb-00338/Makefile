@@ -44,7 +44,7 @@ RTL := $(addprefix $(ROOT)/rtl/, vpu/otpu_fp.sv vpu/otpu_fpipe.sv top/otpu_pkg.s
   vpu/otpu_vpu.sv \
   top/otpu_coll.sv top/otpu_slice.sv \
   shell/otpu_ctrl.sv shell/otpu_trace.sv shell/otpu_board.sv \
-  mem/otpu_native_dram.sv shell/otpu_afifo.sv shell/otpu_mem_ch.sv \
+  mem/otpu_native_dram.sv mem/otpu_native_dram2.sv mem/otpu_native_xdram2.sv shell/otpu_afifo.sv shell/otpu_mem_ch.sv \
   shell/otpu_axi_split2.sv boards/ypcb-00338/otpu_native_sys.sv)
 # MXU_IMPL: the MXU create_project.tcl builds (MXU systolic, the default: 2); the systolic cells'
 # DSP48E1 comes from a lint stub
