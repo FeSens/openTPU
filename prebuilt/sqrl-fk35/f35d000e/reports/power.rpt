@@ -1,0 +1,1786 @@
+Copyright 1986-2019 Xilinx, Inc. All Rights Reserved.
+------------------------------------------------------------------------------------------------------------------
+| Tool Version     : Vivado v.2019.2.1 (win64) Build 2729669 Thu Dec  5 04:49:17 MST 2019
+| Date             : Sat Nov  7 03:54:52 2026
+| Host             : DI-PC running 64-bit major release  (build 9200)
+| Command          : report_power -hierarchical_depth 12 -file M:/fk35v/q8/build/vivado/reports/power.rpt
+| Design           : otpu_fpga_top_fk35
+| Device           : xcvu35p-fsvh2104-2-e
+| Design State     : routed
+| Grade            : extended
+| Process          : typical
+| Characterization : Production
+------------------------------------------------------------------------------------------------------------------
+
+Power Report
+
+Table of Contents
+-----------------
+1. Summary
+1.1 On-Chip Components
+1.2 Power Supply Summary
+1.3 Confidence Level
+2. Settings
+2.1 Environment
+2.2 Clock Constraints
+3. Detailed Reports
+3.1 By Hierarchy
+
+1. Summary
+----------
+
++--------------------------+--------------+
+| Total On-Chip Power (W)  | 41.210       |
+|   FPGA Power (W)         | 31.437       |
+|   HBM Power (W)          | 9.773        |
+| Design Power Budget (W)  | Unspecified* |
+| Power Budget Margin (W)  | NA           |
+| Dynamic (W)              | 37.934       |
+| Device Static (W)        | 3.276        |
+| Effective TJA (C/W)      | 0.5          |
+| Max Ambient (C)          | 78.3         |
+| Junction Temperature (C) | 46.7         |
+| Confidence Level         | Medium       |
+| Setting File             | ---          |
+| Simulation Activity File | ---          |
+| Design Nets Matched      | NA           |
++--------------------------+--------------+
+* Specify Design Power Budget using, set_operating_conditions -design_power_budget <value in Watts>
+
+
+1.1 On-Chip Components
+----------------------
+
++--------------------------+-----------+----------+-----------+-----------------+
+| On-Chip                  | Power (W) | Used     | Available | Utilization (%) |
++--------------------------+-----------+----------+-----------+-----------------+
+| Clocks                   |     3.611 |       30 |       --- |             --- |
+| CLB Logic                |     2.779 |  1245789 |       --- |             --- |
+|   LUT as Logic           |     1.455 |   442618 |    871680 |           50.78 |
+|   LUT as Distributed RAM |     1.074 |    73228 |    403200 |           18.16 |
+|   Register               |     0.146 |   563198 |   1743360 |           32.31 |
+|   CARRY8                 |     0.052 |    14194 |    108960 |           13.03 |
+|   LUT as Shift Register  |     0.052 |    14512 |    403200 |            3.60 |
+|   BUFG                   |    <0.001 |        1 |        64 |            1.56 |
+|   Others                 |     0.000 |    11312 |       --- |             --- |
+|   F7/F8 Muxes            |     0.000 |    10171 |    871680 |            1.17 |
+| Signals                  |     4.039 |  1047976 |       --- |             --- |
+| Block RAM                |     4.350 |    915.5 |      1344 |           68.12 |
+| URAM                     |     0.851 |      192 |       640 |           30.00 |
+| HBM                      |    17.780 |        2 |         2 |          100.00 |
+| MMCM                     |     0.090 |        0 |       --- |             --- |
+| DSPs                     |     0.410 |     1446 |      5952 |           24.29 |
+| I/O                      |     0.009 |        9 |       416 |            2.16 |
+| GTY                      |     3.426 |        8 |        64 |           12.50 |
+| SYSMON                   |     0.010 |        1 |       --- |             --- |
+| Hard IPs                 |     0.500 |        1 |       --- |             --- |
+|   PCIE                   |     0.500 |        1 |       --- |             --- |
+| Static Power             |     3.276 |          |           |                 |
+|   HBM Static             |     0.303 |          |           |                 |
+|   Device Static          |     2.973 |          |           |                 |
+| Total                    |    41.130 |          |           |                 |
++--------------------------+-----------+----------+-----------+-----------------+
+
+
+1.2 Power Supply Summary
+------------------------
+
++------------+-------------+-----------+-------------+------------+-------------+------------+
+| Source     | Voltage (V) | Total (A) | Dynamic (A) | Static (A) | Budget (A)  | Margin (A) |
++------------+-------------+-----------+-------------+------------+-------------+------------+
+| Vccint     |       0.850 |    22.356 |      20.533 |      1.823 | Unspecified | NA         |
+| Vccint_io  |       0.850 |     7.118 |       6.799 |      0.319 | Unspecified | NA         |
+| Vccbram    |       0.850 |     0.420 |       0.366 |      0.054 | Unspecified | NA         |
+| Vccaux     |       1.800 |     0.682 |       0.163 |      0.518 | Unspecified | NA         |
+| Vccaux_io  |       1.800 |     0.028 |       0.004 |      0.024 | Unspecified | NA         |
+| Vcco33     |       3.300 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vcco25     |       2.500 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vcco18     |       1.800 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vcco15     |       1.500 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vcco135    |       1.350 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vcco12     |       1.200 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vcco10     |       1.000 |     0.000 |       0.000 |      0.000 | Unspecified | NA         |
+| Vccadc     |       1.800 |     0.016 |       0.000 |      0.016 | Unspecified | NA         |
+| VCC_IO_HBM |       1.200 |     4.534 |       4.437 |      0.096 | Unspecified | NA         |
+| VCC_HBM    |       1.200 |     4.857 |       4.748 |      0.109 | Unspecified | NA         |
+| VCCAUX_HBM |       2.500 |     0.116 |       0.093 |      0.023 | Unspecified | NA         |
+| MGTYAVcc   |       0.900 |     0.825 |       0.752 |      0.073 | Unspecified | NA         |
+| MGTYAVtt   |       1.200 |     1.752 |       1.727 |      0.026 | Unspecified | NA         |
+| MGTYVccaux |       1.800 |     0.050 |       0.047 |      0.003 | Unspecified | NA         |
++------------+-------------+-----------+-------------+------------+-------------+------------+
+
+
+1.3 Confidence Level
+--------------------
+
++-----------------------------+------------+-------------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+| User Input Data             | Confidence | Details                                               | Action                                                                                                     |
++-----------------------------+------------+-------------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+| Design implementation state | High       | Design is routed                                      |                                                                                                            |
+| Clock nodes activity        | High       | User specified more than 95% of clocks                |                                                                                                            |
+| I/O nodes activity          | Medium     | More than 5% of inputs are missing user specification | Provide missing input activity with simulation results or by editing the "By Resource Type -> I/Os" view   |
+| Internal nodes activity     | Medium     | User specified less than 25% of internal nodes        | Provide missing internal nodes activity with simulation results or by editing the "By Resource Type" views |
+| Device models               | High       | Device models are Production                          |                                                                                                            |
+|                             |            |                                                       |                                                                                                            |
+| Overall confidence level    | Medium     |                                                       |                                                                                                            |
++-----------------------------+------------+-------------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+
+
+2. Settings
+-----------
+
+2.1 Environment
+---------------
+
++-----------------------+--------------------------+
+| Ambient Temp (C)      | 25.0                     |
+| ThetaJA (C/W)         | 0.5                      |
+| Airflow (LFM)         | 250                      |
+| Heat Sink             | medium (Medium Profile)  |
+| ThetaSA (C/W)         | 0.7                      |
+| Board Selection       | medium (10"x10")         |
+| # of Board Layers     | 12to15 (12 to 15 Layers) |
+| Board Temperature (C) | 25.0                     |
++-----------------------+--------------------------+
+
+
+2.2 Clock Constraints
+---------------------
+
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------+
+| Clock                                                                                                                                                                                                                                                                                                                                                                                                                             | Domain                                                                                                                                                                                                                                                                                                                                                                                                             | Constraint (ns) |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------+
+| clk100_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                        | u_bd/otpu_bd_i/clk_wiz_0/inst/clk100                                                                                                                                                                                                                                                                                                                                                                               |            10.0 |
+| clk100_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                        | u_bd/otpu_bd_i/clk_wiz_0/inst/clk100_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                           |            10.0 |
+| core_clk_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                      | u_bd/otpu_bd_i/clk_wiz_0/inst/core_clk_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                         |             4.0 |
+| dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK                                                                                                                                                                                                                                                                                                                               | dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/in0                                                                                                                                                                                                                                                                                                                                                  |            50.0 |
+| mcap_clk                                                                                                                                                                                                                                                                                                                                                                                                                          | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_MCAPCLK                                                                                                                                                                                                                                                                                                         |             8.0 |
+| pcie_refclk                                                                                                                                                                                                                                                                                                                                                                                                                       | pcie_refclk_p                                                                                                                                                                                                                                                                                                                                                                                                      |            10.0 |
+| pipe_clk                                                                                                                                                                                                                                                                                                                                                                                                                          | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/pclk2                                                                                                                                                                                                                                                                                                               |             4.0 |
+| qpll0outclk_out[0]                                                                                                                                                                                                                                                                                                                                                                                                                | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[26].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll0outclk_out[0]                                                     |             0.2 |
+| qpll0outclk_out[0]_1                                                                                                                                                                                                                                                                                                                                                                                                              | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll0outclk_out[0]                                                     |             0.2 |
+| qpll0outrefclk_out[0]                                                                                                                                                                                                                                                                                                                                                                                                             | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[26].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll0outrefclk_out[0]                                                  |            10.0 |
+| qpll0outrefclk_out[0]_1                                                                                                                                                                                                                                                                                                                                                                                                           | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll0outrefclk_out[0]                                                  |            10.0 |
+| qpll1outclk_out[0]                                                                                                                                                                                                                                                                                                                                                                                                                | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[26].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll1outclk_out[0]                                                     |             0.2 |
+| qpll1outclk_out[0]_1                                                                                                                                                                                                                                                                                                                                                                                                              | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll1outclk_out[0]                                                     |             0.2 |
+| qpll1outrefclk_out[0]                                                                                                                                                                                                                                                                                                                                                                                                             | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[26].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll1outrefclk_out[0]                                                  |            10.0 |
+| qpll1outrefclk_out[0]_1                                                                                                                                                                                                                                                                                                                                                                                                           | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/qpll1outrefclk_out[0]                                                  |            10.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[0]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[1]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[2]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[3]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[0]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[1]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[2]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[26].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/gtye4_channel_gen.gen_gtye4_channel_inst[0].GTYE4_CHANNEL_PRIM_INST/TXOUTCLK                 | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/txoutclk_out[3]                                                               |             2.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[0].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[0].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[1].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[1].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[2].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[2].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[3].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[3].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[4].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[4].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[5].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[5].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[6].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[6].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[7].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/otpu_bd_xdma_0_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.otpu_bd_xdma_0_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[7].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_7_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/bufg_gt_intclk/O                                                                                                                                                                                                                                                                                                                   | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_INTCLK                                                                                                                                                                                                                                                                                                          |          1000.0 |
+| uclk_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                          | u_bd/otpu_bd_i/clk_wiz_0/inst/uclk_otpu_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                             |             4.0 |
+| xdma_aclk                                                                                                                                                                                                                                                                                                                                                                                                                         | u_bd/otpu_bd_i/xdma_0/inst/pcie4c_ip_i/inst/gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_USERCLK                                                                                                                                                                                                                                                                                                         |             4.0 |
++-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------+
+
+
+3. Detailed Reports
+-------------------
+
+3.1 By Hierarchy
+----------------
+
++--------------------------------------------------------------------------+-----------+
+| Name                                                                     | Power (W) |
++--------------------------------------------------------------------------+-----------+
+| otpu_fpga_top_fk35                                                       |    37.854 |
+|   dbg_hub                                                                |     0.004 |
+|     inst                                                                 |     0.004 |
+|       BSCANID.u_xsdbm_id                                                 |     0.004 |
+|         CORE_XSDB.UUT_MASTER                                             |     0.003 |
+|           U_ICON_INTERFACE                                               |     0.002 |
+|   g_hbm[0].u_port                                                        |     0.306 |
+|     g_p[0].u_cq                                                          |     0.018 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_awq                                                         |     0.001 |
+|     g_p[1].u_cq                                                          |     0.018 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_cq                                                          |     0.017 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_cq                                                          |     0.019 |
+|     g_p[3].u_wq                                                          |     0.008 |
+|   g_hbm[1].u_port                                                        |     0.286 |
+|     g_p[0].u_cq                                                          |     0.016 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_arq                                                         |     0.001 |
+|     g_p[1].u_cq                                                          |     0.016 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_cq                                                          |     0.015 |
+|     g_p[2].u_wq                                                          |     0.008 |
+|     g_p[3].u_awq                                                         |     0.001 |
+|     g_p[3].u_cq                                                          |     0.016 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   g_hbm[2].u_port                                                        |     0.277 |
+|     g_p[0].u_cq                                                          |     0.013 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_cq                                                          |     0.014 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_cq                                                          |     0.012 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_cq                                                          |     0.014 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   g_hbm[3].u_port                                                        |     0.319 |
+|     g_n[1].g_tq.u_tq                                                     |     0.001 |
+|     g_p[0].u_awq                                                         |     0.001 |
+|     g_p[0].u_cq                                                          |     0.019 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_arq                                                         |     0.002 |
+|     g_p[1].u_cq                                                          |     0.017 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_awq                                                         |     0.001 |
+|     g_p[2].u_cq                                                          |     0.020 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_cq                                                          |     0.020 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   g_hbm[4].u_port                                                        |     0.314 |
+|     g_p[0].u_awq                                                         |     0.001 |
+|     g_p[0].u_cq                                                          |     0.017 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_awq                                                         |     0.001 |
+|     g_p[1].u_cq                                                          |     0.017 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_awq                                                         |     0.002 |
+|     g_p[2].u_cq                                                          |     0.018 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_cq                                                          |     0.018 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   g_hbm[5].u_port                                                        |     0.332 |
+|     g_p[0].u_awq                                                         |     0.001 |
+|     g_p[0].u_cq                                                          |     0.024 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_arq                                                         |     0.002 |
+|     g_p[1].u_cq                                                          |     0.022 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_awq                                                         |     0.001 |
+|     g_p[2].u_cq                                                          |     0.022 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_arq                                                         |     0.002 |
+|     g_p[3].u_cq                                                          |     0.022 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   g_hbm[6].u_port                                                        |     0.304 |
+|     g_p[0].u_awq                                                         |     0.001 |
+|     g_p[0].u_cq                                                          |     0.017 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_cq                                                          |     0.017 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_cq                                                          |     0.016 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_cq                                                          |     0.018 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   g_hbm[7].u_port                                                        |     0.340 |
+|     g_p[0].u_arq                                                         |     0.001 |
+|     g_p[0].u_cq                                                          |     0.021 |
+|     g_p[0].u_wq                                                          |     0.006 |
+|     g_p[1].u_arq                                                         |     0.001 |
+|     g_p[1].u_cq                                                          |     0.022 |
+|     g_p[1].u_wq                                                          |     0.006 |
+|     g_p[2].u_cq                                                          |     0.022 |
+|     g_p[2].u_wq                                                          |     0.006 |
+|     g_p[3].u_arq                                                         |     0.001 |
+|     g_p[3].u_cq                                                          |     0.023 |
+|     g_p[3].u_wq                                                          |     0.006 |
+|   u_bd                                                                   |     6.482 |
+|     otpu_bd_i                                                            |     6.482 |
+|       clk_wiz_0                                                          |     0.090 |
+|         inst                                                             |     0.090 |
+|       refclk_buf                                                         |     0.006 |
+|         U0                                                               |     0.006 |
+|       sc_ctl                                                             |     0.016 |
+|         inst                                                             |     0.016 |
+|           s00_entry_pipeline                                             |     0.002 |
+|             s00_mmu                                                      |     0.002 |
+|               inst                                                       |     0.002 |
+|           switchboards                                                   |     0.012 |
+|             i_nodes                                                      |     0.012 |
+|               i_ar_node                                                  |     0.002 |
+|                 inst                                                     |     0.002 |
+|                   inst_mi_handler                                        |     0.002 |
+|                     gen_normal_area.inst_fifo_node_payld                 |     0.001 |
+|                       gen_reg_fifo_async.inst_reg_fifo_async             |     0.001 |
+|               i_aw_node                                                  |     0.002 |
+|                 inst                                                     |     0.002 |
+|                   inst_mi_handler                                        |     0.002 |
+|                     gen_normal_area.inst_fifo_node_payld                 |     0.002 |
+|                       gen_reg_fifo_async.inst_reg_fifo_async             |     0.002 |
+|               i_r_node                                                   |     0.003 |
+|                 inst                                                     |     0.003 |
+|                   inst_mi_handler                                        |     0.003 |
+|                     gen_normal_area.inst_fifo_node_payld                 |     0.003 |
+|                       gen_reg_fifo_async.inst_reg_fifo_async             |     0.003 |
+|               i_w_node                                                   |     0.005 |
+|                 inst                                                     |     0.005 |
+|                   inst_mi_handler                                        |     0.004 |
+|                     gen_normal_area.inst_fifo_node_payld                 |     0.004 |
+|                       gen_reg_fifo_async.inst_reg_fifo_async             |     0.004 |
+|       sc_dma                                                             |     1.140 |
+|         inst                                                             |     1.140 |
+|           m00_exit_pipeline                                              |     0.022 |
+|             m00_exit                                                     |     0.022 |
+|               inst                                                       |     0.022 |
+|                 r_reg                                                    |     0.016 |
+|                 w_reg                                                    |     0.005 |
+|           m00_nodes                                                      |     0.096 |
+|             m00_ar_node                                                  |     0.006 |
+|               inst                                                       |     0.006 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.005 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.005 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m00_aw_node                                                  |     0.006 |
+|               inst                                                       |     0.006 |
+|                 inst_mi_handler                                          |     0.006 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.005 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.005 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m00_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m00_r_node                                                   |     0.042 |
+|               inst                                                       |     0.042 |
+|                 inst_mi_handler                                          |     0.041 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.009 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.032 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.032 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.010 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.010 |
+|             m00_w_node                                                   |     0.041 |
+|               inst                                                       |     0.041 |
+|                 inst_mi_handler                                          |     0.041 |
+|                   gen_normal_area.gen_downsizer.inst_downsizer           |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.038 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.038 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m01_exit_pipeline                                              |     0.019 |
+|             m01_exit                                                     |     0.019 |
+|               inst                                                       |     0.019 |
+|                 r_reg                                                    |     0.014 |
+|                 w_reg                                                    |     0.003 |
+|           m01_nodes                                                      |     0.087 |
+|             m01_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m01_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m01_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m01_r_node                                                   |     0.040 |
+|               inst                                                       |     0.040 |
+|                 inst_mi_handler                                          |     0.040 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.010 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.029 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.029 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.010 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.010 |
+|             m01_w_node                                                   |     0.035 |
+|               inst                                                       |     0.035 |
+|                 inst_mi_handler                                          |     0.035 |
+|                   gen_normal_area.gen_downsizer.inst_downsizer           |     0.001 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m02_exit_pipeline                                              |     0.018 |
+|             m02_exit                                                     |     0.018 |
+|               inst                                                       |     0.018 |
+|                 r_reg                                                    |     0.013 |
+|                 w_reg                                                    |     0.003 |
+|           m02_nodes                                                      |     0.087 |
+|             m02_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m02_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m02_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m02_r_node                                                   |     0.040 |
+|               inst                                                       |     0.040 |
+|                 inst_mi_handler                                          |     0.040 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.010 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.029 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.029 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.009 |
+|             m02_w_node                                                   |     0.035 |
+|               inst                                                       |     0.035 |
+|                 inst_mi_handler                                          |     0.035 |
+|                   gen_normal_area.gen_downsizer.inst_downsizer           |     0.001 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m03_exit_pipeline                                              |     0.017 |
+|             m03_exit                                                     |     0.017 |
+|               inst                                                       |     0.017 |
+|                 r_reg                                                    |     0.012 |
+|                 w_reg                                                    |     0.003 |
+|           m03_nodes                                                      |     0.085 |
+|             m03_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m03_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m03_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m03_r_node                                                   |     0.038 |
+|               inst                                                       |     0.038 |
+|                 inst_mi_handler                                          |     0.038 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.008 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.029 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.029 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.010 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.009 |
+|             m03_w_node                                                   |     0.034 |
+|               inst                                                       |     0.034 |
+|                 inst_mi_handler                                          |     0.034 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m04_exit_pipeline                                              |     0.017 |
+|             m04_exit                                                     |     0.017 |
+|               inst                                                       |     0.017 |
+|                 r_reg                                                    |     0.012 |
+|                 w_reg                                                    |     0.003 |
+|           m04_nodes                                                      |     0.086 |
+|             m04_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m04_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m04_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m04_r_node                                                   |     0.040 |
+|               inst                                                       |     0.040 |
+|                 inst_mi_handler                                          |     0.040 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.008 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.031 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.031 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.010 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.010 |
+|             m04_w_node                                                   |     0.034 |
+|               inst                                                       |     0.034 |
+|                 inst_mi_handler                                          |     0.034 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m05_exit_pipeline                                              |     0.019 |
+|             m05_exit                                                     |     0.019 |
+|               inst                                                       |     0.019 |
+|                 r_reg                                                    |     0.014 |
+|                 w_reg                                                    |     0.003 |
+|           m05_nodes                                                      |     0.087 |
+|             m05_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m05_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m05_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m05_r_node                                                   |     0.041 |
+|               inst                                                       |     0.041 |
+|                 inst_mi_handler                                          |     0.041 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.010 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.030 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.030 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.010 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.010 |
+|             m05_w_node                                                   |     0.034 |
+|               inst                                                       |     0.034 |
+|                 inst_mi_handler                                          |     0.034 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m06_exit_pipeline                                              |     0.023 |
+|             m06_exit                                                     |     0.023 |
+|               inst                                                       |     0.023 |
+|                 r_reg                                                    |     0.017 |
+|                 w_reg                                                    |     0.003 |
+|           m06_nodes                                                      |     0.088 |
+|             m06_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m06_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m06_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m06_r_node                                                   |     0.041 |
+|               inst                                                       |     0.041 |
+|                 inst_mi_handler                                          |     0.041 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.011 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.030 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.030 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.010 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.010 |
+|             m06_w_node                                                   |     0.034 |
+|               inst                                                       |     0.034 |
+|                 inst_mi_handler                                          |     0.034 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           m07_exit_pipeline                                              |     0.023 |
+|             m07_exit                                                     |     0.023 |
+|               inst                                                       |     0.023 |
+|                 r_reg                                                    |     0.017 |
+|                 w_reg                                                    |     0.004 |
+|           m07_nodes                                                      |     0.086 |
+|             m07_ar_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m07_aw_node                                                  |     0.005 |
+|               inst                                                       |     0.005 |
+|                 inst_mi_handler                                          |     0.005 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.004 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.004 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             m07_b_node                                                   |     0.002 |
+|               inst                                                       |     0.002 |
+|                 inst_mi_handler                                          |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|             m07_r_node                                                   |     0.039 |
+|               inst                                                       |     0.039 |
+|                 inst_mi_handler                                          |     0.039 |
+|                   gen_normal_area.gen_upsizer.inst_upsizer               |     0.010 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.029 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.029 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.009 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.009 |
+|             m07_w_node                                                   |     0.034 |
+|               inst                                                       |     0.034 |
+|                 inst_mi_handler                                          |     0.034 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.033 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.033 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.008 |
+|                       gen_mem_rep[3].inst_xpm_memory                     |     0.008 |
+|           s00_entry_pipeline                                             |     0.055 |
+|             s00_mmu                                                      |     0.052 |
+|               inst                                                       |     0.052 |
+|                 ar_reg_stall                                             |     0.001 |
+|                 ar_sreg                                                  |     0.001 |
+|                 aw_reg_stall                                             |     0.001 |
+|                 aw_sreg                                                  |     0.002 |
+|                 r_sreg                                                   |     0.022 |
+|                 w_sreg                                                   |     0.021 |
+|             s00_transaction_regulator                                    |     0.003 |
+|               inst                                                       |     0.003 |
+|                 gen_endpoint.gen_r_singleorder.r_singleorder             |     0.002 |
+|                   gen_cmd_reg.cmd_reg                                    |     0.001 |
+|                 gen_endpoint.gen_w_singleorder.w_singleorder             |     0.001 |
+|                   gen_cmd_reg.cmd_reg                                    |     0.001 |
+|           s00_nodes                                                      |     0.117 |
+|             s00_ar_node                                                  |     0.008 |
+|               inst                                                       |     0.008 |
+|                 inst_mi_handler                                          |     0.008 |
+|                   gen_normal_area.gen_fifo_req.inst_fifo_req             |     0.002 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.005 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.005 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.004 |
+|             s00_aw_node                                                  |     0.008 |
+|               inst                                                       |     0.008 |
+|                 inst_mi_handler                                          |     0.008 |
+|                   gen_normal_area.gen_fifo_req.inst_fifo_req             |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.006 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.006 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.005 |
+|             s00_b_node                                                   |     0.004 |
+|               inst                                                       |     0.004 |
+|                 inst_mi_handler                                          |     0.003 |
+|                   gen_normal_area.gen_node_prog_full.inst_node_prog_full |     0.001 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.001 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.002 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.002 |
+|                 inst_si_handler                                          |     0.001 |
+|             s00_r_node                                                   |     0.047 |
+|               inst                                                       |     0.047 |
+|                 inst_mi_handler                                          |     0.046 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.045 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.045 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.013 |
+|                       gen_mem_rep[1].inst_wr_addra                       |     0.001 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.014 |
+|                       gen_mem_rep[2].inst_wr_addra                       |     0.001 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.012 |
+|                 inst_si_handler                                          |     0.001 |
+|             s00_w_node                                                   |     0.050 |
+|               inst                                                       |     0.050 |
+|                 inst_mi_handler                                          |     0.050 |
+|                   gen_normal_area.gen_fifo_req.inst_fifo_req             |     0.002 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.002 |
+|                   gen_normal_area.inst_fifo_node_payld                   |     0.047 |
+|                     gen_xpm_memory_fifo.inst_fifo                        |     0.047 |
+|                       gen_mem_rep[0].inst_rd_addrb                       |     0.001 |
+|                       gen_mem_rep[0].inst_xpm_memory                     |     0.014 |
+|                       gen_mem_rep[1].inst_rd_addrb                       |     0.001 |
+|                       gen_mem_rep[1].inst_xpm_memory                     |     0.014 |
+|                       gen_mem_rep[2].inst_rd_addrb                       |     0.001 |
+|                       gen_mem_rep[2].inst_xpm_memory                     |     0.015 |
+|                   gen_normal_area.inst_fifo_send                         |     0.001 |
+|           switchboards                                                   |     0.108 |
+|             aw_switchboard                                               |     0.001 |
+|               inst                                                       |     0.001 |
+|                 gen_mi[0].inst_opipe_payld                               |     0.001 |
+|             r_switchboard                                                |     0.070 |
+|               inst                                                       |     0.070 |
+|                 gen_mi[0].inst_opipe_payld                               |     0.070 |
+|             w_switchboard                                                |     0.035 |
+|               inst                                                       |     0.035 |
+|                 gen_mi[0].inst_opipe_payld                               |     0.035 |
+|       sysmon                                                             |     0.013 |
+|         inst                                                             |     0.013 |
+|           AXI_SYSMON_CORE_I                                              |     0.012 |
+|       xdma_0                                                             |     5.217 |
+|         inst                                                             |     5.217 |
+|           pcie4c_ip_i                                                    |     4.727 |
+|             inst                                                         |     4.727 |
+|               gt_top_i                                                   |     3.611 |
+|                 diablo_gt.diablo_gt_phy_wrapper                          |     3.490 |
+|                   gt_wizard.gtwizard_top_i                               |     3.450 |
+|                     otpu_bd_xdma_0_0_pcie4c_ip_gt_i                      |     3.450 |
+|                       inst                                               |     3.450 |
+|                   phy_lane[0].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[1].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[2].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[3].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[4].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[5].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[6].phy_txeq_i                                 |     0.003 |
+|                   phy_lane[7].phy_txeq_i                                 |     0.003 |
+|                 gen4_64b_convert.gen4_f2s_mod5                           |     0.008 |
+|                 gen4_64b_convert.gen4_perlane_64b_bridge                 |     0.046 |
+|                   per_lane_bridge[0].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[0].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[1].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[1].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[2].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[2].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[3].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[3].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[4].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[4].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[5].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[5].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[6].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[6].gen4_tx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[7].gen4_rx_64b_bridge                  |     0.003 |
+|                   per_lane_bridge[7].gen4_tx_64b_bridge                  |     0.002 |
+|                 gen4_64b_convert.gen4_perlane_eq_bridge                  |     0.003 |
+|                 phy_pipeline                                             |     0.041 |
+|                   per_lane_ff_chain[0].phy_rxdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[0].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[1].phy_rxdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[1].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[2].phy_rxdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[2].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[3].phy_rxdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[3].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[4].phy_rxdata_chain                  |     0.001 |
+|                   per_lane_ff_chain[4].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[5].phy_rxdata_chain                  |     0.001 |
+|                   per_lane_ff_chain[5].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[6].phy_rxdata_chain                  |     0.001 |
+|                   per_lane_ff_chain[6].phy_txdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[7].phy_rxdata_chain                  |     0.002 |
+|                   per_lane_ff_chain[7].phy_txdata_chain                  |     0.002 |
+|                   phy_rate_chain                                         |     0.001 |
+|               pcie_4_0_pipe_inst                                         |     1.115 |
+|                 pcie4_0_512b_intfc_mod                                   |     0.160 |
+|                   pcie_4_0_512b_intfc_int_mod                            |     0.160 |
+|                     pcie_4_0_512b_cc_intfc_mod                           |     0.034 |
+|                       pcie_4_0_512b_async_fifo_blk                       |     0.015 |
+|                       pcie_4_0_512b_cc_output_mux_blk                    |     0.015 |
+|                     pcie_4_0_512b_cq_intfc_mod                           |     0.040 |
+|                       pcie_4_0_512b_cq_output_mux_blk                    |     0.013 |
+|                       pcie_4_0_512b_sync_fifo_blk                        |     0.008 |
+|                     pcie_4_0_512b_rc_intfc_mod                           |     0.052 |
+|                       pcie_4_0_512b_rc_output_mux_blk                    |     0.019 |
+|                       pcie_4_0_512b_sync_fifo_blk                        |     0.008 |
+|                     pcie_4_0_512b_rq_intfc_mod                           |     0.034 |
+|                       pcie_4_0_512b_async_fifo_blk                       |     0.014 |
+|                       pcie_4_0_512b_rq_output_mux_blk                    |     0.016 |
+|                 pcie_4_0_bram_inst                                       |     0.391 |
+|                   RAM32K.bram_comp_inst                                  |     0.205 |
+|                     bram_16k_0_int                                       |     0.084 |
+|                     bram_16k_1_int                                       |     0.084 |
+|                   bram_post_inst                                         |     0.109 |
+|                     bram_16k_int                                         |     0.084 |
+|                   bram_repl_inst                                         |     0.076 |
+|                     bram_rep_int_0                                       |     0.057 |
+|                 pcie_4_0_init_ctrl_inst                                  |     0.024 |
+|           ram_top                                                        |     0.169 |
+|             C2H_PCIE_DSC_CPLD_RAM                                        |     0.012 |
+|             MASTER_READ_BRAM                                             |     0.051 |
+|               genblk1[0].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[1].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[2].u_buffermem                                     |     0.009 |
+|                 U0                                                       |     0.009 |
+|                   inst_blk_mem_gen                                       |     0.009 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.009 |
+|                       valid.cstr                                         |     0.009 |
+|               genblk1[3].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[4].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[5].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[6].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[7].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|             MASTER_WRITE_FIFO                                            |     0.011 |
+|               genblk1[0].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[1].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[2].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[3].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[4].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[5].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[6].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|               genblk1[7].u_buffermem                                     |     0.001 |
+|                 U0                                                       |     0.001 |
+|                   inst_blk_mem_gen                                       |     0.001 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.001 |
+|                       valid.cstr                                         |     0.001 |
+|             gen_c2h_bram.C2H_DAT0_FIFO                                   |     0.048 |
+|               genblk1[0].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[1].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[2].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[3].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[4].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[5].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[6].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[7].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|             gen_h2c_bram.H2C_DAT0_FIFO                                   |     0.047 |
+|               genblk1[0].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[1].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[2].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[3].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[4].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[5].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[6].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|               genblk1[7].u_buffermem                                     |     0.006 |
+|                 U0                                                       |     0.006 |
+|                   inst_blk_mem_gen                                       |     0.006 |
+|                     gnbram.gnativebmg.native_blk_mem_gen                 |     0.006 |
+|                       valid.cstr                                         |     0.006 |
+|           udma_wrapper                                                   |     0.321 |
+|             dma_top                                                      |     0.320 |
+|               axi4mm_bridge_top_inst                                     |     0.032 |
+|                 axi4mm_axi_mm_master_top_inst                            |     0.032 |
+|                   axi4mm_axi_mm_master_rd                                |     0.008 |
+|                   axi4mm_axi_mm_master_wr_inst                           |     0.002 |
+|                   axi4mm_axi_str_masterbr_rdtlp_inst                     |     0.014 |
+|                   axi4mm_axi_str_masterbridge_wrrd_inst                  |     0.008 |
+|               base                                                       |     0.011 |
+|                 CFG_INST                                                 |     0.003 |
+|                 IRQ_INST                                                 |     0.006 |
+|                   msix_req.pf0_msix_table                                |     0.005 |
+|               dma_enable.aximm.dma_aximm                                 |     0.056 |
+|                 axi4mm_axi_mm_master_rd                                  |     0.009 |
+|                 axi4mm_axi_mm_master_wr                                  |     0.044 |
+|                   WTLP_DAT_FIFO                                          |     0.011 |
+|                 axidma_rrq_arb                                           |     0.001 |
+|                   Fifowhead.fifoInfo                                     |     0.001 |
+|                 axidma_wrq_arb                                           |     0.002 |
+|                   Fifowhead.fifoInfo                                     |     0.002 |
+|               dma_enable.vul_dma                                         |     0.076 |
+|                 RD                                                       |     0.024 |
+|                   gen_rdwr_loop[0].gen_rdwr_eng.RDWR_INST                |     0.024 |
+|                     DSC_FIFO                                             |     0.002 |
+|                     RRQ_FIFO                                             |     0.002 |
+|                     WRQ_FIFO                                             |     0.002 |
+|                 WR                                                       |     0.030 |
+|                   gen_rdwr_loop[0].gen_rdwr_eng.RDWR_INST                |     0.030 |
+|                     DSC_FIFO                                             |     0.002 |
+|                     RRQ_FIFO                                             |     0.001 |
+|                     WRQ_FIFO                                             |     0.002 |
+|                 dsc_eng.DSC                                              |     0.021 |
+|                   RRQ_FIFO                                               |     0.002 |
+|               dma_enable.wb_eng.dma_pcie_wb_eng                          |     0.002 |
+|               dma_pcie_req                                               |     0.141 |
+|                 axidma_rrq_arb                                           |     0.002 |
+|                   Fifowhead.fifoInfo                                     |     0.002 |
+|                 axidma_wrq_arb                                           |     0.002 |
+|                   Fifowhead.fifoInfo                                     |     0.002 |
+|                 dma_pcie_rc                                              |     0.096 |
+|                   u_dma_rc_mem_pfch                                      |     0.012 |
+|                   u_mem_rc                                               |     0.049 |
+|                 dma_pcie_rq                                              |     0.041 |
+|                   RQ_FIFO                                                |     0.008 |
+|                   WTLP_DAT_FIFO                                          |     0.006 |
+|   u_hbm                                                                  |    17.795 |
+|     u_hbm                                                                |    17.795 |
+|       inst                                                               |    17.795 |
+|         TWO_STACK.u_hbm_top                                              |    17.795 |
+|           TWO_STACK_HBM.hbm_apb_mst_0                                    |     0.001 |
+|           TWO_STACK_HBM.hbm_apb_mst_1                                    |     0.001 |
+|           TWO_STACK_HBM.u_xsdb_top_0                                     |     0.003 |
+|             U_XSDB_SLAVE                                                 |     0.002 |
+|             xsdb2adb_u0                                                  |     0.001 |
+|           TWO_STACK_HBM.u_xsdb_top_1                                     |     0.003 |
+|             U_XSDB_SLAVE                                                 |     0.002 |
+|             xsdb2adb_u0                                                  |     0.001 |
+|           TWO_STACK_HBM.xpm_memory_spram_inst_0                          |     0.002 |
+|             xpm_memory_base_inst                                         |     0.002 |
+|           TWO_STACK_HBM.xpm_memory_spram_inst_1                          |     0.002 |
+|             xpm_memory_base_inst                                         |     0.002 |
+|   u_sys                                                                  |    11.091 |
+|     g_ch[0].u_ch                                                         |     0.245 |
+|       g_port[0].u_of                                                     |     0.046 |
+|         g_bram.u_m                                                       |     0.046 |
+|       g_port[1].u_of                                                     |     0.046 |
+|         g_bram.u_m                                                       |     0.046 |
+|       g_port[1].u_tag                                                    |     0.004 |
+|       u_ad                                                               |     0.008 |
+|       u_ar                                                               |     0.086 |
+|       u_xd                                                               |     0.018 |
+|       u_xq                                                               |     0.001 |
+|       u_xr                                                               |     0.017 |
+|       u_xwi                                                              |     0.008 |
+|     g_ch[1].u_ch                                                         |     0.204 |
+|       g_port[0].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_tag                                                    |     0.004 |
+|       u_ad                                                               |     0.007 |
+|       u_ar                                                               |     0.063 |
+|       u_xd                                                               |     0.014 |
+|       u_xq                                                               |     0.001 |
+|       u_xr                                                               |     0.012 |
+|       u_xwi                                                              |     0.002 |
+|     g_ch[2].u_ch                                                         |     0.206 |
+|       g_port[0].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_tag                                                    |     0.001 |
+|       u_ad                                                               |     0.007 |
+|       u_ar                                                               |     0.070 |
+|       u_xd                                                               |     0.013 |
+|       u_xq                                                               |     0.002 |
+|       u_xr                                                               |     0.011 |
+|       u_xwi                                                              |     0.002 |
+|     g_ch[3].u_ch                                                         |     0.191 |
+|       g_port[0].u_of                                                     |     0.046 |
+|         g_bram.u_m                                                       |     0.046 |
+|       g_port[1].u_of                                                     |     0.046 |
+|         g_bram.u_m                                                       |     0.046 |
+|       u_ad                                                               |     0.010 |
+|       u_ar                                                               |     0.044 |
+|       u_xd                                                               |     0.014 |
+|       u_xq                                                               |     0.001 |
+|       u_xr                                                               |     0.015 |
+|       u_xwi                                                              |     0.002 |
+|     g_ch[4].u_ch                                                         |     0.217 |
+|       g_port[0].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_tag                                                    |     0.003 |
+|       u_ad                                                               |     0.007 |
+|       u_ar                                                               |     0.079 |
+|       u_xd                                                               |     0.011 |
+|       u_xq                                                               |     0.002 |
+|       u_xr                                                               |     0.011 |
+|       u_xwi                                                              |     0.002 |
+|     g_ch[5].u_ch                                                         |     0.203 |
+|       g_port[0].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_tag                                                    |     0.003 |
+|       u_ad                                                               |     0.008 |
+|       u_ar                                                               |     0.062 |
+|       u_xd                                                               |     0.013 |
+|       u_xq                                                               |     0.001 |
+|       u_xr                                                               |     0.013 |
+|       u_xwi                                                              |     0.002 |
+|     g_ch[6].u_ch                                                         |     0.201 |
+|       g_port[0].u_of                                                     |     0.046 |
+|         g_bram.u_m                                                       |     0.046 |
+|       g_port[1].u_of                                                     |     0.045 |
+|         g_bram.u_m                                                       |     0.045 |
+|       g_port[1].u_tag                                                    |     0.002 |
+|       u_ad                                                               |     0.007 |
+|       u_ar                                                               |     0.061 |
+|       u_xd                                                               |     0.013 |
+|       u_xq                                                               |     0.002 |
+|       u_xr                                                               |     0.012 |
+|       u_xwi                                                              |     0.002 |
+|     g_ch[7].u_ch                                                         |     0.214 |
+|       g_port[0].u_of                                                     |     0.046 |
+|         g_bram.u_m                                                       |     0.046 |
+|       g_port[1].u_of                                                     |     0.047 |
+|         g_bram.u_m                                                       |     0.047 |
+|       u_ad                                                               |     0.010 |
+|       u_ar                                                               |     0.067 |
+|       u_xd                                                               |     0.014 |
+|       u_xq                                                               |     0.001 |
+|       u_xr                                                               |     0.014 |
+|       u_xwi                                                              |     0.002 |
+|     u_board                                                              |     9.408 |
+|       g_coll.u_coll                                                      |     0.005 |
+|       g_memx.u_mem                                                       |     1.834 |
+|         u_dram                                                           |     1.453 |
+|           g_ad[0].u_ad                                                   |     0.762 |
+|             bt_q_reg_0_255_1_1                                           |     0.003 |
+|             bt_q_reg_256_511_1_1                                         |     0.004 |
+|             g_mem[0].g_rb[0].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[1].u_rbm                                       |     0.013 |
+|             g_mem[0].g_rb[2].u_rbm                                       |     0.013 |
+|             g_mem[0].g_rb[3].u_rbm                                       |     0.015 |
+|             g_mem[0].g_rb[4].u_rbm                                       |     0.013 |
+|             g_mem[0].g_rb[5].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[6].u_rbm                                       |     0.011 |
+|             g_mem[0].g_rb[7].u_rbm                                       |     0.011 |
+|             g_mem[0].u_qwd                                               |     0.090 |
+|             g_mem[0].u_wrm                                               |     0.057 |
+|             g_mem[1].g_rb[0].u_rbm                                       |     0.012 |
+|             g_mem[1].g_rb[1].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[2].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[3].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[4].u_rbm                                       |     0.012 |
+|             g_mem[1].g_rb[5].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[6].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[7].u_rbm                                       |     0.013 |
+|             g_mem[1].u_qwd                                               |     0.092 |
+|             g_mem[1].u_wrm                                               |     0.050 |
+|           g_ad[1].u_ad                                                   |     0.679 |
+|             bt_q_reg_0_255_1_1                                           |     0.004 |
+|             bt_q_reg_256_511_1_1                                         |     0.003 |
+|             g_mem[0].g_rb[0].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[1].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[2].u_rbm                                       |     0.013 |
+|             g_mem[0].g_rb[3].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[4].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[5].u_rbm                                       |     0.010 |
+|             g_mem[0].g_rb[6].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[7].u_rbm                                       |     0.013 |
+|             g_mem[0].u_qwd                                               |     0.088 |
+|             g_mem[0].u_wrm                                               |     0.054 |
+|             g_mem[1].g_rb[0].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[1].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[2].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[3].u_rbm                                       |     0.012 |
+|             g_mem[1].g_rb[4].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[5].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[6].u_rbm                                       |     0.012 |
+|             g_mem[1].g_rb[7].u_rbm                                       |     0.013 |
+|             g_mem[1].u_qwd                                               |     0.093 |
+|             g_mem[1].u_wrm                                               |     0.046 |
+|         u_m                                                              |     0.278 |
+|           u_qa                                                           |     0.001 |
+|           u_qb                                                           |     0.023 |
+|           u_qs                                                           |     0.005 |
+|         u_s                                                              |     0.103 |
+|       g_slice[1].g_memx.u_mem                                            |     1.887 |
+|         u_dram                                                           |     1.479 |
+|           g_ad[0].u_ad                                                   |     0.761 |
+|             bt_q_reg_0_255_1_1                                           |     0.004 |
+|             bt_q_reg_256_511_1_1                                         |     0.004 |
+|             g_mem[0].g_rb[0].u_rbm                                       |     0.014 |
+|             g_mem[0].g_rb[1].u_rbm                                       |     0.013 |
+|             g_mem[0].g_rb[2].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[3].u_rbm                                       |     0.013 |
+|             g_mem[0].g_rb[4].u_rbm                                       |     0.015 |
+|             g_mem[0].g_rb[5].u_rbm                                       |     0.014 |
+|             g_mem[0].g_rb[6].u_rbm                                       |     0.015 |
+|             g_mem[0].g_rb[7].u_rbm                                       |     0.016 |
+|             g_mem[0].qbm_reg_0_31_28_41                                  |     0.001 |
+|             g_mem[0].qbm_reg_0_31_42_55                                  |     0.001 |
+|             g_mem[0].u_qwd                                               |     0.088 |
+|             g_mem[0].u_wrm                                               |     0.054 |
+|             g_mem[1].g_rb[0].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[1].u_rbm                                       |     0.014 |
+|             g_mem[1].g_rb[2].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[3].u_rbm                                       |     0.012 |
+|             g_mem[1].g_rb[4].u_rbm                                       |     0.015 |
+|             g_mem[1].g_rb[5].u_rbm                                       |     0.015 |
+|             g_mem[1].g_rb[6].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[7].u_rbm                                       |     0.014 |
+|             g_mem[1].u_qwd                                               |     0.091 |
+|             g_mem[1].u_wrm                                               |     0.051 |
+|           g_ad[1].u_ad                                                   |     0.703 |
+|             bt_q_reg_0_255_1_1                                           |     0.002 |
+|             bt_q_reg_256_511_1_1                                         |     0.001 |
+|             g_mem[0].g_rb[0].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[1].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[2].u_rbm                                       |     0.011 |
+|             g_mem[0].g_rb[3].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[4].u_rbm                                       |     0.012 |
+|             g_mem[0].g_rb[5].u_rbm                                       |     0.011 |
+|             g_mem[0].g_rb[6].u_rbm                                       |     0.011 |
+|             g_mem[0].g_rb[7].u_rbm                                       |     0.012 |
+|             g_mem[0].u_qwd                                               |     0.088 |
+|             g_mem[0].u_wrm                                               |     0.052 |
+|             g_mem[1].g_rb[0].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[1].u_rbm                                       |     0.014 |
+|             g_mem[1].g_rb[2].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[3].u_rbm                                       |     0.013 |
+|             g_mem[1].g_rb[4].u_rbm                                       |     0.012 |
+|             g_mem[1].g_rb[5].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[6].u_rbm                                       |     0.011 |
+|             g_mem[1].g_rb[7].u_rbm                                       |     0.012 |
+|             g_mem[1].u_qwd                                               |     0.092 |
+|             g_mem[1].u_wrm                                               |     0.050 |
+|         u_m                                                              |     0.289 |
+|           u_qa                                                           |     0.001 |
+|           u_qb                                                           |     0.024 |
+|           u_qs                                                           |     0.005 |
+|         u_s                                                              |     0.119 |
+|       g_slice[1].u_slice                                                 |     2.730 |
+|         u_act                                                            |     0.063 |
+|           g_row[0].g_pc[0].u_act                                         |     0.003 |
+|           g_row[0].g_pc[1].u_act                                         |     0.003 |
+|           g_row[0].g_pc[2].u_act                                         |     0.003 |
+|           g_row[0].g_pc[3].u_act                                         |     0.003 |
+|           g_row[1].g_pc[0].u_act                                         |     0.003 |
+|           g_row[1].g_pc[1].u_act                                         |     0.003 |
+|           g_row[1].g_pc[2].u_act                                         |     0.003 |
+|           g_row[1].g_pc[3].u_act                                         |     0.003 |
+|           g_row[2].g_pc[0].u_act                                         |     0.003 |
+|           g_row[2].g_pc[1].u_act                                         |     0.003 |
+|           g_row[2].g_pc[2].u_act                                         |     0.003 |
+|           g_row[2].g_pc[3].u_act                                         |     0.003 |
+|           g_row[2].u_asc                                                 |     0.001 |
+|           g_row[3].g_pc[0].u_act                                         |     0.003 |
+|           g_row[3].g_pc[1].u_act                                         |     0.003 |
+|           g_row[3].g_pc[2].u_act                                         |     0.003 |
+|           g_row[3].g_pc[3].u_act                                         |     0.003 |
+|         u_dma                                                            |     0.365 |
+|           g_gb[0].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[7].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[7].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[7].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[7].u_gb                                            |     0.003 |
+|           u_lb                                                           |     0.218 |
+|         u_mxu                                                            |     0.840 |
+|           g_ask[0].g_p[15].u_pe                                          |     0.004 |
+|           g_ask[1].g_p[31].u_pe                                          |     0.003 |
+|           g_ask[2].g_p[15].u_pe                                          |     0.003 |
+|           g_ask[3].g_p[15].u_pe                                          |     0.003 |
+|           g_bd[0].u_bd                                                   |     0.001 |
+|           g_bd[1].u_bd                                                   |     0.001 |
+|           g_bd[2].u_bd                                                   |     0.001 |
+|           g_bd[3].u_bd                                                   |     0.001 |
+|           g_col_end[0].u_bm                                              |     0.002 |
+|           g_col_end[0].u_ce                                              |     0.006 |
+|           g_col_end[0].u_dsk                                             |     0.005 |
+|           g_col_end[1].u_bm                                              |     0.002 |
+|           g_col_end[1].u_ce                                              |     0.005 |
+|           g_col_end[1].u_dsk                                             |     0.004 |
+|           g_col_end[2].u_bm                                              |     0.002 |
+|           g_col_end[2].u_ce                                              |     0.004 |
+|           g_col_end[2].u_dsk                                             |     0.010 |
+|           g_col_end[3].u_bm                                              |     0.002 |
+|           g_col_end[3].u_ce                                              |     0.006 |
+|           g_fd[0].g_d2.u_fd2                                             |     0.028 |
+|           g_fd[0].u_fd                                                   |     0.028 |
+|           g_fd[1].g_d2.u_fd2                                             |     0.025 |
+|           g_fd[1].u_fd                                                   |     0.025 |
+|           g_fd[2].g_d2.u_fd2                                             |     0.025 |
+|           g_fd[2].u_fd                                                   |     0.025 |
+|           g_fd[3].g_d2.u_fd2                                             |     0.023 |
+|           g_fd[3].u_fd                                                   |     0.023 |
+|           g_fsq.u_fs23                                                   |     0.010 |
+|           g_lane[0].u_l                                                  |     0.026 |
+|             u_m1                                                         |     0.006 |
+|             u_m2                                                         |     0.007 |
+|             u_sa                                                         |     0.002 |
+|           g_lane[1].u_l                                                  |     0.024 |
+|             u_m1                                                         |     0.006 |
+|             u_m2                                                         |     0.006 |
+|             u_sa                                                         |     0.002 |
+|           g_rfm[0].u_m                                                   |     0.038 |
+|           g_rfm[1].u_m                                                   |     0.038 |
+|           g_rfm[2].u_m                                                   |     0.039 |
+|           g_rmw[0].u_y                                                   |     0.012 |
+|             u_a                                                          |     0.007 |
+|             u_m                                                          |     0.005 |
+|           g_rmw[1].u_y                                                   |     0.013 |
+|             u_a                                                          |     0.008 |
+|             u_m                                                          |     0.005 |
+|           u_fs0                                                          |     0.015 |
+|           u_fs1                                                          |     0.011 |
+|           u_rw                                                           |     0.006 |
+|           u_tl                                                           |     0.004 |
+|           u_ts                                                           |     0.004 |
+|         u_quant                                                          |     0.138 |
+|           g_gr[0].u_g                                                    |     0.002 |
+|           g_gr[1].u_g                                                    |     0.002 |
+|           g_gr[2].u_g                                                    |     0.002 |
+|           g_gr[3].u_g                                                    |     0.002 |
+|           g_pre[0].u_c                                                   |     0.001 |
+|           g_pre[0].u_c2                                                  |     0.002 |
+|           g_pre[0].u_r                                                   |     0.006 |
+|           g_pre[1].u_c                                                   |     0.001 |
+|           g_pre[1].u_c2                                                  |     0.002 |
+|           g_pre[1].u_r                                                   |     0.007 |
+|           g_pre[2].u_c                                                   |     0.001 |
+|           g_pre[2].u_c2                                                  |     0.002 |
+|           g_pre[2].u_r                                                   |     0.004 |
+|           g_pre[3].u_c2                                                  |     0.002 |
+|           g_pre[3].u_r                                                   |     0.004 |
+|           g_pre[4].u_c                                                   |     0.001 |
+|           g_pre[4].u_c2                                                  |     0.002 |
+|           g_pre[4].u_r                                                   |     0.001 |
+|           g_pre[5].u_c                                                   |     0.001 |
+|           g_pre[5].u_c2                                                  |     0.002 |
+|           g_pre[5].u_r                                                   |     0.001 |
+|           g_pre[6].u_r                                                   |     0.001 |
+|           g_pre[7].u_c                                                   |     0.001 |
+|           g_pre[7].u_c2                                                  |     0.002 |
+|           g_pre[7].u_r                                                   |     0.001 |
+|           g_q[0].u_q                                                     |     0.001 |
+|           g_q[1].u_q                                                     |     0.001 |
+|           g_q[2].u_q                                                     |     0.001 |
+|           g_q[3].u_q                                                     |     0.001 |
+|           g_xb.u_xb                                                      |     0.006 |
+|           u_da                                                           |     0.001 |
+|           u_mp                                                           |     0.002 |
+|           u_sc                                                           |     0.022 |
+|             g_it[0].u_t                                                  |     0.002 |
+|               u_a                                                        |     0.002 |
+|             g_it[0].u_y                                                  |     0.003 |
+|             g_it[1].u_t                                                  |     0.002 |
+|             u_e                                                          |     0.002 |
+|             u_sc                                                         |     0.003 |
+|             u_scd                                                        |     0.002 |
+|             u_y3                                                         |     0.002 |
+|           u_wq                                                           |     0.003 |
+|         u_seq                                                            |     0.241 |
+|           u_imem                                                         |     0.085 |
+|         u_tmem                                                           |     0.582 |
+|         u_vpu                                                            |     0.326 |
+|           g_comp.u_comp                                                  |     0.064 |
+|             g_lane[0].g_st[0].u_k                                        |     0.002 |
+|             g_lane[0].g_st[1].u_k                                        |     0.001 |
+|             g_lane[0].g_st[2].u_k                                        |     0.001 |
+|             g_lane[1].g_st[0].u_k                                        |     0.002 |
+|             g_lane[1].g_st[1].u_k                                        |     0.001 |
+|             g_lane[1].g_st[2].u_k                                        |     0.001 |
+|             g_lane[2].g_st[0].u_k                                        |     0.002 |
+|             g_lane[2].g_st[1].u_k                                        |     0.001 |
+|             g_lane[2].g_st[2].u_k                                        |     0.001 |
+|             g_lane[3].g_st[0].u_k                                        |     0.002 |
+|             g_lane[3].g_st[1].u_k                                        |     0.001 |
+|             g_lane[3].g_st[2].u_k                                        |     0.001 |
+|             g_lane[4].g_st[0].u_k                                        |     0.002 |
+|             g_lane[4].g_st[1].u_k                                        |     0.001 |
+|             g_lane[4].g_st[2].u_k                                        |     0.001 |
+|             g_lane[5].g_st[0].u_k                                        |     0.002 |
+|             g_lane[5].g_st[1].u_k                                        |     0.001 |
+|             g_lane[5].g_st[2].u_k                                        |     0.001 |
+|             g_lane[6].g_st[0].u_k                                        |     0.002 |
+|             g_lane[6].g_st[1].u_k                                        |     0.001 |
+|             g_lane[6].g_st[2].u_k                                        |     0.001 |
+|             g_lane[7].g_st[0].u_k                                        |     0.002 |
+|             g_lane[7].g_st[1].u_k                                        |     0.001 |
+|             g_lane[7].g_st[2].u_k                                        |     0.001 |
+|           g_mdel[0].g_d0.u_d                                             |     0.002 |
+|           g_se.u_tail                                                    |     0.121 |
+|             g_lq[0].u_a                                                  |     0.002 |
+|             g_lq[1].u_a                                                  |     0.002 |
+|             g_lq[2].u_a                                                  |     0.002 |
+|             g_lq[2].u_m                                                  |     0.001 |
+|             g_lq[3].u_a                                                  |     0.002 |
+|             g_lq[4].u_a                                                  |     0.002 |
+|             g_lq[5].u_a                                                  |     0.002 |
+|             g_lq[6].u_a                                                  |     0.002 |
+|             g_lq[7].u_a                                                  |     0.002 |
+|             g_u[0].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[1].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.001 |
+|             g_u[2].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.004 |
+|               u_m                                                        |     0.002 |
+|             g_u[3].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[4].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.001 |
+|             g_u[5].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_c                                                        |     0.001 |
+|               u_m                                                        |     0.001 |
+|             g_u[6].u_ma                                                  |     0.004 |
+|               u_a                                                        |     0.002 |
+|             g_u[7].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.002 |
+|               u_m                                                        |     0.001 |
+|             u_d1                                                         |     0.002 |
+|               u_m                                                        |     0.001 |
+|             u_d2                                                         |     0.004 |
+|               u_a                                                        |     0.002 |
+|               u_m                                                        |     0.002 |
+|             u_d3                                                         |     0.004 |
+|               u_a                                                        |     0.002 |
+|               u_m                                                        |     0.002 |
+|             u_ub                                                         |     0.004 |
+|           g_slane[0].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|           g_slane[1].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.003 |
+|             u_m                                                          |     0.001 |
+|           g_slane[2].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|             u_m                                                          |     0.001 |
+|           g_slane[3].u_ma                                                |     0.006 |
+|             u_a                                                          |     0.003 |
+|             u_m                                                          |     0.001 |
+|           g_slane[4].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.003 |
+|             u_m                                                          |     0.001 |
+|           g_slane[5].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.002 |
+|             u_c                                                          |     0.001 |
+|             u_m                                                          |     0.001 |
+|           g_slane[6].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|             u_c                                                          |     0.001 |
+|           g_slane[7].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|             u_c                                                          |     0.001 |
+|           u_vt                                                           |     0.041 |
+|             g_ln.g_m[0].g_o.u_ln                                         |     0.004 |
+|             g_ln.g_m[1].g_n.u_ln                                         |     0.003 |
+|             g_tree[0].u_tree                                             |     0.003 |
+|             g_tree[1].u_tree                                             |     0.003 |
+|             g_tree[2].u_tree                                             |     0.003 |
+|             g_tree[3].u_tree                                             |     0.003 |
+|             g_tree[4].u_tree                                             |     0.004 |
+|             g_tree[5].u_tree                                             |     0.002 |
+|             g_tree[6].u_tree                                             |     0.003 |
+|             g_tree[7].u_tree                                             |     0.002 |
+|       g_trace.u_trace                                                    |     0.084 |
+|       g_xs.g_x[0].g_pf.u_pf_rx                                           |     0.007 |
+|       g_xs.g_x[0].g_pf.u_pf_tx                                           |     0.007 |
+|       g_xs.g_x[0].u_cport                                                |     0.022 |
+|       g_xs.g_x[0].u_dn_rx                                                |     0.003 |
+|       g_xs.g_x[0].u_dn_tx                                                |     0.003 |
+|       g_xs.g_x[0].u_up_rx                                                |     0.003 |
+|       g_xs.g_x[0].u_up_tx                                                |     0.002 |
+|       g_xs.g_x[1].u_cport                                                |     0.016 |
+|       g_xs.g_x[1].u_dn_rx                                                |     0.003 |
+|       g_xs.g_x[1].u_dn_tx                                                |     0.003 |
+|       g_xs.g_x[1].u_up_rx                                                |     0.002 |
+|       g_xs.g_x[1].u_up_tx                                                |     0.002 |
+|       g_xs.u_chub                                                        |     0.001 |
+|       u_ctrl                                                             |     0.020 |
+|       u_slice                                                            |     2.770 |
+|         u_act                                                            |     0.065 |
+|           g_row[0].g_pc[0].u_act                                         |     0.003 |
+|           g_row[0].g_pc[1].u_act                                         |     0.003 |
+|           g_row[0].g_pc[2].u_act                                         |     0.003 |
+|           g_row[0].g_pc[3].u_act                                         |     0.003 |
+|           g_row[0].u_asc                                                 |     0.001 |
+|           g_row[1].g_pc[0].u_act                                         |     0.003 |
+|           g_row[1].g_pc[1].u_act                                         |     0.003 |
+|           g_row[1].g_pc[2].u_act                                         |     0.003 |
+|           g_row[1].g_pc[3].u_act                                         |     0.003 |
+|           g_row[1].u_asc                                                 |     0.001 |
+|           g_row[2].g_pc[0].u_act                                         |     0.003 |
+|           g_row[2].g_pc[1].u_act                                         |     0.003 |
+|           g_row[2].g_pc[2].u_act                                         |     0.003 |
+|           g_row[2].g_pc[3].u_act                                         |     0.003 |
+|           g_row[2].u_asc                                                 |     0.001 |
+|           g_row[3].g_pc[0].u_act                                         |     0.003 |
+|           g_row[3].g_pc[1].u_act                                         |     0.003 |
+|           g_row[3].g_pc[2].u_act                                         |     0.003 |
+|           g_row[3].g_pc[3].u_act                                         |     0.003 |
+|           g_row[3].u_asc                                                 |     0.001 |
+|         u_dma                                                            |     0.365 |
+|           g_gb[0].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[0].g_l[7].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[1].g_l[7].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[2].g_l[7].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[0].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[1].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[2].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[3].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[4].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[5].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[6].u_gb                                            |     0.003 |
+|           g_gb[3].g_l[7].u_gb                                            |     0.003 |
+|           u_lb                                                           |     0.218 |
+|         u_mxu                                                            |     0.859 |
+|           g_ask[0].g_p[15].u_pe                                          |     0.003 |
+|           g_ask[1].g_p[15].u_pe                                          |     0.003 |
+|           g_ask[3].g_p[31].u_pe                                          |     0.003 |
+|           g_bd[0].u_bd                                                   |     0.002 |
+|           g_bd[1].u_bd                                                   |     0.002 |
+|           g_bd[2].u_bd                                                   |     0.002 |
+|           g_bd[3].u_bd                                                   |     0.002 |
+|           g_col_end[0].u_bm                                              |     0.002 |
+|           g_col_end[0].u_ce                                              |     0.006 |
+|           g_col_end[0].u_dsk                                             |     0.006 |
+|           g_col_end[1].u_bm                                              |     0.002 |
+|           g_col_end[1].u_ce                                              |     0.005 |
+|           g_col_end[1].u_dsk                                             |     0.005 |
+|           g_col_end[2].u_bm                                              |     0.002 |
+|           g_col_end[2].u_ce                                              |     0.004 |
+|           g_col_end[2].u_dsk                                             |     0.012 |
+|           g_col_end[3].u_bm                                              |     0.002 |
+|           g_col_end[3].u_ce                                              |     0.010 |
+|           g_fd[0].g_d2.u_fd2                                             |     0.028 |
+|           g_fd[0].u_fd                                                   |     0.028 |
+|           g_fd[1].g_d2.u_fd2                                             |     0.024 |
+|           g_fd[1].u_fd                                                   |     0.024 |
+|           g_fd[2].g_d2.u_fd2                                             |     0.024 |
+|           g_fd[2].u_fd                                                   |     0.024 |
+|           g_fd[3].g_d2.u_fd2                                             |     0.022 |
+|           g_fd[3].u_fd                                                   |     0.022 |
+|           g_fsq.u_fs23                                                   |     0.011 |
+|           g_lane[0].u_l                                                  |     0.022 |
+|             u_m1                                                         |     0.006 |
+|             u_m2                                                         |     0.006 |
+|             u_sa                                                         |     0.002 |
+|           g_lane[1].u_l                                                  |     0.024 |
+|             u_m1                                                         |     0.006 |
+|             u_m2                                                         |     0.006 |
+|             u_sa                                                         |     0.002 |
+|           g_rfm[0].u_m                                                   |     0.039 |
+|           g_rfm[1].u_m                                                   |     0.039 |
+|           g_rfm[2].u_m                                                   |     0.038 |
+|           g_rmw[0].u_y                                                   |     0.015 |
+|             u_a                                                          |     0.009 |
+|             u_m                                                          |     0.005 |
+|           g_rmw[1].u_y                                                   |     0.015 |
+|             u_a                                                          |     0.010 |
+|             u_m                                                          |     0.005 |
+|           u_fs0                                                          |     0.015 |
+|           u_fs1                                                          |     0.017 |
+|           u_rw                                                           |     0.005 |
+|           u_tl                                                           |     0.002 |
+|           u_ts                                                           |     0.005 |
+|         u_quant                                                          |     0.162 |
+|           g_gr[0].u_g                                                    |     0.002 |
+|           g_gr[1].u_g                                                    |     0.002 |
+|           g_gr[2].u_g                                                    |     0.002 |
+|           g_gr[3].u_g                                                    |     0.002 |
+|           g_pre[0].u_c                                                   |     0.001 |
+|           g_pre[0].u_c2                                                  |     0.002 |
+|           g_pre[0].u_r                                                   |     0.001 |
+|           g_pre[1].u_c                                                   |     0.002 |
+|           g_pre[1].u_c2                                                  |     0.007 |
+|           g_pre[1].u_r                                                   |     0.010 |
+|           g_pre[2].u_c                                                   |     0.002 |
+|           g_pre[2].u_c2                                                  |     0.007 |
+|           g_pre[2].u_r                                                   |     0.009 |
+|           g_pre[3].u_c                                                   |     0.002 |
+|           g_pre[3].u_c2                                                  |     0.002 |
+|           g_pre[3].u_r                                                   |     0.001 |
+|           g_pre[4].u_c                                                   |     0.001 |
+|           g_pre[4].u_c2                                                  |     0.004 |
+|           g_pre[4].u_r                                                   |     0.005 |
+|           g_pre[5].u_c                                                   |     0.001 |
+|           g_pre[5].u_c2                                                  |     0.002 |
+|           g_pre[5].u_r                                                   |     0.001 |
+|           g_pre[6].u_c                                                   |     0.002 |
+|           g_pre[6].u_c2                                                  |     0.002 |
+|           g_pre[6].u_r                                                   |     0.001 |
+|           g_pre[7].u_r                                                   |     0.001 |
+|           g_q[1].u_q                                                     |     0.003 |
+|           g_q[2].u_q                                                     |     0.004 |
+|           g_q[4].u_q                                                     |     0.002 |
+|           g_xb.u_xb                                                      |     0.006 |
+|           u_da                                                           |     0.001 |
+|           u_mp                                                           |     0.002 |
+|           u_sc                                                           |     0.022 |
+|             g_it[0].u_t                                                  |     0.003 |
+|               u_a                                                        |     0.002 |
+|             g_it[0].u_y                                                  |     0.005 |
+|             g_it[1].u_t                                                  |     0.002 |
+|             u_e                                                          |     0.002 |
+|             u_sc                                                         |     0.002 |
+|             u_y3                                                         |     0.002 |
+|           u_wq                                                           |     0.003 |
+|         u_seq                                                            |     0.250 |
+|           u_imem                                                         |     0.085 |
+|         u_tmem                                                           |     0.592 |
+|         u_vpu                                                            |     0.329 |
+|           g_comp.u_comp                                                  |     0.055 |
+|             g_lane[0].g_st[0].u_k                                        |     0.001 |
+|             g_lane[0].g_st[1].u_k                                        |     0.001 |
+|             g_lane[0].g_st[2].u_k                                        |     0.001 |
+|             g_lane[1].g_st[0].u_k                                        |     0.001 |
+|             g_lane[1].g_st[1].u_k                                        |     0.001 |
+|             g_lane[1].g_st[2].u_k                                        |     0.001 |
+|             g_lane[2].g_st[0].u_k                                        |     0.001 |
+|             g_lane[2].g_st[1].u_k                                        |     0.001 |
+|             g_lane[2].g_st[2].u_k                                        |     0.001 |
+|             g_lane[3].g_st[0].u_k                                        |     0.001 |
+|             g_lane[3].g_st[1].u_k                                        |     0.001 |
+|             g_lane[3].g_st[2].u_k                                        |     0.001 |
+|             g_lane[4].g_st[0].u_k                                        |     0.001 |
+|             g_lane[4].g_st[1].u_k                                        |     0.001 |
+|             g_lane[4].g_st[2].u_k                                        |     0.001 |
+|             g_lane[5].g_st[0].u_k                                        |     0.001 |
+|             g_lane[5].g_st[1].u_k                                        |     0.001 |
+|             g_lane[5].g_st[2].u_k                                        |     0.001 |
+|             g_lane[6].g_st[0].u_k                                        |     0.001 |
+|             g_lane[6].g_st[1].u_k                                        |     0.001 |
+|             g_lane[6].g_st[2].u_k                                        |     0.001 |
+|             g_lane[7].g_st[0].u_k                                        |     0.001 |
+|             g_lane[7].g_st[1].u_k                                        |     0.001 |
+|             g_lane[7].g_st[2].u_k                                        |     0.001 |
+|           g_mdel[0].g_d0.u_d                                             |     0.001 |
+|           g_se.u_tail                                                    |     0.138 |
+|             g_lq[0].u_a                                                  |     0.002 |
+|             g_lq[0].u_m                                                  |     0.002 |
+|             g_lq[1].u_a                                                  |     0.002 |
+|             g_lq[1].u_m                                                  |     0.001 |
+|             g_lq[2].u_a                                                  |     0.002 |
+|             g_lq[2].u_m                                                  |     0.001 |
+|             g_lq[3].u_a                                                  |     0.002 |
+|             g_lq[3].u_m                                                  |     0.002 |
+|             g_lq[4].u_a                                                  |     0.002 |
+|             g_lq[4].u_m                                                  |     0.002 |
+|             g_lq[5].u_a                                                  |     0.002 |
+|             g_lq[5].u_m                                                  |     0.001 |
+|             g_lq[6].u_a                                                  |     0.002 |
+|             g_lq[7].u_a                                                  |     0.002 |
+|             g_lq[7].u_m                                                  |     0.001 |
+|             g_u[0].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[1].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[2].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[3].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[4].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.001 |
+|             g_u[5].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[6].u_ma                                                  |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             g_u[7].u_ma                                                  |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.001 |
+|             u_d1                                                         |     0.007 |
+|               u_a                                                        |     0.004 |
+|               u_m                                                        |     0.003 |
+|             u_d2                                                         |     0.005 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.002 |
+|             u_d3                                                         |     0.006 |
+|               u_a                                                        |     0.003 |
+|               u_m                                                        |     0.003 |
+|             u_ub                                                         |     0.004 |
+|           g_slane[0].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.002 |
+|             u_m                                                          |     0.001 |
+|           g_slane[1].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|           g_slane[2].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|             u_m                                                          |     0.001 |
+|           g_slane[3].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.002 |
+|             u_c                                                          |     0.001 |
+|             u_m                                                          |     0.001 |
+|           g_slane[4].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.003 |
+|             u_m                                                          |     0.001 |
+|           g_slane[5].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|             u_c                                                          |     0.001 |
+|             u_m                                                          |     0.001 |
+|           g_slane[6].u_ma                                                |     0.005 |
+|             u_a                                                          |     0.002 |
+|             u_c                                                          |     0.001 |
+|             u_m                                                          |     0.002 |
+|           g_slane[7].u_ma                                                |     0.004 |
+|             u_a                                                          |     0.002 |
+|             u_m                                                          |     0.001 |
+|           u_vt                                                           |     0.042 |
+|             g_ln.g_m[0].g_o.u_ln                                         |     0.004 |
+|             g_ln.g_m[1].g_n.u_ln                                         |     0.003 |
+|             g_tree[0].u_tree                                             |     0.003 |
+|             g_tree[1].u_tree                                             |     0.003 |
+|             g_tree[2].u_tree                                             |     0.003 |
+|             g_tree[3].u_tree                                             |     0.003 |
+|             g_tree[4].u_tree                                             |     0.003 |
+|             g_tree[5].u_tree                                             |     0.002 |
+|             g_tree[6].u_tree                                             |     0.003 |
+|             g_tree[7].u_tree                                             |     0.003 |
++--------------------------------------------------------------------------+-----------+
+
+

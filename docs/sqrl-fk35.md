@@ -10,7 +10,7 @@ The SQRL Forest Kitten 35: Virtex UltraScale+ HBM xcvu35p-fsvh2104-2-e (two SLRs
 | top | `rtl/boards/sqrl-fk35/otpu_fpga_top_fk35.sv` |
 | block design | `boards/sqrl-fk35/vivado/bd.tcl`: XDMA (Gen4 x8 on PCIE4C_X1Y0, 512-bit AXI at 250 MHz; PCIE_GEN=3: Gen3 x8, 256-bit, the builds before f35d000c), clocks, SYSMON, BAR0 and DMA interconnects |
 | memory | `otpu_hbm.sv` (the HBM IP, all 32 AXI ports as arrays) and one `otpu_hbm_port.sv` per channel |
-| floorplan | `boards/sqrl-fk35/constraints/fk35_floorplan.tcl`: the memory side (and the slices' memory adapters: MEMX) in SLR0, the slices and the shell in SLR1 |
+| floorplan | `boards/sqrl-fk35/constraints/fk35_floorplan.tcl`: the memory side (and the slices' memory adapters: MEMX) in SLR0, the slices and the shell in SLR1; Gen4: XDMA in a pblock at the PCIe block |
 | build | `boards/sqrl-fk35/run_vivado.sh` (Vivado 2019.2), with this board's `vivado/build.tcl`, `scripts/preflight.tcl` and `vivado/tmem_uram.xdc` |
 
 ## The design
@@ -48,6 +48,27 @@ WNS -0.15 ns; with MEMX SLR1 holds 69% of its block RAMs and 81% of its CLBs, SL
 LUTs). `QMEM` (run_vivado.sh, the top's parameter) is the other way tried: the adapters' 512-bit x 32 queues in LUT
 RAM (1) and the B FIFOs in UltraRAM too (2) took SLR1 down to 69% of its block RAMs with the adapters in place, but
 neither routed better than about -0.3 ns before it was stopped. The core reset crosses as a register per side.
+
+Gen4 x8 (PCIE_GEN 4, from f35d000c) needs XDMA's 512-bit AXI: XDMA grows from 24k to 54k LUTs (pcie4c_ip 3k -> 10k,
+the DMA engine 20k -> 44k), SLR0 from 62% to 70% of its LUTs and 91% to 94% of its CLBs. Unconstrained (f35d000c)
+the placer spread XDMA over X64-232 Y0-239 of SLR0, mostly its top row and a fifth among channels 2-5 and the memory
+adapters, and the memory side failed (WNS -0.524 ns core, -0.404 uclk, -0.250 xdma_aclk; congestion level 6).
+fk35_floorplan.tcl now puts XDMA and sc_dma's 512-bit entry (its S00 entry pipeline and nodes, where it converts to
+the channels' 128 bits) in a hard pblock pb_xdma: the two right columns of SLR0 (the PCIe block PCIE4CE4_X1Y0 is in
+clock region X7Y0) and the top row's right half, X6Y0:X7Y3 + X3Y3:X5Y3. The HBM side's reset (the top's u_rst) is a
+register with max_fanout, not a gate on rst_uclk fanned out to every adapter. f35d000d (pblock, register, and an
+axi_dwidth_converter 512 -> 128 ahead of sc_dma) routed at WNS +0.012 / WHS +0.005 ns but its DMA did not work:
+2019.2's SmartConnect kept generating its S00 for XDMA's 512 bits and 4-bit ID behind the converter, the block
+design zero-padded the converter's 128 bits into it, and C2H read DECERR (status 0x200) while H2C hung at any size.
+Keep XDMA's M_AXI straight into sc_dma. f35d000e (pblock with sc_dma's entry, the reset register) met timing:
+WNS +0.002 ns (core_clk +0.002, uclk +0.007, xdma_aclk +0.017, pipe_clk +0.026), WHS +0.004 ns; SLR0 70.3% of its
+LUTs, 95.2% of its CLBs. Flashed 2026-11-07: self-test ALL PASS (host -> card 2.09 GB/s, card -> host 2.83), Qwen3.5-9B
+decode 24.48 tok/s fp4 and 21.97 mix, as f35d000b. The slot (PCH root port 0:1B.4, x4) trains Gen4 x4 after a full
+restart; retrains while Windows runs (flash + rescan, root-port restarts, sleep / fast-startup) left it at Gen3 x4
+from 2026-10-27 until then. At Gen4 x4 (2026-11-07, no AER errors under load): self-test 2.18 / 2.89 GB/s
+(host -> card / card -> host, Gen3 x4: 2.09 / 2.83), the driver's direct DMA 2.49 / 3.19 GB/s, its loop test to one
+HBM channel 2.63 / 3.39 GB/s. The link is not the limit: a transfer goes to one channel's 128-bit DMA port
+(4 GB/s at 250 MHz) and through otpu_mem_ch's XDMA side; SQRL's own design moves 7.1 / 6.9 GB/s over the same link.
 
 The host reaches channel j at j x 2 GiB, and the channel's 1 GiB repeats in the window's upper half (otpu_hbm_port
 takes the low 30 bits): CFG_DRAM still reports 2^31 bytes a channel, the 4 GiB slice's map. Nothing addresses the

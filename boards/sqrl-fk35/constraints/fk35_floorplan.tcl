@@ -57,6 +57,24 @@ foreach j {0 1 2 3 4 5 6 7} {
 fk35_pb pb_mem SLR0 $mem
 fk35_pb pb_cmp SLR1 $cmp
 
+# Gen4 (XDMA's 512-bit AXI: sc_dma's S00 has 512 data bits; Gen3's 256): XDMA (54k LUTs, Gen3's 24k) and sc_dma's
+# 512-bit entry (its S00 entry pipeline and nodes, the width conversion) in a hard pblock, the two right columns of
+# SLR0 (the PCIe block at X7Y0) and the top row's right half; sc_dma's 128-bit masters stay free. Unconstrained,
+# f35d000c spread XDMA over X64-232 Y0-239, a fifth of it among channels 2-5 and the memory adapters in X2-X5 rows
+# 0-2, whose paths then failed (-0.52 ns core, -0.40 uclk). Other cells may still use those regions.
+if {[llength [get_pins -quiet {u_bd/otpu_bd_i/sc_dma/S00_AXI_wdata[511]}]]} {
+  set pbc [get_cells u_bd/otpu_bd_i/xdma_0]
+  foreach c {s00_entry_pipeline s00_nodes} {
+    set x [get_cells -quiet u_bd/otpu_bd_i/sc_dma/inst/$c]
+    if {[llength $x]} { lappend pbc $x } else { puts "CRITICAL WARNING: \[fk35_floorplan.tcl\] pb_xdma: no sc_dma $c" }
+  }
+  set pb [create_pblock pb_xdma]
+  resize_pblock $pb -add {CLOCKREGION_X6Y0:CLOCKREGION_X7Y3 CLOCKREGION_X3Y3:CLOCKREGION_X5Y3}
+  set_property IS_SOFT false $pb
+  add_cells_to_pblock $pb $pbc
+  puts "fk35_floorplan.tcl: pb_xdma, [llength $pbc] cells ($pbc) in X6Y0:X7Y3 X3Y3:X5Y3"
+}
+
 if {$memx} {
   # Laguna registers on the slices' port crossings: each side's sll_* registers (u_s's requests out and replies in,
   # u_m's requests in and replies out)

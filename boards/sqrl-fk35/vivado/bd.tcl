@@ -110,6 +110,9 @@ set scd [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_dma]
 set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI $NCH CONFIG.NUM_CLKS {1}] $scd
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_dma/aclk]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins sc_dma/aresetn]
+# XDMA's M_AXI straight into sc_dma, which converts to the channels' 128 bits once at its entry. Not through an
+# axi_dwidth_converter ahead of it (f35d000d): 2019.2's SmartConnect still generated its S00 for XDMA's 512 bits and
+# ID, the block design zero-padded the downsizer's 128 bits into it, and every DMA failed (C2H DECERR, H2C hung).
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins sc_dma/S00_AXI]
 foreach p $dmas {
   set m [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]

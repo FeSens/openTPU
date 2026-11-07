@@ -125,7 +125,10 @@ module otpu_fpga_top_fk35 #(
   logic [1:0] hbm_calib, hbm_cattrip;
   (* ASYNC_REG = "TRUE" *) logic [1:0] hcal_u1 = '0, hcal_u2 = '0;
   always_ff @(posedge uclk) begin hcal_u1 <= hbm_calib; hcal_u2 <= hcal_u1; end
-  wire u_rst = !urstn || !(&hcal_u2);
+  // the HBM side's reset from a flip-flop the tools may replicate, not a gate on rst_uclk fanned out to every channel
+  // and adapter (f35d000c, Gen4: rst_uclk -> the adapters' synchronous resets at -0.5 ns)
+  (* max_fanout = 256 *) logic u_rst = 1'b1;
+  always_ff @(posedge uclk) u_rst <= !urstn || !(&hcal_u2);
   logic [NP-1:0][32:0]  h_awaddr, h_araddr;
   logic [NP-1:0][5:0]   h_awid, h_arid, h_bid, h_rid;
   logic [NP-1:0][3:0]   h_awlen, h_arlen;
