@@ -182,7 +182,9 @@ def x2_rows(x: dict) -> list[str]:
         bad = ", ".join(q["errors"] + ([f"{q['crc']} CRC errors"] if q["crc"] else []))
         ping = f", ping {q['ping_cycles']} cycles" if q["ping_cycles"] is not None else ""
         return f"QSFP{p} {'up' if q['up'] else 'DOWN'} ({peer}{ping})" + (f" ! {bad}" if bad else "")
-    place = "not set (one card)" if x["ncards"] <= 1 else f"card {x['card']} of {x['ncards']}"
+    # (0 of 1 is the image's reset value: a two-card image no host has brought up since it loaded)
+    place = "not set yet (a bring-up sets them)" if x["ncards"] <= 1 \
+        else f"card {x['card']} of {x['ncards']}"
     coll = f"  collective: {', '.join(x['coll'])}" if x["coll"] else ""
     out = [_line(f"{'Cards':<11}{place}  collectives {x['seq']}{coll}")]
     out += [_line(" " * 11 + port(p, q)) for p, q in enumerate(x["ports"])]

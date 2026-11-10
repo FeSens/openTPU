@@ -19,7 +19,29 @@ BCU_BUILD=~/otpu-build      # optional: the trees, cardimg, bin (default ~/otpu-
 BCU_DATA=$BCU_BUILD/data    # optional: raw images and KV stores
 BCU_PY=python3              # optional: the interpreter (default PATH's python3)
 BCU_CARD=0                  # optional: the one-card wrappers' card (0 or 1; `otpu-chat --card N` sets it)
+BCU_IMAGE=one               # optional: the image the cards hold, one (a one-card image) or x2 (the two-card image)
+BCU_RESUME=65               # optional: the governor's RESUME for every bring-up's GOs (C, at most 69.9)
+BCU_TREE=$BCU_BUILD/bcu-wg/tree   # optional: otpu-chat's host tree
+BCU_X2_TARGET=bcu1525-x2:st16     # optional: the two-card image's target, for otpu-chat on both cards
 ```
+
+A `BCU_*` variable already in the environment wins over the file's, so one run can differ
+(`BCU_BUILD=~/other otpu-chat`, `BCU_RESUME=69.9 otpu-chat35x2`).
+
+**RESUME.** The governor takes a GO only with the die at or under RESUME, and a bring-up sets RESUME before its GOs
+(`wg_bringup.py up --resume`, 65 C by default). Fans that hold the die above it (a fan loop whose target is higher)
+keep every GO refused: the bring-up retries for 30 minutes and fails. `BCU_RESUME` raises it for the wrappers'
+bring-ups. Each wrapper says so before the bring-up when the die is above the RESUME it will use, and while it waits
+it shows the bring-up's line (`waiting for GO: die 70.1 C, RESUME 65.0 C ...`) every 15 s.
+
+**Which image.** A card in SAFE keeps its accelerator's registers fenced, so the wrappers cannot ask it which
+bitstream it holds. `otpu-chat` takes `BCU_IMAGE`, else `x2` when `$BCU_BUILD/cardimg/x2/IMAGE` exists, else `one`
+(and the card's own registers instead, when they answer: a card left running). On the two-card image `otpu-chat`
+brings both cards up (`tools/x2_session/bringup.py up` on each) and chats on both
+(`--dev /dev/xdmaA+/dev/xdmaB`, `OTPU_TARGET=$BCU_X2_TARGET`), any model the chat takes; `--card 0` or `1` there is
+refused at once, since one card of that image holds half the machine's slices. On a one-card image `--card 0|1`
+picks the card, as before. A bring-up that then fails on the bitstream's check says the card holds another image
+than `BCU_IMAGE`.
 
 A card's XDMA device is found by its PCI function each time, so either card runs the one-card wrappers whichever
 `/dev/xdmaN` it is (`BCU_DEV`, when set, must name that card's device: a check, not a choice). `OTPU_DEV` is not part of
@@ -36,7 +58,7 @@ stays the entry's). A wrapper without its card's serial and PCI function stops b
 
 | File | Where it runs | What it does |
 |---|---|---|
-| `otpu-chat` | card host `$BCU_BUILD/bin` | the BCU chat wrapper; `--model qwen36-35b` goes to `otpu-chat35`; `--card 0|1|x2` |
+| `otpu-chat` | card host `$BCU_BUILD/bin` | the BCU chat wrapper: one card of a one-card image (`--card 0|1`) or both cards of the two-card image (no `--card`, or `--card x2`); `--model qwen36-35b` goes to `otpu-chat35` or `otpu-chat35x2` |
 | `otpu-chat35` | card host `$BCU_BUILD/bin` | bring-up, the raw image's pages into the page cache meanwhile, `chat35.py`, SAFE |
 | `chat35.py` | card host / build host, from the tree's root | the chat with the entry's Engine (see below); `CHAT35_BUILD=1` builds the image, `CHAT35_KEY=1` prints its key, `CHAT35_EXPAND=<entry>` writes the raw image |
 | `c35.sh`, `b35.sh` | build host | key / build the image there (88 min, ~45 GB RAM: on a build host, not the card host); `[TREE [ARGS...]]`: another tree, otpu-chat's ARGS (`--slots 2 --cap 131072`: otpu-serve35 --slots 2's image) |
@@ -164,7 +186,8 @@ and `ENTRY` at the new tree and key. A `host/` change is a copy of the file into
 The same chat on two cards as one machine: four slices, two a card, in tensor parallel over the QSFP28 link
 (`opentpu.host.cards.CardsTransport`, `--dev /dev/xdmaA+/dev/xdmaB`, `BCU_CARD0_*` card 0). Both cards hold the x2 image (`tools/x2_card.py`,
 `tools/x2_session`); `otpu-chat --model qwen36-35b` goes to
-`otpu-chat35x2` when `cardimg/x2/IMAGE` exists (or with `--card x2`), else to `otpu-chat35`.
+`otpu-chat35x2` when the cards hold the two-card image (`BCU_IMAGE=x2`, or `cardimg/x2/IMAGE` exists; or with
+`--card x2`), else to `otpu-chat35`.
 
 | File | Where it runs | What it does |
 |---|---|---|

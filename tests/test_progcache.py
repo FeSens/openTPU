@@ -50,6 +50,24 @@ def test_disk_round_trip(tmp_path, value):
                 [(v.name, v.bound, c) for v, c in (ra or ())]
 
 
+def test_a_write_under_the_free_disk_floor_is_skipped_and_counted(tmp_path, monkeypatch):
+    """Nothing is written that would leave under the floor (FREE_FLOOR, or
+    OTPU_PROG_CACHE_FREE_GB over it); the skip is counted, so a host can say its programs are
+    not kept."""
+    monkeypatch.setattr(PC, "stats", dict.fromkeys(PC.stats, 0))
+    f = tmp_path / "ab" / "ab.npz"
+    monkeypatch.setenv("OTPU_PROG_CACHE_FREE_GB", str(1 << 30))
+    assert PC.free_floor() == (1 << 30) * 2**30
+    PC._store(tmp_path, f, ([_prog(5, 1)], None))
+    assert not f.exists() and PC.stats["skip"] == 1 and PC.stats["write"] == 0
+    monkeypatch.setenv("OTPU_PROG_CACHE_FREE_GB", "0")
+    PC._store(tmp_path, f, ([_prog(5, 1)], None))
+    assert f.exists() and PC.stats["write"] == 1
+    monkeypatch.delenv("OTPU_PROG_CACHE_FREE_GB")
+    assert PC.free_floor() == PC.FREE_FLOOR
+    assert "OTPU_PROG_CACHE_FREE_GB" in PC.RUNTIME_ENV      # (not in the key)
+
+
 def test_the_key_sees_the_layout_the_environment_and_what(monkeypatch):
     monkeypatch.delenv("OTPU_FORMATS", raising=False)
     k = PC.key(("spec", 512), ("gen", 1))

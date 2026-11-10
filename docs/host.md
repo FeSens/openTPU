@@ -1273,7 +1273,8 @@ the owning process.
 
 Every card is a device of its own, whatever its target: a Kintex-7 card and the BCU1525s of
 one host each get a table. A card of a two-card machine (CAPS2 bit15, `bcu1525-x2`) adds a
-Cards row, its place in the machine (`card 0 of 2`; `not set` before a host has set it up) with
+Cards row, its place in the machine (`card 0 of 2`; `not set yet (a bring-up sets them)` on an image no host has brought
+up since it loaded, with both links DOWN until then) with
 the collectives issued since the link reset, and a line for each QSFP28 link: up or DOWN, the
 card and port its peer's hello named, the last ping in core cycles, and after a `!` the sticky
 errors standing (CRC, watchdog, abort, dropped) with the CRC count
@@ -1375,6 +1376,7 @@ Read by the host and the compilers:
 | `OTPU_MOE_GROUPS` | N | at S > 1: the tensor-parallel experts' activation gathers a layer |
 | `OTPU_SEXACT` | 0, 1 | S-exact images at S > 1 (`opentpu.llm.qwen35.s_exact_on`), over the target's `SEXACT` |
 | `OTPU_PROG_CACHE_GB` | GiB | the program cache's size before it evicts (to 90%) |
+| `OTPU_PROG_CACHE_FREE_GB` | GiB | the free disk a program-cache write must leave (4); a write under it is skipped, and `otpu-chat` and the server say so at start |
 | `OTPU_SERVE_QUIET` | set | `otpu-serve` without its line a request |
 
 ## Troubleshooting

@@ -26,7 +26,8 @@ Tests leave it off: they patch kernels' module constants, which the key does not
 cache: OTPU_PROG_CACHE=<dir>; with 1 (or an engine's prog_cache=True and the variable unset)
 ~/otpu-build/qcache/prog on a host with ~/otpu-build (the build and card hosts), else none. Entries are .npz files written to a
 temporary name, then renamed; the least recently used go past CAP_BYTES (OTPU_PROG_CACHE_GB).
-`stats` counts memory hits, disk hits, compiles and disk writes.
+`stats` counts memory hits, disk hits, compiles, disk writes and the writes skipped under the
+free-disk floor (free_floor).
 
 `fact(layout, what, compute)` keeps a small JSON value the same way (.json beside the
 programs), e.g. the rows a prompt run of a bucket takes (prefill.r_max): what a compile found
@@ -46,11 +47,12 @@ from . import isa as I
 from .compiler import Program, run_var
 
 CAP_BYTES = 2 << 30             # the disk cache's size (OTPU_PROG_CACHE_GB overrides)
-FREE_FLOOR = 20 << 30           # free disk a write must leave
+FREE_FLOOR = 4 << 30            # free disk a write must leave (OTPU_PROG_CACHE_FREE_GB overrides)
 # read by the host's tools only: not in the key (otpu-lock sets OTPU_LOCK_HELD and its pid,
 # OTPU_LOCK_PID, for every command it runs: in the key, no session found the one before's)
 RUNTIME_ENV = ("OTPU_PROG_CACHE", "OTPU_PROG_CACHE_GB", "OTPU_IMAGE_CACHE", "OTPU_IMAGE_CACHE_GB",
                "OTPU_IMG_CACHE", "OTPU_IMG_CACHE_GB", "OTPU_IMG_CACHE_FREE_GB", "OTPU_BUILD_JOBS",
+               "OTPU_PROG_CACHE_FREE_GB",
                "OTPU_QUIET", "OTPU_PREBUILD_CFG", "OTPU_PREBUILD_MIN_GB",
                "OTPU_PREBUILD_QUIET_WAIT", "OTPU_LOCK_HELD", "OTPU_LOCK_PID", "OTPU_LOCK_WAIT",
                "OTPU_RUN_DIR", "OTPU_STOP_RUN", "OTPU_SIM_TMP", "OTPU_PARENT",
@@ -66,7 +68,7 @@ HOST_KEYED = ("host/offload.py",)
 # image (tests/test_progcache.py: no other module imports one, but runtime's RTL run)
 UNKEYED = ("hwtrace.py", "lens.py", "profile.py", "reference.py", "rtlsim.py", "simtmp.py",
            "llm/rtl_backend.py")
-stats = {"memory": 0, "disk": 0, "compile": 0, "write": 0}
+stats = {"memory": 0, "disk": 0, "compile": 0, "write": 0, "skip": 0}
 _mem: dict = {}
 _SRC: str | None = None
 
@@ -115,6 +117,14 @@ def keyed_env() -> list:
                   if k.startswith("OTPU_") and k not in RUNTIME_ENV)
 
 
+def free_floor() -> int:
+    """The free disk a write must leave, bytes: OTPU_PROG_CACHE_FREE_GB, else FREE_FLOOR. A write
+    that would leave less is skipped (stats "skip"): the program is compiled again by the next
+    process that wants it."""
+    v = os.environ.get("OTPU_PROG_CACHE_FREE_GB")
+    return FREE_FLOOR if v is None else int(float(v) * 2**30)
+
+
 def key(layout, what) -> str:
     return hashlib.blake2b(repr((layout, what, keyed_env(), source())).encode(),
                            digest_size=20).hexdigest()
@@ -158,10 +168,13 @@ def fact(layout, what, compute, disk: bool = True):
         v = compute()
         if f is not None:
             f.parent.mkdir(parents=True, exist_ok=True)
-            tmp = f.with_name(f".{f.stem}.{os.getpid()}.json")
-            tmp.write_text(json.dumps(v))
-            os.replace(tmp, f)
-            stats["write"] += 1
+            if shutil.disk_usage(f.parent).free < free_floor():
+                stats["skip"] += 1
+            else:
+                tmp = f.with_name(f".{f.stem}.{os.getpid()}.json")
+                tmp.write_text(json.dumps(v))
+                os.replace(tmp, f)
+                stats["write"] += 1
     _mem[k] = v
     return v
 
@@ -209,7 +222,8 @@ def _store(d: Path, f: Path, v) -> None:
             "ra": None if ra is None else [[v_.name, int(c), v_.bound] for v_, c in ra],
             "seen": [[v_.name, int(c), v_.bound] for v_, c in _seen(parts)]}
     f.parent.mkdir(parents=True, exist_ok=True)
-    if shutil.disk_usage(f.parent).free - sum(a.nbytes for a in arrs.values()) < FREE_FLOOR:
+    if shutil.disk_usage(f.parent).free - sum(a.nbytes for a in arrs.values()) < free_floor():
+        stats["skip"] += 1
         return
     tmp = f.with_name(f".{f.stem}.{os.getpid()}.npz")
     np.savez(tmp, meta=np.frombuffer(json.dumps(meta).encode(), np.uint8), **arrs)

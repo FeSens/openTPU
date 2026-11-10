@@ -60,6 +60,7 @@ PAGE = 4096                     # zeros are left out in whole pages
 MAGIC = b"OTPUIMG1"
 stats = {"hit": 0, "miss": 0, "write": 0, "skip": 0}
 last: tuple = ("off", 0.0)
+why_skipped: str = ""           # the latest skipped write's reason (for the host's load line)
 _LIBS: str | None = None
 
 
@@ -161,6 +162,7 @@ def build(image, W, layout) -> list[np.ndarray]:
     left = _left(before, _attrs(image, W), W)
     if left is None:
         stats["skip"] += 1
+        _why("the build left state on the image the cache cannot keep")
     stored = left is not None and _store(d, f, images, left, secs)
     last = ("miss" if stored else "skip", time.perf_counter() - t0)
     return images
@@ -247,13 +249,22 @@ def _store(d: Path, f: Path, images: list, left: dict, build_s: float = 0.0) -> 
     size = sum(n for s in slices for _, n in s["runs"]) + \
         sum(v.nbytes for kind, v in left.values() if kind == "array")
     free = float(os.environ.get("OTPU_IMG_CACHE_FREE_GB", FREE_FLOOR / 2**30)) * 2**30
+    cap = _cap()
     head = json.dumps(meta).encode()
     tmp = f.with_name(f".{f.stem}.{os.getpid()}.img")
+    if size > cap:                      # (written, _evict would drop it at once: it alone is over)
+        stats["skip"] += 1
+        _why(f"its {size / 2**30:.1f} GiB are over the cache's size, {cap / 2**30:g} GiB "
+             f"(OTPU_IMG_CACHE_GB)")
+        return False
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
-        short = free + size - shutil.disk_usage(f.parent).free
+        have = shutil.disk_usage(f.parent).free
+        short = free + size - have
         if short > 0 and not _room(d, short, _score(time.time(), build_s, size)):
             stats["skip"] += 1
+            _why(f"its {size / 2**30:.1f} GiB would leave the cache's disk ({have / 2**30:.1f} GiB "
+                 f"free) under the {free / 2**30:g} GiB floor (OTPU_IMG_CACHE_FREE_GB)")
             return False
         with open(tmp, "wb") as out:
             out.write(MAGIC + struct.pack("<Q", len(head)) + head)
@@ -268,10 +279,21 @@ def _store(d: Path, f: Path, images: list, left: dict, build_s: float = 0.0) -> 
         if not isinstance(e, OSError):
             raise
         stats["skip"] += 1
+        _why(f"the write failed ({e})")
         return False
     stats["write"] += 1
     _evict(d)
     return True
+
+
+def _why(reason: str) -> None:
+    global why_skipped
+    why_skipped = reason
+
+
+def _cap() -> int:
+    """The cache's size, bytes (OTPU_IMG_CACHE_GB, else CAP_BYTES)."""
+    return int(float(os.environ.get("OTPU_IMG_CACHE_GB", CAP_BYTES / 2**30)) * 2**30)
 
 
 def _load(f: Path, W):
@@ -352,7 +374,7 @@ def _ranked(d: Path) -> list:
 
 def _evict(d: Path) -> None:
     """While the cache is over its size, drop entries (to 90% of it) in the eviction order."""
-    cap = int(float(os.environ.get("OTPU_IMG_CACHE_GB", CAP_BYTES / 2**30)) * 2**30)
+    cap = _cap()
     ents = _ranked(d)
     total = sum(e[1] for e in ents)
     if total <= cap:

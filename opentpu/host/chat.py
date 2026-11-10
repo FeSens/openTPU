@@ -1187,9 +1187,17 @@ def main(argv=None):
     weights = weights_label(eng.image, wformat)
     print(f"weights: {weights}", flush=True)
     how, secs = IC.last                     # (the image cache: opentpu/imgcache.py)
+    skipped = how == "skip"
     how = {"hit": "read from the image cache", "miss": "built and cached"}.get(how, "built")
     print(f"loaded in {time.perf_counter() - t0:.1f} s (the image {how} in {secs:.1f} s)",
           flush=True)
+    if skipped and IC.why_skipped:      # (the next load builds it again: say why)
+        print(f"otpu-chat: the image was not cached: {IC.why_skipped}", flush=True)
+    if not a.no_prog_cache:             # (under its free-disk floor every chat compiles again)
+        from opentpu.serve import progstate as PS
+        saves = PS.saves()
+        if saves["saving"] is False:
+            print(PS.saves_line(saves, "otpu-chat") + " (OTPU_PROG_CACHE_FREE_GB)", flush=True)
     if getattr(eng.backend, "status", None) is not None:
         eng.backend.status.update(weights=weights)      # for otpu-smi
     tok = tokenizer()

@@ -554,7 +554,7 @@ that answer at once (the card's and the link's parts are not in it), per prompt:
 | into a slot sharing 40 pages | 43 MB (21 MB) | 0.02 s |
 
 What is left of the prompt after a restore runs on warmed programs, also with the program cache's
-saves off (free disk under `FREE_FLOOR`): on the warm's cache, in each of the four
+saves off (free disk under the floor, `OTPU_PROG_CACHE_FREE_GB`): on the warm's cache, in each of the four
 slots, nothing compiled and no wait entry computed. The host's part, reading programs
 and entries from disk, then again with them in memory:
 

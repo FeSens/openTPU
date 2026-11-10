@@ -1,7 +1,7 @@
 """What the server can say about its programs' files: whether the program cache saves, and how far
 a long prompt's runs are on disk (docs/dashboard.md, "Program saves").
 
-progcache._store and waits.entries skip a write that would leave under progcache.FREE_FLOOR on
+progcache._store and waits.entries skip a write that would leave under progcache.free_floor() on
 the disk, without a word. A server under the floor then compiles and computes a position's
 programs and wait entries again on every pass: on the two-card 35B 23-30 s of wait entries a
 512-token chunk against 0.04 s from the disk, a chunk's 328 entries past waits.MEM_N's 256.
@@ -22,7 +22,7 @@ def saves() -> dict:
     and their seconds."""
     from .. import progcache as PC
     from .. import waits as WC
-    out = {"dir": None, "saving": None, "free_bytes": None, "floor_bytes": PC.FREE_FLOOR,
+    out = {"dir": None, "saving": None, "free_bytes": None, "floor_bytes": PC.free_floor(),
            "under_floor_bytes": None, "programs_compiled": PC.stats["compile"],
            "programs_written": PC.stats["write"], "entries_computed": WC.stats["computed"],
            "entries_s": round(WC.stats["seconds"], 3), "entries_read": WC.stats["disk"]}
@@ -34,8 +34,8 @@ def saves() -> dict:
         free = shutil.disk_usage(probe).free
     except (OSError, TypeError):
         return dict(out, dir=str(d))
-    return dict(out, dir=str(d), saving=free >= PC.FREE_FLOOR, free_bytes=free,
-                under_floor_bytes=max(0, PC.FREE_FLOOR - free))
+    return dict(out, dir=str(d), saving=free >= PC.free_floor(), free_bytes=free,
+                under_floor_bytes=max(0, PC.free_floor() - free))
 
 
 def saves_line(s: dict, label: str) -> str | None:

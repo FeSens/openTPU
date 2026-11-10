@@ -292,6 +292,23 @@ def test_least_recently_used_go_over_the_cap_and_none_under_the_floor(ckpt, cach
     assert IC.last[0] == "skip" and IC.stats["skip"] == 1 and len(_entries(cache)) == 3
 
 
+def test_an_entry_over_the_cap_is_not_written(ckpt, cache, monkeypatch):
+    """An image larger than OTPU_IMG_CACHE_GB is not written (the eviction after its write would
+    drop it at once, and the next load would build it again believing it cached): a skip, with
+    its reason for the host's load line."""
+    monkeypatch.setenv("OTPU_IMG_CACHE_GB", str(1000 / 2**30))
+    _engine(ckpt)
+    assert IC.last[0] == "skip" and IC.stats == {"hit": 0, "miss": 1, "write": 0, "skip": 1}
+    assert not _entries(cache) and "OTPU_IMG_CACHE_GB" in IC.why_skipped
+    monkeypatch.setenv("OTPU_IMG_CACHE_GB", "16")
+    monkeypatch.setenv("OTPU_IMG_CACHE_FREE_GB", str(1 << 30))
+    _engine(ckpt)
+    assert IC.last[0] == "skip" and "OTPU_IMG_CACHE_FREE_GB" in IC.why_skipped
+    monkeypatch.setenv("OTPU_IMG_CACHE_FREE_GB", "0")
+    _engine(ckpt)
+    assert IC.last[0] == "miss" and len(_entries(cache)) == 1
+
+
 def _head(**h) -> bytes:
     """An entry's MAGIC and header, page-sized."""
     head = json.dumps(h).encode()

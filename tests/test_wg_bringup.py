@@ -297,6 +297,29 @@ def test_go_cool_retries_until_the_governor_takes_it():
     assert t.run == 1 and len(sleeps) == 3
 
 
+def test_go_cool_says_what_it_waits_for(monkeypatch, capsys):
+    """While the governor refuses GO, a line every GO_SAY_S: the die, RESUME and the way out (a
+    fan target above RESUME holds the die there for the whole limit: the wrappers show the
+    line instead of sitting silent)."""
+    t = FakeWg()
+    t.code = t.resume + 5
+    now = [1000.0]
+    monkeypatch.setattr(W.time, "time", lambda: now[0])
+
+    def sleep(s):
+        now[0] += 20
+        if now[0] >= 1100:
+            t.code = t.resume - 2
+    W.go_cool(G.Gov(t), Guard(), (), sleep=sleep)
+    said = [ln for ln in capsys.readouterr().out.splitlines() if "waiting for GO" in ln]
+    lim = G.Gov(t).limits()["resume_c"]
+    assert len(said) == 2 and all(f"RESUME {lim:.1f} C" in ln and "--resume" in ln for ln in said)
+    assert "40 of 1800 s" in said[0] and "80 of 1800 s" in said[1], said
+    s = dict(G.Gov(t).status(), cool=True, reg_cool=False)
+    assert W.waiting_line(s, 65.0, 3, 1800) == \
+        f"waiting for GO: die {s['temp_c']:.1f} C, RESUME 65.0 C; the regulator above its RESUME; 3 of 1800 s"
+
+
 def test_check_raises_once_safe():
     t = FakeWg()
     g = G.Gov(t)

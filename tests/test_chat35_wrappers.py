@@ -33,6 +33,11 @@ signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)
 if os.environ.get("STUB_CARDS"):                # (which card: its JTAG serial and XDMA device)
     log(f"bringup card {sys.argv[sys.argv.index('--serial') + 1]} {sys.argv[sys.argv.index('--dev') + 1]}")
+if os.environ.get("STUB_RESUME"):               # (the RESUME it was given)
+    log(f"bringup resume {sys.argv[sys.argv.index('--resume') + 1] if '--resume' in sys.argv else None}")
+if os.environ.get("STUB_WAIT"):                 # (go_cool's line while GO is refused, then the GO)
+    print("12:00:00 waiting for GO: die 70.1 C, RESUME 65.0 C; 30 of 1800 s", flush=True)
+    time.sleep(float(os.environ["STUB_WAIT"]))
 log(f"bringup up, own session {os.getsid(0) == os.getpid()}")
 (out / "HOLDING").write_text("held")
 try:
@@ -82,15 +87,18 @@ held = glob.glob(os.path.join(os.environ["HOME"], "otpu-build/**/runs/**/HOLDING
 log(f"chat held {bool(held)}")
 log("chat exit")
 '''
-GOV = '''class Gov:
+GOV = '''import os
+
+
+class Gov:
     def __init__(self, t):
         pass
 
     def present(self):
-        return True
+        return not os.environ.get("STUB_NO_GOV")
 
     def status(self):
-        return {"temp_c": 50.0}
+        return {"temp_c": float(os.environ.get("STUB_DIE_C", 50.0))}
 '''
 
 
@@ -116,7 +124,8 @@ def _host(tmp_path: Path, wrapper: str) -> tuple[Path, dict]:
     (t / "opentpu" / "host" / "gov.py").write_text(GOV)
     (t / "opentpu" / "host" / "chat.py").write_text(CHAT)              # (otpu-chat's: python -m opentpu.host.chat)
     b.mkdir(parents=True, exist_ok=True)
-    (b / "serve35.py").write_text(SERVER)
+    for c in ("serve35.py", "serve35x2.py"):
+        (b / c).write_text(SERVER)
     for c in ("chat35.py", "chat35x2.py"):
         (b / c).write_text(CHAT)
     venv = tmp_path / "venv" / "bin"
@@ -239,6 +248,12 @@ WHICH = [
     ("otpu-serve35", [], {"BCU_CARD": "1"}, [("SERIALCRD1", "/dev/xdma1")], "server dev /dev/xdma1", ()),
     ("otpu-chat35x2", [], {}, [("SERIALCRD0", "/dev/xdma0"), ("SERIALCRD1", "/dev/xdma1")],
      "chat dev /dev/xdma0+/dev/xdma1 target bcu1525-x2:st16", ()),
+    # otpu-chat on the two-card image (BCU_IMAGE, or the marker beside the two-card wrappers): both cards
+    ("otpu-chat", [], {"BCU_IMAGE": "x2"}, [("SERIALCRD0", "/dev/xdma0"), ("SERIALCRD1", "/dev/xdma1")],
+     "chat dev /dev/xdma0+/dev/xdma1 target bcu1525-x2:st16", ()),
+    ("otpu-chat", ["--prompt", "Hi", "--card", "x2"], {"BCU_IMAGE": "x2", "BCU_X2_TARGET": "bcu1525-x2"},
+     [("SERIALCRD0", "/dev/xdma0"), ("SERIALCRD1", "/dev/xdma1")],
+     "chat dev /dev/xdma0+/dev/xdma1 target bcu1525-x2", ()),
     # otpu-chat's hand-over of the 35B: one card (--card N), or both
     ("otpu-chat", ["--model", "qwen36-35b", "--card", "1"], {}, [("SERIALCRD1", "/dev/xdma1")],
      "chat dev /dev/xdma1 target bcu1525-wg:bhw16", ("otpu-chat35",)),
@@ -250,7 +265,8 @@ WHICH = [
 
 @pytest.mark.skipif(BASH is None or not hasattr(os, "setsid"), reason="needs bash and setsid")
 @pytest.mark.parametrize("wrapper,args,extra,cards,opened,also", WHICH,
-                         ids=[f"{w}{'-' + '-'.join(a) if a else ''}{'-card1' if e else ''}" for w, a, e, *_ in WHICH])
+                         ids=[f"{w}{'-' + '-'.join(a) if a else ''}{'-' + '-'.join(e.values()) if e else ''}"
+                              for w, a, e, *_ in WHICH])
 def test_each_front_end_opens_the_card_it_was_asked_for(tmp_path, wrapper, args, extra, cards, opened, also):
     """Card 0, card 1 or both: the bring-up gets that card's JTAG serial and the XDMA device at its PCI function,
     and the chat (or the server) opens the same device, under that image's target."""
@@ -270,3 +286,96 @@ def test_bcu_dev_must_be_the_cards_own_device(tmp_path):
                        text=True, env=env, timeout=60)
     assert p.returncode == 1 and "CRD1 is /dev/xdma1, not BCU_DEV=/dev/xdma0" in p.stdout, p.stdout + p.stderr
     assert not ev.exists()
+
+
+# ---------------------------------------------------------------------------- the image, RESUME, BCU_ENV
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("how", ["BCU_IMAGE", "marker", "registers"])
+@pytest.mark.parametrize("card", ["0", "1"])
+def test_otpu_chat_refuses_one_card_of_the_two_card_image_at_once(tmp_path, how, card):
+    """--card 0 or 1 while the cards hold the two-card image (BCU_IMAGE=x2, the marker beside the two-card wrappers,
+    or the card's own registers when they answer): exit 2 with what to do, nothing brought up."""
+    ev, env = _host(tmp_path, "otpu-chat")
+    tree = tmp_path / "otpu-build" / "bcu-wg" / "tree"
+    if how == "BCU_IMAGE":
+        env["BCU_IMAGE"] = "x2"
+    elif how == "marker":
+        (tmp_path / "otpu-build" / "cardimg" / "x2").mkdir(parents=True)
+        (tmp_path / "otpu-build" / "cardimg" / "x2" / "IMAGE").write_text("x2\n")
+    else:                                       # (a card left running: its registers say platform 7, two cards)
+        env["BCU_IMAGE"] = "one"
+        (tree / "opentpu" / "host" / "board.py").write_text(
+            "class XdmaTransport:\n    def __init__(self, *a, **k):\n        pass\n\n"
+            "    def reg_read(self, a):\n        return 0x4F545055\n\n\n"
+            "class Board:\n    def __init__(self, *a, **k):\n        pass\n\n"
+            "    def info(self):\n        return {'cfg': {'platform': 7}}\n")
+        (tree / "opentpu" / "host" / "regs.py").write_text("R_ID, ID_OTPU = 0, 0x4F545055\n")
+        (tree / "opentpu" / "target.py").write_text("def by_platform(p):\n    return p\n\n\n"
+                                                    "def cards(t):\n    return 2 if t == 7 else 1\n")
+    p = subprocess.run([BASH, str(CHAT35 / "otpu-chat"), "--prompt", "Hi", "--card", card],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert f"card {card} (CRD{card}) holds the two-card image" in p.stdout and "without --card" in p.stdout, p.stdout
+    assert not ev.exists()
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+def test_otpu_chat_card_x2_needs_the_two_card_image(tmp_path):
+    ev, env = _host(tmp_path, "otpu-chat")
+    p = subprocess.run([BASH, str(CHAT35 / "otpu-chat"), "--card", "x2"], stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 2 and "--card x2 needs the two-card image" in p.stdout, p.stdout + p.stderr
+    assert not ev.exists()
+
+
+@pytest.mark.skipif(BASH is None or not hasattr(os, "setsid"), reason="needs bash and setsid")
+def test_otpu_chat_on_the_two_card_image_holds_both_cards(tmp_path):
+    """otpu-chat on the two-card image: both bring-ups, the chat on both devices, Ctrl-C to the chat alone, then both
+    cards back in SAFE."""
+    rc, out, ev = _run(tmp_path, "otpu-chat", signal.SIGINT, "chat up", {"BCU_IMAGE": "x2"})
+    assert ev[:3] == ["bringup up, own session True"] * 2 + ["chat up"], (ev, out)
+    assert ev[3:6] == ["chat interrupted", "chat held True", "chat exit"], (ev, out)
+    assert sorted(ev[6:]) == sorted([f"bringup stopped (signal {int(signal.SIGTERM)})"] * 2
+                                    + ["bringup safe"] * 2), (ev, out)
+    assert rc == 0 and "CRD0 back in SAFE" in out and "CRD1 back in SAFE" in out, out
+
+
+ALL = [("otpu-chat", {}, 1), ("otpu-chat", {"BCU_IMAGE": "x2"}, 2), ("otpu-chat35", {}, 1), ("otpu-serve35", {}, 1),
+       ("otpu-chat35x2", {}, 2), ("otpu-serve35x2", {}, 2)]
+
+
+@pytest.mark.skipif(BASH is None or not hasattr(os, "setsid"), reason="needs bash and setsid")
+@pytest.mark.parametrize("wrapper,extra,n", ALL, ids=[w + "".join(e.values()) for w, e, _ in ALL])
+@pytest.mark.parametrize("resume", [None, "69.9"])
+def test_bcu_resume_goes_to_every_bringup(tmp_path, wrapper, extra, n, resume):
+    """BCU_RESUME is each bring-up's --resume (none without it: wg_bringup's own); a die above the RESUME the
+    bring-up will set is said before the bring-up, and its "waiting for GO" line shown while the wrapper waits."""
+    ready = "server up" if "serve" in wrapper else "chat up"
+    env = {"STUB_RESUME": "1", "STUB_DIE_C": "68.0", "STUB_WAIT": "2.5", "BCU_WAIT_SAY": "1", **extra}
+    if resume:
+        env["BCU_RESUME"] = resume
+    rc, out, ev = _run(tmp_path, wrapper, signal.SIGINT, ready, env)
+    assert [e for e in ev if e.startswith("bringup resume")] == [f"bringup resume {resume}"] * n, (ev, out)
+    assert ("is above RESUME (65 C)" in out) == (resume is None), out
+    assert "BCU_RESUME (at most 69.9)" in out or resume, out
+    assert "waiting for GO: die 70.1 C, RESUME 65.0 C" in out, out
+
+
+@pytest.mark.skipif(BASH is None, reason="needs bash")
+@pytest.mark.parametrize("wrapper", ["otpu-chat", "otpu-chat35", "otpu-chat35x2", "otpu-serve35", "otpu-serve35x2"])
+def test_the_environment_wins_over_bcu_env(tmp_path, wrapper):
+    """A BCU_* variable in the environment keeps its value over the file's (BCU_BUILD for one run); what the
+    environment does not set comes from the file. Here the file's BCU_BUILD has no tree: the wrapper finds the
+    environment's (as far as its governor check, the card named by the file), and without the environment's it stops at the file's."""
+    ev, env = _host(tmp_path, wrapper)
+    f = tmp_path / "bcu.env"
+    f.write_text(f"BCU_BUILD={tmp_path}/nowhere\nBCU_CARD0_NAME=FILE0\n")
+    env.update(BCU_ENV=str(f), BCU_BUILD=str(tmp_path / "otpu-build"))
+    env.pop("BCU_CARD0_NAME")
+    p = subprocess.run([BASH, str(CHAT35 / wrapper)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                       env={**env, "STUB_NO_GOV": "1"}, timeout=60)
+    assert "no governor on FILE0" in p.stdout + p.stderr, p.stdout + p.stderr
+    env.pop("BCU_BUILD")
+    p = subprocess.run([BASH, str(CHAT35 / wrapper)], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                       env={**env, "STUB_NO_GOV": "1"}, timeout=60)
+    assert p.returncode == 2 and "no governor" not in p.stdout + p.stderr, p.stdout + p.stderr

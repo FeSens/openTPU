@@ -113,15 +113,34 @@ def check(g: G.Gov, guard) -> dict:
     return s
 
 
+GO_SAY_S = 30.0                 # go_cool's line while the governor refuses GO, every so often
+
+
+def waiting_line(s: dict, resume_c: float, waited_s: float, limit_s: float) -> str:
+    """What go_cool logs while GO is refused: the die against RESUME, and what else holds it."""
+    why = [w for k, w in (("reg_cool", "the regulator above its RESUME"),
+                          ("temp_valid", "no valid temperature")) if not s[k]]
+    why += [w for k, w in (("alarm", "the temperature alarm"), ("ot", "over-temperature"))
+            if s[k]]
+    return (f"waiting for GO: die {s['temp_c']:.1f} C, RESUME {resume_c:.1f} C"
+            + ("" if s["cool"] else " (the die must cool to it; a fan target above RESUME never "
+               f"does: --resume, at most {RESUME_MAX_C - 0.1:g})")
+            + "".join(f"; {w}" for w in why)
+            + f"; {waited_s:.0f} of {limit_s:.0f} s")
+
+
 def go_cool(g: G.Gov, guard, dimms, limit_s: float = 1800.0, sleep=time.sleep) -> None:
     """GO once the die (and the regulator) are at or below RESUME; the governor refuses a GO
-    above it, so this retries."""
-    t0 = time.time()
+    above it, so this retries, and says what it waits for every GO_SAY_S."""
+    t0 = said = time.time()
     while True:
         s = g.status()
         if s["cool"] and s["reg_cool"] and s["temp_valid"] and not s["alarm"] and not s["ot"] \
                 and g.go(dimms=dimms):
             return
+        if time.time() - said >= GO_SAY_S:      # (the wrappers show the latest of these lines)
+            said = time.time()
+            log(waiting_line(s, g.limits()["resume_c"], said - t0, limit_s))
         if guard is not None and (guard.tripped or guard.booted):
             raise Tripped(f"guard: {guard.tripped}")
         if time.time() - t0 > limit_s:

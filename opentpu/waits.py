@@ -923,7 +923,7 @@ def entries(words, D: int = 128, S: int = 1, run_args=None, prog=None,
         stats["seconds"] += time.perf_counter() - t0
         if f is not None:
             f.parent.mkdir(parents=True, exist_ok=True)
-            if shutil.disk_usage(f.parent).free - e.nbytes >= PC.FREE_FLOOR:
+            if shutil.disk_usage(f.parent).free - e.nbytes >= PC.free_floor():
                 tmp = f.with_name(f".{f.stem}.{os.getpid()}.npz")
                 np.savez(tmp, waits=e)
                 os.replace(tmp, f)

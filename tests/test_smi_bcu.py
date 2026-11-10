@@ -333,7 +333,7 @@ def test_each_card_of_the_two_card_machine_shows_its_link(monkeypatch):
           for c, v in enumerate(views)]
     for d in ds:
         assert d["ok"] and d["x2"]["ncards"] == 1 and not any(p["up"] for p in d["x2"]["ports"])
-    assert "not set (one card)" in smi.table(ds) and smi.table(ds).count("DOWN (no hello)") == 4
+    assert "not set yet (a bring-up sets them)" in smi.table(ds) and smi.table(ds).count("DOWN (no hello)") == 4
     for c, k in enumerate(cards):               # the host's set-up (CardsTransport.set_cards')
         k.reg_write(R.R_X2_CARD, c | 2 << 8)
     for k in cards:

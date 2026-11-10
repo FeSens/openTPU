@@ -123,6 +123,12 @@ image:
     otpu-selftest --model qwen3
     otpu-chat --backend board --model qwen3         # the one card up; --dev /dev/xdmaN to name one
 
+`chat35/otpu-chat` does the same in one command (bring-up, RUN held, the chat, SAFE at its end) on
+either image: one card of a one-card image (`--card 0|1`) or both cards of the two-card image
+(`bcu1525-x2`; a card of it cannot chat alone). Its README has the host's file (`BCU_ENV`: the
+cards, `BCU_IMAGE`, and `BCU_RESUME` for a host whose fans hold the die above the bring-up's
+RESUME).
+
 The large models (Qwen3.6-35B-A3B with its whole 262,144-token context resident, on one card
 or two) need their card images built ahead of time on a host with enough RAM, and run through
 the wrappers in `chat35/` (its README), which do the bring-up, hold RUN, serve the chat or an

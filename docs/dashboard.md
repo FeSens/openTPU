@@ -110,8 +110,8 @@ values at that time, and each chart's Table button shows its numbers as a table.
 
 ## Program saves
 
-`progcache._store` and `waits.entries` skip a write that would leave under `progcache.FREE_FLOOR`
-(20 GiB) free on the disk, without a word. A long prompt then compiles and computes each position's
+`progcache._store` and `waits.entries` skip a write that would leave under `progcache.free_floor()`
+(4 GiB, `OTPU_PROG_CACHE_FREE_GB`) free on the disk, without a word. A long prompt then compiles and computes each position's
 programs and wait entries on every pass: on the two-card 35B a 512-token chunk takes 30-47 s
 against 8-11 s with the files on disk, the card about 14 % busy and one host core at 100 %. So the
 server says so (`opentpu/serve/progstate.py`; it only reads, and `opentpu/serve` is outside

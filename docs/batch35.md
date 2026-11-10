@@ -296,7 +296,7 @@ decode rate rose from 75.6 to 81.3 tok/s.
   that.
 - **Rows past four** on two cards need the V scale's address in a transient form (section 3).
 - **Start-up.** A server computes its step programs' wait entries at start unless the program
-  cache can store them (it keeps 20 GiB of its disk free and skips saves below that): 80
+  cache can store them (it keeps 4 GiB of its disk free, `OTPU_PROG_CACHE_FREE_GB`, and skips saves below that): 80
   programs in about 97 s with the entries stored, about 260 s computed.
 - **Not done:** the real routing's union at 4-16 rows from router logs (it lowers the routed
   bytes); a paged KV pool in place of N equal slots, so long and short sequences share the
