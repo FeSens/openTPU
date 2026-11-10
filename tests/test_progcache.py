@@ -60,10 +60,28 @@ def test_the_key_sees_the_layout_the_environment_and_what(monkeypatch):
     k = PC.key(("spec", 512), ("gen", 1))
     for var, val in (("OTPU_QUIET", "/tmp/q"), ("OTPU_BUILD_JOBS", "3"),
                      ("OTPU_IMG_CACHE", "/tmp/i"), ("OTPU_LOCK_HELD", "xdma0"),
-                     ("OTPU_LOCK_PID", str(os.getpid())), ("OTPU_VISION_WARM", "0")):
+                     ("OTPU_LOCK_PID", str(os.getpid())), ("OTPU_VISION_WARM", "0"),
+                     ("OTPU_DEV", "/dev/xdma1")):    # (which card's node: the second card's too)
         monkeypatch.setenv(var, val)        # read by the host's tools only (otpu-lock sets its
         assert PC.key(("spec", 512), ("gen", 1)) == k, var  # pid: each session's misses;
                                             # vision_warm's switch: its entries, the engine's)
+
+
+def test_a_schedule_only_field_parts_the_programs_not_the_images(monkeypatch):
+    """Two builds of a target that differ only in SE_R (the streams' engine: Config.SE_OWN, a
+    DeltaNet burst a pair) compile different programs, so their program keys differ; their
+    images are the same bytes, so the image cache keys them as one (imgcache.PROGRAM_ONLY)."""
+    from opentpu import imgcache as IC
+    from opentpu import target as T
+    monkeypatch.delenv("OTPU_SE_R", raising=False)
+    on, off = (T.build_config("bcu1525-x2", SE_R=r) for r in (1, 0))
+    assert on.SE_OWN and not off.SE_OWN and T.config("bcu1525-x2").SE_OWN
+    assert {f: v for f, v in vars(on).items() if v != vars(off)[f]} == {"SE_OWN": True}
+    lay = [("spec", c, 512, 1, 1, 256, ()) for c in (on, off)]
+    assert PC.key(lay[0], ("gen", 1)) != PC.key(lay[1], ("gen", 1))
+    img = type("Image", (), {})()
+    assert IC.key(img, lay[0], None) == IC.key(img, lay[1], None)
+    assert IC.key(img, lay[0], None) != IC.key(img, ("spec", on, 1024, 1, 1, 256, ()), None)
 
 
 def test_the_key_sees_the_host_modules_the_programs_take(monkeypatch):
@@ -104,7 +122,8 @@ def test_the_key_sees_the_host_modules_the_programs_take(monkeypatch):
 def test_the_key_leaves_out_the_tools_no_build_runs(monkeypatch):
     """An edit to a profiler, trace, reference or RTL simulation module (UNKEYED) keeps the
     cached programs and images; one to the compiler misses. No keyed module imports an UNKEYED
-    one, at module level or in a function, but runtime's RTL run (rtlsim: a run, not a build)."""
+    one, at module level or in a function, but runtime's RTL run (rtlsim: a run, not a build)
+    and the ISA simulator's DRAM above 4 GiB (simtmp.dram_file: where its sparse file goes)."""
     import ast
     from pathlib import Path
     root = Path(PC.__file__).resolve().parent
@@ -120,7 +139,7 @@ def test_the_key_leaves_out_the_tools_no_build_runs(monkeypatch):
         assert (PC.key(("spec", 512), ("gen", 1)) != k) == misses, name
     monkeypatch.undo()
     unkeyed = {u[:-3].replace("/", ".") for u in PC.UNKEYED}
-    allowed = {("runtime.py", "rtlsim")}
+    allowed = {("runtime.py", "rtlsim"), ("isasim.py", "simtmp")}
     for f in PC.keyed():
         rel = f.relative_to(root)
         pkg = list(rel.parts[:-1])

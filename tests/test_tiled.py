@@ -244,6 +244,33 @@ def test_tiled_prompt_runs_are_todays(tmp_path_factory, monkeypatch, case, mcols
                                                     _dram_but_scratch(b, P1 + P2)))
 
 
+@pytest.mark.parametrize("pair", [False, True], ids=["dstep", "dstep2"])
+def test_tiled_27b_shape_prompt_runs_are_the_steps(pair):
+    """Qwen3.5-27B's DeltaNet shape (test_qwen35._tiny27: 48 value heads on 16 key heads,
+    qkonce) on one BCU slice (bcu1525-wg: DSTEP, WG 8, no PAIR), tiled prompt runs: the
+    pipelined pairs' gates in TMEM, the key heads two at a time, with DSTEP2 a pair's heads a
+    row in one DSTEP. Two prompts (the second from where the first left) give the logits of
+    token-by-token decode and its layers' blocks (KV caches, DeltaNet states and windows) bit
+    for bit."""
+    import test_qwen35 as TQ
+    from opentpu import target as T
+    _, W, spec, _ = TQ._tiny27()
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 26, DSTEP2=pair)
+    r = np.random.default_rng(5)
+    p1, p2 = ([int(t) for t in r.integers(0, 1024, n)] for n in (21, 9))
+    a = Engine(spec, W, cap=512, cfg=cfg, rows=16, resident=True, prompt_runs=True)
+    a.tile_runs = True
+    got = [a.prefill(p1), a.prefill(p2)]
+    assert "prompt tile" in {k[0] for k in a._prompt_progs}
+    b = Engine(spec, W, cap=512, cfg=cfg, rows=16, resident=True)
+    want = [[b.step(t) for t in p][-1] for p in (p1, p2)]
+    for x, y in zip(got, want):
+        assert np.array_equal(x.view(np.uint32), y.view(np.uint32))
+    img = a.image                       # (past the head: the tiled runs' scratch)
+    assert np.array_equal(a.backend.machine.slices[0].dram[img.layer0:img.head[0]],
+                          b.backend.machine.slices[0].dram[img.layer0:img.head[0]])
+
+
 @pytest.mark.parametrize("case, mcols, P1, P2, T, levels, peel", [
     ("phi3", 4, 250, 20, 16, {2}, False),   # G = 3: a row a tile; a loop over its 2 KV heads,
     ("qwen3", 4, 250, 20, 7, {2}, False),   # across the bucket's end; G = 2: 2 rows a tile, a
@@ -397,6 +424,51 @@ def test_qwen35_tiles_fit_the_cards_imem(dims, T):
         for kind in ("P", "L"):
             progs, _ = tiled.compile_tile_run(img, blocks, T, kind)
             assert G.fits(img, progs), (blocks, kind, max(map(len, progs)))
+
+
+def test_tiled_mlp_past_act_ram_in_groups_is_todays(monkeypatch):
+    """An MLP wider than ACT RAM (the tiny Qwen3.5 with F 2560 at ACT_BLOCKS 18, 2304 columns:
+    as Qwen3.5-27B's 17408 against 128 x 128 on one slice): Spec.check takes it (the down MMs'
+    chunk, 256 columns), a tile's ten chunks' activations go in two groups of five beside the
+    operand (tiled.act_groups, the down MMs' sums held across them) and two prompts' tiled
+    runs give today's prompt runs' last logits and every slice's DRAM bit for bit."""
+    from test_qwen35 import _tiny_model
+    seen, groups = [], tiled.act_groups
+    monkeypatch.setattr(tiled, "act_groups",
+                        lambda *a: seen.append([len(g) for g in groups(*a)]) or groups(*a))
+    _, W, spec = _tiny_model(8, init=0.2, ffn=2560)
+    cfg = board_config(DRAM_BYTES=1 << 25, DSTEP=True, STREAM=True, PAIR=True, MCOLS=4,
+                       ACT_ROWS=16, ACT_BLOCKS=18)
+    assert spec.ffn > cfg.ACT_BLOCKS * cfg.D
+    r = np.random.default_rng(37)
+    p1, p2 = ([int(t) for t in r.integers(0, 1000, n)] for n in (37, 30))
+    a = Engine(spec, W, cap=512, cfg=cfg, rows=16, resident=True, prompt_runs=True)
+    a.tile_runs = True
+    got = [a.prefill(p1), a.prefill(p2)]
+    assert "prompt tile" in {k[0] for k in a._prompt_progs}
+    assert seen and all(g == [5, 5] for g in seen)
+    b = Engine(spec, W, cap=512, cfg=cfg, rows=16, resident=True, prompt_runs=True)
+    b.tile_runs = False
+    b._prompt_rmax = {k: (4, True) for k in range(3)}
+    want = [b.prefill(p1), b.prefill(p2)]
+    for x, y in zip(got, want):
+        assert np.array_equal(x.view(np.uint32), y.view(np.uint32))
+    assert all(np.array_equal(x, y) for x, y in zip(_dram_but_scratch(a, 67),
+                                                    _dram_but_scratch(b, 67)))
+
+
+@pytest.mark.parametrize("n, per, sizes", [(17, 11, [9, 8]), (10, 8, [5, 5]), (8, 5, [4, 4]),
+                                           (10, 3, [3, 3, 2, 2]), (7, 2, [2, 2, 2, 1]),
+                                           (5, 5, [5]), (4, 9, [4])])
+def test_act_groups_are_as_few_as_fit_and_even(monkeypatch, n, per, sizes):
+    """act_groups: n chunks of 2 blocks beside an operand of 4 in ACT RAM of 4 + 2 per blocks:
+    one group where all fit, else as few as fit, in order, sizes within one of each other
+    (Qwen3.5-27B fp4: 17 chunks of 8 blocks, 11 fit beside its 40: 9 + 8)."""
+    from types import SimpleNamespace as NS
+    monkeypatch.setattr(tiled, "current", lambda: NS(cfg=NS(ACT_BLOCKS=4 + 2 * per, D=128)))
+    starts = list(range(0, 256 * n, 256))
+    groups = tiled.act_groups(starts, 256, NS(KB=4))
+    assert [len(g) for g in groups] == sizes and sum(groups, []) == starts
 
 
 def test_lfm2_stack_in_one_loop_is_the_plans_runs(monkeypatch):
@@ -860,8 +932,9 @@ def test_tiled_expert_major_layer_runs_in_ranges(gmoe, monkeypatch):
     assert _dkl(lb, la) < 1e-3
 
 
-@pytest.mark.parametrize("wf, T, R", [("int8", 8, 0), ("fp4", 8, 4), ("fp4", 6, 4)])
-def test_tiled_qwen35_expert_major_layer_runs(monkeypatch, wf, T, R):
+@pytest.mark.parametrize("wf, T, R, pair", [("int8", 8, 0, False), ("fp4", 8, 4, False),
+                                             ("fp4", 6, 4, False), ("int8", 8, 0, True)])
+def test_tiled_qwen35_expert_major_layer_runs(monkeypatch, wf, T, R, pair):
     """Qwen3.5-MoE's expert-major layer runs tiled (Engine.layer_tile): runs of T rows (the
     MoE layer before ended EM_GROUP rows at a time, the DeltaNet rows in runs of the image's
     4 gr / on rows, the gated attention in tiles, the route, need lines and shared expert a
@@ -870,7 +943,7 @@ def test_tiled_qwen35_expert_major_layer_runs(monkeypatch, wf, T, R):
     run of either of at most 2 rows, which would pair): the logits, the layers' blocks
     (DeltaNet states and windows, KV caches) and the decode steps after, bit for bit; 43
     tokens (the first 3 token by token), chunks of 24 and 16 rows, 6 slots a layer, the
-    embedding rows from the host's table."""
+    embedding rows from the host's table. pair: DSTEP2 (a pair's two heads a row in one DSTEP)."""
     import test_qwen35_moe as TQM
     from opentpu.llm import qwen35 as Q35
     from opentpu.llm.qwen3 import device_config
@@ -879,7 +952,8 @@ def test_tiled_qwen35_expert_major_layer_runs(monkeypatch, wf, T, R):
     spec, W = TQM._untied(TQM._tiny())
     cfg = device_config(spec, 256, rows=1, lookup=True, S=1, experts=6, wformat=wf, MCOLS=4,
                         PAIR=True, DSTEP=True, STREAM=True)
-    kw = dict(cap=256, cfg=dataclasses.replace(cfg, ACT_ROWS=16), rows=1, resident=True,
+    kw = dict(cap=256, cfg=dataclasses.replace(cfg, ACT_ROWS=16, DSTEP2=pair), rows=1,
+              resident=True,
               experts=6, wformat=wf)
     a = Engine(spec, W, layer_major=T, expert_major=True, tile_rows=T, **kw)
     b = Engine(spec, W, tile_runs=False, **(dict(kw, layer_major=R, expert_major=True)

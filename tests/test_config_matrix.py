@@ -1,7 +1,8 @@
 """The compiler, the kernels and the models across architectures (docs/targets.md): every
 target's in targets/ (opentpu.target.config, the hardware's truth: ypcb-00338, nangate45 (the
-card's at 8 ACT RAM rows), bcu1525's two slices, nangate45-small's D = 32 / 2 columns / 4 lanes /
-16K-word TMEM / 1K-instruction IMEM), the simulators' design point, and two grown versions of
+card's at 8 ACT RAM rows), bcu1525's two slices, bcu1525-x2's four (where the tiny models are
+refused: their 2 KV heads), nangate45-small's D = 32 / 2 columns / 4 lanes / 16K-word TMEM /
+1K-instruction IMEM), the simulators' design point, and two grown versions of
 the small one (D = 64 and 128, 16K-word IMEM, DSTEP / STREAM / PAIR), which reach the paths the
 small target refuses earlier: the one-hot gathers in parts, a decode step placed best-fit, DeltaNet
 heads several D wide. On the ISA simulator; nothing here is tied to the card's sizes.
@@ -65,8 +66,8 @@ def _key(name: str) -> str:
 @pytest.mark.parametrize("name", list(ARCHS))
 def test_kernels(name):
     """MLP, attention decode and an attention layer (heads over the slices) on each
-    architecture, against float64 math; a Gated DeltaNet head step (VPU form) where its two
-    states fit TMEM."""
+    architecture, against float64 math; a Gated DeltaNet head step (VPU form: RDOT and OUTER, or
+    its ISA form on a VPU without OUTER) where its two states fit TMEM."""
     import test_kernels as K
     cfg = replace(ARCHS[name], DRAM_BYTES=1 << 24)
     S, D = cfg.S, cfg.D
@@ -86,7 +87,7 @@ def test_kernels(name):
     dk = 2 * D if D < 128 else D
     if 2 * dk * dk < cfg.TMEM_WORDS:
         args, (Sw, ow) = V.deltanet_args(np.random.default_rng(7), dk=dk, dv=dk)
-        o = launch(gated_deltanet_step, cfg, **args).outputs
+        o = launch(gated_deltanet_step, cfg, **args, fused=cfg.OUTER).outputs
         assert np.max(np.abs(o["state_out"].transpose(0, 2, 1) - Sw)) < 1e-5 * np.abs(Sw).max()
 
 
@@ -142,7 +143,15 @@ def _model(models, name):
 # (model, arch) -> what its image says where the model does not map onto it
 REFUSED = {("qwen35", SMALL): "DeltaNet on the VPU.*inner dimension exceeds ACT RAM",
            ("gemma4", SMALL): "inner dimension exceeds ACT RAM",
-           ("gemma4", "bcu1525"): "one slice", ("gemma4", "design"): "one slice"}
+           ("gemma4", "bcu1525"): "one slice", ("gemma4", "design"): "one slice",
+           # Gemma 4's single KV head is not split over slices (S = 1 only: on the BCU its
+           # bitstream is bcu1525-wg's)
+           ("gemma4", "bcu1525-s2"): "one slice",
+           # two BCU1525s' 4 slices (bcu1525-x2): a model's hidden size a multiple of S x D,
+           # its KV heads of S (Qwen3.5: or a divisor of S, KVDesc.kv_heads)
+           ("qwen3", "bcu1525-x2"): r"hidden 256 % S\*D; n_kv 2 % S",
+           ("lfm2", "bcu1525-x2"): r"n_kv 2 % S", ("qwen35", "bcu1525-x2"): r"hidden 256 % S\*D",
+           ("gemma4", "bcu1525-x2"): "one slice"}
 CAP = 384           # (Gemma 4: 512, a multiple of its attention block)
 
 
@@ -168,7 +177,9 @@ def test_model(models, model, name):
     """A tiny model on each architecture: a resident engine's prompt (runs of up to 8 rows,
     across the attention bucket at 256 where TMEM is small) gives the per-position engine's
     logits bit for bit, the decode loop on the device its greedy tokens; the device follows
-    the quantized math at the architecture's D (emulated_logits)."""
+    the quantized math at the architecture's D (emulated_logits, at the image's S-exact
+    choice: Config.SEXACT), and an S-exact image (bcu1525-s2's) gives S = 1's logits bit for
+    bit."""
     from opentpu.llm.qwen3 import Engine
     W, spec = _model(models, model)
     cfg = ARCHS[name]
@@ -193,9 +204,16 @@ def test_model(models, model, name):
         ref.append(t)
     assert a.can_generate and a.generate_card(t0, 8, stop_ids=[]) == ref
     c = Engine(spec, W, cap=_cap(spec), cfg=cfg)
-    dev = np.array([c.step(t) for t in toks[:6]], np.float64)
-    sk = {"S": cfg.S} if "S" in inspect.signature(mod.emulated_logits).parameters else {}
-    emu = mod.emulated_logits(spec, W, toks[:6], D=cfg.D, **sk)   # (S: the slices' QACTs)
+    raw = np.array([c.step(t) for t in toks[:6]])
+    if getattr(c.image, "sexact", False):
+        one = Engine(spec, W, cap=_cap(spec), cfg=replace(cfg, S=1))
+        assert np.array_equal(raw.view(np.uint32),
+                              np.array([one.step(t) for t in toks[:6]]).view(np.uint32))
+    dev = raw.astype(np.float64)
+    sig = inspect.signature(mod.emulated_logits).parameters
+    sk = {k: v for k, v in (("S", cfg.S), ("cfg", cfg)) if k in sig}
+    emu = mod.emulated_logits(spec, W, toks[:6], D=cfg.D, **sk)   # (S: the slices' QACTs;
+    #                                                         cfg: S-exact's, S = 1's)
     if model == "gemma4":
         dev, emu = G4.softcap(spec, dev), G4.softcap(spec, emu)
     assert _cos(dev, emu).min() > (0.99 if model == "gemma4" else 0.999)
@@ -228,12 +246,13 @@ def test_one_hot_gathers_in_parts(models, monkeypatch):
 
 
 def test_a_decode_step_is_placed_best_fit_where_next_fit_fails(models, monkeypatch):
-    """Qwen3.5's resident decode at a 16K-word TMEM: its tiles placed next-fit leave the free
+    """Qwen3.5's resident decode at a 15,872-word TMEM: its tiles placed next-fit leave the free
     words in gaps too small for a later one, best-fit fits them (compiler.trace_fit); the
-    compiles that probe (prefill rows, prompt runs) keep next-fit's answer."""
+    compiles that probe (prefill rows, prompt runs) keep next-fit's answer. (At 16K words
+    next-fit fits now; best-fit alone fits from 15,616 to 16,128 words.)"""
     from opentpu.llm import qwen3 as Q3
     W, spec = _model(models, "qwen35")
-    cfg = _sized(spec, ARCHS["small-d64+"])
+    cfg = replace(_sized(spec, ARCHS["small-d64+"]), TMEM_WORDS=15872)
     img = spec.image(cfg, CAP, 1, 8, lookup=True)
     lo = spec.conv_k - 1
     progs, _ = img.compile_decode(1, lo)

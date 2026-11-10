@@ -15,6 +15,10 @@ from opentpu.host.board import Board, ConfigMismatch, check_fits, device_config
 from opentpu.host.fake import FakeTransport
 from opentpu.isasim import Config, board_config
 
+# the targets at WG 8 (weight groups, the channel bridges' adapter knobs): the BCU1525 at one
+# slice (targets/bcu1525-wg.toml), at two (bcu1525-s2.toml) and two cards of those (bcu1525-x2)
+WG_TARGETS = {"bcu1525-wg", "bcu1525-s2", "bcu1525-x2"}
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -63,6 +67,8 @@ def test_board_config_follows_otpu_target(no_env):
     no_env.setenv("OTPU_TARGET", "nangate45-small")
     c = board_config()
     assert (c.D, c.MCOLS, c.LANES, c.TMEM_WORDS, c.IMEM_WORDS) == (32, 2, 4, 16384, 8192)
+    no_env.setenv("OTPU_TARGET", "bcu1525-wg")                 # (no VOP OUTER, as built)
+    assert not board_config().OUTER
     no_env.setenv("OTPU_TARGET", "no-such-board")
     with pytest.raises(T.TargetError, match="no target 'no-such-board'"):
         board_config()
@@ -73,7 +79,33 @@ def _hash_without_numerics(cfg) -> int:
     import hashlib
     import json
     d = dataclasses.asdict(cfg)
-    d.pop("SEQ_WC")                     # (a field that host's Config does not have)
+    d.pop("SEQ_WC")                     # (fields that host's Config does not have)
+    d.pop("WG")
+    d.pop("CHASH")
+    d.pop("OUTER")
+    d.pop("GALL")
+    d.pop("DSTEP2")
+    d.pop("SE_OWN")
+    d.pop("KT")
+    d.pop("AW")
+    d.pop("ICACHE")
+    d.pop("BHW")
+    d.pop("SEXACT")
+    d.pop("KVSPLIT")
+    d.pop("DNCHUNK")
+    d.pop("DNMERGE")
+    d.pop("WC_WIN")
+    d.pop("ST16")
+    d.pop("FSUM")
+    d.pop("SPLITQ")
+    d.pop("ST16S")
+    d.pop("QHL")
+    d.pop("QSTHL")
+    d.pop("VSIG")
+    d.pop("VMAC")
+    d.pop("OUTER1")
+    d.pop("QONCE")
+    d.pop("SPLMM")
     s = json.dumps({k: (int(v) if isinstance(v, bool) else v) for k, v in sorted(d.items())},
                    separators=(",", ":"))
     return int.from_bytes(hashlib.sha256(s.encode()).digest()[:4], "big")
@@ -96,10 +128,30 @@ def test_arch_hash_is_stable_and_sensitive():
     # the ASIC's card point is the card's arch (release r2's m4) with 8 ACT RAM rows (docs/asic.md)
     assert T.arch_hash(dataclasses.replace(card, ACT_ROWS=8)) == T.arch_hash(T.config("nangate45"))
     for f in dataclasses.fields(Config):
+        if f.name in ("CHASH", "GALL", "SEXACT", "KVSPLIT", "DNCHUNK", "DNMERGE"):    # (only at WG > 1, below; never)
+            continue
         v = getattr(card, f.name)
-        other = dataclasses.replace(card, **{f.name: (not v) if isinstance(v, bool) else v * 2
-                                             if v else 1})
+        other = dataclasses.replace(card, **{f.name: (not v) if isinstance(v, bool) else
+                                             "e6m9" if isinstance(v, str) else v * 2 if v else 1})
         assert T.arch_hash(other) != T.arch_hash(card), f.name
+    # SEXACT (S-exact images) is a compile choice, never in it: the same machine
+    assert T.arch_hash(dataclasses.replace(card, S=2, SEXACT=True)) == \
+        T.arch_hash(dataclasses.replace(card, S=2))
+    # KVSPLIT (the KV sequence split's buckets) neither: a compile choice
+    assert T.arch_hash(dataclasses.replace(card, S=4, KVSPLIT=2)) == \
+        T.arch_hash(dataclasses.replace(card, S=4))
+    # DNCHUNK (the DeltaNet rows by chunks, pf500) neither
+    assert T.arch_hash(dataclasses.replace(card, S=4, DNCHUNK=64)) == \
+        T.arch_hash(dataclasses.replace(card, S=4))
+    # DNMERGE (the DN stage's tile pipeline, stage.py) neither
+    assert T.arch_hash(dataclasses.replace(card, S=4, DNMERGE=4)) == \
+        T.arch_hash(dataclasses.replace(card, S=4))
+    # CHASH and GALL are in it at WG > 1 alone (a machine without groups has no rows to order,
+    # no MM to group); OUTER only when off (the pins above have it on: every VPU before the field)
+    for k in ("CHASH", "GALL"):
+        assert T.arch_hash(dataclasses.replace(card, **{k: True})) == T.arch_hash(card)
+        w8 = dataclasses.replace(card, MCOLS=8, WG=8)
+        assert T.arch_hash(dataclasses.replace(w8, **{k: True})) != T.arch_hash(w8)
 
 
 def test_card_variants(tmp_path):
@@ -129,6 +181,466 @@ def test_card_variants(tmp_path):
         'variant = "m4"', 'variant = "m8"'))
     with pytest.raises(T.TargetError, match="differ from the default variant 'm8'"):
         T.load(str(p))
+
+
+# The existing targets' resolved RTL parameters and simulation uarch, as before the native
+# adapter's channel parameters (NCH, CB: rtl_params' CB is new, the adapter's default 64 bytes
+# on these): the wide channels leave every other target's build as it was
+_TM3 = {"TMEM_NSB": 2, "TMEM_RPL": 1, "TMEM_TDP": 1, "TMEM_GST": 1}
+_COMMON = {"D": 128, "ACT_BLOCKS": 128, "IMEM_WORDS": 32768, "LANES": 8, "DSTEP": 1,
+           "MXU_IMPL": 2, "MXU_CL": 16, "VPU_CL": 2, "ULANES": 8, "RPB": 64, "WPB": 1, "WIN": 16,
+           "FIFO_DEPTH": 1024, "PQ_WIN": 1024, "CHASH": 1, "NCH": 2, "CH_LOG2": 31,
+           "DRAM_LOG2": 32}
+_RESOLVED = {
+    "ypcb-00338": _TM3 | _COMMON | {
+        "TMEM_PMP": 1, "S": 1, "MCOLS": 4, "ACT_ROWS": 16, "TMEM_WORDS": 65536, "MXU_E": 4,
+        "TMEM_IMPL": 3, "TRACE_DEPTH": 16384, "SEQ_WC": 1, "DDR_MTS": 1066, "PLATFORM": 1,
+        "ARCH_HASH": 0x4ffd1e17},
+    "ypcb-00338:m8": _TM3 | _COMMON | {
+        "TMEM_PMP": 1, "S": 1, "MCOLS": 8, "ACT_ROWS": 16, "TMEM_WORDS": 131072, "MXU_E": 8,
+        "TMEM_IMPL": 3, "TRACE_DEPTH": 16384, "SEQ_WC": 1, "DDR_MTS": 1066, "PLATFORM": 1,
+        "ARCH_HASH": 0x46b96e6d},
+    "bcu1525": _COMMON | {
+        "S": 2, "MCOLS": 4, "ACT_ROWS": 4, "TMEM_WORDS": 65536, "MXU_E": 0, "TMEM_IMPL": 0,
+        "TRACE_DEPTH": 16384, "SEQ_WC": 0, "DDR_MTS": 1200, "PLATFORM": 2,
+        "ARCH_HASH": 3323358210},
+    "nangate45": _TM3 | _COMMON | {
+        "TMEM_PMP": 0, "S": 1, "MCOLS": 4, "ACT_ROWS": 8, "TMEM_WORDS": 65536, "MXU_E": 4,
+        "TMEM_IMPL": 3, "TRACE_DEPTH": 0, "SEQ_WC": 1, "DDR_MTS": 0, "PLATFORM": 256,
+        "ARCH_HASH": 715574571},
+    "nangate45-small": {
+        "S": 1, "D": 32, "MCOLS": 2, "ACT_ROWS": 2, "ACT_BLOCKS": 32, "TMEM_WORDS": 16384,
+        "IMEM_WORDS": 8192, "LANES": 4, "DSTEP": 0, "MXU_IMPL": 2, "MXU_CL": 16, "MXU_E": 0,
+        "VPU_CL": 1, "ULANES": 4, "TMEM_IMPL": 1, "RPB": 1, "WPB": 1, "WIN": 16,
+        "FIFO_DEPTH": 64, "TRACE_DEPTH": 0, "PQ_WIN": 1024, "CHASH": 0, "SEQ_WC": 0,
+        "DDR_MTS": 0, "NCH": 1, "CH_LOG2": 28, "DRAM_LOG2": 28, "PLATFORM": 257,
+        "ARCH_HASH": 307112127},
+}
+_SIM = {"WIN": 16, "RPB": 128, "WPB": 1, "FIFO_DEPTH": 1024}
+_SIM_RESOLVED = {
+    "ypcb-00338": _SIM | {"TMEM_IMPL": 3} | _TM3 | {"TMEM_PMP": 1, "MXU_E": 4, "SEQ_WC": 1},
+    "ypcb-00338:m8": _SIM | {"TMEM_IMPL": 3} | _TM3 | {"TMEM_PMP": 1, "MXU_E": 8, "SEQ_WC": 1},
+    "bcu1525": _SIM | {"COLL_HUB": 1},     # two slices: otpu_board's collective (its hub)
+    "nangate45": _SIM | {"TMEM_IMPL": 3} | _TM3 | {"TMEM_PMP": 0, "MXU_E": 4, "SEQ_WC": 1},
+    "nangate45-small": {"WIN": 16, "RPB": 1, "WPB": 1, "FIFO_DEPTH": 64, "TMEM_IMPL": 1},
+}
+
+
+def test_existing_targets_resolve_unchanged():
+    for n, want in _RESOLVED.items():
+        p = T.rtl_params(n)
+        assert p.pop("CB") == (16 if n == "nangate45-small" else 64), n
+        assert p == want, n
+        assert T.sim_uarch(n) == _SIM_RESOLVED[n], n
+        assert T.mem_model(n) == [], n
+
+
+def test_wg_target():
+    """targets/bcu1525-x2.toml: 4 slices (two cards of two), each on 8 channels of 2 GiB in
+    128-byte beats (otpu_native_dram NCH 8, CB 128: CH_LOG2 31, a slice's 16 GiB); the
+    simulation tops take the channels (sim_uarch), the channel model its rate, latency and
+    refresh in core cycles (mem_model: 4.56 GB/s a channel is 34.2 bytes a cycle at 133.33 MHz;
+    250 ns is 33 cycles at 133.33); 8 MXU columns and the card m8's 128K TMEM; weight groups of
+    8 rows (1 KiB on port W a step) with a 2048-deep chunk FIFO; RSCALE's row factor read once a
+    row and a buffered QACT pass 1 at two chunks a cycle (QUANT_R1, QUANT_PW: the cards at WG 1
+    leave them out); the MXU's command queue 4 deep (MXU_QD; the WG 1 cards' 2, left out)."""
+    t = T.load("bcu1525-x2")
+    p = T.rtl_params(t)
+    assert (p["S"], p["D"], p["MCOLS"], p["NCH"], p["CB"], p["CH_LOG2"], p["DRAM_LOG2"],
+            p["PLATFORM"]) == (4, 128, 8, 8, 128, 31, 34, 7)
+    assert (p["MXU_E"], p["TMEM_WORDS"], p["FIFO_DEPTH"], p["WG"]) == (8, 1 << 17, 2048, 8)
+    assert t.kind == "fpga" and t.family == "xilinxus" and t.platform["mem"] == "ddr4"
+    c = T.config(t)
+    assert (c.S, c.DRAM_BYTES, c.PAIR, c.DSTEP, c.STREAM, c.LANES, c.WG) == (4, 1 << 34, False,
+                                                                             True, True, 8, 8)
+    # every MM in groups (GALL: the MXU at WG > 1), in the hash; column reuse at WG 1 only
+    # (otpu_board's CAPS bit5), and at WG 1 neither
+    assert c.GALL and not any(T.config(n).GALL for n in T.names() if n not in WG_TARGETS)
+    assert T.arch_hash(dataclasses.replace(c, GALL=False)) != p["ARCH_HASH"]
+    w1 = T.build_config(t, WG=1)
+    assert not w1.GALL and w1.PAIR and not T.config(t, WG=1).GALL
+    assert T.arch_hash(w1) == T.arch_hash(dataclasses.replace(w1, GALL=True))
+    # the group chunks' rows in the channel hash's order (docs/isa.md "Weight groups"); a build
+    # without groups has none to order, and every target without them leaves it off
+    assert c.CHASH and not T.config(t, WG=1).CHASH and not T.build_config(t, WG=1).CHASH
+    assert p["ARCH_HASH"] == T.arch_hash(c) != T.arch_hash(dataclasses.replace(c, CHASH=False))
+    # a build without the hash (otpu_board CHASH 0: make_wg.py --set CHASH=0) reports its hash
+    assert T.build_config(t, CHASH=0) == dataclasses.replace(c, CHASH=False)
+    assert T.build_config(t, CHASH=1) == c and not T.build_config(t, CHASH=1, WG=1).CHASH
+    assert not any(T.config(n).CHASH for n in T.names() if n not in WG_TARGETS)
+    # no VOP OUTER (its DeltaNet runs DSTEP): otpu_board OUTER 0 and the field in the hash; every
+    # other target's VPU has it (no OUTER parameter, the hash without the field)
+    assert not c.OUTER and p["OUTER"] == 0
+    assert T.arch_hash(dataclasses.replace(c, OUTER=True)) != p["ARCH_HASH"]
+    assert not T.build_config(t).OUTER and T.build_config(t, OUTER=1).OUTER
+    assert all(T.config(n).OUTER and "OUTER" not in T.rtl_params(n) for n in T.names()
+               if n not in WG_TARGETS)
+    u = T.sim_uarch(t)
+    assert (u["NCH"], u["CB"], u["TMEM_IMPL"], u["QUANT_R1"], p["QUANT_R1"]) == (8, 128, 3, 1, 1)
+    assert (u["QUANT_PW"], p["QUANT_PW"]) == (2, 2)
+    assert (u["MXU_QD"], p["MXU_QD"]) == (4, 4)
+    for k in ("QUANT_R1", "QUANT_PW", "MXU_QD"):
+        assert k not in T.rtl_params("ypcb-00338") and k not in T.sim_uarch("ypcb-00338")
+    assert T.mem_model(t, 133.33) == ["+nat_bpc=34201", "+axi_lat=33", "+nat_refi=1040",
+                                      "+nat_rfc=47"]
+    assert T.mem_model(t)[:2] == ["+nat_bpc=45600", "+axi_lat=25"]        # its 100 MHz
+    assert T.by_platform(7) is not None and T.by_platform(7).name == "bcu1525-x2"
+    assert T.by_platform(4) is None
+
+
+def test_native_channels_are_checked(tmp_path):
+    """An FPGA target's channels are the native adapter's: a power of two of at least 2, beats
+    of 64 or 128 bytes (a D chunk whole beats, a beat on every channel whole chunks), and the
+    slice's DRAM exactly its channels' bytes; with weight groups a group step is a D-byte beat on
+    every channel. (The WG targets' NAT_XPOST off here, and its half beats: they need beat_bytes = D and
+    128, checked first.)"""
+    good = (ROOT / "targets/bcu1525-wg.toml").read_text().replace(
+        "NAT_XPOST = true", "NAT_XPOST = false", 1).replace("NAT_RHB = true", "NAT_RHB = false", 1) \
+
+    p = tmp_path / "bcu1525-wg.toml"
+    for edit, msg in ((("channel_bytes = 4294967296", "channel_bytes = 2147483648"),
+                       "8 channels x 2147483648 bytes is not the slice's DRAM_BYTES"),
+                      (("beat_bytes = 128", "beat_bytes = 32"), "beats of\n?.*64 or 128"),
+                      (("channels_per_slice = 8", "channels_per_slice = 6"), "a power of two")):
+        T.load.cache_clear()
+        p.write_text(good.replace(*edit))
+        with pytest.raises(T.TargetError, match=msg):
+            T.load(str(p))
+    # weight groups: a step one beat on every channel, a row a beat (port W's lane c column c's:
+    # 16 channels of 64 bytes are WG x D but not a row a beat)
+    T.load.cache_clear()
+    p.write_text(good.replace("channels_per_slice = 8\nchannel_bytes = 4294967296",
+                              "channels_per_slice = 16\nchannel_bytes = 2147483648")
+                 .replace("beat_bytes = 128\n", "beat_bytes = 64\n"))
+    with pytest.raises(T.TargetError, match="not one beat of D bytes"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_native_depths_from_the_target(tmp_path):
+    """otpu_native_dram's per-channel depths (RD, AD, XD, WQD), A's read runs (APF) and the SW
+    queue's fill reads (SW_FILL: NAT_FILL) are the target's [uarch] NAT_* where it states them
+    (rtl_params, sim_uarch: otpu_board / otpu_top NAT_*), else the adapter's defaults, which
+    otpu_board's, otpu_top's and the testbenches' defaults repeat; the cards state none."""
+    adp = (ROOT / "rtl/mem/otpu_native_dram.sv").read_text()
+    want = {k: re.search(rf"parameter int {k} = ([^,]+),", adp).group(1).strip()
+            for k in ("RD", "AD", "XD", "WQD", "APF")}
+    for f in ("rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv", "sim/verilator/tb_board.sv",
+              "sim/verilator/tb_top.sv", "sim/verilator/tb_ndram.sv"):
+        txt = (ROOT / f).read_text()
+        for k, v in want.items():
+            n = k if f.endswith("tb_ndram.sv") else f"NAT_{k}"
+            assert re.search(rf"parameter int {n}\s*=\s*{re.escape(v)}\s*[,;\n]", txt), (f, k)
+        n = "SW_FILL" if f.endswith("tb_ndram.sv") else "NAT_FILL"
+        assert re.search(rf"parameter bit {n}\s*=\s*1'b1\s*[,;]", txt), f
+    assert re.search(r"parameter bit SW_FILL = 1'b1,", adp)
+    for n in T.names():
+        if n not in WG_TARGETS:
+            assert not set(T.NAT_KEYS) & (set(T.rtl_params(n)) | set(T.sim_uarch(n))), n
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text((ROOT / "targets/bcu1525-wg.toml").read_text().replace(
+        "CHASH = true", "CHASH = true\nNAT_XD = 128", 1))
+    T.load.cache_clear()
+    t = T.load(str(p))
+    assert (T.rtl_params(t)["NAT_RD"], T.sim_uarch(t)["NAT_XD"]) == (16, 128)
+    assert (T.rtl_params(t)["NAT_FILL"], T.sim_uarch(t)["NAT_FILL"]) == (0, 0)
+    assert "NAT_WQD" not in T.rtl_params(t)
+    # the WG targets' own: A's read runs of 8 beats, its FIFO 16 deep (>= 2 APF - 1), B's reads 16 a
+    # channel, partial SW beats as masked writes (the memory's data mask), B's
+    # and SW's write data posted, one SW gather beat for every channel, port W's beats posted into
+    # the MXUs' chunk FIFOs, 2 register stages each way between a slice and its adapter and 2 for
+    # the posts (otpu_xstg), the channels' data in half beats (R1 / R2)
+    assert {k: v for k, v in T.rtl_params("bcu1525-wg").items() if k in T.NAT_KEYS} == \
+        {"NAT_APF": 8, "NAT_AD": 16, "NAT_RD": 16, "NAT_FILL": 0, "NAT_WPOST": 1, "NAT_SWG": 1,
+         "NAT_XPOST": 1, "NAT_XSTG": 2, "NAT_XSTG_P": 2, "NAT_RHB": 1}
+    T.load.cache_clear()
+
+
+def test_posted_write_data_from_the_target(tmp_path):
+    """The write data posted at the take (otpu_native_dram WPOST: the WG targets' bridges take a channel's
+    data ahead of its commands) is the target's [uarch] NAT_WPOST: off by default in the adapter,
+    otpu_board, otpu_top and the testbenches (tb_ndram's WPOST), stated by no card, on for the WG targets;
+    a target that asks for it with NAT_FILL on (a fill read's data merged as its write goes out)
+    is refused."""
+    adp = (ROOT / "rtl/mem/otpu_native_dram.sv").read_text()
+    assert re.search(r"parameter bit WPOST = 1'b0,", adp)
+    for f in ("rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv", "sim/verilator/tb_board.sv",
+              "sim/verilator/tb_top.sv", "sim/verilator/tb_ndram.sv"):
+        n = "WPOST" if f.endswith("tb_ndram.sv") else "NAT_WPOST"
+        assert re.search(rf"parameter bit {n}\s*=\s*1'b0\s*[,;]", (ROOT / f).read_text()), f
+    for n in T.names():
+        if n not in WG_TARGETS:
+            assert "NAT_WPOST" not in T.rtl_params(n), n
+    assert (T.rtl_params("bcu1525-wg")["NAT_WPOST"], T.sim_uarch("bcu1525-wg")["NAT_WPOST"]) == (1, 1)
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text((ROOT / "targets/bcu1525-wg.toml").read_text()
+                 .replace("NAT_FILL = false", "NAT_FILL = true", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="NAT_WPOST needs NAT_FILL false"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_one_gather_beat_from_the_target(tmp_path):
+    """One SW gather beat and one posted beat a cycle for every channel (otpu_native_dram SWG,
+    the WG targets' area cut) is the target's [uarch] NAT_SWG: off by default in the adapter, otpu_board,
+    otpu_top and the testbenches (tb_ndram's SWG), stated by the WG targets alone; a target that asks
+    for it without NAT_WPOST (its one bus is the posted beat's) is refused."""
+    adp = (ROOT / "rtl/mem/otpu_native_dram.sv").read_text()
+    assert re.search(r"parameter bit SWG = 1'b0,", adp)
+    for f in ("rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv", "sim/verilator/tb_board.sv",
+              "sim/verilator/tb_top.sv", "sim/verilator/tb_ndram.sv"):
+        n = "SWG" if f.endswith("tb_ndram.sv") else "NAT_SWG"
+        assert re.search(rf"parameter bit {n}\s*=\s*1'b0\s*[,;]", (ROOT / f).read_text()), f
+    for n in T.names():
+        if n not in WG_TARGETS:
+            assert "NAT_SWG" not in T.rtl_params(n), n
+    assert (T.rtl_params("bcu1525-wg")["NAT_SWG"], T.sim_uarch("bcu1525-wg")["NAT_SWG"]) == (1, 1)
+    src = (ROOT / "targets/bcu1525-wg.toml").read_text()
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text(src.replace("NAT_WPOST = true", "NAT_WPOST = false", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="NAT_SWG needs NAT_WPOST"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_half_beats_from_the_target(tmp_path):
+    """The channels' read and write data in half beats (otpu_native_dram and otpu_hbm_ch RHB /
+    WHB, the WG targets' R1 / R2: docs/native_channels.md) are the target's [uarch] NAT_RHB / NAT_WHB: off
+    by default in the adapter, the bridge, otpu_board, otpu_top, the native memory model and the
+    testbenches, so the cards build cycle for cycle as before; the WG targets alone state NAT_RHB
+    (rtl_params, sim_uarch, the wrapper's OTPU_RHB), the BCU1525's and the YPCB-00338's targets do
+    not, and no target NAT_WHB (a 27B decode measured 3.3% slower with it: the posted bus a beat every two
+    cycles). They are not in the Config: the WG targets' arch_hash is the same with WHB on and RHB off. A
+    target that asks for NAT_RHB without NAT_XPOST (W's beats would come back on n_rdata) or
+    NAT_WHB without NAT_SWG (its halves go on the one posted bus) is refused."""
+    for f, ks in (("rtl/mem/otpu_native_dram.sv", ("RHB", "WHB")), ("rtl/mem/otpu_hbm_ch.sv", ("RHB", "WHB")),
+                  ("sim/verilator/otpu_native_mem.sv", ("RHB", "WHB")),
+                  ("sim/verilator/tb_ndram.sv", ("RHB", "WHB")), ("sim/verilator/tb_hbmch.sv", ("RHB", "WHB")),
+                  ("rtl/shell/otpu_board.sv", ("NAT_RHB", "NAT_WHB")), ("rtl/top/otpu_top.sv", ("NAT_RHB", "NAT_WHB")),
+                  ("sim/verilator/tb_board.sv", ("NAT_RHB", "NAT_WHB")), ("sim/verilator/tb_top.sv", ("NAT_RHB", "NAT_WHB"))):
+        txt = (ROOT / f).read_text()
+        for k in ks:
+            assert re.search(rf"parameter bit {k}\s*=\s*1'b0\s*([,;]|//[^\n]*\n\s*\))", txt), (f, k)
+    wg = (ROOT / "rtl/boards/bcu1525/otpu_bcu_wg_sys.sv").read_text()
+    assert "`define OTPU_RHB 0" in wg and "`define OTPU_WHB 0" in wg
+    for n in T.names():
+        assert "NAT_WHB" not in set(T.rtl_params(n)) | set(T.sim_uarch(n)), n
+        if n not in WG_TARGETS:
+            assert "NAT_RHB" not in set(T.rtl_params(n)) | set(T.sim_uarch(n)), n
+    assert {"bcu1525", "ypcb-00338"} <= set(T.names())
+    t = T.load("bcu1525-wg")
+    assert (T.rtl_params(t)["NAT_RHB"], T.sim_uarch(t)["NAT_RHB"]) == (1, 1)
+    src = (ROOT / "targets/bcu1525-wg.toml").read_text()
+    assert "NAT_RHB = true" in src and "\nNAT_WHB" not in src
+    p = tmp_path / "bcu1525-wg.toml"
+    whb = src.replace("NAT_RHB = true", "NAT_WHB = true\nNAT_RHB = true", 1)
+    p.write_text(whb.replace("NAT_RHB = true", "NAT_RHB = false", 1))
+    T.load.cache_clear()
+    other = T.load(str(p))
+    assert T.rtl_params(other)["NAT_WHB"] == 1 and T.rtl_params(other)["NAT_RHB"] == 0
+    assert T.arch_hash(T.config(other)) == T.arch_hash(T.config(t))
+    assert T.rtl_params(other)["ARCH_HASH"] == T.rtl_params(t)["ARCH_HASH"]
+    p.write_text(src.replace("NAT_XPOST = true", "NAT_XPOST = false", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="NAT_RHB .* needs NAT_XPOST"):
+        T.load(str(p))
+    p.write_text(whb.replace("NAT_SWG = true", "NAT_SWG = false", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="NAT_WHB .* needs NAT_WPOST and NAT_SWG"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_result_fifo_rows_from_the_target(tmp_path):
+    """The MXU's result FIFO rows (otpu_mxu RF_ROWS, an area cut) are the target's [uarch]
+    MXU_RF_ROWS: 0 (its rule) by default in otpu_slice, otpu_board, otpu_top and the testbenches,
+    stated by no target now (a target's value reaches rtl_params, sim_uarch and the board model's build); a value that is not a
+    power of two of at least 16 is refused."""
+    for f in ("rtl/top/otpu_slice.sv", "rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv",
+              "sim/verilator/tb_board.sv", "sim/verilator/tb_top.sv"):
+        assert re.search(r"parameter int MXU_RF_ROWS\s*=\s*0\s*[,;]", (ROOT / f).read_text()), f
+    for n in T.names():
+        assert "MXU_RF_ROWS" not in T.rtl_params(n) and "MXU_RF_ROWS" not in T.sim_uarch(n), n
+    src = (ROOT / "targets/bcu1525-wg.toml").read_text()
+    assert "MXU_QD = 4\n" in src
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text(src.replace("MXU_QD = 4\n", "MXU_QD = 4\nMXU_RF_ROWS = 32\n", 1))
+    T.load.cache_clear()
+    t = T.load(str(p))
+    assert (T.rtl_params(t)["MXU_RF_ROWS"], T.sim_uarch(t)["MXU_RF_ROWS"]) == (32, 32)
+    for bad in (24, 8):
+        p.write_text(src.replace("MXU_QD = 4\n", f"MXU_QD = 4\nMXU_RF_ROWS = {bad}\n", 1))
+        T.load.cache_clear()
+        with pytest.raises(T.TargetError, match=f"MXU_RF_ROWS {bad}: 0, or a power of two"):
+            T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_posted_w_beats_from_the_target(tmp_path):
+    """Port W's beats posted into the MXU's chunk FIFO by the channels (otpu_native_dram /
+    otpu_mxu XPOST, (a) v2: docs/native_channels.md) are the target's [uarch] NAT_XPOST: off by
+    default in otpu_board, otpu_top and the testbenches, stated by the WG targets alone (their
+    bridges post them). A target that states it away from an FPGA at WG > 1 is
+    refused, and one at WG > 1 with PAIR on (the MXU runs every MM in groups there, GALL);
+    otpu_board reports column reuse (CAPS bit5) at WG 1 only."""
+    for f in ("rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv", "sim/verilator/tb_board.sv",
+              "sim/verilator/tb_top.sv"):
+        assert re.search(r"parameter bit NAT_XPOST\s*=\s*1'b0\s*[,;]", (ROOT / f).read_text()), f
+    assert ".PAIR(WG == 1)" in (ROOT / "rtl/shell/otpu_board.sv").read_text()
+    for n in T.names():
+        assert ("NAT_XPOST" in T.rtl_params(n)) == (n in WG_TARGETS), n
+    t = T.load("bcu1525-wg")
+    assert (T.rtl_params(t)["NAT_XPOST"], T.sim_uarch(t)["NAT_XPOST"]) == (1, 1)
+    assert not T.config(t).PAIR
+    src = (ROOT / "targets/bcu1525-wg.toml").read_text()
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text(src.replace("beat_bytes = 128", "beat_bytes = 256", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="NAT_XPOST"):
+        T.load(str(p))
+    p.write_text(src.replace("PAIR = false", "PAIR = true", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="WG > 1 needs PAIR false"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_tmem_style_from_the_target(tmp_path):
+    """The TMEM's RAM style is the target's [uarch] TMEM_STYLE (rtl_params: the string, a flow
+    quotes it; sim_uarch: a Verilator -G string literal): the WG targets' pumped one copy in UltraRAM
+    (its block RAM is the board's), absent elsewhere: otpu_tmem's "block", which otpu_slice,
+    otpu_board, otpu_top and the testbenches repeat. Not "block" or "ultra": refused."""
+    assert re.search(r'parameter string STYLE = "block"',
+                     (ROOT / "rtl/mem/otpu_tmem.sv").read_text())
+    for f in ("rtl/top/otpu_slice.sv", "rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv",
+              "sim/verilator/tb_board.sv", "sim/verilator/tb_top.sv"):
+        assert re.search(r'parameter string TMEM_STYLE = "block"\s*[,;]',
+                         (ROOT / f).read_text()), f
+    assert (T.rtl_params("bcu1525-wg")["TMEM_STYLE"], T.sim_uarch("bcu1525-wg")["TMEM_STYLE"]) == \
+        ("ultra", '"ultra"')
+    for n in T.names():
+        if n not in WG_TARGETS:
+            assert "TMEM_STYLE" not in T.rtl_params(n) and "TMEM_STYLE" not in T.sim_uarch(n), n
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text((ROOT / "targets/bcu1525-wg.toml").read_text().replace(
+        'TMEM_STYLE = "ultra"', 'TMEM_STYLE = "lutram"', 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="TMEM_STYLE"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_imem_style_and_act_ucols_from_the_target(tmp_path):
+    """IMEM's RAMs' style (IMEM_STYLE, a string as TMEM_STYLE; absent: otpu_seq's "auto"), its
+    wait entries' (IMEM_WC_STYLE; absent: IMEM_STYLE's, otpu_seq WSTYLE "") and the ACT RAM's
+    columns in UltraRAM (ACT_UCOLS, 0 .. MCOLS; absent or 0: none, no parameter): the WG targets' IMEM
+    and ACT RAM in block RAM, the wait entries in UltraRAM (the chunk FIFO's lanes take the rest,
+    FIFO_DEPTH 2048), absent elsewhere. Every top repeats otpu_seq's and otpu_actram's defaults."""
+    seq = (ROOT / "rtl/seq/otpu_seq.sv").read_text()
+    assert re.search(r'parameter string STYLE\s*= "auto"', seq)
+    assert re.search(r'parameter string WSTYLE\s*= ""', seq) and ".STYLE(WST)" in seq
+    assert re.search(r"parameter int UCOLS\s*= 0\b", (ROOT / "rtl/mem/otpu_actram.sv").read_text())
+    for f in ("rtl/top/otpu_slice.sv", "rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv",
+              "sim/verilator/tb_board.sv", "sim/verilator/tb_top.sv"):
+        src = (ROOT / f).read_text()
+        assert re.search(r'parameter string IMEM_STYLE = "auto"\s*[,;]', src), f
+        assert re.search(r'parameter string IMEM_WC_STYLE = ""\s*[,;]', src), f
+        assert re.search(r"parameter int ACT_UCOLS\s*= 0\s*[,;]", src), f
+        assert ".IMEM_WC_STYLE(IMEM_WC_STYLE)" in src or ".WSTYLE(IMEM_WC_STYLE)" in src, f
+    p, u = T.rtl_params("bcu1525-wg"), T.sim_uarch("bcu1525-wg")
+    assert (p["IMEM_STYLE"], u["IMEM_STYLE"], p["IMEM_WC_STYLE"], u["IMEM_WC_STYLE"]) == \
+        ("block", '"block"', "ultra", '"ultra"')
+    assert "ACT_UCOLS" not in p and "ACT_UCOLS" not in u      # (0: every column in block RAM)
+    for n in T.names():
+        if n not in WG_TARGETS:
+            for k in ("IMEM_STYLE", "IMEM_WC_STYLE", "ACT_UCOLS"):
+                assert k not in T.rtl_params(n) and k not in T.sim_uarch(n), (n, k)
+    p = tmp_path / "bcu1525-wg.toml"
+    for old, new, err in (('IMEM_STYLE = "block"', 'IMEM_STYLE = "lutram"', "IMEM_STYLE"),
+                          ('IMEM_WC_STYLE = "ultra"', 'IMEM_WC_STYLE = "auto"', "IMEM_WC_STYLE"),
+                          ("ACT_UCOLS = 0", "ACT_UCOLS = 9", "ACT_UCOLS")):
+        p.write_text((ROOT / "targets/bcu1525-wg.toml").read_text().replace(old, new, 1))
+        T.load.cache_clear()
+        with pytest.raises(T.TargetError, match=err):
+            T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_mxu_result_fifo_style_from_the_target(tmp_path):
+    """The MXU's result FIFO's copies (MXU_RF_STYLE, a string as TMEM_STYLE; absent: otpu_mxu's
+    "block", read ahead): the WG targets' "distributed", LUT RAM read at its address (its LUTs bind; read
+    ahead the FIFO took 28.5 block RAM tiles and 312 LUTs more a slice), absent elsewhere; a style
+    otpu_mxu does not build is an error. Every top repeats otpu_mxu's default and passes it on,
+    and otpu_mxu builds each style in a branch of its own."""
+    mxu = (ROOT / "rtl/mxu/otpu_mxu.sv").read_text()
+    assert re.search(r'parameter string RF_STYLE = "block"\s*[,;]', mxu)
+    rfm = mxu[mxu.index("begin : g_rfm"):]
+    rfm = rfm[:rfm.index("assign rq[c]")]
+    lut, bram = rfm[rfm.index("begin : g_lut"):], rfm[rfm.index("begin : g_bram"):]
+    assert 'if (RF_STYLE == "distributed") begin : g_lut' in rfm
+    assert "assign rqm = m[rf_qc[c]];" in lut[:lut.index("end else")] and "otpu_ram_1r1w_ra" in bram
+    assert ".RF_STYLE(MXU_RF_STYLE)" in (ROOT / "rtl/top/otpu_slice.sv").read_text()
+    for f in ("rtl/top/otpu_slice.sv", "rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv",
+              "sim/verilator/tb_board.sv", "sim/verilator/tb_top.sv"):
+        src = (ROOT / f).read_text()
+        assert re.search(r'parameter string MXU_RF_STYLE = "block"\s*[,;]', src), f
+        assert f.endswith("otpu_slice.sv") or ".MXU_RF_STYLE(MXU_RF_STYLE)" in src, f
+    p, u = T.rtl_params("bcu1525-wg"), T.sim_uarch("bcu1525-wg")
+    assert (p["MXU_RF_STYLE"], u["MXU_RF_STYLE"]) == ("distributed", '"distributed"')
+    for n in T.names():
+        if n not in WG_TARGETS:
+            assert "MXU_RF_STYLE" not in T.rtl_params(n) and "MXU_RF_STYLE" not in T.sim_uarch(n), n
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text((ROOT / "targets/bcu1525-wg.toml").read_text().replace(
+        'MXU_RF_STYLE = "distributed"', 'MXU_RF_STYLE = "ultra"', 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="MXU_RF_STYLE"):
+        T.load(str(p))
+    T.load.cache_clear()
+
+
+def test_mxu_chunk_fifo_style_from_the_target(tmp_path):
+    """The MXU's chunk FIFO lanes (MXU_FIFO_STYLE, a string as TMEM_STYLE; absent: otpu_mxu's
+    "block"): the WG targets' "ultra", UltraRAM in 72-bit column groups, at NAT_XPOST each lane's posted
+    beats staged in LUT RAM across the clocks (g_xp's g_u, otpu_mxu_stage and its scoped
+    constraints; option A's block RAMs in g_a), absent
+    elsewhere; a style otpu_mxu does not build is an error. Every top repeats otpu_mxu's default
+    and passes it on; the board model takes it (SimTransport)."""
+    mxu = (ROOT / "rtl/mxu/otpu_mxu.sv").read_text()
+    assert re.search(r'parameter string FIFO_STYLE = "block"\s*[,;]', mxu)
+    assert 'localparam bit FU = FIFO_STYLE == "ultra";' in mxu
+    assert "localparam int FB = FU ? 72 : 36;" in mxu
+    xp = mxu[mxu.index("begin : g_xp"):mxu.index("begin : g_nfdw")]
+    assert "if (FU) begin : g_u" in xp and "end else begin : g_a" in xp
+    assert "otpu_mxu_stage #(.QW(QW), .N(NS)) u_sg" in xp and '.STYLE("ultra")) u_fd' in xp
+    stage = mxu[mxu.index("module otpu_mxu_stage"):]
+    assert '.STYLE("distributed")) u_q' in stage[:stage.index("endmodule")]
+    # the staging's crossing: scoped to otpu_mxu_stage, read where a build has it
+    assert (ROOT / "boards/bcu1525/constraints/otpu_mxu_stage.tcl").exists()
+    assert "set_property SCOPED_TO_REF otpu_mxu_stage [get_files $cons/otpu_mxu_stage.tcl]" in \
+        (ROOT / "boards/bcu1525/vivado/create_project_wg.tcl").read_text()
+    assert ".FIFO_STYLE(MXU_FIFO_STYLE)" in (ROOT / "rtl/top/otpu_slice.sv").read_text()
+    for f in ("rtl/top/otpu_slice.sv", "rtl/shell/otpu_board.sv", "rtl/top/otpu_top.sv",
+              "sim/verilator/tb_board.sv", "sim/verilator/tb_top.sv"):
+        src = (ROOT / f).read_text()
+        assert re.search(r'parameter string MXU_FIFO_STYLE = "block"\s*[,;]', src), f
+        assert f.endswith("otpu_slice.sv") or ".MXU_FIFO_STYLE(MXU_FIFO_STYLE)" in src, f
+    assert '"MXU_FIFO_STYLE"' in (ROOT / "opentpu/host/board.py").read_text()
+    p, u = T.rtl_params("bcu1525-wg"), T.sim_uarch("bcu1525-wg")
+    assert (p["MXU_FIFO_STYLE"], u["MXU_FIFO_STYLE"]) == ("ultra", '"ultra"')
+    for n in T.names():
+        if n not in WG_TARGETS:
+            assert "MXU_FIFO_STYLE" not in T.rtl_params(n), n
+            assert "MXU_FIFO_STYLE" not in T.sim_uarch(n), n
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text((ROOT / "targets/bcu1525-wg.toml").read_text().replace(
+        'MXU_FIFO_STYLE = "ultra"', 'MXU_FIFO_STYLE = "distributed"', 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="MXU_FIFO_STYLE"):
+        T.load(str(p))
+    T.load.cache_clear()
 
 
 def test_build_config_applies_the_flow_knobs():
@@ -205,24 +717,346 @@ def test_bad_target_files(tmp_path):
         p.write_text(good.replace(*edit))
         with pytest.raises(T.TargetError, match=msg):
             T.load(str(p))
-    # otpu_seq's wait entries (SEQ_WC) count a unit's last 15 instructions: a window of 16 at most
+    # otpu_seq's wait entries (SEQ_WC) count a unit's last 15 instructions: a window of 16 at
+    # most, or 32 (the counts saturate: Config.WC_WIN)
     p = tmp_path / "nangate45-small.toml"
     wc = good.replace("SEQ_WC = false", "SEQ_WC = true")
     p.write_text(wc)
     assert T.load(str(p)).arch["SEQ_WC"] and T.sim_uarch(T.load(str(p)))["SEQ_WC"] == 1
+    assert T.config(T.load(str(p))).WC_WIN == 16
     T.load.cache_clear()
     p.write_text(wc.replace("WIN = 16", "WIN = 32"))
-    with pytest.raises(T.TargetError, match="SEQ_WC .* needs WIN <= 16"):
+    assert T.config(T.load(str(p))).WC_WIN == 32
+    T.load.cache_clear()
+    p.write_text(wc.replace("WIN = 16", "WIN = 24"))
+    with pytest.raises(T.TargetError, match="SEQ_WC .* needs WIN <= 16, or 32"):
         T.load(str(p))
+    # the MXU's command queue: 2 .. 7 deep (otpu_mxu QD: q_n's 3 bits)
+    for qd in (1, 8):
+        T.load.cache_clear()
+        p.write_text(good.replace("WIN = 16", f"WIN = 16\nMXU_QD = {qd}"))
+        with pytest.raises(T.TargetError, match=f"MXU_QD {qd}: 2..7"):
+            T.load(str(p))
+
+
+def test_the_entries_window(monkeypatch):
+    """Config.WC_WIN: 32 on a WAITC target at WIN 32 (bcu1525-wg's bhw variant, bcu1525-s2),
+    else 16; arch_hash holds it above 16 only, so a window-16 target keeps its CFG_HASH (the
+    production card's bcu1525-wg) and its programs' entries (opentpu.waits: the same words)."""
+    wg, bhw, s2 = T.config("bcu1525-wg"), T.config("bcu1525-wg:bhw"), T.config("bcu1525-s2")
+    assert (wg.WC_WIN, bhw.WC_WIN, s2.WC_WIN) == (16, 32, 32)
+    assert T.arch_hash(wg) == 0x4B35EC47 and T.arch_hash(T.config("bcu1525-wg:kt")) == 0xD49B52F5
+    assert (bhw.BHW, bhw.KT, s2.BHW, s2.KT) == (33, True, 33, True)   # (one S 1 bitstream, as S 2)
+    assert T.load("bcu1525-wg:bhw").uarch["WIN"] == T.load("bcu1525-s2").uarch["WIN"] == 32
+    assert T.arch_hash(dataclasses.replace(wg, WC_WIN=16)) == T.arch_hash(wg)
+    assert T.arch_hash(dataclasses.replace(bhw, WC_WIN=16)) != T.arch_hash(bhw)
+    assert T.build_config("bcu1525-wg:bhw").WC_WIN == 32
+    assert T.build_config("bcu1525-wg:bhw", SEQ_WC=0).WC_WIN == 16    # (no entries)
+    for n in T.names():
+        t = T.load(n)
+        assert T.config(t).WC_WIN == (32 if t.arch["SEQ_WC"] and t.uarch["WIN"] > 16 else 16), n
+
+
+def test_st16_variants_keep_the_hashes():
+    """[arch] ST16 (Config.ST16, docs/isa.md "ST16"): DSTEP's state in 16 bits, in arch_hash and
+    rtl_params only when on, so every target and variant before the field keeps its CFG_HASH
+    (pinned: bcu1525-wg:bhw 9df8e94f, the pbhw card's) and its RTL parameters; bcu1525-wg:bhw16
+    is bhw with ST16 e6m9, bcu1525-s2:st16 the S 2 target's."""
+    pins = {"bcu1525-s2": 0xf2f66919, "bcu1525-s2:kt": 0xf2f66919, "bcu1525-wg": 0x4b35ec47,
+            "bcu1525-wg:bhw": 0x9df8e94f, "bcu1525-wg:ic": 0xc4849fa6,
+            "bcu1525-wg:kt": 0xd49b52f5, "bcu1525": 0xc6166c02,
+            "nangate45-small": 0x124e28bf, "nangate45": 0x2aa6cd2b, "ypcb-00338": 0x4ffd1e17,
+            "ypcb-00338:m4": 0x4ffd1e17, "ypcb-00338:m8": 0x46b96e6d}
+    for n, h in pins.items():
+        c = T.config(n)
+        assert (T.arch_hash(c), c.ST16) == (h, ""), n
+        assert "ST16" not in T.rtl_params(n), n
+    bhw, b16 = T.config("bcu1525-wg:bhw"), T.config("bcu1525-wg:bhw16")
+    assert dataclasses.replace(b16, ST16="") == bhw and b16.ST16 == "e6m9"
+    assert T.arch_hash(b16) == 0x4d5cbf8d != T.arch_hash(dataclasses.replace(b16, ST16="bf16"))
+    assert T.arch_hash(T.config("bcu1525-s2:st16")) == 0xe331f79c
+    pb, p16 = T.rtl_params("bcu1525-wg:bhw"), T.rtl_params("bcu1525-wg:bhw16")
+    assert p16.pop("ST16") == 1 and p16.pop("ARCH_HASH") == 0x4d5cbf8d
+    pb.pop("ARCH_HASH")
+    assert p16 == pb
+    assert T.build_config("bcu1525-wg:bhw16") == b16
+    assert T.build_config("bcu1525-wg:bhw16", ST16=0) == bhw
+    assert T.build_config("bcu1525-wg:bhw", ST16="bf16").ST16 == "bf16"
+    assert T.build_config("bcu1525-wg:bhw16", DSTEP=0).ST16 == ""
+    with pytest.raises(T.TargetError, match="ST16"):
+        T.build_config("bcu1525-wg:bhw", ST16="fp16")
+
+
+def test_fsum_variant_keeps_the_hashes(tmp_path):
+    """[arch] FSUM (Config.FSUM: VOP EXP2SUB's fused row sums, otpu_vpu FSUM): in arch_hash and
+    rtl_params only when on, so every target and variant before it keeps its CFG_HASH and RTL
+    parameters; bcu1525-wg:bhw16fs is bhw16 with it. It needs the VPU's composites on the stream
+    engine's (DSTEP, LANES 8, D >= 32)."""
+    for n in ("bcu1525-s2", "bcu1525-wg", "bcu1525-wg:bhw", "bcu1525-wg:bhw16", "bcu1525-wg:ic",
+              "bcu1525", "nangate45", "ypcb-00338", "ypcb-00338:m8"):
+        c = T.config(n)
+        assert not c.FSUM and "VPU_FSUM" not in T.rtl_params(n), n
+    b16, fs = T.config("bcu1525-wg:bhw16"), T.config("bcu1525-wg:bhw16fs")
+    assert T.arch_hash(b16) == 0x4d5cbf8d
+    assert dataclasses.replace(fs, FSUM=False) == b16 and fs.FSUM
+    assert T.arch_hash(fs) != T.arch_hash(b16)
+    p16, pfs = T.rtl_params("bcu1525-wg:bhw16"), T.rtl_params("bcu1525-wg:bhw16fs")
+    assert pfs.pop("VPU_FSUM") == 1 and pfs.pop("ARCH_HASH") == T.arch_hash(fs)
+    p16.pop("ARCH_HASH")
+    assert pfs == p16
+    assert T.sim_uarch(T.load("bcu1525-wg:bhw16fs"))["VPU_FSUM"] == 1
+    assert "VPU_FSUM" not in T.sim_uarch(T.load("bcu1525-wg:bhw16"))
+    assert T.build_config("bcu1525-wg:bhw16fs") == fs
+    assert T.build_config("bcu1525-wg:bhw16fs", FSUM=0) == b16
+    assert T.build_config("bcu1525-wg:bhw16", FSUM=1) == fs
+    assert not T.build_config("bcu1525-wg:bhw16fs", DSTEP=0).FSUM
+    good = (ROOT / "targets/nangate45-small.toml").read_text()      # (no DSTEP)
+    p = tmp_path / "nangate45-small.toml"
+    p.write_text(good.replace("DSTEP = false", "DSTEP = false\nFSUM = true", 1))
+    with pytest.raises(T.TargetError, match="FSUM"):
+        T.load(str(p))
+
+
+def test_vsig_keeps_the_hashes(tmp_path):
+    """[arch] VSIG (Config.VSIG: VOP SIGMOID / SILU, otpu_se_comp SIG): in arch_hash and the RTL
+    and simulator parameters only when on, so every target and variant without it keeps its
+    CFG_HASH; the wmx variants have it (VSIG 0 there: the variant without it). It needs the
+    composites on the stream engine's path (DSTEP, LANES 8, D >= 32), at VPU_CNS 3 or 5: the knob
+    is off elsewhere, and a target stating it without them is refused."""
+    for n in ("bcu1525-s2", "bcu1525-wg", "bcu1525-wg:bhw16", "bcu1525-wg:bhw16fs",
+              "bcu1525-x2:st16", "bcu1525", "nangate45", "ypcb-00338"):
+        c = T.config(n)
+        assert not c.VSIG and "VPU_SIG" not in T.rtl_params(n), n
+        assert "VPU_SIG" not in T.sim_uarch(T.load(n)), n
+    assert T.arch_hash(T.config("bcu1525-wg:bhw16")) == 0x4d5cbf8d
+    for n in ("bcu1525-x2:wmx", "bcu1525-wg:wmx"):
+        v, w = T.build_config(n), T.build_config(n, VSIG=0)
+        assert v == T.config(n) and v.VSIG and dataclasses.replace(v, VSIG=False) == w
+        assert T.arch_hash(v) != T.arch_hash(w)
+        assert T.rtl_params(n)["VPU_SIG"] == 1 and T.sim_uarch(T.load(n))["VPU_SIG"] == 1
+        assert not T.build_config(n, DSTEP=0).VSIG
+    v = T.build_config("bcu1525-x2:st16", VSIG=1)                      # VPU_CNS 3 (six passes)
+    assert v.VSIG and T.arch_hash(v) != T.arch_hash(T.config("bcu1525-x2:st16"))
+    src = (ROOT / "targets/bcu1525-wg.toml").read_text()
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text(src.replace("DSTEP = true", "DSTEP = true\nVSIG = true", 1)
+                 .replace("LANES = 8", "LANES = 4", 1))
+    with pytest.raises(T.TargetError, match="VSIG"):
+        T.load(str(p))                                                  # LANES 4
+    for cns in ("", "VPU_CNS = 5\n"):                                  # VPU_CNS 3, 5
+        p.write_text(src.replace("DSTEP = true", "DSTEP = true\nVSIG = true", 1)
+                     .replace("[uarch]\n", "[uarch]\n" + cns, 1))
+        t = T.load(str(p))
+        assert T.config(t).VSIG and T.rtl_params(t)["VPU_SIG"] == 1 and T.sim_uarch(t)["VPU_SIG"] == 1
+
+
+def test_vmac_variant_keeps_the_hashes():
+    """[arch] VMAC (Config.VMAC: VOP MAC, otpu_vpu MAC): in arch_hash and rtl_params only when
+    on, so every target and variant without it keeps its CFG_HASH and RTL parameters; the wmx
+    variants (bcu1525-x2's and bcu1525-wg's) have it."""
+    for n in ("bcu1525-s2", "bcu1525-wg", "bcu1525-wg:bhw16", "bcu1525-wg:bhw16fs", "bcu1525-x2",
+              "bcu1525-x2:st16", "bcu1525", "nangate45", "ypcb-00338",
+              "ypcb-00338:m8"):
+        c = T.config(n)
+        assert not c.VMAC and "VPU_MAC" not in T.rtl_params(n), n
+    assert T.arch_hash(T.config("bcu1525-wg:bhw16")) == 0x4d5cbf8d
+    for n in ("bcu1525-x2:wmx", "bcu1525-wg:wmx"):
+        c = T.config(n)
+        off = dataclasses.replace(c, VMAC=False)
+        assert c.VMAC and T.arch_hash(c) != T.arch_hash(off), n
+        p = T.rtl_params(n)
+        assert p["VPU_MAC"] == 1 and T.sim_uarch(T.load(n))["VPU_MAC"] == 1, n
+        assert T.build_config(n, VMAC=0) == off and T.build_config(n) == c, n
+
+
+def test_outer1_knob_keeps_the_hashes(tmp_path):
+    """[arch] OUTER1 (Config.OUTER1: VOP OUTER decay one on MAC's datapath, otpu_vpu OUTER1): no
+    target has it yet, so every one keeps its CFG_HASH and RTL parameters; a build with it (the
+    knob, wmx's: VMAC on, OUTER off) hashes apart and builds VPU_OUTER1, the knob is void without
+    VMAC or with OUTER, and a target stating it there is refused."""
+    for n in ("bcu1525-x2:wmx", "bcu1525-wg:wmx", "bcu1525-x2", "ypcb-00338"):
+        c = T.config(n)
+        assert not c.OUTER1 and "VPU_OUTER1" not in T.rtl_params(n), n
+        assert "VPU_OUTER1" not in T.sim_uarch(T.load(n)), n
+    c = T.config("bcu1525-x2:wmx")
+    on = T.build_config("bcu1525-x2:wmx", OUTER1=1)
+    assert on == dataclasses.replace(c, OUTER1=True) and T.arch_hash(on) != T.arch_hash(c)
+    assert not T.build_config("bcu1525-x2", OUTER1=1).OUTER1            # (no VMAC)
+    assert not T.build_config("ypcb-00338", OUTER1=1).OUTER1            # (OUTER)
+    bad = tmp_path / "bcu1525-x2.toml"
+    bad.write_text((ROOT / "targets/bcu1525-x2.toml").read_text().replace(
+        "OUTER = false", "OUTER = false\nOUTER1 = true", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="OUTER1"):
+        T.load(str(bad))
+    T.load.cache_clear()
+
+
+# every target and variant's CFG_HASH (the cards' bitstreams and the image and program caches'
+# keys hold them): a variant added to a file leaves the others' as they were
+HASHES = {"bcu1525": 0xc6166c02, "bcu1525-s2": 0xf2f66919, "bcu1525-s2:kt": 0xf2f66919,
+          "bcu1525-s2:st16": 0xe331f79c, "bcu1525-wg": 0x4b35ec47, "bcu1525-wg:bhw": 0x9df8e94f,
+          "bcu1525-wg:bhw16": 0x4d5cbf8d, "bcu1525-wg:bhw16fs": 0x2e196bbd,
+          "bcu1525-wg:ic": 0xc4849fa6, "bcu1525-wg:kt": 0xd49b52f5, "bcu1525-wg:wmx": 0xa6d2f884,
+          "bcu1525-x2": 0x2963590d, "bcu1525-x2:kt": 0x2963590d, "bcu1525-x2:st16": 0xd5239726,
+          "bcu1525-x2:wmx": 0x92012fec, "bcu1525-x2:b2": 0xd4bd45a5, "nangate45": 0x2aa6cd2b,
+          "nangate45-small": 0x124e28bf, "ypcb-00338": 0x4ffd1e17, "ypcb-00338:m4": 0x4ffd1e17,
+          "ypcb-00338:m8": 0x46b96e6d}
+
+
+def test_every_variant_keeps_its_hash():
+    for n, h in HASHES.items():
+        assert T.arch_hash(T.config(n)) == h, n
+        assert T.rtl_params(n).get("ARCH_HASH", h) == h, n
+
+
+def test_b2_variant(no_env):
+    """bcu1525-x2:b2 (B2, docs/bcu1525_wg.md): x2:wmx's machine with the VPU's
+    composites at three stages (option C: FSUM off with VPU_CNS 5, VSIG kept), QST HL and its row
+    buffer (QSTHL, QUANT_QSTB), VOP OUTER of decay one (OUTER1), quantize-once (QONCE), MM SPL
+    (SPLMM) and NAT_XSTG 3 (DMA_LDQ 2 as wmx's); wmx stays B1's. Its
+    Config, build_config, RTL and simulator parameters differ from wmx's in exactly those, and a
+    card of it reports its Config back (device_config from its registers: CFG_HASH, CAPS2)."""
+    w, b = T.config("bcu1525-x2:wmx"), T.config("bcu1525-x2:b2")
+    assert b == dataclasses.replace(w, FSUM=False, QSTHL=True, OUTER1=True, QONCE=True,
+                                    SPLMM=True)
+    assert T.build_config("bcu1525-x2:b2") == b and T.build_config("bcu1525-x2:wmx") == w
+    assert (T.arch_hash(w), T.arch_hash(b)) == (0x92012fec, 0xd4bd45a5)
+    pw, pb = T.rtl_params("bcu1525-x2:wmx"), T.rtl_params("bcu1525-x2:b2")
+    diff = {k: (pw.get(k), pb.get(k)) for k in set(pw) | set(pb) if pw.get(k) != pb.get(k)}
+    assert diff == {"ARCH_HASH": (0x92012fec, 0xd4bd45a5), "NAT_XSTG": (2, 3),
+                    "QUANT_QSTB": (None, 1), "QUANT_QSTHL": (None, 1), "VPU_CNS": (5, None),
+                    "VPU_FSUM": (1, None), "VPU_OUTER1": (None, 1), "QONCE": (None, 1),
+                    "MXU_SPL": (None, 1)}
+    assert pw["DMA_LDQ"] == pb["DMA_LDQ"] == 2 and pw["VPU_SIG"] == pb["VPU_SIG"] == 1
+    sw, sb = T.sim_uarch(T.load("bcu1525-x2:wmx")), T.sim_uarch(T.load("bcu1525-x2:b2"))
+    assert {k: (sw.get(k), sb.get(k)) for k in set(sw) | set(sb) if sw.get(k) != sb.get(k)} == \
+        {k: v for k, v in diff.items() if k != "ARCH_HASH"}
+    assert pb["NAT_XSTG_P"] == pw["NAT_XSTG_P"] == 2 and pb["QUANT_SWW"] == 4
+    from opentpu.host.fake import target_cfg
+    for n in ("bcu1525-x2:wmx", "bcu1525-x2:b2"):
+        no_env.setenv("OTPU_TARGET", n)
+        t = FakeTransport(devname=None, regmap=5, D=128, MCOLS=8, LANES=8, act_rows=16,
+                          cfg=target_cfg(n), dstep=True, stream=True, chash=True, outer=False,
+                          dstep2=True, kt=True, seq_wc=True, se_own=True)
+        info = dict(Board(t).info(), target=T.load(n))
+        assert device_config(info) == T.config(n), n
+        assert info["caps2"]["outer1"] == info["caps2"]["qsthl"] == info["caps2"]["splmm"] == \
+            info["caps2"]["qonce"] == (n.endswith("b2")), n
+    nohash = info | {"cfg": None}                       # (B2's registers, B1's CAPS2 below)
+    check_fits(b, nohash)
+    with pytest.raises(ConfigMismatch, match="OUTER1"):
+        check_fits(b, nohash | {"caps2": dict(info["caps2"], outer1=False)})
+    with pytest.raises(ConfigMismatch, match="QSTHL"):  # (x2:b2's programs on B1)
+        check_fits(b, nohash | {"caps2": dict(info["caps2"], qsthl=False)})
+    with pytest.raises(ConfigMismatch, match="SPLMM"):
+        check_fits(b, nohash | {"caps2": dict(info["caps2"], splmm=False)})
+    with pytest.raises(ConfigMismatch, match="FSUM"):   # (x2:wmx's on B2)
+        check_fits(w, nohash)
+    with pytest.raises(ConfigMismatch, match="QONCE"):
+        check_fits(b, nohash | {"caps2": dict(info["caps2"], qonce=False)})
+    check_fits(dataclasses.replace(w, FSUM=False), nohash)     # (VSIG on both: option C)
+    with pytest.raises(ConfigMismatch, match="VSIG"):
+        check_fits(b, nohash | {"caps2": dict(info["caps2"], vsig=False)})
+
+
+def test_splmm_knob_keeps_the_hashes(tmp_path):
+    """[arch] SPLMM (Config.SPLMM: MM SPL, a split's terms as one MM, otpu_mxu SPL): only x2:b2
+    states it (test_b2_variant), so the others keep their CFG_HASH and RTL parameters; a build with
+    it (the knob, wmx's:
+    WAITC at WG 8) hashes apart and builds MXU_SPL, the knob is void without the wait entries or
+    groups, and a target stating it there is refused."""
+    for n in ("bcu1525-x2:wmx", "bcu1525-wg:wmx", "bcu1525-x2", "ypcb-00338"):
+        c = T.config(n)
+        assert not c.SPLMM and "MXU_SPL" not in T.rtl_params(n), n
+        assert "MXU_SPL" not in T.sim_uarch(T.load(n)), n
+    c = T.config("bcu1525-x2:wmx")
+    on = T.build_config("bcu1525-x2:wmx", SPLMM=1)
+    assert on == dataclasses.replace(c, SPLMM=True) and T.arch_hash(on) != T.arch_hash(c)
+    assert not T.build_config("ypcb-00338", SPLMM=1).SPLMM             # (WG 1)
+    bad = tmp_path / "ypcb-00338.toml"
+    bad.write_text((ROOT / "targets/ypcb-00338.toml").read_text().replace(
+        "[arch]", "[arch]\nSPLMM = true", 1))
+    T.load.cache_clear()
+    with pytest.raises(T.TargetError, match="SPLMM"):
+        T.load(str(bad))
+    T.load.cache_clear()
+
+
+def test_st16_needs_the_dma_state(tmp_path):
+    """A target's ST16 is e6m9, bf16 or empty, and needs DSTEP and STREAM (otpu_dma's)."""
+    good = (ROOT / "targets/bcu1525-wg.toml").read_text()
+    p = tmp_path / "bcu1525-wg.toml"
+    p.write_text(good.replace("DSTEP2 = true", 'DSTEP2 = true\nST16 = "fp16"', 1))
+    with pytest.raises(T.TargetError, match="ST16 'fp16'"):
+        T.load(str(p))
+    p.write_text(good.replace("DSTEP2 = true", 'DSTEP2 = true\nST16 = "e6m9"', 1)
+                 .replace("DSTEP = true", "DSTEP = false", 1))
+    with pytest.raises(T.TargetError, match="ST16 'e6m9'"):
+        T.load(str(p))
+
+
+def test_dram_address_bits(tmp_path):
+    """[arch] AW (Config.AW, docs/isa.md "Machine model"): DRAM addresses of 32 to AW_MAX bits,
+    DRAM_BYTES a power of two of at most 2^AW; left out, 32 (every target but the BCU's), out of
+    arch_hash and rtl_params at 32 (their hashes and parameters as before the field). The
+    BCU1525 at WG 8: AW 36, its 32 GiB as 8 virtual channels of 4 GiB (two a DIMM), the RTL's
+    AW, DRAM_LOG2 and CH_LOG2 from it."""
+    for n in T.names():
+        if n not in ("bcu1525-wg", "bcu1525-s2", "bcu1525-x2"):
+            assert T.config(n).AW == 32 and "AW" not in T.rtl_params(n), n
+    # (the BCU1525 at two slices: 16 GiB a slice, 8 virtual channels of 2 GiB, AW 36 as one's)
+    t2 = T.load("bcu1525-s2")
+    assert (T.config(t2).AW, T.config(t2).DRAM_BYTES) == (36, 1 << 34)
+    assert (t2.platform["channels_per_slice"], t2.platform["channel_bytes"]) == (8, 1 << 31)
+    p2 = T.rtl_params(t2)
+    assert (p2["AW"], p2["DRAM_LOG2"], p2["CH_LOG2"], p2["NCH"]) == (36, 34, 31, 8)
+    c = T.config("bcu1525-wg")
+    assert (c.AW, c.DRAM_BYTES) == (36, 1 << 35)
+    t = T.load("bcu1525-wg")
+    assert (t.platform["channels_per_slice"], t.platform["channel_bytes"]) == (8, 1 << 32)
+    p = T.rtl_params(t)
+    assert (p["AW"], p["DRAM_LOG2"], p["CH_LOG2"], p["NCH"]) == (36, 35, 32, 8)
+    assert p["ARCH_HASH"] == T.arch_hash(c) != T.arch_hash(dataclasses.replace(c, AW=37))
+    assert T.arch_hash(dataclasses.replace(c, AW=32)) != T.arch_hash(c)
+    # at 32 the field is not hashed: a Config without it hashes the same
+    card = T.config("ypcb-00338")
+    assert T.arch_hash(dataclasses.replace(card, AW=33)) != T.arch_hash(card) == 0x4ffd1e17
+    good = (ROOT / "targets/nangate45-small.toml").read_text()
+    q = tmp_path / "nangate45-small.toml"
+    for edit, msg in ((("DRAM_BYTES = 268435456", "DRAM_BYTES = 268435456\nAW = 31"), "AW 31"),
+                      (("DRAM_BYTES = 268435456", "DRAM_BYTES = 268435456\nAW = 41"), "AW 41"),
+                      (("DRAM_BYTES = 268435456", "DRAM_BYTES = 201326592"), "a power of two"),
+                      (("DRAM_BYTES = 268435456", "DRAM_BYTES = 137438953472\nAW = 36"),
+                       "over 64 GiB")):
+        T.load.cache_clear()
+        q.write_text(good.replace(*edit))
+        with pytest.raises(T.TargetError, match=msg):
+            T.load(str(q))
+    T.load.cache_clear()
+    q.write_text(good.replace("DRAM_BYTES = 268435456", "DRAM_BYTES = 8589934592\nAW = 33"))
+    big = T.load(str(q))
+    assert (T.config(big).AW, T.config(big).DRAM_BYTES, T.rtl_params(big)["AW"],
+            T.rtl_params(big)["DRAM_LOG2"]) == (33, 1 << 33, 33, 33)
+    T.load.cache_clear()
 
 
 # ------------------------------------------------------------------------------ register map 4
 def test_cfg_register_codec():
     c = dict(S=2, TMEM_WORDS=1 << 16, IMEM_WORDS=1 << 15, ACT_BLOCKS=128, DRAM_BYTES=1 << 32,
-             channels=2, channel_bytes=1 << 31, MXU_IMPL=2, TMEM_IMPL=1, VPU_CL=2, ULANES=8,
-             SEQ_WC=1, platform=2, hash=0x8B699C81)
+             channels=2, channel_bytes=1 << 31, beat_bytes=64, MXU_IMPL=2, TMEM_IMPL=1,
+             VPU_CL=2, ULANES=8, SEQ_WC=1, WG=1, ICACHE=0, platform=2, hash=0x8B699C81)
     assert R.cfg(R.cfg_words(c)) == c
     assert R.cfg(R.cfg_words(dict(c, SEQ_WC=0)))["SEQ_WC"] == 0
+    assert R.cfg(R.cfg_words(dict(c, ICACHE=1))) == dict(c, ICACHE=1)
+    # CFG_DRAM [31:24]: log2(beat bytes / 64), 0 on the cards (their register value as before)
+    assert R.cfg_words(c)[4] == 32 | 2 << 8 | 31 << 16
+    wide = dict(c, S=4, channels=8, channel_bytes=1 << 29, beat_bytes=128, platform=7)
+    assert R.cfg(R.cfg_words(wide)) == wide and R.cfg_words(wide)[4] >> 24 == 1
+    # CFG_UARCH [27:25]: log2 WG, 0 on every build before weight groups (WG 1)
+    assert R.cfg_words(c)[5] >> 25 == 0
+    w8 = dict(wide, WG=8)
+    assert R.cfg(R.cfg_words(w8)) == w8 and R.cfg_words(w8)[5] >> 25 == 3
 
 
 def test_device_config_from_the_cfg_registers(no_env):
@@ -330,7 +1164,8 @@ def test_rtl_file_lists_agree():
     make = _make_rtl(ROOT / "boards/ypcb-00338/Makefile")
     assert make == [f for f in card if not f.endswith("otpu_fpga_top_ld.sv")]
     sim = [f for f in rtlsim.RTL_SOURCES
-           if f not in ("mem/otpu_dram.sv", "mem/otpu_native_dram.sv", "top/otpu_top.sv",
+           if f not in ("mem/otpu_dram.sv", "mem/otpu_native_dram.sv", "mem/otpu_xstg.sv",
+                        "top/otpu_top.sv",
                         "exp/tmem_nocopy/otpu_tmem_model.sv")]
     assert sim == T.sources("nangate45", "generic")
     for f in T.CORE + T.SHELL + sum(T.TECH.values(), []) + sum(T.BOARDS.values(), []):
@@ -384,7 +1219,7 @@ def test_tech_families_define_the_same_cells():
             mods[m.group(1)] = (norm(m.group(2)), norm(m.group(3)))
         return mods
     ref = iface(ROOT / "rtl/tech/generic/otpu_tech_dsp.sv")
-    assert set(ref) == {"otpu_pe", "otpu_mxce"}
+    assert set(ref) == {"otpu_pe", "otpu_mxce", "otpu_ppe"}
     for fam in ("xilinx7", "xilinxus"):
         assert iface(ROOT / f"rtl/tech/{fam}/otpu_tech_dsp.sv") == ref, fam
 
@@ -431,18 +1266,21 @@ def test_the_slice_reads_dram_writes_through_the_sw_register():
     txt = (ROOT / "rtl/top/otpu_slice.sv").read_text()
     assert _slice_sw_uses(txt) == []
     # the check sees one: the quantizer's grant on the raw ready
-    bad = txt.replace("if (g == G_Q && q_awant && !sw_rdy_i) aok[g] = 1'b0;",
-                      "if (g == G_Q && q_awant && !sw_rdy) aok[g] = 1'b0;")
+    bad = txt.replace("wire  q_blk = (q_awant && !sw_rdy_i) || q_ahold;",
+                      "wire  q_blk = (q_awant && !sw_rdy) || q_ahold;")
     assert bad != txt and [t for _, t in _slice_sw_uses(bad)] == \
-        ["if (g == G_Q && q_awant && !sw_rdy) aok[g] = 1'b0;"]
+        ["wire  q_blk = (q_awant && !sw_rdy) || q_ahold;"]
     # and a unit connected to the raw one implicitly (.wr_idle, as before the register)
-    bad = txt.replace(".a_want(q_awant), .wr_idle(wr_idle_i),", ".a_want(q_awant), .wr_idle,")
-    assert bad != txt and [t for _, t in _slice_sw_uses(bad)] == [".a_want(q_awant), .wr_idle,"]
+    bad = txt.replace(".act_wv(q_actwv), .wr_idle(wr_idle_i),", ".act_wv(q_actwv), .wr_idle,")
+    assert bad != txt and [t for _, t in _slice_sw_uses(bad)] == \
+        [".a_want(q_awant), .a_hold(q_ahold), .a_rdy(sw_rdy_i), .act_wv(q_actwv), .wr_idle,"]
     # port B: the MXU's grant on the raw ready, the loader's start on the raw read idle, and the
     # MXU's read data connected implicitly; port A: the MXU's grant on the raw ready
-    for a, b in (("assign mxu_bgnt = !dma_breq && b_rdy_i;", "assign mxu_bgnt = !dma_breq && b_rdy;"),
+    for a, b in (("assign mxu_bgnt = !dma_breq && b_rdy_i && !ic_req;",
+                  "assign mxu_bgnt = !dma_breq && b_rdy && !ic_req;"),
                  ("assign mxu_agnt = a_rdy_i;", "assign mxu_agnt = a_rdy;"),
-                 ("else if (!ld_go) ld_go <= rd_idle_i;", "else if (!ld_go) ld_go <= rd_idle;"),
+                 ("else if (!ld_go) ld_go <= rd_idle_i && !ic_busy;",
+                  "else if (!ld_go) ld_go <= rd_idle && !ic_busy;"),
                  (".b_rdata(b_rdata_i),\n", ".b_rdata,\n")):
         assert txt.count(a) == 1, a
         bad = txt.replace(a, b)
@@ -455,11 +1293,16 @@ def test_the_board_counts_the_port_registers_as_requests_pending():
     (sw_req, b_req && b_we: the registers' valid bits), and its reads all back (q_rd_idle) once
     the adapter has none, neither port A's output register (a_req: reads only) nor port B's holds
     one (b_req && !b_we) and port B's input register no data (m_rv: a b_rvalid the cycle before);
-    the adapter's wr_idle and rd_idle (m_wr_idle, m_rd_idle) go to the slice alone, for slice 0 and
-    the others. sim/verilator/tb_board.sv checks the same in every board simulation."""
+    the adapter's wr_idle and rd_idle (d_wr_idle, d_rd_idle) reach the slice alone, as u_xs gives
+    them (m_wr_idle, m_rd_idle: at NAT_XSTG > 0 its stages', with its queues and the sends in
+    flight), for slice 0 and the others. sim/verilator/tb_board.sv checks the same in every board
+    simulation."""
     code = re.sub(r"//.*", "", (ROOT / "rtl/shell/otpu_board.sv").read_text())
-    assert re.findall(r"\.wr_idle\(([^)]*)\)", code) == ["m_wr_idle"] * 4
-    assert re.findall(r"\.rd_idle\(([^)]*)\)", code) == ["m_rd_idle"] * 4
+    assert re.findall(r"\.wr_idle\(([^)]*)\)", code) == ["m_wr_idle", "d_wr_idle"] * 2
+    assert re.findall(r"\.rd_idle\(([^)]*)\)", code) == ["m_rd_idle", "d_rd_idle"] * 2
+    for k in ("wr", "rd"):
+        assert re.findall(rf"\.s_{k}_idle\(([^)]*)\)", code) == [f"m_{k}_idle"] * 2
+        assert re.findall(rf"\.m_{k}_idle\(([^)]*)\)", code) == [f"d_{k}_idle"] * 2
     assert re.findall(r"assign\s+q_wr_idle\[(\w+)\]\s*=\s*([^;]*);", code) == \
         [(k, "m_wr_idle && !sw_req && !(b_req && b_we)") for k in ("0", "s")]
     assert re.findall(r"assign\s+q_rd_idle\[(\w+)\]\s*=\s*([^;]*);", code) == \
@@ -544,7 +1387,7 @@ def test_the_long_wire_drivers_are_copies_per_consumer():
     act = src("rtl/mem/otpu_actram.sv")
     head, row = act.split("begin : g_row", 1)
     assert re.search(r"logic \[D\*8-1:0\]\s+wd;", head) and not re.search(r"\bwd\s*;", row.split("end")[0])
-    assert re.search(r"wb <= w_idx_h\[DW \+: BW\];", row) and "wsel <= wsel_n[j];" in row
+    assert re.search(r"wb <= w_idx_h\[DW \+: BW\];", row) and "wsel <= rst ? 1'b0 : wsel_n[j];" in row
     tm = src("rtl/mem/otpu_tmem.sv")
     pmp = tm[tm.index("begin : g_pmp"):tm.index("begin : g_ram")]
     sl = pmp[pmp.index("begin : g_sl"):]
@@ -562,7 +1405,12 @@ def test_the_widest_lut_rams_are_block_rams_read_ahead():
     response FIFO (38,528) and the MXU's result FIFO (37,632) were the most of any memories. They
     are otpu_ram_1r1w_ra (rtl/tech: a block RAM read at the address's next value, the same cycles
     as the asynchronous read; flip-flops on the ASIC), read ahead at their pointer's next value,
-    and the per-RAM copies of their write addresses that the LUT RAMs needed are gone."""
+    and the per-RAM copies of their write addresses that the LUT RAMs needed are gone. The B
+    response FIFO only where it is deep (RBB: RD >= 128, the cards') or asked for (RB_BLOCK: a
+    slice's, otpu_board NAT_RBB): the WG targets' 16 beats in 32 halves of 512 bits stay LUT RAM (as block
+    RAM 8 RAMB36 a channel, a sixteenth of their depth used), its tail's copies (rb_tq) in that
+    branch alone. The MXU's result FIFO at RF_STYLE "block" (the
+    cards'; the WG targets' MXU_RF_STYLE "distributed", below)."""
     def src(p):
         return re.sub(r"//.*", "", (ROOT / p).read_text())
     ra = r"otpu_ram_1r1w_ra\s*#\([^;]*?\.ra_n\((\w+)"
@@ -571,8 +1419,14 @@ def test_the_widest_lut_rams_are_block_rams_read_ahead():
     assert re.search(ra, gb).group(1) == "gh_n" and "logic [31:0] gb [NGC]" not in dma
     assert re.search(r"assign gh_n = ", dma) and not re.search(r"gb_wa \[SPC\]\[W\]", dma)
     nd = src("rtl/mem/otpu_native_dram.sv")
-    assert re.search(ra, nd[nd.index("begin : g_rb"):]).group(1) == "rb_hn"
-    assert "rb_tq" not in nd and not re.search(r"\brbm\s*\[", nd)
+    assert "localparam bit RBB = RD >= 128 || RB_BLOCK;" in nd
+    g_rb = nd[nd.index("begin : g_rb"):nd.index("begin : g_lut")]
+    assert "if (RBB) begin : g_ra" in g_rb and re.search(ra, g_rb).group(1) == "rb_hn"
+    lut = nd[nd.index("begin : g_lut"):]
+    lut = lut[:lut.index("\n      end\n")]
+    assert len(re.findall(r"\brbm\s*\[", nd)) == len(re.findall(r"\brbm\s*\[", lut)) == 3
+    tq_uses = [l for l in nd.splitlines() if re.search(r"rb_tq\[c\]\[k\] (<=|!=)", l)]
+    assert len(tq_uses) == 3 and all("!RBB" in l for l in tq_uses), tq_uses
     mxu = src("rtl/mxu/otpu_mxu.sv")
     rfm = mxu[mxu.index("begin : g_rfm"):]
     assert re.search(ra, rfm) and "begin : g_s" not in rfm.split("end\n  always_ff")[0]
@@ -598,7 +1452,8 @@ def test_late_pushes_reach_no_lut_ram_write_enable():
     assert re.search(r"qam \[2 \* QD\];", nd)
     assert re.search(r"always_ff @\(posedge clk\) qam\[", nd)
     af = src("rtl/shell/otpu_afifo.sv")
-    assert "if (OOO ? wput : wready) mem[waddr] <= wdata;" in af
+    assert "if (WCP == 1 && (OOO ? wput : wready)) mem[waddr] <= wdata;" in af
+    assert "if (we_c[g]) cmem[wa_c[g]] <= wdata[g * GW +: GW];" in af     # (WCP > 1: wready's copies)
     mxu = src("rtl/mxu/otpu_mxu.sv")
     load = mxu[mxu.index("if (!rst && al_st == 2'd3)"):]
     assert "alpha[j] <= t_rdata" in load.split("`ifndef SYNTHESIS")[0]
@@ -621,8 +1476,8 @@ def test_the_mxu_epilogue_advances_on_flip_flops():
     def src(p):
         return re.sub(r"//.*", "", (ROOT / p).read_text())
     mxu = src("rtl/mxu/otpu_mxu.sv")
-    tq = mxu[mxu.index("if (TQ) begin : g_tq"):mxu.index("end else begin : g_ng")]
-    ng = mxu[mxu.index("end else begin : g_ng"):]
+    tq = mxu[mxu.index("if (TQ) begin : g_tq"):mxu.index("end else begin : g_ng\n")]
+    ng = mxu[mxu.index("end else begin : g_ng\n"):]
     ng = ng[:ng.index("\n  end\n")]
     rest = mxu.replace(tq, "").replace(ng, "")
     # the grant reaches the port declaration and nothing else outside the TMEM interface
@@ -681,7 +1536,7 @@ def test_the_real_150_mhz_paths_start_at_flip_flops():
     assert "wire q_en = urdy[u] && !ustart[u];" in seq
     # the MXU's read by bank: TMEM takes a PBR port's banks as they come, the MXU gives registers
     assert "b_en = r_ben[p];" in tm and "b_a[b] = r_bad[p][b][BW +: IW];" in tm
-    tq = mxu[mxu.index("if (TQ) begin : g_tq"):mxu.index("end else begin : g_ng")]
+    tq = mxu[mxu.index("if (TQ) begin : g_tq"):mxu.index("end else begin : g_ng\n")]
     assert "assign t_rben = rb_q;" in tq and "assign t_rbad = rb_a;" in tq
     assert re.search(r"always_ff @\(posedge clk\) if \(!rst && ea_t\) rb_a <= bk_ad\(t_raddr_c, t_ren_c\);", tq)
     assert re.search(r"rb_q <= \(ea_t \? bk_en\(t_raddr_c, t_ren_c\) : rb_v\) &", tq)

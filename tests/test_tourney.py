@@ -449,13 +449,13 @@ def test_rank_fmax():
 def test_parse_counts_and_busy():
     c = RM.parse_counts("runviv 1\nours 1\ntotal 2\n")
     assert c == {"runviv": 1, "ours": 1, "total": 2, "docker": 0}
-    busy = lambda t: RM.busy(RM.parse_counts(t), False)     # Docker host (omarchy)
+    busy = lambda t: RM.busy(RM.parse_counts(t), False)     # Docker host (the build host)
     assert RM.busy(c, False) == 2           # one make bit + one tournament OOC job
     assert busy("runviv 1\nours 0\ntotal 0\n") == 1   # make bit, pre-Vivado
     assert busy("runviv 0\nours 0\ntotal 1\n") == 1   # someone's bare docker
     assert busy("runviv 2\nours 0\ntotal 2\n") == 2
     assert busy("garbage") == 0
-    nat = lambda t: RM.busy(RM.parse_counts(t), True)       # native Vivado (opentpu)
+    nat = lambda t: RM.busy(RM.parse_counts(t), True)       # native Vivado
     assert nat("runviv 1\nours 1\ntotal 5\n") == 2    # a make bit's runs are several processes
     assert nat("runviv 0\nours 0\ntotal 3\n") == 1    # someone's own Vivado session
     assert nat("runviv 0\nours 2\ntotal 0\n") == 2    # OOC wrappers before Vivado starts
@@ -661,7 +661,7 @@ def test_exec_dispatch(tmp_path, monkeypatch):
     monkeypatch.delenv("EXEC", raising=False)
     assert G.exec_mode() == "remote"
     argv, env = G.command(wt, ["python", "-m", "pytest", "-q", "t.py"], G.BOARD_ENV)
-    assert argv[:4] == ["bash", "tools/omarchy_test.sh", "--exec", "env"]
+    assert argv[:4] == ["bash", "tools/remote_test.sh", "--exec", "env"]
     assert argv[4:8] == ["OTPU_UARCH=board", "OTPU_AXI=1", "OTPU_BOOT=1", "OTPU_NATIVE=ld"]
     assert argv[8:] == ["python", "-m", "pytest", "-q", "t.py"]
     assert env["OTPU_REMOTE_NAME"] == "tourney-fmax-otpu_vpu-r1-s0"
@@ -685,7 +685,7 @@ def test_remote_housekeeping(monkeypatch):
     G.remote_prune()
     assert sent[0] == "rm -rf ~/otpu-test/tourney-fmax-otpu_vpu-r1-s0"
     assert "otpu-test/.tourney-build/verilator" in sent[1] and "-mmin +1440" in sent[1]
-    assert hosts == [RM.TEST_HOST] * 2              # test trees live on omarchy, not the Vivado host
+    assert hosts == [RM.TEST_HOST] * 2              # test trees live on the build host, not the Vivado host
     monkeypatch.setenv("EXEC", "local")
     G.remote_clean(Path("/x/y"))
     G.remote_prune()
@@ -713,7 +713,7 @@ def test_gates_go_through_execute(tmp_path, monkeypatch):
     wt = tmp_path / "c" / "s0"
     assert G.pytest(wt, ["tests/a.py"], G.BOARD_ENV, "board") == "5 passed in 3s"
     assert G.perf(wt) == 123456
-    assert all(a[:3] == ["bash", "tools/omarchy_test.sh", "--exec"] for a in seen)
+    assert all(a[:3] == ["bash", "tools/remote_test.sh", "--exec"] for a in seen)
     assert "models/Qwen3-0.6B" in seen[1]
     monkeypatch.setattr(G, "run_remote", lambda *a, **k: R("FAILED x", 1))
     with pytest.raises(G.GateFailure, match="board"):
@@ -735,7 +735,7 @@ def test_gates_go_through_execute(tmp_path, monkeypatch):
 
 
 def test_gate_timeout_counts_from_the_slot(tmp_path):
-    """The queue for an omarchy test slot is no part of a gate's timeout: the clock starts at the
+    """The queue for a test slot on the build host is no part of a gate's timeout: the clock starts at the
     script's slot mark; a run past it is killed."""
     mark = f"echo '{G.SLOT_MARK}1' >&2"
     r = G.run_remote(["bash", "-c", f"sleep 2; {mark}; echo 5 passed"], tmp_path, dict(os.environ),
@@ -748,16 +748,16 @@ def test_gate_timeout_counts_from_the_slot(tmp_path):
 
 
 def test_gate_queues_again_without_a_slot(tmp_path, monkeypatch):
-    """omarchy had no free test slot for 2 h (the script's exit 2): the gate queues again, and
+    """the build host had no free test slot for 2 h (the script's exit 2): the gate queues again, and
     only fails after QUEUE_RETRIES more waits."""
     monkeypatch.setenv("EXEC", "remote")
     monkeypatch.setattr(G, "TEST_LOCK", tmp_path / "t.lock")
-    full = subprocess.CompletedProcess([], 2, "", "no free test slot on omarchy after 2 h\n")
+    full = subprocess.CompletedProcess([], 2, "", "no free test slot on HOST after 2 h\n")
     runs = iter([full, subprocess.CompletedProcess([], 0, "3 passed in 1s\n", "")])
     monkeypatch.setattr(G, "run_remote", lambda *a, **k: next(runs))
     assert G.pytest(tmp_path / "c" / "s0", ["tests/a.py"], None, "fast") == "3 passed in 1s"
     monkeypatch.setattr(G, "run_remote", lambda *a, **k: full)
-    with pytest.raises(G.GateFailure, match="no free test slot on omarchy after 3 waits"):
+    with pytest.raises(G.GateFailure, match="no free test slot on the test host after 3 waits"):
         G.pytest(tmp_path / "c" / "s0", ["tests/a.py"], None, "fast")
 
 

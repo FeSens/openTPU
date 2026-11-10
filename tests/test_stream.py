@@ -486,13 +486,17 @@ def _stream_rtl_program(rng, n_steps=8):
     return prog
 
 
-@pytest.mark.parametrize("uarch,seed", [({}, 0), ("board", 1), ("board", 2), ("board", 3)])
-def test_stream_rtl_bit_exact(have_verilator, uarch, seed):
+# se_r: the streams on an engine of their own with SE_R rows a cycle (otpu_slice SE_R; 0 the VPU's)
+@pytest.mark.parametrize("uarch,se_r,seed", [({}, 0, 0), ("board", 0, 1), ("board", 0, 2),
+                                             ("board", 0, 3), ({}, 1, 4), ({}, 2, 5), ({}, 4, 6),
+                                             ("board", 2, 2), ("board", 2, 3)])
+def test_stream_rtl_bit_exact(have_verilator, uarch, se_r, seed):
     """STREAM (the board's subset) and DSTEP through the stream engine on the RTL, beside VOPs,
     against the ISA simulator word for word (TMEM and DRAM)."""
     from opentpu import rtlsim
     cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True, STREAM=True)
-    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
+    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else dict(uarch)
+    uarch |= {"SE_R": se_r} if se_r else {}
     r = np.random.default_rng(1900 + seed)
     prog = _stream_rtl_program(r)
     img = np.zeros(1 << 20, np.uint8)

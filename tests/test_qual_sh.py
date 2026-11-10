@@ -117,7 +117,7 @@ if "dmesg" in a:
         if os.environ.get(k):
             print(os.environ[k])
 elif "rescan" in a:
-    print("otpu device 0000:01:00.0 ID 0x4f545055")
+    print("otpu device 0000:02:00.0 ID 0x4f545055")
 '''
 
 

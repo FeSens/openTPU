@@ -91,8 +91,15 @@ def test_waitw_completes_or_times_out_never_both(have_verilator):
     m = Machine(cfg, [prog], [_dram(cfg)])
     m.host = lambda mach: mach.slices[0].m32.__setitem__(FLAG // 4, np.uint32(0x40))
     m.run()
+    # ICACHE: the WAITW issues once the program's first line has arrived, the cycles the
+    # sequencer waited for it later (a run without the flag: its timeout)
+    d = 0
+    if int(rtlsim.UARCH.get("ICACHE", int(getattr(cfg, "ICACHE", False)))):
+        _, _, st = rtlsim.run(cfg, [prog], [_dram(cfg)], error_ok=True, max_cycles=20000)
+        assert st["error"]
+        d = sum(x["stall"] for x in st["icache"])
     seen = set()
-    for c in range(to - 40, to + 30, 3):
+    for c in range(d + to - 40, d + to + 30, 3):
         drams, tmems, st = rtlsim.run(cfg, [prog], [_dram(cfg)], pokes={0: [(c, FLAG, 0x40)]},
                                       error_ok=True, max_cycles=20000)
         word, out = int(tmems[0][32]), int(drams[0][OUT:OUT + 4].view("<u4")[0])

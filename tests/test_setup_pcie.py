@@ -11,9 +11,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HOST = ROOT / "opentpu" / "host"
 LIB = HOST / "pcie" / "relink.sh"
-PORT, CARD = "0000:00:01.0", "0000:01:00.0"
+PORT, CARD = "0000:00:01.0", "0000:02:00.0"
 
-# The fake hardware: the card's link comes back after BACK (rescan: by itself, as on omarchy;
+# The fake hardware: the card's link comes back after BACK (rescan: by itself, as on the build host;
 # retrain | disable | reset: after that step on the port; never). setpci keeps the registers in
 # files and logs each call with the port's power/control at that moment.
 DRIVER = r"""

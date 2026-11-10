@@ -525,7 +525,7 @@ def _wait_first(card, srv):
     """srv serves its next request with a miss only once the threaded fake card waits (at
     its WAITW on the answer, or the next post's fence), so card.waits counts the wait whatever
     the host's speed: a fast host serves before the card's thread reaches its WAITW, and the
-    count stays put (omarchy, 2026-10-02). Returns a function that arms it again."""
+    count stays put (the build host, 2026-10-02). Returns a function that arms it again."""
     import time
     serve, armed = srv.serve, [True]
 

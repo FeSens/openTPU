@@ -114,6 +114,42 @@ def test_sampled_rows_pick_as_the_decode_loop(pen):
             ctx[s].append(out[r])
 
 
+def test_sampled_rows_with_head_chunks_off_the_sampler_blocks(monkeypatch):
+    """Three sampled rows whose LM head chunk (head_rows_chunk) would not be whole sampler
+    blocks (generate.BLK): x2's three rows, TMEM / 24 = 5,456 vocabulary rows, 85 blocks and
+    16, here HEAD_CHUNK 336 (5 blocks and 16) over 1,000, top-k 3 (3 of the 16 blocks
+    gathered, as the 35B's 20 of 970). The chunks keep whole blocks, so each block's maximum
+    covers the logits its gather reads: every pick is the decode loop's (the card's B = 4
+    window, 11-05: three sampled rows after the fourth ended picked from block maxima of other
+    logits)."""
+    from opentpu.llm import qwen3 as Q3
+    monkeypatch.setattr(Q3, "HEAD_CHUNK", 336)
+    eng, single, spec = _engines()
+    slots = [0, 1, 3]
+    ps = _prompts(4, [13, 22, 8])
+    samp = G.Sampling(1.0, 3, 1.0, 1.0)
+    st = BA.Steps(eng)
+    refs, ctx, nxt = {}, {}, {}
+    for s, p in zip(slots, ps):
+        nxt[s] = int(np.argmax(eng.prefill(p, seq=s)))
+        ctx[s] = list(p) + [nxt[s]]
+        st.set_sampling(s, samp, ctx[s])
+        refs[s] = single()
+        refs[s].prefill(p)
+    rng, sampled = np.random.default_rng(6), 0
+    for _ in range(8):
+        u = np.minimum(rng.random(3), 1 - 2.0 ** -24).astype(np.float32)
+        out = st.run([(s, eng.poss[s]) for s in slots], [nxt[s] for s in slots], uniforms=u)
+        for r, s in enumerate(slots):
+            lg = refs[s].step(nxt[s])
+            want = G.reference_pick(lg, samp, ctx[s], u[r], 1, None)
+            assert out[r] == want, (s, r)
+            sampled += want != int(np.argmax(lg))
+            nxt[s] = want
+            ctx[s].append(want)
+    assert sampled > 0
+
+
 def test_slot0_keeps_the_generate_loop_and_steps_follow_it():
     eng, single, spec = _engines()
     p = _prompts(2, [19])[0]

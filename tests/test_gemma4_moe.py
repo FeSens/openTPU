@@ -469,6 +469,37 @@ def test_moe_expert_major_prefill_is_bit_exact(moe, wf, R, C, monkeypatch):
         t = int(np.argmax(ga))
 
 
+def test_moe_expert_run_quantized_once_is_bit_exact(moe, monkeypatch):
+    """Quantize-once (Config.QONCE) on Gemma 4's expert-major prefill: the prologue stores each
+    row's expert input, its normed row times g_exp (a QACT ST of its own beside the router's
+    QACT), to its record's em_q, and every expert-run entry loads it (LDA) instead of norming,
+    scaling and quantizing the row again. The logits and decode steps of the same engine
+    without QONCE, bit for bit."""
+    import dataclasses
+    from opentpu import isasim as SIM
+    monkeypatch.setattr(G, "PREFILL_CHUNK", 24)
+    n = {"st": 0, "lda": 0}
+    qrows, lda = SIM.Slice._qrows_out, SIM.Slice._lda
+    monkeypatch.setattr(SIM.Slice, "_qrows_out",
+                        lambda self, *a: (n.__setitem__("st", n["st"] + 1), qrows(self, *a))[1])
+    monkeypatch.setattr(SIM.Slice, "_lda",
+                        lambda self, ins: (n.__setitem__("lda", n["lda"] + 1), lda(self, ins))[1])
+    toks = [int(t) for t in np.random.default_rng(13).integers(0, 1000, 40)]
+    out = []
+    for once in (False, True):
+        a = _moe_engine(moe, cfg=dataclasses.replace(_cfg(), QONCE=once), experts=6,
+                        layer_major=2, expert_major=True)
+        la = a.prefill(toks)
+        assert (n["st"] > 0 and n["lda"] > 0) == once, n
+        t, steps = int(np.argmax(la)), []
+        for _ in range(2):
+            steps.append(a.step(t))
+            t = int(np.argmax(steps[-1]))
+        out.append([la] + steps)
+    for x, y in zip(*out):
+        assert np.array_equal(x.view(np.uint32), y.view(np.uint32))
+
+
 def test_moe_layer_runs_hint_the_next_layer_and_change_no_logit(moe):
     """Engine(layer_ahead="hint") on Gemma 4: each layer run but the last layer's ends with the
     next layer's hint (moe.moe_hint_rows: its router, through its norm and scale, on the run's

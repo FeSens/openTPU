@@ -32,9 +32,10 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: long; runs only with --runslow")
+    config.addinivalue_line("markers", "rtl: Verilator simulation (slow; needs Verilator)")
     # a temporary root of this session's own: pytest's default (<tmp>/pytest-of-<user>, the newest
     # three kept) let gates running side by side on one host remove each other's directories
-    # mid-run (fix-core's omarchy gate: the progcache tests and a wall-clock test failed, and
+    # mid-run (a gate on the build host: the progcache tests and a wall-clock test failed, and
     # passed again with a --basetemp of their own); removed at the end, as pytest's own are
     if config.option.basetemp is None:
         parent = os.path.join(tempfile.gettempdir(), f"pytest-of-{getpass.getuser()}")
@@ -43,7 +44,7 @@ def pytest_configure(config):
         config._otpu_basetemp = config.option.basetemp
     # and a device-lock / status directory of its own (opentpu/host/runstate.py, default
     # /tmp/otpu; the tests that check it set theirs): a fake board one gate left open held
-    # /tmp/otpu/fake0.lock, and a gate beside it on omarchy failed test_board's run-clock test
+    # /tmp/otpu/fake0.lock, and a gate beside it on the build host failed test_board's run-clock test
     # with DeviceBusy. Not under the basetemp, which pytest empties on its first tmp_path.
     config._otpu_run_dir = os.path.join(tempfile.gettempdir(),
                                         f"otpu-run-{getpass.getuser()}-{os.getpid()}")

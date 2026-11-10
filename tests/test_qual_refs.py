@@ -56,11 +56,12 @@ def test_env_key_has_the_kernels_variables_not_the_runtime_ones(tmp_path, monkey
     (pkg / "progcache.py").write_text('os.environ.get("OTPU_PROG_CACHE")\n')
     (pkg / "simtmp.py").write_text('os.environ.get("OTPU_SIM_TMP")\n')
     (pkg / "host" / "runstate.py").write_text('os.environ.get("OTPU_LOCK_HELD")\n')
+    (pkg / "target.py").write_text('os.environ.get("OTPU_TARGET")\n')
     for k in list(os.environ):
         if k.startswith("OTPU_"):
             monkeypatch.delenv(k)
     assert refs.env_key(pkg) == {}
-    for k in ("OTPU_PROG_CACHE", "OTPU_SIM_TMP", "OTPU_LOCK_HELD"):     # runtime, host-only
+    for k in ("OTPU_PROG_CACHE", "OTPU_SIM_TMP", "OTPU_LOCK_HELD", "OTPU_TARGET"):  # runtime
         monkeypatch.setenv(k, "1")
     assert refs.env_key(pkg) == {}
     monkeypatch.setenv("OTPU_PLE_FORMAT", "fp4")
@@ -221,7 +222,7 @@ def fake(tmp_path, monkeypatch):
     monkeypatch.setattr(refs, "prompt_runs_taken", lambda eng, ids: True)
     monkeypatch.setattr(qwen3, "Engine", FakeEngine)
     monkeypatch.setattr(board, "sim_config", lambda *a, **kw: None)
-    monkeypatch.setattr(board, "XdmaTransport", lambda *a, **kw: None)
+    monkeypatch.setattr(board, "open_transport", lambda *a, **kw: None)
     monkeypatch.setattr(FakeEngine, "off", {})
     monkeypatch.setattr(FakeEngine, "engaged", True)
     cfg = tmp_path / "cfg.pkl"
@@ -284,3 +285,42 @@ def test_an_old_reference_is_no_pass(fake, capsys):
     kp.write_bytes(pickle.dumps([785, 6722, 315]))              # refs.py v1: a token list
     assert refs.card(cfg, "m", "int8", "-", 32, resident=False) == 1
     assert "not of format 2" in capsys.readouterr().out
+
+
+def test_a_moe_reference_runs_its_prompt_through_the_decode_step():
+    """Qwen3.6-35B-A3B's reference (a Qwen3.5 MoE: its rows programs route one token, R > 1
+    refused): greedy feeds its prompt token by token, at the Engine's default rows; the tokens
+    and logits those of an engine of one row."""
+    pytest.importorskip("transformers")
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    from test_qwen35_moe import _tiny
+    _, W, s = _tiny()
+    eng = Engine(s, W, cap=256, cfg=device_config(s, 256, S=1, rows=PREFILL_ROWS))
+    one = Engine(s, W, cap=256, cfg=device_config(s, 256, S=1, rows=1), rows=1)
+    assert eng.rows > 1 and refs.token_by_token(eng)
+    ids = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 5)]
+    assert refs.greedy(eng, ids, 3) == refs.greedy(one, ids, 3)
+    assert not refs.token_by_token(FakeEngine(None, None, 0, None, "int8", None))
+
+
+def test_gpt_oss_reference_loads_its_checkpoint_and_runs_token_by_token(tmp_path):
+    """GPT-OSS-20B's reference: its checkpoint read through gptoss.load_weights (qwen3's by
+    model_type: the experts' MXFP4 as stored), its prompt fed token by token (gptoss
+    compile_rows runs one row per program, R > 1 refused), at the Engine's default rows; the
+    tokens and logits those of an engine of one row."""
+    pytest.importorskip("transformers")
+    from opentpu.llm import gptoss
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config, load_weights
+    from test_gptoss import _tiny
+    m, W, _ = _tiny()
+    m.save_pretrained(tmp_path)
+    assert isinstance(load_weights(tmp_path), gptoss.Weights)
+    s = gptoss.Spec.from_hf(tmp_path)
+    eng = Engine(s, W, cap=256, cfg=device_config(s, 256, S=1, rows=PREFILL_ROWS))
+    one = Engine(s, W, cap=256, cfg=device_config(s, 256, S=1, rows=1), rows=1)
+    ids = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 5)]
+    with pytest.raises(ValueError, match="one row"):
+        eng.prefill(ids)
+    eng.reset()
+    assert eng.rows > 1 and refs.token_by_token(eng)
+    assert refs.greedy(eng, ids, 3) == refs.greedy(one, ids, 3)

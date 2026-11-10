@@ -97,7 +97,7 @@ def test_tiny_matches_hf(tiny):
     dev = np.array([eng.step(t) for t in toks])
     assert _cos(dev, hf).min() > 0.998
     # the device follows the quantized math (it differs only in fp32 rounding)
-    emu = emulated_logits(spec, W, toks[:12])
+    emu = emulated_logits(spec, W, toks[:12], S=eng.cfg.S)
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
@@ -153,7 +153,7 @@ def test_tiny_k_smoothing(tiny):
         devs[on] = np.array([eng.step(t) for t in toks])
     assert _cos(devs[True], ref).min() > 0.999 and _kl(ref, devs[True]) < 1e-4
     assert _cos(devs[False], ref).min() < 0.99 and _kl(ref, devs[False]) > 10 * _kl(ref, devs[True])
-    emu = emulated_logits(spec, W, toks[:12])
+    emu = emulated_logits(spec, W, toks[:12], S=eng.cfg.S)
     assert _cos(devs[True][:12], emu).min() > 0.9995
 
 
@@ -164,7 +164,7 @@ def test_tiny_4bit_follows_emulation(tiny, wformat):
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
     eng = Engine(spec, W, cap=256, wformat=wformat)
     dev = np.array([eng.step(t) for t in toks])
-    emu = emulated_logits(spec, W, toks, wformat=wformat)
+    emu = emulated_logits(spec, W, toks, wformat=wformat, S=eng.cfg.S)
     assert _cos(dev, emu).min() > 0.9995
 
 
@@ -518,9 +518,9 @@ def test_tiny_prefill_chunk_with_mm_replay_on_rtl(tiny, have_verilator, mcols, w
     _, W, spec = tiny
     wkw = dict(wformat=wformat, head_format="int8") if wformat != "int8" else {}
     toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 11)]
-    ref = Engine(spec, W, cap=256, **wkw)
-    want = ref.prefill(toks, chunk=1)
     cfg = board_config(MCOLS=mcols, ACT_ROWS=8, DRAM_BYTES=1 << 24, PAIR=wformat != "int8")
+    ref = Engine(spec, W, cap=256, cfg=cfg, **wkw)
+    want = ref.prefill(toks, chunk=1)
     eng = Engine(spec, W, cap=256, cfg=cfg, **wkw)
     eng.prefill(toks[:3])                         # a cache to attend over
     rows = [(0, 3 + j) for j in range(8)]

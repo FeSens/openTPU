@@ -103,10 +103,16 @@ def _stream_rtl_program(rng, n_steps=10, combos=None):
     return prog
 
 
-@pytest.mark.parametrize("uarch,seed", [({}, 0), ("board", 1), ("board", 2)])
-def test_stream_rtl_bit_exact(have_verilator, uarch, seed):
-    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True, STREAM=True)
-    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else uarch
+# se_r: the streams on an engine of their own with SE_R rows a cycle (otpu_slice SE_R; 0 the VPU's);
+# outer off: a VPU without VOP OUTER (otpu_vpu OUTER 0, the WG targets'), whose slot 0 runs the streams
+@pytest.mark.parametrize("uarch,se_r,seed,outer", [({}, 0, 0, True), ("board", 0, 1, True),
+                                                   ("board", 0, 2, True), ({}, 2, 0, True),
+                                                   ("board", 2, 1, True), ({}, 0, 0, False),
+                                                   ("board", 0, 3, False), ("board", 1, 4, False)])
+def test_stream_rtl_bit_exact(have_verilator, uarch, se_r, seed, outer):
+    cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True, STREAM=True, OUTER=outer)
+    uarch = dict(rtlsim.BOARD_UARCH) if uarch == "board" else dict(uarch)
+    uarch |= {"SE_R": se_r} if se_r else {}
     r = np.random.default_rng(1700 + seed)
     combos = [(dp, g) for dp in DPROGS for g in GATES] if seed == 0 else None
     prog = _stream_rtl_program(r, n_steps=18 if combos else 10, combos=combos)
@@ -126,8 +132,9 @@ def test_stream_rtl_bit_exact(have_verilator, uarch, seed):
 # destination must wait for it too, though it has no dependency on anything else: the
 # scoreboard's footprint holds dst beside src (a DMA LD or ST ready before the STREAM would
 # otherwise start first, as would the MXU's stream).
+@pytest.mark.parametrize("se_r", [0, 2])
 @pytest.mark.parametrize("young", ["ld", "st", "mm"])
-def test_stream_dst_orders_younger_accesses(have_verilator, young):
+def test_stream_dst_orders_younger_accesses(have_verilator, young, se_r):
     cfg = Config(S=1, D=128, DRAM_BYTES=1 << 20, DSTEP=True, STREAM=True)
     r = np.random.default_rng(1800)
     rows, cols, src, dst = 64, 128, 0x10000, 0x80000     # dst past src's 256 KiB range
@@ -154,7 +161,8 @@ def test_stream_dst_orders_younger_accesses(have_verilator, young):
     img[src:src + 4 * rows * cols] = f(0.3 * r.standard_normal(rows * cols)).view(np.uint8)
     img[dst:dst + 4 * rows * cols] = f(r.standard_normal(rows * cols)).view(np.uint8)
     m = Machine(cfg, [prog], [img.copy()]).run()
-    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()])
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [img.copy()],
+                                 uarch=dict(rtlsim.UARCH, SE_R=se_r) if se_r else None)
     bad = np.nonzero(tmems[0] != m.slices[0].tmem)[0]
     assert len(bad) == 0, f"{len(bad)} TMEM words differ, first at {bad[:8]}"
     bad = np.nonzero(drams[0] != m.slices[0].dram)[0]

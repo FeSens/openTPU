@@ -96,6 +96,15 @@ def test_v3_info_snapshot_and_rates():
                                           / 0.01 / 1e9)
 
 
+def test_counter_units_follow_the_half_beats():
+    """A DRAM_RD / DRAM_WR count is a channel beat, half of one where the build moves its read
+    or write data in half beats (NAT_RHB / NAT_WHB: the bridges' n_rvalid each half)."""
+    from opentpu.host.board import counter_units
+    assert counter_units("ypcb-00338") == (64, 64)
+    assert counter_units("bcu1525-wg") == (64, 128)      # NAT_RHB, no NAT_WHB
+    assert counter_units("bcu1525-x2") == (64, 128)      # (two cards of bcu1525-s2's build)
+
+
 def test_caps2_gather_and_the_load_refusal():
     """Register map 5's CAPS2 bit0 (GATHER): a one-slice bitstream built without it (otpu_board
     COLL_GATHER 0) runs BAR alone, so the host refuses to load a program with a GATHER there,
@@ -106,7 +115,9 @@ def test_caps2_gather_and_the_load_refusal():
     gather = I.assemble([I.gather(0, 256, 4, 64, 256, 64, 0), I.halt()])
     bar = I.assemble([I.bar(), I.halt()])
     b = Board(FakeTransport(devname=None, regmap=5, gather=False))
-    assert b.info()["caps2"] == {"gather": False} and not b.gather
+    assert b.info()["caps2"] == {"gather": False, "outer": True, "dstep2": False,
+                                 "se_own": False, "bmc": False, "kt": False, "bhw": 0, "icache": False,
+                                 "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False} and not b.gather
     with pytest.raises(NoGather, match="instruction 0"):
         b.load_program(4096, gather)
     with pytest.raises(NoGather, match="slice 0"):
@@ -116,14 +127,230 @@ def test_caps2_gather_and_the_load_refusal():
     for t in (FakeTransport(devname=None, regmap=5), FakeTransport(devname=None, regmap=4),
               FakeTransport(devname=None)):
         ok = Board(t)
-        assert ok.gather and ok.info()["caps2"] == {"gather": True}
+        assert ok.gather and ok.info()["caps2"] == {"gather": True, "outer": True,
+                                                    "dstep2": False, "se_own": False, "bmc": False,
+                                                    "kt": False, "bhw": 0, "icache": False,
+                                                    "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
         ok.load_program(4096, gather)
         assert t.reg_read(R.R_PROG_N) == 2
     cfg = board_config()
     names = {n for g, n, _ in op_checks(cfg)}
     assert "GATHER" in names
     assert names - {n for g, n, _ in op_checks(cfg, gather=False)} == {"GATHER"}
-    assert R.caps2(None) == {"gather": True} and R.caps2(0) == {"gather": False}
+    assert R.caps2(None) == {"gather": True, "outer": True, "dstep2": False, "se_own": False,
+                             "bmc": False, "kt": False, "bhw": 0, "icache": False, "st16": "", "xcard": False,
+                             "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    assert R.caps2(0) == {"gather": False, "outer": True, "dstep2": False, "se_own": False,
+                          "bmc": False, "kt": False, "bhw": 0, "icache": False, "st16": "", "xcard": False,
+                          "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    assert R.caps2(R.CAP2_FSUM)["fsum"] and not R.caps2(R.CAP2_GATHER)["fsum"]
+    assert R.caps2(R.CAP2_VSIG)["vsig"] and not R.caps2(R.CAP2_FSUM)["vsig"]
+    assert R.caps2(R.CAP2_VMAC)["vmac"] and not R.caps2(R.CAP2_VSIG)["vmac"]
+    assert R.caps2(R.CAP2_OUTER1)["outer1"] and not R.caps2(R.CAP2_VMAC)["outer1"]
+    assert R.caps2(R.CAP2_SPLMM)["splmm"] and not R.caps2(R.CAP2_OUTER1)["splmm"]
+    assert R.caps2(R.CAP2_QONCE)["qonce"] and not R.caps2(R.CAP2_QONCE)["splmm"] \
+        and not R.caps2(R.CAP2_SPLMM)["qonce"]     # (bit24 QONCE, bit25 SPLMM)
+    assert R.caps2(R.CAP2_GATHER | R.CAP2_BMC)["bmc"] and not R.caps2(R.CAP2_GATHER)["bmc"]
+
+
+def test_check_fits_refuses_outer1_programs_without_the_bit():
+    """Programs compiled with Config.OUTER1 (VOP OUTER of decay one on MAC's datapath) run on a
+    VPU with OUTER1 (CAPS2 bit23) or with OUTER itself, and check_fits refuses them on a VPU with
+    neither (a build without OUTER1, e.g. B1's x2:wmx); device_config takes bit23."""
+    from opentpu.host.board import ConfigMismatch, check_fits
+    info = dict(Board(FakeTransport(devname=None, regmap=5, outer=False)).info(), cfg=None)
+    cfg = device_config(info)                   # (no CFG_HASH: the fake's is the OUTER build's)
+    assert not cfg.OUTER and not cfg.OUTER1
+    check_fits(cfg, info)
+    o1 = replace(cfg, VMAC=True, OUTER1=True)
+    with pytest.raises(ConfigMismatch, match="OUTER1"):
+        check_fits(o1, info)
+    mac = dict(info["caps2"], vmac=True)
+    with pytest.raises(ConfigMismatch, match="OUTER1"):
+        check_fits(o1, dict(info, caps2=mac))
+    check_fits(o1, dict(info, caps2=dict(mac, outer1=True)))
+    check_fits(o1, dict(info, caps2=dict(mac, outer=True)))               # (OUTER: bit1 clear)
+    assert device_config(dict(info, caps2=dict(mac, outer1=True))).OUTER1
+
+
+def test_check_fits_refuses_splmm_programs_without_the_bit():
+    """Programs compiled with Config.SPLMM (MM SPL: a split's terms as one MM) run only on an
+    MXU with SPL (CAPS2 bit25); check_fits refuses them on one without (every build before it);
+    device_config takes bit25."""
+    from opentpu.host.board import ConfigMismatch, check_fits
+    info = dict(Board(FakeTransport(devname=None, regmap=5)).info(), cfg=None)
+    cfg = device_config(info)
+    assert not cfg.SPLMM
+    check_fits(cfg, info)
+    on = replace(cfg, SPLMM=True)
+    with pytest.raises(ConfigMismatch, match="SPLMM"):
+        check_fits(on, info)
+    check_fits(on, dict(info, caps2=dict(info["caps2"], splmm=True)))
+    assert device_config(dict(info, caps2=dict(info["caps2"], splmm=True))).SPLMM
+
+
+def test_caps2_no_outer():
+    """Register map 5's CAPS2 bit1 (NO_OUTER): a VPU built without VOP OUTER (otpu_board OUTER 0,
+    the WG targets'). The host's Config has OUTER off (device_config; the CFG_HASH checked with it), and
+    the ISA checks and the vops program leave OUTER out; with the bit clear (every bitstream
+    before it, and before register map 5) OUTER is there."""
+    from opentpu.host.checks import vops_program
+    from opentpu.host.opchecks import op_checks
+    assert R.caps2(R.CAP2_NO_OUTER) == {"gather": False, "outer": False, "dstep2": False,
+                                        "se_own": False, "bmc": False, "kt": False, "bhw": 0, "icache": False,
+                                        "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    assert R.caps2(R.CAP2_GATHER | R.CAP2_NO_OUTER) == {"gather": True, "outer": False,
+                                                        "dstep2": False, "se_own": False,
+                                                        "bmc": False, "kt": False, "bhw": 0, "icache": False,
+                                                        "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    b = Board(FakeTransport(devname=None, regmap=5, outer=False))
+    assert b.info()["caps2"] == {"gather": True, "outer": False, "dstep2": False,
+                                 "se_own": False, "bmc": False, "kt": False, "bhw": 0, "icache": False,
+                                 "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    cfg = device_config(b.info())
+    assert not cfg.OUTER
+    for t in (FakeTransport(devname=None, regmap=5), FakeTransport(devname=None, regmap=4)):
+        assert device_config(Board(t).info()).OUTER
+    names = {n for g, n, _ in op_checks(cfg)}
+    assert {n for g, n, _ in op_checks(replace(cfg, OUTER=True))} - names == \
+        {"VOP OUTER scalar", "VOP OUTER column", "VOP OUTER one"}
+    outer = [i for i in vops_program() if i.op == I.VOP and (i.w[5] >> 16 & 0xFF) == I.V_OUTER]
+    assert len(outer) == 1 and len(vops_program(False)) == len(vops_program()) - 1
+    assert not any(i.op == I.VOP and (i.w[5] >> 16 & 0xFF) == I.V_OUTER
+                   for i in vops_program(False))
+
+
+def test_caps2_dstep2():
+    """Register map 5's CAPS2 bit2 (DSTEP2): the DMA and the stream engine run DSTEP's pair
+    (otpu_board DSTEP2). The host's Config has DSTEP2 on (device_config; the CFG_HASH checked
+    with it, a bitstream reporting the bit with the other hash refused); clear (every bitstream
+    before it, and before register map 5) DSTEP2 is off."""
+    from opentpu.host.board import ConfigMismatch
+    from opentpu.target import arch_hash
+    assert R.caps2(R.CAP2_GATHER | R.CAP2_DSTEP2) == {"gather": True, "outer": True,
+                                                      "dstep2": True, "se_own": False, "bmc": False,
+                                                      "kt": False, "bhw": 0, "icache": False,
+                                                      "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    b = Board(FakeTransport(devname=None, regmap=5, dstep=True, dstep2=True))
+    assert b.info()["caps2"]["dstep2"] and device_config(b.info()).DSTEP2
+    for t in (FakeTransport(devname=None, regmap=5), FakeTransport(devname=None, regmap=4)):
+        assert not device_config(Board(t).info()).DSTEP2
+    i = Board(FakeTransport(devname=None, regmap=5, dstep=True)).info()
+    i["caps2"] = dict(i["caps2"], dstep2=True)           # (the hash without DSTEP2)
+    with pytest.raises(ConfigMismatch, match="CFG_HASH"):
+        device_config(i)
+    cfg = device_config(b.info())
+    assert arch_hash(cfg) != arch_hash(replace(cfg, DSTEP2=False))
+
+
+def test_caps2_se_own():
+    """Register map 5's CAPS2 bit3 (SE_OWN): the streams run on an engine of their own beside the
+    VPU (otpu_board SE_R > 0). The host's Config has SE_OWN on (device_config; the CFG_HASH
+    checked with it, a bitstream reporting the bit with the other hash refused), so the compiler
+    gives each DeltaNet pair a burst of its own; clear (every bitstream before it, and before
+    register map 5) SE_OWN is off and every other bit's hash is the one before."""
+    from opentpu.host.board import ConfigMismatch
+    from opentpu.target import arch_hash
+    assert R.caps2(R.CAP2_GATHER | R.CAP2_SE_OWN) == {"gather": True, "outer": True,
+                                                      "dstep2": False, "se_own": True, "bmc": False,
+                                                      "kt": False, "bhw": 0, "icache": False,
+                                                      "st16": "", "xcard": False, "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    b = Board(FakeTransport(devname=None, regmap=5, dstep=True, se_own=True))
+    assert b.info()["caps2"]["se_own"] and device_config(b.info()).SE_OWN
+    for t in (FakeTransport(devname=None, regmap=5), FakeTransport(devname=None, regmap=4)):
+        assert not device_config(Board(t).info()).SE_OWN
+    i = Board(FakeTransport(devname=None, regmap=5, dstep=True)).info()
+    i["caps2"] = dict(i["caps2"], se_own=True)           # (the hash without SE_OWN)
+    with pytest.raises(ConfigMismatch, match="CFG_HASH"):
+        device_config(i)
+    cfg = device_config(b.info())
+    assert arch_hash(cfg) != arch_hash(replace(cfg, SE_OWN=False))
+
+
+def test_caps2_bhw(monkeypatch):
+    """Register map 5's CAPS2 bits 11:6 (BHW): the memory's bank-half window, the slice's first
+    2^BHW bytes (the BCU1525's otpu_mig_pair; the images' layout: qwen35 Image.mix). The host's
+    Config has it (device_config, and the CFG_HASH's check: _reg_config); 0, every bitstream
+    before it and before register map 5, leaves it off and every hash as it was."""
+    from opentpu.host import fake as F
+    from opentpu.target import arch_hash, config
+    assert R.caps2(R.CAP2_GATHER | 33 << R.CAP2_BHW_SHIFT)["bhw"] == 33
+    assert R.caps2(None)["bhw"] == 0 and R.caps2(R.CAP2_GATHER | R.CAP2_BMC)["bhw"] == 0
+    both = R.caps2(R.CAP2_GATHER | R.CAP2_KT | 33 << R.CAP2_BHW_SHIFT)   # (bit5 KT, bits 11:6 BHW)
+    assert both["kt"] and both["bhw"] == 33 and both["gather"] and not both["bmc"]
+    assert not R.caps2(33 << R.CAP2_BHW_SHIFT)["kt"] and R.caps2(R.CAP2_KT)["bhw"] == 0
+    for target, bhw in (("bcu1525-wg:bhw", 33), ("bcu1525-wg", 0)):
+        monkeypatch.setenv("OTPU_TARGET", target)       # (CAPS2's BHW: the current target's)
+        b = Board(F.FakeTransport(devname=None, regmap=R.CAPS2_SINCE, D=128, MCOLS=8, LANES=8,
+                                  act_rows=16, cfg=F.target_cfg(target), dstep=True,
+                                  stream=True, args=True, gen=True, chash=True, outer=False,
+                                  dstep2=True, se_own=True, kt=bool(bhw)))   # (bhw: with KT)
+        try:
+            i = b.info()
+            assert i["caps2"]["bhw"] == bhw and device_config(i).BHW == bhw   # (hash checked)
+            if bhw:
+                i["caps2"] = dict(i["caps2"], bhw=0)            # (the hash with BHW)
+                with pytest.raises(ConfigMismatch, match="CFG_HASH"):
+                    device_config(i)
+        finally:
+            b.close()
+    assert arch_hash(config("bcu1525-wg")) == 0x4B35EC47            # (as before the field)
+    assert arch_hash(config("bcu1525-wg:bhw")) != 0x4B35EC47
+
+
+def test_caps2_kt():
+    """Register map 5's CAPS2 bit5 (KT): the MXU takes MM's K tail (otpu_board KT). The host's
+    Config has KT on (device_config; the CFG_HASH checked with it, a bitstream reporting the bit
+    with the other hash refused), so the compiler pairs the groups of a K that ends in the middle
+    of a block; clear (every bitstream before it, and before register map 5) KT is off."""
+    from opentpu.host.board import ConfigMismatch
+    from opentpu.target import arch_hash
+    assert R.caps2(R.CAP2_GATHER | R.CAP2_KT) == {"gather": True, "outer": True, "dstep2": False,
+                                                  "se_own": False, "bmc": False, "kt": True,
+                                                  "bhw": 0, "icache": False, "st16": "", "xcard": False,
+                                                  "fsum": False, "splitq": False, "st16s": False, "qhl": False, "qsthl": False, "vsig": False, "vmac": False, "outer1": False, "qonce": False, "splmm": False}
+    b = Board(FakeTransport(devname=None, regmap=5, kt=True))
+    assert b.info()["caps2"]["kt"] and device_config(b.info()).KT
+    for t in (FakeTransport(devname=None, regmap=5), FakeTransport(devname=None, regmap=4)):
+        assert not device_config(Board(t).info()).KT
+    i = Board(FakeTransport(devname=None, regmap=5)).info()
+    i["caps2"] = dict(i["caps2"], kt=True)               # (the hash without KT)
+    with pytest.raises(ConfigMismatch, match="CFG_HASH"):
+        device_config(i)
+    cfg = device_config(b.info())
+    assert arch_hash(cfg) != arch_hash(replace(cfg, KT=False))
+
+
+def test_icache_write_refuses_the_loaded_program():
+    """On an ICACHE bitstream (CAPS2 ICACHE) the slices fetch the loaded program's lines from
+    DRAM while it runs and between runs, so Board.write refuses a write that overlaps the
+    program and its wait entries, takes the bytes either side, and loading a program elsewhere
+    moves the range; release_program drops it (a new image over the old program, board_perf's next
+    point). A bitstream without the cache keeps no range: the host writes anywhere."""
+    c = R.cfg(FakeTransport(devname=None, regmap=5).cfg_words)
+    b = Board(FakeTransport(devname=None, regmap=5, cfg=dict(c, ICACHE=1)))
+    assert b.icache and b.info()["caps2"]["icache"]
+    words = np.arange(64, dtype=np.uint32)              # 8 instructions: [8192, 8448)
+    one = np.full(256, 0xA5, np.uint8)
+    b.write(8192, one)                                  # nothing loaded: any write
+    b.load_program(8192, words)
+    for a, n in ((8192 - 64, 65), (8447, 1), (8192, 256), (8000, 1000), (8300, 4)):
+        with pytest.raises(ValueError, match="over the loaded program"):
+            b.write(a, one[:n] if n <= 256 else np.zeros(n, np.uint8))
+    b.write(8192 - 64, one[:64])                        # the bytes either side
+    b.write(8448, one[:64])
+    assert np.array_equal(b.read(8192, 256), words.view(np.uint8))
+    b.load_program(16384, words)
+    b.write(8192, one)
+    with pytest.raises(ValueError, match="over the loaded program"):
+        b.write(16384 + 128, one[:4])
+    b.release_program()
+    b.write(16384 + 128, one[:4])
+    plain = Board(FakeTransport(devname=None, regmap=5))
+    assert not plain.icache
+    plain.load_program(8192, words)
+    plain.write(8192, one)
+    assert np.array_equal(plain.read(8192, 256), one)
 
 
 def test_ddr_rate(monkeypatch, capsys):
@@ -253,7 +480,7 @@ def test_board_backend_rejects_another_configuration(no_cfg_env):
 def test_chat_board_backend_takes_the_bitstream_configuration(no_cfg_env):
     from opentpu.host import board, chat
     card = FakeTransport(devname="fake4", MCOLS=4, LANES=16)
-    no_cfg_env.setattr(board, "XdmaTransport", lambda dev: card)
+    no_cfg_env.setattr(board, "XdmaTransport", lambda dev, **kw: card)
     backend, cfg = chat.make_backend("board", None, 256, "/dev/fake4", "m0")
     assert (cfg.MCOLS, cfg.LANES) == (4, 16)
     be = backend(replace(cfg, DRAM_BYTES=1 << 21), [np.zeros(4096, np.uint8)])
@@ -286,6 +513,25 @@ def test_sim_config_sizes_the_format_when_int8_is_over_4gib():
     assert cfg.DRAM_BYTES == 1 << 32
     small = Spec(hidden=256, layers=2, n_q=4, n_kv=2, head_dim=128, ffn=512, vocab=1000)
     assert sim_config(small, 256, wformat="fp4") == sim_config(small, 256)
+
+
+def test_sim_config_is_never_over_the_cards_dram():
+    """At AW 36 (bcu1525-wg) the int8 image is sized where it fits the card's DRAM, else the
+    run's formats are, as at 4 GiB at AW 32: the DRAM was 2^AW's to size, so the 35B-A3B's
+    reference (int8 over 32 GiB, fp4 22 GiB) had 64 GiB, twice the card's."""
+    from dataclasses import replace
+
+    from opentpu import target as T
+    from opentpu.host.board import sim_config
+    from opentpu.llm.qwen3 import Spec
+    spec = Spec(hidden=2048, layers=2, n_q=16, n_kv=4, head_dim=128, ffn=8192, vocab=2_200_000)
+    card = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)   # int8 8.35 GiB (from 4 GiB), fp4 2.4
+    assert sim_config(spec, 256, card, wformat="fp4", head_format="fp4").DRAM_BYTES == 1 << 32
+    with pytest.raises(MemoryError):
+        sim_config(spec, 256, card)
+    roomy = replace(card, DRAM_BYTES=1 << 34)
+    assert sim_config(spec, 256, roomy, wformat="fp4", head_format="fp4") == \
+        sim_config(spec, 256, roomy) == replace(roomy, DRAM_BYTES=1 << 34)
 
 
 def test_4bit_image_needs_a_4bit_bitstream(run_dir):
@@ -499,6 +745,48 @@ def test_a_short_run_after_a_long_one_is_seen_soon(run_dir):
     be.close()
     assert late[0] < 2e-3, late             # not the long run's 40 ms
     assert max(late[1:]) < 1e-3, late
+
+
+def test_loops_of_one_length_are_expected_by_their_arguments(run_dir, monkeypatch):
+    """A layer loop's program has one length for any run count (a chunk's
+    buckets split a layer's runs into an 8-run and a 1-run loop): a run is expected to take what
+    the last run of its length and arguments took (a chunk's later layers: the same arguments),
+    one with new arguments the least of its length's last runs, so a 1-run loop is not expected
+    to take the 8-run loop's 40 ms once a 1-run loop was seen (by length alone, every 1-run loop
+    after an 8-run one: +17 s past the runs' ends on a 2,689-token prompt on the card)."""
+    from opentpu.host import board as B
+    monkeypatch.setattr(B, "EXPECT_N", 4)
+
+    class Loops(FakeTransport):             # a loop's time: its run count (ARG0) x 5 ms
+        def reg_write(self, off, val):
+            if off == R.R_CTRL and val & R.CTRL_RUN:
+                n = self.regs.get(R.R_ARG0, 0)
+                self.run_s, self.cycles_per_run = 0.005 * n, 500_000 * n    # 100 MHz
+            super().reg_write(off, val)
+
+    card = Loops(devname=None, args=True)
+    be = BoardBackend(board_config(DRAM_BYTES=1 << 21), [np.zeros(1 << 16, np.uint8)],
+                      transport=card, status=False)
+    loop = [[I.ld(0, 0, 64)] * 8 + [I.halt()]]  # one program, the run count an argument
+    hit, miss = [], []
+    for pos in (0, 9, 18):                  # chunks: a layer's 8 runs at pos, its 1 at pos + 8
+        for layer in range(3):
+            for n, p in ((8, pos), (1, pos + 8)):
+                be.start(loop, args=[n, p])
+                new, want = be._akey not in be._expects, be._expect
+                be.wait()
+                late = be.board.t_seen - be.board._t_run - card.run_s
+                (miss if new else hit).append((n, want, late))
+    be.close()
+    assert len(hit) == 12 and len(miss) == 6
+    for n, want, late in hit:               # the same loop's time
+        assert want == pytest.approx(0.005 * n, rel=0.1)
+        assert late < 1e-3, hit
+    wants = [w for _, w, _ in miss]
+    assert wants[0] == 0 and wants[1] == pytest.approx(0.04, rel=0.1)  # (only the 8-run one seen)
+    assert wants[2:] == pytest.approx([0.005] * 4, rel=0.1)
+    assert all(late < 3e-3 for _, _, late in miss[2:]), miss    # early: the backoff's 1 ms at most
+    assert len(be._expects) == 4 and (be._key, (8, 0)) not in be._expects     # EXPECT_N
 
 
 def test_resident_decode_takes_run_arguments(run_dir):
@@ -1316,8 +1604,8 @@ def test_board_compiles_the_next_program_after_starting_the_card():
     eng._drain()
     # position 0 compiles in line; position p + 1 only after the card started position p
     assert seen == [(0, 0), (1, 1), (2, 2), (3, 3)]
-    be = eng.backend                        # the expectation for the last program's length
-    assert be._expects[be._key] == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
+    be = eng.backend                        # the expectation for the last program's length (no arguments)
+    assert be._expects[be._akey] == pytest.approx(t.cycles_per_run / 100e6, rel=0.02)  # x ratio
     eng.backend.close()
 
 
@@ -1698,11 +1986,56 @@ def test_diag_names_the_failing_byte_lane(tmp_path, capsys, no_cfg_env):
     assert st["channel 1 random blocks"] == "FAIL"
     assert st["channel 0 data bits (walking 1 / 0)"] == "PASS"
     assert st["channel 0 random blocks"] == "PASS"
+    assert st["channel 0 DMA bandwidth"] == "SKIP"         # (the fake has no DMA timing)
     assert "channel 1 byte lane 5 errors -> DQ[47:40] pinout / calibration of that lane; " \
            "only DQ44 (stuck or shorted bit)" in rep["hints"]
     assert not any("channel 0" in h for h in rep["hints"])
     text = capsys.readouterr().out
     assert "does not work:" in text and "DQ[47:40]" in text
+
+
+def test_diag_tests_every_channel_of_a_fake_wg_card(tmp_path, capsys, no_cfg_env):
+    """otpu-diag's memory section on bcu1525-x2's geometry (CFG_DRAM: 4 slices of 8 channels in
+    128-byte beats): every one of the 32 channels gets the per-channel tests at its own beat
+    (walking 1 / 0 over 1024 bits), the interleave runs over a slice's 8 channels, and the two
+    STATUS calibration bits are named for the even and odd channels (each ANDs 16 of them). A
+    DQ fault on channel 13 fails that channel alone, and the hint names its byte lane."""
+    from opentpu.host import diag
+    from test_board import _wg_cfg
+
+    class WideLaneFault(FakeTransport):
+        def mem_read(self, ch, off, n, out=None):
+            d = super().mem_read(ch, off, n).copy()
+            if ch == 13:
+                d[(8 - off % 8 + 5) % 8::8] ^= 0x10
+            if out is not None:
+                out[:] = d
+                return out
+            return d
+    for card, rc_want in ((FakeTransport, 0), (WideLaneFault, 1)):
+        t = card(devname=None, regmap=4, cfg={**_wg_cfg(), "hash": 0}, ch_bytes=1 << 20)
+        out = tmp_path / "diag.json"
+        rc = diag.main(["--only", "mem", "--bw-mib", "1", "--json", str(out)],
+                       open_transport=lambda dev: t)
+        assert rc == rc_want
+        rep = json.loads(out.read_text())
+        st = {r["name"]: r["status"] for r in rep["rows"]}
+        assert st["memory calibration, even channels (STATUS CALIB0)"] == "PASS"
+        assert st["memory calibration, odd channels (STATUS CALIB1)"] == "PASS"
+        assert not any(n.startswith("DDR3 calibration") for n in st)
+        mem = [r for r in rep["rows"] if r["section"] == "mem" and r["group"]]
+        assert {r["group"] for r in mem} == {f"ch{c}" for c in range(32)} and len(mem) == 160
+        # the DMA bandwidth skipped (the fake's copies have no DMA timing), the rest passes
+        bw = {r["status"] for r in mem if r["name"].endswith("DMA bandwidth")}
+        bad = {r["group"] for r in mem if r["status"] != "PASS"
+               and not r["name"].endswith("DMA bandwidth")}
+        assert bw == {"SKIP"} and bad == (set() if rc_want == 0 else {"ch13"})
+        assert st["interleave patterns"] == "PASS"
+        assert "over the 1024-bit beat" in next(r["msg"] for r in mem
+                                                 if r["name"].startswith("channel 31 data"))
+    assert "channel 13 byte lane 5 errors -> DQ[47:40] pinout / calibration of that lane; " \
+           "only DQ44 (stuck or shorted bit)" in rep["hints"]
+    assert not any("channel 1 " in h or "channel 0 " in h for h in rep["hints"])
 
 
 def test_diag_hints_from_the_pattern_of_failures():
@@ -2001,6 +2334,62 @@ def test_busy_card_is_one_line_not_a_traceback(tmp_path, monkeypatch, capsys):
     held.release()
 
 
+def test_open_transport_dispatches_by_name(tmp_path, monkeypatch):
+    """open_transport: any path (a "/" in it: /dev/xdmaN, a link elsewhere, a relative one)
+    XdmaTransport, a bare name refused."""
+    from opentpu.host import board
+    got = []
+    monkeypatch.setattr(board, "XdmaTransport", lambda dev, dma=True: got.append(("x", dev, dma)))
+    for dev, dma in (("/dev/xdma0", True), (str(tmp_path / "xdmaB"), False), ("by-id/xdma1", True)):
+        board.open_transport(dev, dma=dma)
+    assert got == [("x", "/dev/xdma0", True), ("x", str(tmp_path / "xdmaB"), False),
+                   ("x", "by-id/xdma1", True)]
+    for bad in ("xdma0", "nonsense:7", "card0"):
+        with pytest.raises(ValueError, match="no transport"):
+            board.open_transport(bad)
+
+
+def test_the_default_device_is_the_card_that_is_there(monkeypatch):
+    """default_dev without --dev: OTPU_DEV first; one XDMA device: it, whichever its number (a
+    Kintex-7 card alone, a BCU1525 alone); several: the only one that answers as openTPU (a
+    BCU1525 in SAFE reads the fence, another design its own ID), card 0 or card 1; both up, or
+    none: /dev/xdma0 as before (name the card, or the pair as /dev/xdmaA+/dev/xdmaB)."""
+    from opentpu.host import board
+    from opentpu.host import regs as R
+    FENCED, up = 0xDEAD0FF0, R.ID_OTPU
+    monkeypatch.delenv("OTPU_DEV", raising=False)
+    dd = lambda ids: board.default_dev(present=list(ids), ident=ids.get)   # noqa: E731
+    assert dd({"/dev/xdma0": up}) == "/dev/xdma0"
+    assert dd({"/dev/xdma2": None}) == "/dev/xdma2"                 # (the only one: not even read)
+    assert dd({"/dev/xdma0": up, "/dev/xdma1": FENCED}) == "/dev/xdma0"         # card 0 up
+    assert dd({"/dev/xdma0": FENCED, "/dev/xdma1": up}) == "/dev/xdma1"         # card 1 up
+    assert dd({"/dev/xdma0": 0x12345678, "/dev/xdma1": FENCED, "/dev/xdma2": up}) == "/dev/xdma2"
+    assert dd({"/dev/xdma0": up, "/dev/xdma1": up}) == "/dev/xdma0"             # both: no guess
+    assert dd({"/dev/xdma1": FENCED, "/dev/xdma2": FENCED}) == "/dev/xdma0"
+    assert dd({}) == "/dev/xdma0"
+    monkeypatch.setenv("OTPU_DEV", "/dev/xdma7")
+    assert dd({"/dev/xdma0": up}) == "/dev/xdma7"
+
+
+def test_otpu_chat_opens_the_default_device(monkeypatch):
+    """otpu-chat --backend board without --dev: make_backend opens board.default_dev()'s card."""
+    from opentpu.host import board, chat
+    got = []
+
+    class Stop(Exception):
+        pass
+
+    def opened(dev, target=None):
+        got.append(dev)
+        raise Stop
+    monkeypatch.setattr(board, "open_transport", opened)
+    monkeypatch.setenv("OTPU_DEV", "/dev/xdma1")
+    for dev, want in ((None, "/dev/xdma1"), ("/dev/xdma3", "/dev/xdma3")):
+        with pytest.raises(Stop):
+            chat.make_backend("board", None, 64, dev)
+        assert got[-1] == want
+
+
 def test_xdma_transport_locks_before_opening(tmp_path, monkeypatch):
     """A transport waiting for a busy card holds no file on it (a rescan by the holder would be
     refused): the lock comes first, so a busy device raises DeviceBusy, not an open error."""
@@ -2198,3 +2587,25 @@ def test_dma_lock_is_reentrant_in_its_thread(tmp_path, monkeypatch):
     th.join(10)
     assert order == ["holder", "other"]
     assert ops == [board.fcntl.LOCK_EX, board.fcntl.LOCK_UN] * 2
+
+
+def test_op_checks_store_the_same_at_aw_36():
+    """The op checks' register arithmetic is the machine's (opchecks._addi: isa.wrap at
+    cfg.AW; rld_mul's negative multiplier): on an AW 36 machine (the BCU's) every check stores
+    below PROG_AT what it stores on a 32-bit one, and at AW 32 its words are as before."""
+    from opentpu.host.checks import PROG_AT
+    from opentpu.host.opchecks import diag_image, op_checks
+    from opentpu.isasim import Machine
+    c32 = board_config(S=1)
+    c36 = replace(c32, AW=36, DRAM_BYTES=1 << 34)
+    img = diag_image(c32)
+    a32 = op_checks(c32, gen=True, waitw=True, gather=False)
+    a36 = op_checks(c36, gen=True, waitw=True, gather=False)
+    assert [n for _, n, _ in a32] == [n for _, n, _ in a36]
+    differ = 0
+    for (_, n, p32), (_, _, p36) in zip(a32, a36):
+        differ += list(I.assemble(p32)) != list(I.assemble(p36))
+        want = Machine(c32, [p32], [img]).run().slices[0].dram[:PROG_AT]
+        got = Machine(c36, [p36], [img]).run().slices[0].dram[:PROG_AT]
+        assert np.array_equal(want, got), n
+    assert differ                                   # (negative ADDIs' w2, the RLD MUL by -7)

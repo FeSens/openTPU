@@ -353,6 +353,89 @@ def test_board_dram_writes_what_board_write_writes(chash, slot, fmt, pieces, hin
     assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == seq
 
 
+def _wg_card(chash: bool):
+    """A fake WG card (CFG_DRAM: 8 channels of 128-byte beats a slice, tests/test_board.py's
+    _wg_cfg) with or without CHASH."""
+    from opentpu.host.board import Board
+    from opentpu.host.fake import FakeTransport
+    from test_board import _wg_cfg
+    return Board(FakeTransport(ch_bytes=1 << 18, devname=None, regmap=4, cfg=_wg_cfg(),
+                               chash=chash), lock=False)
+
+
+@pytest.mark.parametrize("chash", [False, True])
+@pytest.mark.parametrize("slot,fmt", [(128 * 37, "bytes"), (1024 * 5, "bytes"),
+                                      (4096 * 3, "split")])
+def test_board_dram_on_wg_channels_writes_what_board_write_writes(chash, slot, fmt, tmp_path,
+                                                                  monkeypatch):
+    """BoardDram on the WG targets' channels (8 of 128-byte beats: Board.nch / beat) leaves every
+    channel memory as BackendDram's Board.write does, request after request: the slots (whole
+    1 KiB chunks through the channel runs with CHASH's permutation, the tag chunk in a call of
+    its own after them: a chunk is not the slot's 128-byte tag chunk; a slot off the chunk grid
+    through Board.write), the directory and served, each one beat and one DMA call. A split
+    pool (the cards' format) is written from its bytes. The layout's lines a beat (LINE 128):
+    with the cards' 64-byte lines BoardDram refuses the WG targets' beats (served's beat would carry
+    the answer's words)."""
+    from types import SimpleNamespace
+
+    from opentpu.host import offload
+    from opentpu.host.board import chunk_hash
+    from opentpu.host.offload import BackendDram, BoardDram, PoolFile, to_split
+
+    def pool(g):
+        return np.random.default_rng(g).integers(0, 256, slot, dtype=np.uint8)
+
+    with pytest.raises(ValueError, match="128-byte beats are longer than the layout's 64"):
+        BoardDram(SimpleNamespace(board=_wg_card(chash)), Layout.build(4096, 4, 2, (2,), slot))
+    monkeypatch.setattr(offload, "LINE", 128)
+    lay = Layout.build(4096, 4, 2, (2, 3), slot)
+    fast_pool = pool
+    if fmt == "split":
+        f = tmp_path / "pool.bin"
+        f.write_bytes(b"".join(to_split(pool(g)).tobytes() for g in range(8)))
+        fast_pool = PoolFile(f, slot, split=True).get
+    ba, bb = _wg_card(chash), _wg_card(chash)
+    fast = ExpertServer(BoardDram(SimpleNamespace(board=ba), lay), lay, fast_pool)
+    plain = ExpertServer(BackendDram(SimpleNamespace(write=lambda s, a, d: bb.write(a, d),
+                                                     read=lambda s, a, n: bb.read(a, n))),
+                         lay, pool)
+    for srv in (fast, plain):
+        srv.load([0, 4])
+    assert (fast.mem.nch, fast.mem.h, fast.mem.blk) == (8, 128, 1024)
+
+    def same():
+        for c in range(32):
+            assert np.array_equal(ba.t.ch[c], bb.t.ch[c]), c
+    same()
+    m, lo, hi = fast.mem, fast.mem.lo, fast.mem.lo + len(fast.mem.shadow)
+    words, calls, mw, w = [0], [0], ba.t.mem_write, m.write
+
+    def call(ch, off, data):                # DMA calls into the host's words
+        k = off // 128                      # (the logical address of channel ch's beat k)
+        c = ch ^ (int(chunk_hash(k * 1024, 1, 8, 128)[0]) if chash else 0)
+        calls[0] += lo <= 1024 * k + 128 * c + off % 128 < hi
+        mw(ch, off, data)
+
+    def write(addr, data):                  # the server's writes of them
+        words[0] += lo <= addr < hi
+        w(addr, data)
+    ba.t.mem_write, m.write = call, write
+    seq = 0
+    for ids in [[0, 1], [4, 6], [2, 3], [5, 7], [1, 2], [6, 4], [3, 0], [7, 5]]:
+        seq += 1
+        for b in (ba, bb):                  # the card's post: the row, then seq
+            b.write(lay.row, np.array(ids + [0] * (offload.LINE // 4 - len(ids)), np.float32))
+            b.write(lay.mbox, np.float32(seq).tobytes())
+        assert fast.poll() == plain.poll() == 1
+        same()
+    assert calls[0] == words[0] > 8         # an entry or served: one beat, one DMA call
+    assert fast.misses == plain.misses > 0 and fast.mem.direct == 0
+    assert (fast.mem.dma_bytes > 0) == (slot % 1024 == 0)  # the channel runs: whole chunks
+    assert float(np.frombuffer(ba.read(lay.served, 4), np.float32)[0]) == seq
+    for addr in (lay.served, lay.entry(3), lay.entry(5)):   # a beat alone, as Board.read
+        assert m.read(addr, 8) == ba.read(addr, 8).tobytes()
+
+
 @pytest.mark.parametrize("ahead", [True, False])
 def test_idle_parts_go_as_one_call_each_and_are_read_ahead(ahead, tmp_path):
     """read_ahead (docs/offload.md 13.12): on BoardDram (CHASH, a split pool file) an idle

@@ -274,7 +274,7 @@ def test_emulated_logits_follow_the_isa_simulator(name, monkeypatch):
     device's code; unforced, it rounds the other way now and then and the steps after it stray
     by 0.1 - 2.5% (on main 7 / 13 / 16 of 32 prompts over 16 model seeds of qwen3 / lfm2 /
     qwen35, which ones depending on the host's float64 summation order). Forced, every prompt
-    of 16 seeds is within 4e-7 on the Mac and omarchy, and a 1% error in K or in V's scales,
+    of 16 seeds is within 4e-7 on two hosts, and a 1% error in K or in V's scales,
     or K or V left unrounded, is 0.7 - 2.3% off. Every int8 group finds its device group but the
     head's inputs at the prompts' earlier positions (the device takes no logits there)."""
     import importlib
@@ -283,8 +283,8 @@ def test_emulated_logits_follow_the_isa_simulator(name, monkeypatch):
     _, W, spec = _tiny(name)
     dev, quantize_mx = _DeviceCodes(), F.quantize_mx
 
-    def recorded(x, g, row_mode=False):
-        q, s, d = quantize_mx(x, g, row_mode)
+    def recorded(x, g, row_mode=False, lo=False):
+        q, s, d = quantize_mx(x, g, row_mode, lo)
         dev.record(x, g, q, d)
         return q, s, d
     with monkeypatch.context() as mp:
@@ -517,3 +517,25 @@ def test_the_command_line_on_a_tiny_gemma4(tmp_path):
     assert res["image"]["head"] == "fp4" and res["image"]["ple_table"] == "int8"
     assert res["formats"]["model.per_layer_model_projection.weight"] == "fp4"
     assert res["pass"]
+
+
+def test_the_isa_device_runs_the_targets_hardware(monkeypatch):
+    """--cfg's default is the target's hardware (opentpu.target.config: every feature it has
+    on), not board_config's environment defaults: on the WG targets (no VOP OUTER, every DeltaNet path
+    on DSTEP) those leave DSTEP off, where a Qwen3.5 does not compile. --cfg board keeps
+    board_config's."""
+    from argparse import Namespace
+    from dataclasses import replace
+
+    from opentpu import target as T
+    from opentpu.llm.qwen35 import Spec
+    for k in ("OTPU_PAIR", "OTPU_DSTEP", "OTPU_STREAM", "OTPU_SEQ_WC", "OTPU_MCOLS",
+              "OTPU_LANES", "OTPU_ACT_ROWS"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("OTPU_TARGET", "bcu1525-x2")
+    spec = Spec(512, ("linear", "linear", "attn"), 8, 4, 256, 64, 8, 128, 128, 1024, 1000)
+    a = Namespace(cfg=None, resident=False, wformat="fp4", head_format=None)
+    cfg, hw = V.sim_cfg(spec, 256, a), T.config("bcu1525-x2")
+    assert replace(cfg, DRAM_BYTES=0) == replace(hw, DRAM_BYTES=0)
+    assert cfg.S == 4 and cfg.DSTEP and cfg.STREAM and cfg.SEQ_WC and not cfg.OUTER
+    assert not V.sim_cfg(spec, 256, Namespace(**{**vars(a), "cfg": "board"})).DSTEP

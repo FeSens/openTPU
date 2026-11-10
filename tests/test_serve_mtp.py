@@ -52,8 +52,8 @@ def test_mtp_requests_in_turns_are_their_own_runs(tiny_moe_mtp):
     saved, back = {}, []
     save, restored = w._save_device, w._mtp_restored
 
-    def save_(pin_for=None):
-        save(pin_for)
+    def save_(pin_for=None, r=None, state_at=None):
+        save(pin_for, r=r, state_at=state_at)
         if pin_for is not None:
             saved[pin_for.rid] = _ctx(w, len(w.dev))
 

@@ -68,8 +68,8 @@ def test_families_define_the_same_rams():
             norm = lambda s: re.sub(r"\s+", " ", s).strip()   # noqa: E731
             mods[m.group(1)] = (norm(m.group(2)), norm(m.group(3)))
         return mods
-    pub = {"otpu_ram_1r1w", "otpu_ram_1r1w_ra", "otpu_ram_1r1w_be", "otpu_ram_1rw",
-           "otpu_ram_1rw1r"}
+    pub = {"otpu_ram_1r1w", "otpu_ram_1r1w_2c", "otpu_ram_1r1w_2c_be", "otpu_ram_1r1w_ra",
+           "otpu_ram_1r1w_be", "otpu_ram_1rw", "otpu_ram_1rw1r"}
     g = iface(ROOT / "rtl/tech/generic/otpu_tech_ram.sv")
     a = iface(ROOT / "rtl/tech/asic/otpu_tech_ram.sv")
     assert set(g) == pub and pub <= set(a)

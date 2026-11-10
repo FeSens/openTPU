@@ -169,6 +169,287 @@ def test_small_cache_is_bit_exact(tiny, wformat, formats):
     assert np.array_equal(got.view(np.uint32), ref.view(np.uint32))
 
 
+@pytest.mark.parametrize("resident", [False, True])
+def test_a_resident_pool_above_4gib_is_the_streamed_path_bit_for_bit(tiny, resident,
+                                                                     monkeypatch):
+    """At AW 36 (bcu1525-wg) with the weights above 4 GiB and every expert present, the pool
+    is resident: expert g at the pool's base + g x its bytes (ADDI(RLD MUL(id, bytes), base)),
+    no directory, no server. Its logits are the low image's (the offload path, every expert
+    in a slot) bit for bit, per position and in the resident decode loop."""
+    from opentpu import target as T
+    _, W, spec = tiny
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 6)]
+    got = {}
+    for high in ("0", "1"):
+        monkeypatch.setenv("OTPU_HIGH", high)
+        eng = Engine(spec, W, cap=256, cfg=cfg, resident=resident)
+        im = eng.image
+        assert im.high == (high == "1") and (im.pool is None) == (high == "0")
+        assert (eng.server is None) == (high == "1")
+        if im.high:
+            assert im.layer0 == 1 << 32 and im.pool.base > 1 << 32 and im.low_end < 1 << 32
+            assert im.pool.experts == len(KINDS) * E
+        got[high] = np.array([eng.step(t) for t in toks])
+    assert np.array_equal(got["0"].view(np.uint32), got["1"].view(np.uint32))
+
+
+@pytest.mark.parametrize("resident,grouped", [(False, False), (True, True)])
+def test_the_bank_half_window_is_the_low_image_bit_for_bit(tiny, resident, grouped,
+                                                            monkeypatch):
+    """bcu1525-wg:bhw (Config.BHW 33: the slice's first 8 GiB the bank-half window): the image is
+    high whatever OTPU_HIGH says (Image.mix), its low area below 4 GiB (what a decode writes:
+    the states, windows, KV caches, group-major the pairs' gates), every DeltaNet layer's
+    mixers' weights in the window's upper half from 4 GiB (mloc; the mixer matrices' scale rows
+    in the states' block below 4 GiB, Image.mix's slow), every other weight and the
+    pool from 8 GiB on, the window past the mixers unwritten (Images.skip). The ISA simulator's
+    guard (every write below 4 GiB) holds and the logits are the low image's bit for bit, per
+    position and in the resident decode loop, array- and group-major."""
+    from opentpu import target as T
+    _, W, spec = tiny
+    spec = replace(spec, pair_loop=grouped)
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 6)]
+    monkeypatch.setenv("OTPU_HIGH", "0")
+    got = {}
+    for name, cfg in (("low", T.config("bcu1525-wg", DRAM_BYTES=1 << 33)),
+                      ("bhw", T.config("bcu1525-wg:bhw", DRAM_BYTES=1 << 34))):
+        eng = Engine(spec, W, cap=256, cfg=cfg, resident=resident)
+        im = eng.image
+        assert im.grouped == grouped and im.mix == (name == "bhw")
+        if im.mix:
+            lin = [i for i, k in enumerate(KINDS) if k == "linear"]
+            mx = [im._moff(i).const for i in lin]
+            assert im.low_end < 1 << 32 == min(mx) < max(mx) < im.wskip[0] < im.wskip[1] == \
+                1 << 33 == im.layer0 < im.pool.base and im.wlo == 1 << 32
+            assert all(s.wlim == 1 << 32 for s in eng.backend.machine.slices)
+            # the mixer matrices' scale rows in the states' block below 4 GiB, apart from
+            # their data's banks in the upper half (the layouts' slow)
+            m = im.descriptors(0, 0)
+            for i in lin:
+                slow = im.layouts[im.keys[i][1]].slow
+                assert "wab" in slow and ("wh" in slow) == (not grouped)
+                for n in slow:
+                    q = getattr(m.layer(i), n)
+                    assert Affine.of(q.scale).static() < 1 << 32 <= Affine.of(q.data).static()
+        got[name] = np.array([eng.step(t) for t in toks])
+    assert np.array_equal(got["low"].view(np.uint32), got["bhw"].view(np.uint32))
+
+
+def test_a_sum_from_minus_zero_is_the_rows_sum_bit_for_bit():
+    """moe_ffn's resident loop adds each expert's weighted output into a row filled with -0
+    (the offload path sums y's rows, y0 + y1 + ...): on the ISA simulator -0 + y0 is y0's bits,
+    so the sum is the rows' bit for bit, a column of -0s included (from +0 it would be +0)."""
+    from opentpu import Config
+    from opentpu import language as ol
+    from opentpu.runtime import Input, Output, launch
+
+    @ol.jit
+    def k(y, s, z):
+        a, b = ol.full((1, 128), -0.0), ol.zeros((1, 128))
+        for i in ol.static_range(4):
+            r = ol.load(y[i:i + 1, :])
+            a.set(a + r)
+            b.set(b + r)
+        ol.store(s, a)
+        ol.store(z, b)
+
+    rng = np.random.default_rng(5)
+    y = rng.choice(np.float32([-0.0, 0.0, 1.5, -1.5, 2.0 ** -126, -2.0 ** -126, 1e30, -1e30]),
+                   (4, 128))
+    y[:, 0], y[:, 1] = -0.0, [-0.0, 0.0, -0.0, -0.0]
+    r = launch(k, Config(), y=Input(y.astype(np.float32)), s=Output((1, 128)),
+               z=Output((1, 128)))
+    want = y[0]
+    for i in range(1, 4):
+        want = (want + y[i]).astype(np.float32)
+    got = r.outputs["s"].astype(np.float32).reshape(-1)
+    assert np.array_equal(got.view(np.uint32), want.view(np.uint32))
+    assert np.signbit(got[0]) and not np.signbit(r.outputs["z"].reshape(-1)[0])
+
+
+@pytest.mark.parametrize("resident", [False, True])
+def test_a_resident_pool_below_4gib_is_the_streamed_path_bit_for_bit(tiny, resident,
+                                                                     monkeypatch):
+    """OTPU_POOL=1: the resident pool with the weights below 4 GiB (the board model's runs of a
+    cut take the full model's resident path; its DIMM model holds no image above 4 GiB): expert
+    g at the pool's base + g x its bytes, below HIGH, no directory, no server. Its logits are
+    the offload path's bit for bit, per position and in the resident decode loop; without the
+    knob the image is the offload path's, as before."""
+    from opentpu import target as T
+    _, W, spec = tiny
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    toks = [int(t) for t in np.random.default_rng(2).integers(0, 1000, 6)]
+    monkeypatch.setenv("OTPU_HIGH", "0")
+    got = {}
+    for pool in ("", "1"):
+        monkeypatch.setenv("OTPU_POOL", pool)
+        eng = Engine(spec, W, cap=256, cfg=cfg, resident=resident)
+        im = eng.image
+        assert not im.high and (im.pool is None) == (pool == "") == (eng.server is not None)
+        if pool:
+            assert im.pool.base + im.pool.experts * im.pool.ebytes <= im.nbytes < 1 << 32
+            assert im.pool.experts == len(KINDS) * E
+        got[pool] = np.array([eng.step(t) for t in toks])
+    assert np.array_equal(got[""].view(np.uint32), got["1"].view(np.uint32))
+
+
+def test_a_resident_pool_streams_the_shared_experts_mms_while_it_routes():
+    """With a resident pool the shared expert's gate and up MMs (they need only the normed
+    input) are issued right after the router's MM, before its ARGMAX loop, so DRAM streams them
+    while the VPU routes (moe.moe_ffn / moe_ffn_rows: swiglu_down's each(0)); with the server's
+    slots (low) they come after the request, as before. In the decode step and in layer runs of
+    1 and 4 rows. (The logits stay the low image's bit for bit: the test above.)"""
+    from opentpu import isa as I
+    from opentpu import target as T
+    spec = Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, F, 1000, lin_kheads=8,
+                moe=MoESpec(E=E, k=K, ffn=F, rule="softmax", shared=F))
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+
+    def between(prog):
+        """MMs between each routing's router MM (E + 1 rows) and its first ARGMAX."""
+        out, n = [], None
+        for x in prog:
+            if x.op == I.MM:
+                n = 0 if f". {E + 1}x" in x.comment else None if n is None else n + 1
+            elif x.op == I.VOP and x.comment == "moe: best" and n is not None:
+                out.append(n)
+                n = None
+        return out
+    for high, want in ((True, 2), (False, 0)):      # (F 256 at fp4: one chunk, its gate and up)
+        im = spec.image(cfg, 256, 1, 1, wformat="fp4", lookup=True, prefill_rows=8, high=high)
+        assert (im.pool is not None) == high
+        for progs in (im.compile_step(5), im.compile_layer_run(1, 1, R=1)[0],
+                      im.compile_layer_run(3, 1, R=4)[0]):
+            got = between(progs[0])
+            assert got and set(got) == {want}, (high, got)
+
+
+def test_a_resident_pool_queues_the_windows_beside_its_experts():
+    """The DSTEP decode's taps and windows a layer ahead (qwen35._CvPipe) in a MoE layer: with a
+    resident pool the layer's window stores and the next DeltaNet layer's loads are queued in
+    parts, one after each of the first routed experts' MMs (moe_ffn's spread: those stream from
+    the pool and the DMA is idle; queued whole before them they filled the sequencer's window),
+    none before the first, so the router's gain load no longer waits for them; with the server's
+    slots (low) they are queued before the FFN, as before. (The logits stay the low image's bit
+    for bit: test_a_resident_pool_above_4gib_is_the_streamed_path_bit_for_bit.)"""
+    from opentpu import isa as I
+    from opentpu import target as T
+    spec = Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, F, 1000, lin_kheads=8,
+                moe=MoESpec(E=E, k=K, ffn=F, rule="softmax", shared=F))
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    for high in (True, False):
+        im = spec.image(cfg, 256, 1, 1, wformat="fp4", lookup=True, high=high)
+        assert im.cv_pre and (im.pool is not None) == high
+        (prog,), _ = im.compile_decode(1, 3)
+        fns = [[f[2] for f in x.src] for x in prog]
+        pipe = [i for i, f in enumerate(fns) if "_emit" in f or "share" in f]
+        groups = [g for g in np.split(pipe, np.flatnonzero(np.diff(pipe) > 1) + 1)]
+        # (the loop's unit: two DeltaNet layers; with the pool a part after each of their K
+        # routed experts)
+        assert len(groups) == 2 * (K if high else 1), (high, len(groups))
+        mms = [i for i, x in enumerate(prog) if x.op == I.MM]
+        assert {prog[i].op for i in pipe} == {I.ST, I.LD}
+        for g in groups:
+            before = fns[max(i for i in mms if i < g[0])]
+            after = fns[min(i for i in mms if i > g[-1])]
+            if high:                    # (a routed expert's MM: none before the first)
+                assert "expert" in before
+            else:                       # (out_proj's last MM, the router's)
+                assert "_out_proj" in before and "moe_ffn" in after and "swiglu_down" not in after
+
+
+def test_a_resident_pools_minus_zero_fill_runs_under_the_routers_mm():
+    """moe_ffn's resident loop sums the experts into a row filled with -0. The FILL is emitted
+    before the router's MM (the VPU waits for the logits there): after the routing it sat in
+    the VPU's order before the first expert's place, and behind the pipe's LDs beside the
+    experts (qwen35._CvPipe) on TMEM's write port, where the DMA comes first."""
+    from opentpu import isa as I
+    from opentpu import target as T
+    spec = Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, F, 1000, lin_kheads=8,
+                moe=MoESpec(E=E, k=K, ffn=F, rule="softmax", shared=F))
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    im = spec.image(cfg, 256, 1, 1, wformat="fp4", lookup=True, high=True)
+    assert im.pool is not None
+    (prog,), _ = im.compile_decode(1, 3)
+    fns = [[f[2] for f in x.src] for x in prog]
+    fills = [i for i, x in enumerate(prog) if x.op == I.VOP and "moe_ffn" in fns[i]
+             and (x.w[5] >> 16) & 0xFF == I.V_FILL and x.w[6] == 0x80000000]
+    mms = [i for i, x in enumerate(prog) if x.op == I.MM]
+    routers = [i for i in mms if fns[i][0] == "moe_ffn"]
+    assert fills and len(fills) == len(routers)
+    for f, r in zip(fills, routers):    # (no MM, ST or LD between the FILL and the router's MM)
+        assert f < r and not any(prog[i].op in (I.MM, I.ST, I.LD) for i in range(f + 1, r))
+
+
+def test_a_resident_experts_place_is_bounded_by_its_pool():
+    """The resident pool's RLD MUL (id x expert bytes: past 32 bits above 4 GiB) carries the
+    pool's bound ({w5, w3} .. {w6, w4}: isa.rld), so the waits pass takes the expert's place as
+    one in the pool, above the run-time parts: no wait is stricter than without the bound (as
+    before: any address), every expert MM waits for less (none of the DMA's older work), and so
+    do the stores after them (the next layer's DSTEPs, STs and QSTs had waited for the expert
+    MMs). In the decode step and a layer run of 4 rows."""
+    from opentpu import isa as I
+    from opentpu import target as T
+    from opentpu import waits as WT
+    spec = Spec(256, KINDS, 8, 2, 256, 64, 8, 128, 128, F, 1000, lin_kheads=8,
+                moe=MoESpec(E=E, k=K, ffn=F, rule="softmax", shared=F))
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    im = spec.image(cfg, 256, 1, 1, wformat="fp4", lookup=True, prefill_rows=8, high=True)
+    P = im.pool
+
+    def looser(x, y):               # (a count 0: no wait; k: for the k-th last of its unit)
+        return all(cx == 0 or 0 < cy <= cx for cx, cy in zip(WT.counts(x), WT.counts(y))) \
+            and not WT.vmask(x) & ~WT.vmask(y)
+    for prog, per in ((im.compile_step(5)[0], 2), (im.compile_layer_run(3, 1, R=4)[0][0], 1)):
+        pcs = [pc for pc, x in enumerate(prog) if x.op == I.RLD and x.flags & I.F_MUL]
+        assert pcs and all(prog[pc].flags & I.F_BOUND for pc in pcs)
+        assert {(prog[pc].w[2] | prog[pc].w[4] << 32, prog[pc].w[3] | prog[pc].w[5] << 32)
+                for pc in pcs} == {(0, (P.experts - 1) * P.ebytes)} and P.base >= 1 << 32
+        loose = [replace(x, flags=x.flags & ~I.F_BOUND) if pc in pcs else x
+                 for pc, x in enumerate(prog)]
+        a, b = (WT.wait_counts(p, cfg.D, 1, run_args=prog.run_args, aw=cfg.AW)
+                for p in (prog, loose))
+        assert all(looser(x, y) for x, y in zip(a, b))
+        less = [prog[pc].op for pc in range(len(prog)) if a[pc] != b[pc]]
+        # (gate, up, down at least, in each expert loop: moe_ffn reads the first expert's
+        # place before its loop and the next one's at the end of its body, moe_ffn_rows
+        # each in its body)
+        assert len(pcs) % per == 0 and less.count(I.MM) >= 3 * len(pcs) // per, less
+        assert {I.ST, I.MM} <= set(less), less
+
+
+def test_a_resident_pool_quantizes_its_experts_in_the_batchs_workers(tiny, monkeypatch):
+    """The resident pool's experts' matrices go through a qcache.Batch, in worker processes (in
+    one process an expert of Qwen3.5-35B-A3B's shapes took 0.68 s on a laptop, 116 minutes for
+    its 10,240; in a Batch of 4, 0.16 s): every expert's bytes in DRAM are its pack()'s (the
+    server's), with the channel hash at its address, as before; the matrices quantized in two
+    workers (INLINE 0, the cache off)."""
+    from opentpu import qcache as QC
+    from opentpu import target as T
+    from opentpu.quant import hash_rows
+    _, W, spec = tiny
+    monkeypatch.setenv("OTPU_HIGH", "1")
+    monkeypatch.setenv("OTPU_IMAGE_CACHE", "0")
+    monkeypatch.setenv("OTPU_BUILD_JOBS", "2")
+    monkeypatch.setattr(QC, "INLINE", 0)
+    sent = []
+    submit = QC._Rows.__init__
+
+    def rows(self, n, done, f):
+        sent.append(n)
+        submit(self, n, done, f)
+    monkeypatch.setattr(QC._Rows, "__init__", rows)
+    eng = Engine(spec, W, cap=256, cfg=T.config("bcu1525-wg", DRAM_BYTES=1 << 33))
+    im, dram = eng.image, eng.backend.machine.slices[0].dram
+    P, (wg, D, own) = im.pool, im.slot_lanes
+    assert P.experts == len(KINDS) * E and len(sent) >= 3 * P.experts
+    for g in range(P.experts):
+        at, want = P.base + g * P.ebytes, im.expert(W, g)
+        for o, n in own:
+            want[o:o + n] = hash_rows(want[o:o + n], at + o, wg, D)
+        assert np.array_equal(dram[at:at + P.ebytes], want), g
+
+
 def _untied(tiny):
     """The tiny model with an LM head of its own: its int8 embedding table is the image's own
     (a tied int8 head's rows are gathered from the head)."""
@@ -202,6 +483,34 @@ def test_the_embedding_table_on_the_host(tiny):
     tied = Engine(replace(s1, embed="int8"), W1, cap=512, cfg=cfg, rows=1, resident=True,
                   experts=K)
     assert not tied.image.embed_host and tied.row_server is None
+
+
+def test_a_resident_pool_keeps_the_table_on_the_card(tiny, monkeypatch):
+    """With every expert resident (bcu1525-wg's pool after the head above HIGH, the 35B's image)
+    the int8 embedding table of its own stays on the card by default, as a dense model's: no
+    row server, the generate loop gathers each token's row itself. Prefill's logits, the
+    generate loop's tokens and the resident steps' logits are the table on the host's bit for
+    bit."""
+    from opentpu import target as T
+    spec, W = _untied(tiny)
+    monkeypatch.setenv("OTPU_HIGH", "1")            # (the 35B's: by fit)
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    a, b = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, **kw)
+            for kw in ({}, {"embed_host": True}))
+    assert a.image.high and a.image.pool is not None and a.image.offload is None
+    assert a.server is None
+    assert not a.image.embed_host and a.row_server is None and "mbox" not in a.image.lookup
+    assert b.image.embed_host and b.row_server is not None
+    assert a.image.low_end - b.image.low_end >= spec.vocab * spec.hidden     # (below HIGH)
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 12)]
+    la, lb = a.prefill(toks), b.prefill(toks)
+    assert np.array_equal(la.view(np.uint32), lb.view(np.uint32))
+    t0 = int(np.argmax(la))
+    got = a.generate_card(t0, 8, stop_ids=[])
+    assert got == b.generate_card(t0, 8, stop_ids=[]) and b.row_server.seq >= 7
+    assert len(set(got)) > 2                        # (the tokens vary)
+    for t in got[-3:]:
+        assert np.array_equal(a.step(t).view(np.uint32), b.step(t).view(np.uint32))
 
 
 def test_the_live_card_asks_the_host_for_experts_and_embedding_rows(tiny, tmp_path):
@@ -284,6 +593,47 @@ def test_moe_on_board_model(tiny, have_verilator):
     t0 = int(np.argmax(a))
     assert brd.generate_card(t0, 4, stop_ids=[]) == isa.generate_card(t0, 4, stop_ids=[])
     assert isa.server.misses == 0 and brd.stats[-1]["cycles"] > 0
+
+
+@pytest.mark.parametrize("embed_host", [True, False])
+def test_generate_ahead_gives_the_steps_tokens(monkeypatch, embed_host):
+    """The generate loop's ahead (qwen35._loop_ahead: the gather's operand held in ACT RAM, the
+    first DeltaNet layer's taps and windows loaded in each token's LM head for the next) on a
+    Qwen3.6-style MoE of 16 DeltaNet value heads, a key head a pair (the 35B's), an LM head of
+    its own and the int8 table on the host (embed_host: the row server feeds the loop) or on
+    the card (the loop's gather), on bcu1525-wg's arch (cv_pre, every expert resident): two
+    runs' tokens are the host's resident steps', and the loop's DRAM after them is the loop's
+    without the ahead bit for bit (the last token's loads write nothing)."""
+    from opentpu import isa as I
+    from opentpu import target as T
+    from opentpu.llm import qwen35 as Q35
+    _, W, spec = _tiny(nk=8, nv=16)
+    W = dict(W, **{"lm_head.weight": W["model.embed_tokens.weight"] * np.float32(1.25)})
+    spec = replace(spec, tied=False, embed="int8", cv_ahead=True, cv_pre=True)
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 27)
+    a, b, c = (Engine(spec, W, cap=512, cfg=cfg, rows=1, resident=True, embed_host=embed_host)
+               for _ in range(3))
+    assert a.image.cv_pre and a.image.embed_host == embed_host and a.can_generate
+    toks = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 12)]
+    t0 = int(np.argmax(a.prefill(toks)))
+    assert int(np.argmax(b.prefill(toks))) == t0
+    ref, t = [], t0
+    for _ in range(12):
+        t = int(np.argmax(b.step(t)))
+        ref.append(t)
+    assert len(set(ref)) > 6                        # the tokens vary
+    assert a.generate_card(t0, 8, stop_ids=[]) + a.generate_card(ref[7], 4, stop_ids=[]) == ref
+    for progs in a._gens.values():  # (the ahead's: the operand's QACT and the pipe's loads)
+        lo = next(i for i, x in enumerate(progs[0]) if x.op == I.LOOP)
+        ops = [x.op for x in progs[0][:lo]]
+        assert ops.count(I.QACT) == 1 and ops.count(I.LD) == 1 + spec.lin_heads // 2
+    with monkeypatch.context() as mp:
+        mp.delattr(Q35.qwen35_step, "ahead")
+        c.prefill(toks)
+        assert c.generate_card(t0, 8, stop_ids=[]) + c.generate_card(ref[7], 4, stop_ids=[]) \
+            == ref
+    assert all(np.array_equal(x.dram, y.dram)
+               for x, y in zip(a.backend.machine.slices, c.backend.machine.slices))
 
 
 @pytest.mark.parametrize("wformat,R,b,real,embed_runs", [
@@ -1112,6 +1462,24 @@ def test_em_pass_rows_from_the_configuration(kw, wf, C, S):
     cfg = Config(**kw)
     assert MO.em_pass_rows(cfg, wf) == C and MO.em_short_rows(cfg, wf, C) == S
     assert MO.em_pass_order(cfg, wf)[0] == C and len(MO.em_pass_order(cfg, wf)) == cfg.act_rows
+
+
+def test_em_scratch_keeps_the_expert_runs_experts_past_the_records():
+    """moe.em_scratch: the image's prefill rows' records at any first chunk when the slots past
+    them are the expert runs' (moe.em_expert_slots: the pipelined passes' slot bound) and leave
+    the needs room (3 E), so the server never lands a run's expert in a slot its stores may
+    write; else the chunk's rows' (and the runs' bound every slot)."""
+    from types import SimpleNamespace
+
+    from opentpu.llm import moe as MO
+    sl = [5000 + 1000 * i for i in range(40)]
+    L = SimpleNamespace(pitch=1000, E=1, all_slots=lambda: sl)
+    assert MO.em_expert_slots(L, 512 * 70, (5000, 45000)) == (41000, 45000)    # 36 + 4 slots
+    assert MO.em_scratch(L, 7, 512, 70) == 512 * 70
+    assert MO.em_slots(L, MO.em_scratch(L, 7, 512, 70))[-1] < 41000
+    L2 = SimpleNamespace(pitch=1000, E=2, all_slots=lambda: sl)                 # 4 < 3 E
+    assert MO.em_expert_slots(L2, 512 * 70, (5000, 45000)) is None
+    assert MO.em_scratch(L2, 7, 512, 70) == 7 * 70
 
 
 @pytest.mark.parametrize("R,skew,wformat,b,C", [

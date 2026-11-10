@@ -161,6 +161,29 @@ def test_expert_major_is_the_layer_major_prompts_default(ckpt, formats):
         assert em(em_rows=9) == em(expert_major=True, em_rows=9) == (True, ST.NEED_PART, 9)
 
 
+def test_a_streamed_engine_above_4gib_holds_every_expert(tmp_path, monkeypatch):
+    """streamed.engine at AW 36 (bcu1525-wg) with the DRAM room for every expert and the
+    weights from 4 GiB on (OTPU_HIGH=1): the image's resident pool, no pool file, no server,
+    no expert-major runs; its layer-major prompt and decode steps give the low image's
+    (OTPU_HIGH=0: the server's slots, every expert) logits bit for bit."""
+    from opentpu import target as T
+    d = _checkpoint("qwen35", tmp_path / "model")
+    cfg = T.config("bcu1525-wg", DRAM_BYTES=1 << 33)
+    ids = [int(t) for t in np.random.default_rng(6).integers(10, 1000, 7)]
+    got = {}
+    for high in ("1", "0"):
+        monkeypatch.setenv("OTPU_HIGH", high)
+        eng = ST.engine(d, cfg, "isa", 256, None, wformat="fp4", head_format="int8")
+        if high == "1":
+            assert eng.image.pool is not None and eng.server is None and not eng.expert_major
+            assert eng.layer_major and eng.pool_path is None
+            assert ST.describe(eng).startswith("every one of 48 experts resident from 4 GiB")
+        else:
+            assert eng.image.pool is None and eng.server is not None
+        got[high] = np.vstack([eng.prefill(ids)[None]] + [eng.step(t)[None] for t in (5, 6)])
+    assert np.array_equal(got["1"].view(np.uint32), got["0"].view(np.uint32))
+
+
 @pytest.mark.parametrize("fam", ["qwen35", "gemma4"])
 def test_expert_major_rows_by_family(fam):
     """EM_ROWS (docs/offload.md 13.16): the least new rows a call of the family's prompt runs
