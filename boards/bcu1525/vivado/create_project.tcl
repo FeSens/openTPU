@@ -1,5 +1,6 @@
 # Create the Vivado project for openTPU on the BCU1525 (xcvu9p-fsgd2104-2L-e; docs/bcu1525.md): the
-# four DDR4 channels' LiteDRAM cores (boards/bcu1525/litedram/otpu_ld4.v, one instance per channel),
+# four DDR4 channels' LiteDRAM cores (boards/bcu1525/litedram_udimm/otpu_ld4.v or, OTPU_DIMM rdimm,
+# litedram/otpu_ld4.v: one instance per channel),
 # the block design (bd.tcl: XDMA Gen3, the core clock, the SYSMON) and the board top
 # (rtl/boards/bcu1525/otpu_fpga_top_bcu.sv: S slices, two DDR4 channels each).
 #   vivado -mode batch -source create_project.tcl -tclargs OUT_DIR MCOLS CORE_MHZ BUILD_ID VPU_CL \
@@ -7,7 +8,9 @@
 # (run_vivado.sh takes them from the target, targets/bcu1525.toml; the RTL list below is
 # opentpu.target sources("bcu1525"): tests/test_target.py)
 # Environment: PCIE_LANES (bd.tcl), OTPU_FAST (development strategies), OTPU_IP_CACHE, OTPU_PART
-# (another part, for scripts/synth_check.tcl: without the VU9P's pin constraints).
+# (another part, for scripts/synth_check.tcl: without the VU9P's pin constraints), OTPU_DIMM (the
+# DIMMs: udimm, the default, x8 UDIMMs without ECC, the lab card's GOODRAM GR2400D464L17S/8G;
+# rdimm, the card's original x4 RDIMMs with ECC, MTA18ASF2G72PZ: the top's OTPU_BCU_RDIMM).
 # The VU9P needs a Vivado license that covers it (not the free tier) and the Virtex UltraScale+
 # device files installed.
 
@@ -35,7 +38,7 @@ set PLATFORM [expr {[llength $argv] > 9 ? [lindex $argv 9] : 2}]
 set ARCH_HASH [hexarg 10]
 if {$ARCH_HASH eq ""} { set ARCH_HASH 0 }
 if {![regexp {^[0-9a-fA-F]{1,8}$} $ARCH_HASH]} { error "ARCH_HASH $ARCH_HASH: 1 to 8 hex digits" }
-set DDR_MTS [expr {[llength $argv] > 11 ? [lindex $argv 11] : 1600}]
+set DDR_MTS [expr {[llength $argv] > 11 ? [lindex $argv 11] : 1200}]
 # TMEM_IMPL, TMEM_X: the TMEM (the YPCB's vivado/tmem_knobs.tcl: 3 one copy, its knobs; CLK2X)
 set TMEM_IMPL [expr {[llength $argv] > 12 ? [lindex $argv 12] : 0}]
 set TMEM_X [expr {[llength $argv] > 13 ? [lindex $argv 13] : ""}]
@@ -51,7 +54,14 @@ if {![regexp {^[0-9a-fA-F]{1,8}$} $BUILD_ID]} { error "BUILD_ID $BUILD_ID: 1 to 
 # the core clock as bd.tcl makes it (1/8 steps of the MMCM's 1200 MHz VCO), for CORE_KHZ
 set VCO 1200
 set CORE_KHZ [expr {round($VCO * 1000.0 / (round(double($VCO) / $CORE_MHZ * 8) / 8.0))}]
-puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID, S $S, PLATFORM $PLATFORM, ARCH_HASH $ARCH_HASH, DDR4-$DDR_MTS"
+set DIMM [expr {[info exists ::env(OTPU_DIMM)] && $::env(OTPU_DIMM) ne "" ? $::env(OTPU_DIMM) : "udimm"}]
+# OTPU_FPGA_INIT: no memories' power-on reset (otpu_slice rst_mem; docs/asic.md "Power-up state")
+switch -- $DIMM {
+  udimm { set ld $root/boards/bcu1525/litedram_udimm; set defines {SYNTHESIS OTPU_FPGA_INIT} }
+  rdimm { set ld $root/boards/bcu1525/litedram; set defines {SYNTHESIS OTPU_FPGA_INIT OTPU_BCU_RDIMM} }
+  default { error "OTPU_DIMM $DIMM: udimm or rdimm" }
+}
+puts "CORE_KHZ $CORE_KHZ, BUILD_ID $BUILD_ID, S $S, PLATFORM $PLATFORM, ARCH_HASH $ARCH_HASH, DDR4-$DDR_MTS, $DIMM ([file tail $ld])"
 
 create_project -force otpu $out -part $PART
 if {[info exists ::env(OTPU_IP_CACHE)] && $::env(OTPU_IP_CACHE) ne ""} {
@@ -70,21 +80,23 @@ set rtl [list \
   rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_comp.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv \
   rtl/top/otpu_coll.sv rtl/top/otpu_slice.sv \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
-  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
+  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_xstg.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
   rtl/shell/otpu_axi_split2.sv rtl/boards/bcu1525/otpu_bcu_sys.sv \
+  rtl/boards/bcu1525/otpu_bmc_watch.sv rtl/boards/bcu1525/otpu_bmc_uart.sv \
+  rtl/boards/bcu1525/otpu_bcu_gov.sv \
+  rtl/boards/bcu1525/otpu_axil_off.sv rtl/boards/bcu1525/otpu_axi_off.sv \
   rtl/boards/bcu1525/otpu_fpga_top_bcu.sv]
 foreach f $rtl {
   add_files -norecurse $root/$f
   set_property file_type SystemVerilog [get_files $root/$f]
 }
-set ld $root/boards/bcu1525/litedram
 add_files -norecurse $ld/otpu_ld4.v
 foreach f [glob $ld/otpu_ld4_*.init] {
   add_files -norecurse $f
   set_property FILE_TYPE {Memory Initialization Files} [get_files $f]
 }
-set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
+set_property verilog_define $defines [get_filesets sources_1]
 
 # ---- block design
 source $here/bd.tcl   ;# CLK2X (tmem_knobs.tcl): core_clk2x
@@ -98,7 +110,11 @@ set_property generic "SEQ_WC=1'b$SEQ_WC S=$S MCOLS=$MCOLS ACT_ROWS=$ACT_ROWS VPU
 # ---- constraints: the pins (scripts/gen_pins.py), the top's clocks and crossings; each DDR4
 # core's own (LiteX's false paths, by names inside the core: scoped to otpu_ld4)
 set cons $root/boards/bcu1525/constraints
-set xdcs [glob $cons/*.xdc]
+# the DIMMs' pins: this DIMM's (ddr4_c<d>.udimm.pins.xdc or ddr4_c<d>.pins.xdc), not the other's
+set xdcs [lsearch -all -inline -not [glob $cons/*.xdc] $cons/ddr4_c*.pins.xdc]
+foreach d {0 1 2 3} {
+  lappend xdcs $cons/ddr4_c$d[expr {$DIMM eq "udimm" ? ".udimm" : ""}].pins.xdc
+}
 if {$PART ne $VU9P} {                     ;# another package: the VU9P's pins do not exist there
   set xdcs [lsearch -all -inline -not $xdcs *pins.xdc]
   # but the clocks (and the PERST false path) stay: the top's and the IPs' timing constraints name them

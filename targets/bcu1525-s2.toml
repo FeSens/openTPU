@@ -1,0 +1,138 @@
+# The BCU1525 (VU9P, four DDR4-2400 UDIMMs) at two slices, a slice on each of two dies, each slice
+# bcu1525-wg's at WG 8 (P = 1 KiB a step on port W, 8 channels x 128 bytes) on two DIMMs
+# of its own: its 8 channels virtual, four a DIMM, interleaved at 4 KiB inside it (otpu_mig_pair NC
+# 4; otpu_bcu_wg_sys S 2: slice s's channel j is board channel 8 s + j, DIMM slot (8 s + j) / 4, the
+# slots on the DIMMs by the floorplan's DMAP). A slice's 16 GiB is its two 8 GB DIMMs, a channel
+# 2 GiB. Each slice reads 2 x 19.2 = 38.4 GB/s at peak against its bridges' 76.8 (8 x 256 bits at
+# 300 MHz) and its MXU's port W's 153.6 at 150 MHz: two to four times the headroom of one slice on
+# all four DIMMs (docs/bcu1525_s2.md). The collective (GATHER) runs through the
+# pipelined hub (otpu_coll_hub, COLL_PIPE) beside the control block, a die from each slice.
+# Floorplans (boards/bcu1525/scripts/bcu_fp.py: the slices' SLRs, DMAP, RLY): a, b, c.
+# Built and run on the card at 150 MHz (its :st16 variant: docs/bcu1525_s2.md).
+
+[target]
+name = "bcu1525-s2"
+kind = "fpga"
+platform_id = 6
+description = "BCU1525 at WG 8, two slices: xcvu9p, 4 x DDR4-2400 UDIMM (MIG), XDMA Gen3; 2 slices x 8 channels, 2 DIMMs a slice"
+
+[arch]
+S = 2                           # a slice a die, two DIMMs each
+D = 128
+MCOLS = 8                       # 8 physical MXU columns, 8 weight rows a step (WG 8)
+WG = 8
+ACT_BLOCKS = 128
+ACT_ROWS = 16
+TMEM_WORDS = 131072
+IMEM_WORDS = 32768
+AW = 36                         # DRAM addresses of 36 bits (Phase A,
+#                                 docs/bcu1525_wg.md): 64 GB later at the same AW
+DRAM_BYTES = 17179869184        # 16 GiB a slice: its 8 channels' 2 GiB, all of its two 8 GB DIMMs
+#                                 (64 GB DIMMs: 34359738368, channel_bytes 4294967296)
+BHW = 33                        # the bank-half window (otpu_mig_pair BHW 30 at four channels a
+#                                 DIMM): the slice's first 8 GiB, what a decode writes in its lower
+#                                 4 GiB on the banks with the DIMMs' bank-high bit 0, the DeltaNet
+#                                 mixers' weights in its upper 4 on the others, every other weight
+#                                 and a resident pool from 8 GiB (bcu1525-wg:bhw's; one bitstream
+#                                 for every model: no S = 2 build without it)
+LANES = 8
+PAIR = false                    # WG > 1: every MM in groups (GALL)
+DSTEP = true
+STREAM = true
+SEQ_WC = true
+OUTER = false                   # DeltaNet runs DSTEP, no VOP OUTER
+DSTEP2 = true
+SEXACT = true                   # S = 1's DeltaNet head groups and dense MLP chunks over the slices:
+#                                 the S = 2 programs give S = 1's results bit for bit, one reference
+#                                 set (qwen35.s_exact_on; a compile choice, not in the CFG_HASH)
+KT = true                       # MM's K tail (CAPS2 bit5, docs/isa.md "K tail"): GPT-OSS's
+#                                 2880-wide K at S = 2 too; one bitstream for every model (the
+#                                 other models' programs are KT off's word for word)
+
+[uarch]
+MXU_IMPL = 2
+MXU_CL = 16
+MXU_E = 8
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 3                   # one copy, the card m8's pick too
+TMEM_NSB = 2
+TMEM_RPL = true
+TMEM_TDP = true
+TMEM_GST = true
+TMEM_PMP = 1                    # pumped at 2x (core_clk2x: 300 MHz at 150, the bridges' aclk)
+TMEM_STYLE = "ultra"
+IMEM_STYLE = "block"
+IMEM_WC_STYLE = "ultra"
+ACT_UCOLS = 0
+MXU_RF_STYLE = "distributed"
+RPB = 0
+WPB = 1
+WIN = 32                        # (SEQ_WC: Config.WC_WIN 32, the entries' counts saturate at 15)
+FIFO_DEPTH = 2048               # the MXU's chunk FIFO, its lanes in UltraRAM
+MXU_FIFO_STYLE = "ultra"
+MXU_QD = 4
+QUANT_R1 = true
+QUANT_PW = 2
+TRACE_DEPTH = 16384             # the VU9P has room for the trace buffer
+PQ_WIN = 1024
+CHASH = true
+NAT_APF = 8
+NAT_AD = 16
+NAT_RD = 16
+NAT_WPOST = true
+NAT_SWG = true
+NAT_FILL = false                # the MIG takes WSTRB (DM_NO_DBI: the DIMMs' DM pins)
+NAT_XPOST = true
+NAT_RHB = true
+NAT_XSTG = 2                    # the adapters beside the slice (SLR1); the channels' AXI halves
+NAT_XSTG_P = 2                  #   go to their DIMMs' SLRs inside the bridges (otpu_hbm_ch N)
+SE_R = 2                        # two row groups on the stream engine (f150s2, f150s2d on the card)
+DMA_DEPTH = 512                 # a DSTEP's read-ahead: 29 BRAM18 at any depth up to 512 (f150s2d)
+COLL_PIPE = true                # the collective hub's reads in flight, the round trip's (otpu_coll_hub
+#                                 NR: a GATHER at LANES words a cycle, where one read in flight
+#                                 took 16 + 1.125 cycles a word on a two-slice build, 2026-10-24)
+XRS = 2                         # register stages each way between a slice and the control block / the
+#                                 hub: one each side of the crossing (each slice a die from them)
+
+[tech]
+family = "xilinxus"
+part = "xcvu9p-fsgd2104-2L-e"
+vendor = "xilinx"
+
+[platform]
+board = "bcu1525-wg"
+core_mhz = 100.0                # development builds first
+mem = "ddr4"
+mem_mts = 2400
+mem_ctrl = "mig"                # AMD's DDR4 IP, AXI4 512 bits at 300 MHz a DIMM
+hostcal = false
+channels_per_slice = 8
+channel_bytes = 2147483648      # a virtual channel, a quarter DIMM: the host's DMA reaches board
+                                # channel g = 8 s + j at g x this; DIMM slot g >> 2's DIMM at its
+                                # byte {off[30:12], g & 3, off[11:0]}
+beat_bytes = 128
+host = "pcie"
+pcie_gen = 3
+pcie_lanes = 16
+# The co-simulation's channel model per virtual channel: a quarter DIMM's 19.2 GB/s at 95% (page
+# misses, turnarounds), DDR4 8 Gb refresh (tRFC 350 ns every tREFI 7.8 us) on top, ~250 ns from
+# the bridge's command to its data (the MIG, the crossings). Estimates (the board model,
+# tb_bcuwg at S 2, is the judge).
+sim_ch_gbps = 4.56
+sim_lat_ns = 250
+sim_refi_ns = 7800
+sim_rfc_ns = 350
+
+# MM's K tail (docs/weight_groups.md): otpu_mxu KT, the compiler's paired
+# operands where K ends in the middle of a block (GPT-OSS's hidden 2880; at S = 2 W_gate's and
+# W_up's K, W_down's last part's 64 of 128, as at S = 1). The target's default; kt is its alias
+# (bcu1525-s2:kt, the name today's runs used)
+[variants.kt]
+KT = true
+
+# st16: the DeltaNet states in 16 bits (Config.ST16 "e6m9"; bcu1525-wg:bhw16's, docs/isa.md
+# "ST16"): the images with Spec.state16 read and write their DSTEP states in e6m9, fp32 in the
+# engine. CAPS2 bits 14:13; CFG_HASH has it (the target's stays)
+[variants.st16]
+ST16 = "e6m9"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The card's BPI flash over JTAG with the Vivado hardware manager (docs/flash.md, "Over JTAG").
-# Run it on the PC with the JTAG cable (opentpu: native Vivado 2026.1), with no program using
+# Run it on the PC with the JTAG cable (the card host: native Vivado 2026.1), with no program using
 # the card:
 #
 #   ./flash_jtag.sh detect              the JTAG chain and the FPGA's configuration registers
@@ -118,5 +118,5 @@ case $mode in
     echo "the FPGA runs Vivado's flash programming core now: load a bitstream (program.sh) or"
     echo "boot from the flash (./flash_jtag.sh boot), then: sudo otpu-setup --rescan" ;;
   boot)
-    echo "configuring from the flash: sudo otpu-setup --rescan (or sudo -n otpu-rescan on opentpu)" ;;
+    echo "configuring from the flash: sudo otpu-setup --rescan (or sudo -n otpu-rescan where it is installed)" ;;
 esac

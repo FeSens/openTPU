@@ -1,0 +1,109 @@
+#!/bin/bash
+# otpu-chat on a BCU1525 (--card 0, the default, or 1: BCU_ENV's cards, otpu-chat35's header): brings the card up under the guard (wg_bringup up: the trips, the four
+# DIMMs, the accelerator; RUN held), chats (opentpu.host.chat --backend board, default --model qwen35-2b),
+# and puts the card back in SAFE when the chat ends. Options go to the chat (otpu-chat --help: its own).
+#   otpu-chat                      # Qwen3.5-2B, the full-screen chat
+#   otpu-chat --model gemma4       # Gemma 4 E2B (instruct)
+#   otpu-chat --prompt "Hi"        # one question, plain output
+#   otpu-chat --card 1             # the second card (its xdma device found by its PCI function)
+#   otpu-chat --model qwen36-35b   # Qwen3.6-35B-A3B, its whole context: on both cards (otpu-chat35x2) when they hold the
+#                                  # two-card image (cardimg/x2/IMAGE says so, or --card x2), else on one (otpu-chat35: BCU_CARD's)
+set -u
+[ -f "${BCU_ENV:=$HOME/.config/otpu/bcu.env}" ] && . "$BCU_ENV"
+BB=${BCU_BUILD:-$HOME/otpu-build}; PY=${BCU_PY:-$(command -v python3)}
+# Qwen3.6-35B-A3B: otpu-chat35x2 (both cards, the two-card image) or otpu-chat35 (one card); the other options go to it
+m35=0; rest=(); card35=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --model) case ${2:-} in qwen36-35b|qwen36-35b-a3b|Qwen3.6-35B-A3B) m35=1; shift 2; continue ;; esac ;;
+    --card) card35=${2:-}; rest+=("$1" "${2:-}"); shift 2; continue ;;
+  esac
+  rest+=("$1"); shift
+done
+if [ $m35 = 1 ]; then
+  if [ -z "$card35" ]; then card35=one; [ -f "$BB/cardimg/x2/IMAGE" ] && card35=x2; fi
+  case $card35 in
+    one|x2) ;;
+    0|1) export BCU_CARD=$card35 ;;
+    *) echo "otpu-chat: Qwen3.6-35B-A3B runs on one card (--card 0 or 1) or on both (--card x2: the two-card image)"; exit 2 ;;
+  esac
+  args=(); skip=0
+  for x in ${rest[@]+"${rest[@]}"}; do
+    if [ $skip = 1 ]; then skip=0; continue; fi
+    [ "$x" = --card ] && { skip=1; continue; }
+    args+=("$x")
+  done
+  # (${a[@]+...}: bash before 4.4 takes an empty array as unbound under set -u)
+  [ "$card35" = x2 ] && exec "$BB/bin/otpu-chat35x2" ${args[@]+"${args[@]}"}
+  exec "$BB/bin/otpu-chat35" ${args[@]+"${args[@]}"}
+fi
+set -- ${rest[@]+"${rest[@]}"}
+card=0
+if [ "${1:-}" = "--card" ]; then card=${2:-}; shift 2; fi
+case $card in
+  0|1) ;;
+  *) echo "otpu-chat: --card 0 or 1"; exit 2 ;;
+esac
+s=BCU_CARD${card}_SERIAL; b=BCU_CARD${card}_BDF; n=BCU_CARD${card}_NAME
+S=${!s:-}; BDF=${!b:-}; card=${!n:-card$card}
+[ -n "$S" ] && [ -n "$BDF" ] || { echo "otpu-chat: $s and $b are not set (BCU_ENV: $BCU_ENV)"; exit 2; }
+T=$BB/bcu-wg/tree
+# "$PY" -c "$SETSID" CMD ARGS: CMD in a session of its own (no fork: $! stays its PID), out of the terminal's process
+# group: neither its Ctrl-C nor its hangup reaches it
+SETSID='import os, sys
+try:
+    os.setsid()
+except OSError:                 # (a process group leader already: not in the foreground group)
+    pass
+os.execv(sys.argv[1], sys.argv[1:])'
+case " $* " in *" -h "*|*" --help "*)
+  cd "$T" && PYTHONPATH=. OTPU_TARGET=bcu1525-wg exec "$PY" -m opentpu.host.chat --help ;; esac
+out=$BB/bcu-wg/runs/chat-$(date +%m%d-%H%M%S)
+cd "$T" || exit 2
+export PYTHONPATH=. OTPU_TARGET=bcu1525-wg
+u=$(ls /sys/bus/pci/devices/$BDF/xdma/ 2>/dev/null | grep "_user$" | head -1)
+[ -n "$u" ] || { echo "otpu-chat: no openTPU image on $card ($BDF)"; exit 1; }
+export DEV=/dev/${u%_user}
+if pgrep -af "[w]g_bringup.py up" | grep -qE -- "--serial $S|--dev $DEV( |$)"; then
+  echo "otpu-chat: another bring-up holds $card:"; pgrep -af "[w]g_bringup.py up"; exit 1
+fi
+mkdir -p "$out"
+"$PY" - <<'PYEOF' || exit 1
+import os
+from opentpu.host.board import XdmaTransport
+from opentpu.host import gov as G
+dev = os.environ["DEV"]
+g = G.Gov(XdmaTransport(dev, dma=False))
+if not g.present():
+    raise SystemExit(f"otpu-chat: no governor on {dev} (is the BCU image loaded?)")
+print(f"otpu-chat: die {g.status()['temp_c']:.1f} C")
+PYEOF
+echo "otpu-chat: bringing $card up on $DEV (about a minute; log $out/up.log)"
+# the bring-up in a session of its own: Ctrl-C in the chat must not end the hold under it, nor the terminal's hangup
+# (ignoring SIGINT is not enough: wg_bringup installs its own handler); it ends on bye's TERM, after the chat
+( exec "$PY" -c "$SETSID" "$PY" -u boards/bcu1525/scripts/wg_bringup.py up --out "$out" --mem none \
+    --serial $S --dev $DEV --no-selftest --hold 240 ) > "$out/up.log" 2>&1 &
+up=$!
+safe_line() {    # once the bring-up has exited: the governor's state after its SAFE (wg.json's status_safe)
+  if "$PY" - "$out/wg.json" <<'PYEOF'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1])).get("status_safe") or {}
+except (OSError, ValueError):
+    s = {}
+sys.exit(0 if s and not s.get("run") and not s.get("acc_on") else 1)
+PYEOF
+  then echo "otpu-chat: card back in SAFE ($out)"
+  else echo "otpu-chat: the bring-up has ended, but $out/wg.json does not say SAFE: check the card (otpu-smi)"
+  fi
+}
+bye() { kill -TERM "$up" 2>/dev/null; wait "$up" 2>/dev/null; safe_line; }
+trap bye EXIT
+trap 'exit 129' HUP             # (a hangup: after the chat has ended, as Ctrl-C's exit)
+until [ -f "$out/HOLDING" ]; do
+  if ! kill -0 "$up" 2>/dev/null; then echo "otpu-chat: the bring-up failed:"; tail -15 "$out/up.log"; exit 1; fi
+  sleep 1
+done
+echo "otpu-chat: card up (the first run of a model builds its image and programs: minutes)"
+case " $* " in *" --model "*) ;; *) set -- --model qwen35-2b "$@" ;; esac
+"$PY" -m opentpu.host.chat --backend board --dev $DEV "$@"

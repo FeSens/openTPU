@@ -36,6 +36,48 @@ if {[llength $c2x_pb]} {
   puts "otpu_clk2x.tcl: no pumped TMEM RAMs (otpu_pump_bank)"
 }
 
-# ---------------------------------------------------------------- the MX column's pumped DSPs
-# (none yet: a pumped MX column at MCOLS 8 brings its multicycle set here, as
-# rtl/exp/mx_mxu/ooc.tcl's for otpu_mx_x7)
+# ---------------------------------------------------------------- the MXU's pumped array
+# otpu_mxpc (rtl/mxu/otpu_mxu.sv; otpu_mxu PUMP 1, [uarch] MXU_PUMP): each position's DSP48E2
+# (otpu_ppe) on clk_f. Its weights' registers (A2 and D: CEA2 / CED = pe, high at the even fast
+# edges, the core edges) take the weight launched at a core edge at the next one: one core period
+# (2 fast, -end). The chain ends' holds (g_hold's hold0 and hold1e, loaded at the even edges) are
+# read at the next core edge: one core period to core_clk (2 fast, -start). Column 0's
+# activations (row 0's byte taken at the odd edge), the stream between columns and the AD / M / P
+# registers keep their one fast period, timed as such by default.
+set c2x_pc [get_cells -quiet -hierarchical -filter {ORIG_REF_NAME == otpu_mxpc || REF_NAME == otpu_mxpc}]
+if {[llength $c2x_pc]} {
+  set c2x_c0 [lindex $c2x_pc 0]
+  set c2x_ms [get_clocks -quiet -of_objects [get_pins -quiet $c2x_c0/clk]]
+  set c2x_mf [get_clocks -quiet -of_objects [get_pins -quiet $c2x_c0/clk_f]]
+  set c2x_ts [get_property -quiet -min PERIOD $c2x_ms]
+  set c2x_tf [get_property -quiet -min PERIOD $c2x_mf]
+  if {[llength $c2x_ms] != 1 || [llength $c2x_mf] != 1 || abs($c2x_ts - 2.0 * $c2x_tf) > 0.001} {
+    puts "CRITICAL WARNING: \[otpu_clk2x.tcl\] the pumped MXU's clocks are '$c2x_ms' ($c2x_ts ns) and '$c2x_mf' ($c2x_tf ns), expected one each, the second at twice the first: its weights and chain ends at one fast period"
+  } else {
+    # the DSPs under the columns (otpu_ppe's u_dsp), their A and D data pins (by regexp: in a
+    # -filter pattern [..] is a glob class)
+    set c2x_dsp [get_cells -quiet -hierarchical -filter {REF_NAME == DSP48E2 && NAME =~ *u_ppe/u_dsp}]
+    set c2x_wp {}
+    foreach c2x_p [get_pins -quiet -of_objects $c2x_dsp -filter {DIRECTION == IN && (REF_PIN_NAME =~ A* || REF_PIN_NAME =~ D*)}] {
+      if {[regexp {^(A|D)\[[0-9]+\]$} [get_property REF_PIN_NAME $c2x_p]]} { lappend c2x_wp $c2x_p }
+    }
+    set c2x_hc [get_cells -quiet -hierarchical -filter {IS_SEQUENTIAL && (NAME =~ *g_hold.hold0_reg* || NAME =~ *g_hold.hold1e_reg*)}]
+    if {[llength $c2x_wp]} {
+      set_multicycle_path 2 -setup -end -from $c2x_ms -to $c2x_wp
+      set_multicycle_path 1 -hold -end -from $c2x_ms -to $c2x_wp
+    }
+    if {[llength $c2x_hc]} {
+      set_multicycle_path 2 -setup -start -from $c2x_hc -to $c2x_ms
+      set_multicycle_path 1 -hold -start -from $c2x_hc -to $c2x_ms
+    }
+    puts "otpu_clk2x.tcl: [llength $c2x_pc] pumped MXU columns ([get_property NAME $c2x_ms] $c2x_ts ns, [get_property NAME $c2x_mf] $c2x_tf ns), [llength $c2x_dsp] DSPs, [llength $c2x_wp] weight pins, [llength $c2x_hc] chain-end holds"
+    # for the BCU1525's opt_design pre-hook (bcu1525_wg_check.tcl): the columns constrained, when
+    # both sets were found
+    namespace eval ::otpu {}
+    if {[llength $c2x_dsp] && [llength $c2x_wp] && [llength $c2x_hc]} {
+      set ::otpu::ok(otpu_clk2x_mxu) [llength $c2x_pc]
+    }
+  }
+} else {
+  puts "otpu_clk2x.tcl: no pumped MXU columns (otpu_mxpc)"
+}

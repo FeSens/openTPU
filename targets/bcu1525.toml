@@ -49,8 +49,8 @@ vendor = "xilinx"
 board = "bcu1525"
 core_mhz = 100.0                # development builds first (docs/bcu1525.md 2)
 mem = "ddr4"
-mem_mts = 1600                  # LiteDRAM's USPDDRPHY at 200 MHz first; the RDIMMs are DDR4-2400
-                                # (300 MHz) once its controller closes timing there
+mem_mts = 1200                  # the UDIMM core: LiteDRAM's USPDDRPHY at 150 MHz (its ISERDESE3s'
+                                # clock in spec; 1600 failed it: litedram_udimm/core.json)
 mem_ctrl = "litedram"
 hostcal = false
 channels_per_slice = 2

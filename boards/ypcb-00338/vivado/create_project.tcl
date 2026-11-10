@@ -100,7 +100,7 @@ set rtl [list \
   rtl/vpu/otpu_quant.sv rtl/vpu/otpu_se_comp.sv rtl/vpu/otpu_se_tail.sv rtl/vpu/otpu_vpu.sv rtl/top/otpu_coll.sv \
   rtl/top/otpu_slice.sv \
   rtl/shell/otpu_ctrl.sv rtl/shell/otpu_trace.sv \
-  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv \
+  rtl/shell/otpu_board.sv rtl/mem/otpu_native_dram.sv rtl/mem/otpu_xstg.sv \
   rtl/shell/otpu_afifo.sv rtl/shell/otpu_mem_ch.sv \
   rtl/shell/otpu_axi_split2.sv rtl/boards/ypcb-00338/otpu_native_sys.sv \
   rtl/boards/ypcb-00338/otpu_fpga_top_ld.sv]
@@ -113,8 +113,10 @@ foreach f $rtl {
   add_files -norecurse $root/$f
   set_property file_type SystemVerilog [get_files $root/$f]
 }
-# SYNTHESIS removes the simulation-only checks and dumps
-set_property verilog_define {SYNTHESIS} [get_filesets sources_1]
+# SYNTHESIS removes the simulation-only checks and dumps; OTPU_FPGA_INIT leaves out the memories'
+# power-on reset (otpu_slice rst_mem: configuration's INIT 0 is its state; docs/asic.md "Power-up
+# state")
+set_property verilog_define {SYNTHESIS OTPU_FPGA_INIT} [get_filesets sources_1]
 
 # ---- block design
 source $here/bd_native.tcl   ;# sets PCIE_GEN (environment, run_vivado.sh) for the generics; CLK2X
