@@ -261,6 +261,38 @@ def test_up_sets_resume_before_the_first_go(tmp_path, monkeypatch):
     assert len(seen) == 3 and set(seen) == {G.code_of(64.0)}       # two trips' GOs, the DIMMs'
 
 
+def test_up_records_the_image_the_running_card_reports(tmp_path, monkeypatch):
+    """Once the accelerator answers, up keeps what it reports (opentpu.host.cardimage.note: the
+    record otpu-smi and otpu-chat read while the card is in SAFE) and puts it in wg.json; a
+    record that cannot be made does not stop the bring-up."""
+    from opentpu.host import cardimage as CI
+    import opentpu.host.board as board
+    monkeypatch.setattr(W.signal, "signal", lambda *a: None)
+    monkeypatch.setattr(W.G, "Guard", TripGuard)
+    cmd = ["up", "--out", str(tmp_path), "--no-jtag", "--no-trips", "--mem", "none",
+           "--no-selftest", "--cal-s", "0", "--acc-s", "0.3", "--dev", "/dev/fakewg7"]
+    calls = []
+
+    def note(t, dev):
+        calls.append((t.acc_up(), dev))
+        return {"target": "bcu1525-wg", "platform": 4, "slices": 1, "cards": 1,
+                "cfg_hash": 0x1234, "build_id": 0xABCD, "core_khz": 150000, "when": 1.0,
+                "boot_id": "b", "dev": dev}
+    t = FakeWg(code=G.code_of(60.0))
+    monkeypatch.setattr(board, "XdmaTransport", lambda dev, dma=False: t)
+    monkeypatch.setattr(CI, "note", note)
+    assert W.main(cmd) == 0
+    assert calls == [(True, "/dev/fakewg7")]                    # asked while the accelerator ran
+    assert json.loads((tmp_path / "wg.json").read_text())["image"]["cfg_hash"] == 0x1234
+
+    def broken(t, dev):
+        raise OSError("no state directory")
+    t = FakeWg(code=G.code_of(60.0))
+    monkeypatch.setattr(CI, "note", broken)
+    assert W.main(cmd) == 0
+    assert json.loads((tmp_path / "wg.json").read_text())["image"] == {"error": "no state directory"}
+
+
 def test_up_closes_the_card_when_jtag_does_not_open(tmp_path, monkeypatch):
     """up with JTAG: the cable's session failing to open leaves no PCIe transport open."""
     t = FakeWg()

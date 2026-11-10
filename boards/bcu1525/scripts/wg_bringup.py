@@ -347,6 +347,15 @@ def cmd_up(a) -> int:
         res["bmc"] = guard.reg
         save()
         dimms_up(card, g, guard, card, a, res)
+        # the image as its accelerator reports it, kept for the times the card is in SAFE and
+        # its registers fenced (opentpu.host.cardimage: otpu-smi's Image row, otpu-chat)
+        from opentpu.host import cardimage as CI
+        try:
+            res["image"] = CI.note(pcie, a.dev)
+        except Exception as e:              # (a record is a convenience: the bring-up goes on)
+            res["image"] = {"error": str(e)}
+        if res["image"] and "error" not in res["image"]:
+            log(f"image: {CI.text({**res['image'], 'source': 'registers'})}")
         save()
         if a.mem != "none":
             argv = ["opentpu.host.diag", "--dev", a.dev, "--only", "mem", "--mem", a.mem,

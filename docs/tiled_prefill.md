@@ -35,7 +35,7 @@ take it by default; this section is the prototype's.)
   - a Qwen3-4B shape: -1.1% at MCOLS 4 (its MLP is 69% of a row and at its floor; its G = 4
     heads already fill the columns), -10.7% at MCOLS 8; Qwen3.5-0.8B is 61-73% DeltaNet, which
     no tile touches (about -4% at MCOLS 8, estimated, not ported);
-  - a memory at the port's full rate (the BCU1525's DDR4 at 1600 or 2400, the F2's HBM)
+  - a memory at the port's full rate (the BCU1525's DDR4 at 1600 or 2400)
     changes these by 0-4%: prefill is MXU-bound on every board.
 - **It fits today's TMEM**: T = 16-24 on Qwen3-0.6B and 8-12 on a 4B shape in 64K words, with
   no DRAM spill; a bigger TMEM adds nothing to the tile (77.0K at 256K words against 76.4K).
@@ -101,7 +101,7 @@ docs/dsp_pumping.md 2 on dsp-pump's branch):
 - the stream: 1 / eta, eta the chunks a cycle the memory delivers to the port (at most one: the
   port is 128 bytes a cycle). The card's DDR3-1066 through LiteDRAM: 0.82-0.85 while decoding
   (docs/board.md); the BCU1525's DDR4 (two channels a slice: 25.6 GB/s at 1600, 38.4 at 2400)
-  and the F2's HBM deliver more than one slice's port takes (12.8 GB/s at 100 MHz, 17.1 at
+  delivers more than one slice's port takes (12.8 GB/s at 100 MHz, 17.1 at
   133.33), so eta = 1 there;
 - the MXU: int8, ceil(T / MCOLS) cycles (replayed groups); 4-bit, two blocks a chunk: 1 cycle
   with PAIR (T <= MCOLS / 2), else 2 ceil(T / MCOLS).
@@ -261,8 +261,8 @@ the first 64K). Every TMEM-256K figure here is with the change.
 
 `tools/perf_tiled.py` (section 1's setup): "ldc" is the card's memory path (DDR3-1066 through
 LiteDRAM's controllers, the core at 133.33 MHz), "port" a memory that delivers a chunk every
-cycle with a 40-cycle latency, which stands in for the BCU1525's DDR4 at 1600 or 2400 and the
-F2's HBM (each delivers more than a slice's port takes, section 2: their cycles are the same).
+cycle with a 40-cycle latency, which stands in for the BCU1525's DDR4 at 1600 or 2400
+(each delivers more than a slice's port takes, section 2: their cycles are the same).
 MCOLS 8 is virtual (the RTL at MCOLS 8; the card's part does not fit it). Cycles a row for the
 first 2 layers, positions from 256, no logits; tokens/s are the whole model at that rate.
 
@@ -372,8 +372,8 @@ Qwen3-0.6B, fp4, prefill tokens a second of device time at positions ~256 (28 la
 | YPCB (MCOLS 4, DDR3-1066, 133.33 MHz) | 114 | 115 (R = 8, ACT_ROWS 8) | 120 (today's bitstream) | 125 (ACT_ROWS 16) |
 | the same at position 1024 | 86 | | | 103 |
 | MCOLS 8, DDR3-1066, 133.33 MHz | 165 | 180 (R = 16) | 194 | 214 |
-| BCU1525 / F2, one slice, MCOLS 4, 100 MHz | 86 | | 91 | 93 |
-| BCU1525 / F2, one slice, MCOLS 8, 100 MHz | 129 | 135 (R = 8) | 149 | 161 |
+| BCU1525, one slice, MCOLS 4, 100 MHz | 86 | | 91 | 93 |
+| BCU1525, one slice, MCOLS 8, 100 MHz | 129 | 135 (R = 8) | 149 | 161 |
 
 int8 weights (MCOLS 4 at 133.33 MHz): 107 today, 114 at R = 8, 125 with the tile at T = 8;
 at MCOLS 8: 107 / 175 (R = 16) / 214 (T = 16).
@@ -460,7 +460,7 @@ misses.
   ~/otpu-build/offload/card2/pfB/README.md with its predicted column).
   Nothing in this note changes that session's arms.
 
-**BCU1525 / F2 (experts resident, no link).** Estimated per token and slice at the floor, MCOLS
+**BCU1525 (experts resident, no link).** Estimated per token and slice at the floor, MCOLS
 4, the port's rate (lower bounds: the tile ran Qwen3-0.6B at 1.25x its floor):
 
 | model | dense | experts | DeltaNet steps | today's R = 2 | tiled |
@@ -577,11 +577,11 @@ In order; each step stands on its own.
    tile must outgrow TMEM (MCOLS 16).
 
 What it gives each workload, by board (YPCB: the card, MCOLS 4, DDR3-1066, 133.33 MHz; MCOLS 8:
-the faster MXU of dsp-pump's and mcols' work, same memory; BCU1525 and F2: one slice at the
+the faster MXU of dsp-pump's and mcols' work, same memory; BCU1525: one slice at the
 port's rate, 100 MHz; device tokens a second of prefill at positions ~256, fp4; measured = the
 co-simulations above, estimated = arithmetic on them):
 
-| workload | YPCB today | YPCB, tile on today's bitstream | YPCB, + ACT_ROWS 16 | MCOLS 8: today's kernel -> tile | BCU1525 / F2 (MCOLS 4 today -> tile; MCOLS 8 tile) |
+| workload | YPCB today | YPCB, tile on today's bitstream | YPCB, + ACT_ROWS 16 | MCOLS 8: today's kernel -> tile | BCU1525 (MCOLS 4 today -> tile; MCOLS 8 tile) |
 |---|---|---|---|---|---|
 | single-user decode | unchanged (the tile is a prefill kernel) | unchanged | unchanged | unchanged | unchanged |
 | prefill, Qwen3-0.6B | 114 | 120 (+5%) | 125 (+9%) | 165 -> 214 (+30%) | 86 -> 93; 161 |
@@ -599,7 +599,7 @@ Expert-major's -1.7 s (35B) / -1.9 s (26B) adds to the MoE rows once the pfB A/B
 
 - **No card measurement of a tile.** Every cycle count here is a co-simulation of the card's
   memory path (DDR3-1066 through LiteDRAM's controllers) or of a memory at the port's rate
-  standing in for the BCU1525's DDR4 and the F2's HBM. The co-simulation of today's kernel is
+  standing in for the BCU1525's DDR4. The co-simulation of today's kernel is
   ~6% below the card's prompt runs (section 1); a tile as a prompt run pays the same run-time
   position costs, so its gain is expected within a few points of section 4's.
 - **The 2-layer proxy at position 256** has two attention blocks a row; a short prompt's rows

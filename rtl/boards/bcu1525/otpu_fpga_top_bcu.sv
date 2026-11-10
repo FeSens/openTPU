@@ -338,7 +338,8 @@ module otpu_fpga_top_bcu #(
   logic [2:0] gov_led;
   logic signed [15:0] reg_hot;              // VCCINT's regulator (the BMC's bridge's watch)
   logic [15:0] reg_age;
-  otpu_bcu_gov #(.CLK_HZ(CORE_KHZ * 1000), .HAS_REG(1'b1)) u_gov (
+  otpu_bcu_gov #(.CLK_HZ(CORE_KHZ * 1000), .HAS_REG(1'b1), .IMG_PLATFORM(PLATFORM),
+                 .IMG_SLICES(S), .IMG_CARDS(1), .IMG_HASH(ARCH_HASH), .IMG_BUILD(BUILD_ID)) u_gov (
     .clk(core_clk), .rst(gov_rst), .temp(device_temp), .temp_alarm, .ot_alarm, .reg_t(reg_hot),
     .reg_age, .acc_on, .dimm_on, .dimm_ok, .uart_sel, .led(gov_led),
     .s_awaddr(gv_awaddr[11:0]), .s_awvalid(gv_awvalid), .s_awready(gv_awready),

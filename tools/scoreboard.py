@@ -1,7 +1,7 @@
 """The workload scoreboard: what a hardware configuration gives on the four workloads the user
 weighs equally (2026-10-11): single-user decode, prefill, multi-user batched decode, MoE.
 
-    python3 tools/scoreboard.py [report] [--board ypcb|bcu1525|f2] [what-if options]
+    python3 tools/scoreboard.py [report] [--board ypcb|bcu1525] [what-if options]
     python3 tools/scoreboard.py compare --mcols 8            # a what-if against its board
     python3 tools/scoreboard.py whatifs [--board B]           # the standard what-if set
     python3 tools/scoreboard.py validate                      # the model against card / co-sim
@@ -287,7 +287,7 @@ class HW:
     port_eff: float = 1.0            # the co-sim at an ideal memory: decode 4% faster than LiteDRAM
     gbps: float = 0.0               # a slice's peak memory GB/s (0: channels x mts x 8)
     fast_gb: float = 4.0            # GiB a slice holds for the model (32-bit addresses: 4)
-    far_gbps: float = 0.0           # a second memory tier on the card (F2's DDR4)
+    far_gbps: float = 0.0           # a second, slower memory tier on the card
     far_gb: float = 0.0
     pcie_gbps: float = 2.2          # host -> card for offloaded experts (Gen2 x8, a miss's rate)
     rows: int = 0                   # prefill rows a run (0: the TMEM / IMEM fit)
@@ -336,10 +336,6 @@ BOARDS = {
                   pcie_gbps=9.0,
                   note="BCU1525: VU9P, S = 2 slices on 2 DDR4 channels each (4 GiB a slice "
                        "addressed of 2 x 16 GB), PCIe Gen3 x16; bring-up: DDR4-1600, 100 MHz"),
-    "f2": HW(name="f2", S=4, mhz=250.0, mem="hbm", mts=0, channels=0, gbps=115.0,
-             mem_eff=0.90, far_gbps=19.2, far_gb=64.0, pcie_gbps=20.0,
-             note="AWS F2: VU47P, 16 GB HBM (~460 GB/s: 115 a slice), S = 4 at 250 MHz, "
-                  "64 GB DDR4 as a second tier (one channel assumed)"),
 }
 
 

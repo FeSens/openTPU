@@ -90,6 +90,16 @@ def test_make_wg_writes_the_targets_parameters(tmp_path):
     assert "`define OTPU_XPOST 1" in vh and "`define OTPU_XSW 11" in vh
     tcl = (out / "wg_params.tcl").read_text()
     assert "set CORE_KHZ 150000" in tcl
+    # the governor's identity words (otpu_bcu_gov IMAGE ..): the board's own PLATFORM, ARCH_HASH
+    # and BUILD_ID, the values OTPU_BOARD gives otpu_board
+    h = re.search(r"set ARCH_HASH ([0-9a-f]{8})", tcl).group(1)
+    b = re.search(r"set BUILD_ID ([0-9a-f]{8})", tcl).group(1)
+    assert "`define OTPU_WG_PLATFORM 5\n" in vh
+    assert f"`define OTPU_WG_CFG_HASH 32'h{h.upper()}\n" in vh and f".ARCH_HASH(32'h{h})" in vh
+    assert f"`define OTPU_WG_BUILD_ID 32'h{b.upper()}\n" in vh
+    top = (ROOT / "rtl/boards/bcu1525/otpu_fpga_top_bcu_wg.sv").read_text()
+    assert ".IMG_PLATFORM(`OTPU_WG_PLATFORM), .IMG_SLICES(S), .IMG_CARDS(GOV_CARDS)" in top
+    assert ".IMG_HASH(`OTPU_WG_CFG_HASH), .IMG_BUILD(`OTPU_WG_BUILD_ID)) u_gov (" in top
     # the slice in SLR2 (the default): C0 two crossings from it (9), C1 and C2 one (5), C3 beside it
     # (2); channel j is DIMM j >> 1's, the floorplan's SLR the same
     assert "set RLY 22555599" in tcl and "set WG_SLR 2" in tcl

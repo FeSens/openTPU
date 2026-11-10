@@ -1272,7 +1272,13 @@ DRAM_WAIT and, with register map 3, MXU_STARVE over the UPTIME delta, between tw
 the owning process.
 
 Every card is a device of its own, whatever its target: a Kintex-7 card and the BCU1525s of
-one host each get a table. A card of a two-card machine (CAPS2 bit15, `bcu1525-x2`) adds a
+one host each get a table. A BCU1525 adds Image rows, in RUN and in SAFE (`opentpu.host.cardimage`):
+the target (the variant its CFG_HASH names), its slices and its machine's cards, BUILD_ID,
+CFG_HASH and the core clock, with where the answer came from: `the card's registers` (RUN),
+`the governor` (a build whose governor holds the identity: it answers in SAFE, when the
+accelerator's registers are fenced), `as read at the last bring-up HH:MM` (the record a bring-up
+left under `$BCU_BUILD/state/`, valid for the boot it was written in), or `unknown until a
+bring-up`. A card of a two-card machine (CAPS2 bit15, `bcu1525-x2`) adds a
 Cards row, its place in the machine (`card 0 of 2`; `not set yet (a bring-up sets them)` on an image no host has brought
 up since it loaded, with both links DOWN until then) with
 the collectives issued since the link reset, and a line for each QSFP28 link: up or DOWN, the

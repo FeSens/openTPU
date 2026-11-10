@@ -1832,7 +1832,7 @@ Column meanings in the table below:
   g2fix). The card's compute is the same (RUNNING - DMA_BUSY 1.85 G). The host's windows are
   0.2-0.4 s longer: head +0.15-0.23 s, body +0.13-0.19 s.
 
-- LFM2-8B-A1B's new programs are proven on the ISA simulator only: its pool is not on opentpu.
+- LFM2-8B-A1B's new programs are proven on the ISA simulator only: its pool is not on the card host.
   Its next card run must include a token-exact check against its own ISA reference.
 
 Next, host only: send the answer after the first expert's lead DMA (between its two parts on

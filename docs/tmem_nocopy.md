@@ -836,10 +836,10 @@ about 354 of 955 tiles (37%), against 666.5 with six copies. 128K words would be
 447 tiles with IMEM x2) and fits, but it buys rows only on today's kernel; with the tile kernel it
 buys nothing (section 7). So 64K; 128K only if today's kernel has to ship with MCOLS 8.
 
-**BCU1525 / F2 (UltraScale+).** The same single copy in block RAM pumped at 2x with a 200 MHz core
-(`ku-r2pgR` +0.148 ns at 200 / 400 MHz out of context). Their TMEM is in UltraRAM today, which
+**BCU1525 (UltraScale+).** The same single copy in block RAM pumped at 2x with a 200 MHz core
+(`ku-r2pgR` +0.148 ns at 200 / 400 MHz out of context). Its TMEM is in UltraRAM today, which
 pumps at 2x only up to a 250 MHz core (URAM288's 500 MHz); one copy needs 64 RAMB36 a slice,
-which those parts have, so the TMEM can leave the UltraRAM for capacity elsewhere.
+which the part has, so the TMEM can leave the UltraRAM for capacity elsewhere.
 
 **ASIC.** No pumping (an SRAM macro at twice the core clock caps the core at half the macro's
 speed): the one copy's two reads and write a bank come from two-port macros at the core clock,

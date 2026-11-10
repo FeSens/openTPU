@@ -29,6 +29,9 @@ ID, STATUS, CTRL, CMD, TEMP, TRIP, RESUME, HB_MS, KICK, TRIPS, RUN_MS, LIMITS = 
 REG, REG_TRIP, REG_RESUME, REG_STALE, REG_AGE, REG_LIMITS = range(0x30, 0x48, 4)
 TEMP_AGE, TEMP_STALE = 0x48, 0x4C           # the code's age (ms) and the build's limit; 0: none
 GOV_ID = 0x474F5631                         # "GOV1"
+# the image's identity, answered in SAFE too (a build with them: IMAGE reads IMG_ID, else 0)
+IMAGE, IMG_PLAT, IMG_HASH, IMG_BUILD, IMG_KHZ = range(0x50, 0x64, 4)
+IMG_ID = 0x494D4731                         # "IMG1"
 CMD_GO, CMD_SAFE, CMD_CLEAR = 1, 2, 4
 
 # STATUS
@@ -144,6 +147,19 @@ class Gov:
 
     def present(self) -> bool:
         return self.rd(ID) == GOV_ID
+
+    def image(self) -> dict | None:
+        """The image's identity as the governor holds it (it answers in SAFE, when the
+        accelerator's own registers are fenced): "platform" (CFG_PLATFORM), this card's
+        "slices", its machine's "cards" (0: a top without an accelerator), "cfg_hash"
+        (CFG_HASH), "build_id" and "core_khz". None on a build before these registers (IMAGE
+        reads 0 there)."""
+        if self.rd(IMAGE) != IMG_ID:
+            return None
+        p = self.rd(IMG_PLAT)
+        return {"platform": p & 0xFFFF, "slices": p >> 16 & 0xFF, "cards": p >> 24,
+                "cfg_hash": self.rd(IMG_HASH), "build_id": self.rd(IMG_BUILD),
+                "core_khz": self.rd(IMG_KHZ)}
 
     def status(self) -> dict:
         """The state; with HAS_REG also the regulator's ("reg_c", its highest "reg_max_c" since

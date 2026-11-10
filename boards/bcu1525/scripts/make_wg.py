@@ -142,7 +142,11 @@ def main() -> int:
         "// written by boards/bcu1525/scripts/make_wg.py\n"
         "`ifndef OTPU_BCU_WG_DEFINES\n`define OTPU_BCU_WG_DEFINES\n"
         f"{BM.board_defines(bp)}`define OTPU_WG_CAW {cw}\n`define OTPU_WG_BHW {bhw}\n"
-        f"`define OTPU_WG_S {bp['S']}\n`define OTPU_WG_DMAP 8'h{dmap:02X}\n`endif\n")
+        f"`define OTPU_WG_S {bp['S']}\n`define OTPU_WG_DMAP 8'h{dmap:02X}\n"
+        # the image's identity for the governor (answered in SAFE: otpu_bcu_gov's IMAGE words)
+        f"`define OTPU_WG_PLATFORM {int(bp['PLATFORM'])}\n"
+        f"`define OTPU_WG_CFG_HASH 32'h{bp['ARCH_HASH']:08X}\n"
+        f"`define OTPU_WG_BUILD_ID 32'h{bp['BUILD_ID']:08X}\n`endif\n")
     if ncards > 1:
         vh = a.out / "otpu_bcu_wg_defines.vh"
         vh.write_text(vh.read_text().replace("`endif\n",

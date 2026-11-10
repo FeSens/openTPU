@@ -6,9 +6,12 @@
 #     the trips, the four DIMMs, the accelerator; RUN held
 #   the two-card image (bcu1525-x2, both cards one machine over the QSFP28 link): both cards, no --card (or --card x2);
 #     tools/x2_session/bringup.py up on each. A card of it cannot run alone: --card 0 or 1 is refused at once.
-# A card in SAFE keeps its accelerator's registers fenced, so the image is not read from it: BCU_IMAGE (x2 or one, in
-# the environment or BCU_ENV) says, else the marker $BCU_BUILD/cardimg/x2/IMAGE (there: x2), else one. The registers
-# are asked only when they answer (a card left running), and then they decide.
+# The card says which (opentpu.host.cardimage, otpu-smi's Image row): its accelerator's registers while it runs; in
+# SAFE, where they are fenced, the governor's identity words on a build with them, else what the last bring-up since
+# the boot read. A card that says nothing (no bring-up since the boot, a build without the words): BCU_IMAGE (x2 or
+# one, in the environment or BCU_ENV), else the marker $BCU_BUILD/cardimg/x2/IMAGE (there: x2), else one. The card's
+# answer wins over BCU_IMAGE, with a line saying so. (Qwen3.6-35B-A3B's wrappers are chosen by BCU_IMAGE and the
+# marker alone.)
 # Options go to the chat (otpu-chat --help: its own).
 #   otpu-chat                      # Qwen3.5-2B, the full-screen chat
 #   otpu-chat --model gemma4       # Gemma 4 E2B (instruct)
@@ -65,23 +68,19 @@ cd "$T" || exit 2
 export PYTHONPATH=.
 first=0; [ "${cardarg:-0}" = 1 ] && first=1
 card $first
-# the card's own word, when its registers answer (not fenced: a card left running): x2, one or nothing
-seen=$("$PY" - "$DEV" 2>/dev/null <<'PYEOF'
-import sys
-try:
-    from opentpu.host.board import Board, XdmaTransport
-    from opentpu.host import regs as R
-    from opentpu.target import by_platform, cards
-    t = XdmaTransport(sys.argv[1], dma=False)
-    if t.reg_read(R.R_ID) == R.ID_OTPU:
-        tg = by_platform(Board(t, check=False, lock=False).info()["cfg"]["platform"])
-        if tg is not None:
-            print("x2" if cards(tg) > 1 else "one")
-except Exception:
-    pass
-PYEOF
-)
-[ -z "$seen" ] || img=$seen
+# the card's own word first (opentpu.host.cardimage: its accelerator's registers in RUN; in SAFE the governor's
+# identity words on a build with them, else what the last bring-up read): "x2", "one" or "unknown", then the image
+seen=$("$PY" -m opentpu.host.cardimage --dev "$DEV" 2>/dev/null)
+case ${seen%% *} in
+  x2|one)
+    if [ -n "${BCU_IMAGE:-}" ] && [ "$BCU_IMAGE" != "${seen%% *}" ]; then
+      echo "otpu-chat: BCU_IMAGE says $BCU_IMAGE, but $NAME reports another image: the card's answer is used"
+    fi
+    img=${seen%% *}; echo "otpu-chat: $NAME holds ${seen#*  }"
+    # the two-card image's target as the card names it (its CFG_HASH's variant), unless BCU_X2_TARGET says
+    tg=${seen#*  }; tg=${tg%% *}
+    case $img:$tg in x2:*\?|x2:platform) ;; x2:*) X2T=${BCU_X2_TARGET:-$tg} ;; esac ;;
+esac
 two="the two-card image (bcu1525-x2: its slices run with the other card's, over the QSFP28 link)"
 case $img:$cardarg in
   x2:0|x2:1) echo "otpu-chat: card $cardarg ($NAME) holds $two: it cannot chat alone."

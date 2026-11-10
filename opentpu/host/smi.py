@@ -103,7 +103,7 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
          "down (registers read 0xffffffff)" if ident == 0xFFFFFFFF else
          f"no openTPU (ID {ident:#010x})", "pcie": pcie_link(dev)}
     if not d["ok"]:
-        bcu = bcu_state(t, bmc, sysmon, track) if ident == FENCED else None
+        bcu = bcu_state(t, bmc, sysmon, track, dev=dev) if ident == FENCED else None
         if bcu is not None:                     # a BCU1525 image in SAFE: the board's side
             st = read_status(devname(dev))
             d.update(link="accelerator off (its registers fenced)", bcu=bcu,
@@ -133,7 +133,7 @@ def query(t, dev: str, interval: float = 0.2, prev: dict | None = None,
     bcu = None
     if (tg is not None and str(tg.platform.get("board", "")).startswith("bcu1525")) or \
             i["caps2"].get("bmc"):
-        bcu = bcu_state(t, bmc, sysmon, track)
+        bcu = bcu_state(t, bmc, sysmon, track, dev=dev)
     if bcu is not None:
         bcu.update(target=tg.name if tg is not None else None, cfg=i["cfg"],
                    mem=str(tg.platform.get("mem", "ddr4")).upper() if tg is not None else "DDR4")
@@ -203,7 +203,7 @@ def _units(tg) -> tuple[int, int]:
 
 
 def bcu_state(t, bmc: bool = True, sysmon: bool = False, track: dict | None = None,
-              clock=None) -> dict | None:
+              clock=None, dev: str | None = None) -> dict | None:
     """A BCU1525 image's board side, from registers alone (none written; not the BMC bridge's RX
     or STATUS, whose reads take a byte or clear flags): the governor ("gov": gov.Gov's status and
     limits, the heartbeat's age); how long its die has read the same ("gov_same_s": the
@@ -213,8 +213,9 @@ def bcu_state(t, bmc: bool = True, sysmon: bool = False, track: dict | None = No
     gov.sysmon, all 13 with `sysmon`, else the die alone while the governor's is gone, else None:
     a read of them can stop the governor's die, gov.py); and, with `bmc`, the BMC bridge ("bmc":
     its ID, the core clock from its divider, the watch's readings: bmc.watch, None without the
-    watch; None itself without `bmc`, absent without a bridge). None without a governor at
-    gov.R_GOV."""
+    watch; None itself without `bmc`, absent without a bridge); with `dev` the image the card
+    holds ("image": cardimage.held, its own registers in RUN, the governor's identity words or
+    the last bring-up's record in SAFE). None without a governor at gov.R_GOV."""
     g = G.Gov(t)
     if not g.present():
         return None
@@ -232,6 +233,9 @@ def bcu_state(t, bmc: bool = True, sysmon: bool = False, track: dict | None = No
               f"frozen {same:.0f} s" if same is not None and same >= G.FROZEN_S else None)
     out = {"gov": gs, "gov_same_s": same, "gov_frozen": frozen,
            "sysmon": G.sysmon(t) if sysmon else G.sysmon(t, full=False) if frozen else None}
+    if dev is not None:                         # the image the card holds, in SAFE too
+        from . import cardimage as CI
+        out["image"] = CI.held(t, dev)
     if not bmc:
         out["bmc"] = None                       # (--no-bmc: the bridge left alone)
     elif (br := bmc_bridge(t)) is not None:
@@ -713,7 +717,9 @@ def _dur(s: float) -> str:
 
 
 def bcu_rows(d: dict, hist: list | None = None) -> list[str]:
-    """The BCU1525's board rows (d["bcu"]: bcu_state): the governor's state; the die, as the
+    """The BCU1525's board rows (d["bcu"]: bcu_state): the governor's state; the image the card
+    holds and where that answer came from (its registers, the governor, the last bring-up's
+    record; "unknown until a bring-up" with none); the die, as the
     governor reads it (the wizard's temperature bus) and, when read, the SYSMON's register, with
     the governor's limits; VCCINT's regulator input power, VIN and the reading's age (the BMC
     watch, or a BMC1 bridge's session); the regulator's temperatures and limits; with --sysmon
@@ -739,6 +745,12 @@ def bcu_rows(d: dict, hist: list | None = None) -> list[str]:
         out.append(row("Governor", "SAFE" + (f" ({why})" if why else ""),
                        f"trips {g['trips_thermal']} thermal, {g['trips_heartbeat']} heartbeat",
                        f"last RUN {_dur(g['run_ms'] / 1e3)}" if g["run_ms"] else ""))
+    if bc.get("image") is not None:         # the image the card holds (cardimage.held)
+        from . import cardimage as CI
+        a, b = CI.texts(bc["image"])
+        out.append(row("Image", a))
+        if b:
+            out.append(row("", b))
     fz = bc.get("gov_frozen")
     gtxt = f"{g['temp_c']:.1f} °C" if g["temp_valid"] or g.get("temp_stale") else "n/a"
     if sm is None:                          # (the register unread: the governor's die alone)

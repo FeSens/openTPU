@@ -19,7 +19,7 @@ BCU_BUILD=~/otpu-build      # optional: the trees, cardimg, bin (default ~/otpu-
 BCU_DATA=$BCU_BUILD/data    # optional: raw images and KV stores
 BCU_PY=python3              # optional: the interpreter (default PATH's python3)
 BCU_CARD=0                  # optional: the one-card wrappers' card (0 or 1; `otpu-chat --card N` sets it)
-BCU_IMAGE=one               # optional: the image the cards hold, one (a one-card image) or x2 (the two-card image)
+BCU_IMAGE=one               # optional: the image the cards hold (one, or x2: the two-card image) when a card does not say
 BCU_RESUME=65               # optional: the governor's RESUME for every bring-up's GOs (C, at most 69.9)
 BCU_TREE=$BCU_BUILD/bcu-wg/tree   # optional: otpu-chat's host tree
 BCU_X2_TARGET=bcu1525-x2:st16     # optional: the two-card image's target, for otpu-chat on both cards
@@ -34,14 +34,20 @@ keep every GO refused: the bring-up retries for 30 minutes and fails. `BCU_RESUM
 bring-ups. Each wrapper says so before the bring-up when the die is above the RESUME it will use, and while it waits
 it shows the bring-up's line (`waiting for GO: die 70.1 C, RESUME 65.0 C ...`) every 15 s.
 
-**Which image.** A card in SAFE keeps its accelerator's registers fenced, so the wrappers cannot ask it which
-bitstream it holds. `otpu-chat` takes `BCU_IMAGE`, else `x2` when `$BCU_BUILD/cardimg/x2/IMAGE` exists, else `one`
-(and the card's own registers instead, when they answer: a card left running). On the two-card image `otpu-chat`
+**Which image.** The card says (`python3 -m opentpu.host.cardimage --dev DEV`; `otpu-smi`'s Image rows show the same:
+target, slices, BUILD_ID, CFG_HASH, the core clock, and where the answer came from). In RUN its accelerator's own
+registers answer. In SAFE they are fenced, and the answer is the governor's identity words on a build that has them
+(`otpu_bcu_gov`'s IMAGE registers, 0x50-0x60), else what the last bring-up since the boot read from the running card
+(a record under `$BCU_BUILD/state/`, kept only for the boot it was written in: a new image needs a JTAG load and a
+warm reboot). A card that says nothing (a build without the words that no host has brought up since the boot) leaves
+it to `BCU_IMAGE`, else `x2` when `$BCU_BUILD/cardimg/x2/IMAGE` exists, else `one`; a card's answer wins over
+`BCU_IMAGE`, and `otpu-chat` says so when they differ. On the two-card image `otpu-chat`
 brings both cards up (`tools/x2_session/bringup.py up` on each) and chats on both
 (`--dev /dev/xdmaA+/dev/xdmaB`, `OTPU_TARGET=$BCU_X2_TARGET`), any model the chat takes; `--card 0` or `1` there is
 refused at once, since one card of that image holds half the machine's slices. On a one-card image `--card 0|1`
 picks the card, as before. A bring-up that then fails on the bitstream's check says the card holds another image
-than `BCU_IMAGE`.
+than `BCU_IMAGE`. The two-card image's target is the one the card names (its CFG_HASH's variant) unless
+`BCU_X2_TARGET` is set.
 
 A card's XDMA device is found by its PCI function each time, so either card runs the one-card wrappers whichever
 `/dev/xdmaN` it is (`BCU_DEV`, when set, must name that card's device: a check, not a choice). `OTPU_DEV` is not part of

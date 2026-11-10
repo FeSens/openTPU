@@ -302,21 +302,18 @@ def test_otpu_chat_refuses_one_card_of_the_two_card_image_at_once(tmp_path, how,
     elif how == "marker":
         (tmp_path / "otpu-build" / "cardimg" / "x2").mkdir(parents=True)
         (tmp_path / "otpu-build" / "cardimg" / "x2" / "IMAGE").write_text("x2\n")
-    else:                                       # (a card left running: its registers say platform 7, two cards)
+    else:                                       # (the card's own answer, opentpu.host.cardimage's: over BCU_IMAGE)
         env["BCU_IMAGE"] = "one"
-        (tree / "opentpu" / "host" / "board.py").write_text(
-            "class XdmaTransport:\n    def __init__(self, *a, **k):\n        pass\n\n"
-            "    def reg_read(self, a):\n        return 0x4F545055\n\n\n"
-            "class Board:\n    def __init__(self, *a, **k):\n        pass\n\n"
-            "    def info(self):\n        return {'cfg': {'platform': 7}}\n")
-        (tree / "opentpu" / "host" / "regs.py").write_text("R_ID, ID_OTPU = 0, 0x4F545055\n")
-        (tree / "opentpu" / "target.py").write_text("def by_platform(p):\n    return p\n\n\n"
-                                                    "def cards(t):\n    return 2 if t == 7 else 1\n")
+        (tree / "opentpu" / "host" / "cardimage.py").write_text(
+            'print("x2  bcu1525-x2:st16  S=2 of 2 cards  (the governor)  build 1a2b3c4d  CFG_HASH e331f79c")\n')
     p = subprocess.run([BASH, str(CHAT35 / "otpu-chat"), "--prompt", "Hi", "--card", card],
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, env=env, timeout=60)
     assert p.returncode == 2, p.stdout + p.stderr
     assert f"card {card} (CRD{card}) holds the two-card image" in p.stdout and "without --card" in p.stdout, p.stdout
     assert not ev.exists()
+    said = f"BCU_IMAGE says one, but CRD{card} reports another image: the card's answer is used" in p.stdout
+    assert said == (how == "registers"), p.stdout
+    assert (f"CRD{card} holds bcu1525-x2:st16  S=2 of 2 cards  (the governor)" in p.stdout) == (how == "registers")
 
 
 @pytest.mark.skipif(BASH is None, reason="needs bash")

@@ -15,7 +15,7 @@ Questions:
 3. Can one copy pumped at 3x or 4x replace the three (section 2, "One copy at 3x or 4x?")?
 4. What would 2x, 4x or 6x the words buy (prefill rows a run, batched rows, MoE), and which board
    can afford it?
-5. Which TMEM for each board (YPCB, BCU1525, F2, ASIC), and what does it do to decode, prefill,
+5. Which TMEM for each board (YPCB, BCU1525, ASIC), and what does it do to decode, prefill,
    batched decode and MoE?
 
 ## TMEM today
@@ -274,10 +274,10 @@ and a BUFG.
 ### UltraScale+: out of context
 
 the build host's license has no Virtex UltraScale+ part, so these runs use the free xcku5p-ffvb676-2-e
-(MMCME4, BUFGCE). It has the BCU1525's and F2's block RAM and UltraRAM primitives (RAMB36E2,
+(MMCME4, BUFGCE). It has the BCU1525's block RAM and UltraRAM primitives (RAMB36E2,
 URAM288), and it is a -2 speed grade at VCCINT 0.85 V. The BCU1525's VU9P is -2L: from the data
 sheet (DS923), -2L at 0.85 V has -2 timing and is slower at 0.72 V; which voltage the card runs
-is to be checked. F2's VU47P is -2. Not modelled: the larger dies, the SLR crossings, and the
+is to be checked. Not modelled: the larger dies, the SLR crossings, and the
 slices around the TMEM. *Measured* (Vivado 2026.1, the build host, 2026-10-12):
 
 | run | clocks (core / copies) | RAM | WNS | what limits it |
@@ -579,14 +579,14 @@ The workloads scoreboard (`tools/scoreboard.py` on the workloads branch, an anal
 calibrated on the card and the co-sim; *estimate*), prefill of a 1,024-token prompt, geometric
 mean over nine dense models, against the board as it is:
 
-| what-if | YPCB | BCU1525 | F2 |
-|---|---|---|---|
-| TMEM 128K | +4.4% | +6.0% | +9.5% |
-| TMEM 256K | +5.6% | +8.0% | +13.4% |
-| TMEM 384K | +9.2% | +14.3% | +26.5% |
-| MCOLS 8 | +35.9% | +30.0% | +23.6% |
-| MCOLS 8, TMEM 128K | +52.5% | +45.7% | +39.7% |
-| MCOLS 8, TMEM 256K | +60.7% | +53.7% | +48.2% |
+| what-if | YPCB | BCU1525 |
+|---|---|---|
+| TMEM 128K | +4.4% | +6.0% |
+| TMEM 256K | +5.6% | +8.0% |
+| TMEM 384K | +9.2% | +14.3% |
+| MCOLS 8 | +35.9% | +30.0% |
+| MCOLS 8, TMEM 128K | +52.5% | +45.7% |
+| MCOLS 8, TMEM 256K | +60.7% | +53.7% |
 
 TMEM changes neither single-user decode (a decode step needs well under 64K) nor, in that model,
 batched decode (it runs users in blocks of a pass); one 8-row batched run instead of two 4-row
@@ -680,10 +680,6 @@ without pumping, 128K in Vivado's. UltraRAM pumps at 2x only: URAM288's minimum 
 2.000 ns at -2 (500 MHz, measured above), so P3 in UltraRAM needs the core at or below 250 MHz;
 it meets 200 / 400 MHz.
 
-**F2 (VU47P: 2,016 RAMB36 and 960 URAM288 in three SLRs, 672 and 320 each, from the data
-sheet; not built).** The scoreboard's F2 runs S = 4 slices, so one SLR holds two: 160 URAM288 a
-slice. Six copies fit 128K (96 a slice in yosys' packing), three fit 256K (96) and 384K (144).
-
 **ASIC.** The TMEM is banked already (`TMEM_IMPL 1`, three copies of 1R1W macros). Pumping is an
 FPGA trick: an SRAM macro at twice the core clock would cap the core at half the macro's speed.
 Capacity is macro area: in the card's arch on nangate45 the TMEM is 4.05 mm2 (48 macros of
@@ -711,7 +707,7 @@ over the scoreboard's models):
 
 The batched column is 4-16 users in runs of a pass (MCOLS rows); "8 rows a run" is one run of 8
 users at MCOLS 4. The same what-ifs on the BCU1525 give prefill 1.057 (128K), 1.300 (MCOLS 8) and
-1.457 (both), on the F2 1.095, 1.236 and 1.397. The RTL co-sims of section 3 agree in kind:
+1.457 (both). The RTL co-sims of section 3 agree in kind:
 128K at MCOLS 4 is +10-11% for a large model's prompt rows and nothing for a small one; at MCOLS
 8 it is +18-29%.
 
@@ -723,7 +719,6 @@ users at MCOLS 4. The same what-ifs on the BCU1525 give prefill 1.057 (128K), 1.
 |---|---|---|
 | YPCB (xc7k480t-2, 133.33 MHz) | **3, pumped at 2x (P3)**: the card's behaviour cycle for cycle; +0.267 ns out of context at 133.33 / 266.67 | Two copies or one at 2x are banked: 0.0-2.4% in cycles (measured), but the banked arbiter misses 133.33 MHz by 1.06 ns in the full build (b2). One copy at 3x misses by 27 ps out of context (the block RAM's 1.800 ns clock-to-out) and needs the 2-cycle read. 4x misses by 0.66 ns. |
 | BCU1525 (VU9P -2L; measured on xcku5p-2) | **3 (P3)** at a 200 MHz core, in block RAM (+0.195 ns) or UltraRAM (+0.180 ns) at 200 / 400 | One copy at 3x and 200 MHz meets by 2 ps in uncascaded block RAM (no margin), needs the 2-cycle read, and needs block RAM, while the board's TMEM is in UltraRAM, which stops at 500 MHz. |
-| F2 (VU47P -2) | **3 (P3)**, as the BCU1525; one copy at 4x only with a 133.33 MHz core | One copy at 4x meets 133.33 / 533.33 (+0.097 ns, uncascaded block RAM), but only with the 2-cycle read (estimate +0.02-1.2% in cycles, a change to every unit). |
 | ASIC | **3 banked 1R1W copies** (as today); 2 with QUANT 3 off the ports | Pumping does not apply: an SRAM macro at K times the core clock caps the core at 1/K of the macro's speed. |
 
 So the question "pump TMEM by 3x or 4x so it needs one copy instead of 3?" has these answers:
@@ -789,9 +784,6 @@ not bind until 256K. UltraRAM pumps at 2x only (500 MHz at -2), with the core at
 At a 200 MHz core P3 in UltraRAM meets 400 MHz (+0.180 ns) and halves the URAM. Take P3 when the
 TMEM grows to 256K (with MCOLS 8: +54% prefill on the board, scoreboard). One copy at 3x would
 have to move the TMEM back to block RAM and take the 2-cycle read.
-
-**F2.** Two slices an SLR: 160 URAM288 a slice. Six copies hold 128K; 256K and 384K need P3 in
-UltraRAM (a core at or below 250 MHz), or block RAM.
 
 **ASIC.** Keep the banked TMEM (three copies of 1R1W macros; the measured cycle cost is
 0.1-3%). Its listed critical paths are elsewhere (`docs/asic.md`: dispatch, and the grant into

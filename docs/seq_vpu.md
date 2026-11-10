@@ -46,7 +46,7 @@ co-simulation, Verilator) or estimated.
   16; the VPU: 8 lanes, the stream engine, the write buffer). `rtl/exp/seq_vpu/run_ooc.sh`:
   the module as built (placed and routed), ablations in synthesis
   (`rtl/exp/seq_vpu/abl/otpu_seq.sv`: the hazard check pruned piece by piece), and the flat
-  cells grouped by the RTL name they carry (`ooc.tcl`). UltraScale+ (the BCU1525's and F2's
+  cells grouped by the RTL name they carry (`ooc.tcl`). UltraScale+ (the BCU1525's
   family): xcku5p-2 at 4.0 ns as the stand-in.
 - **Cycles**: the RTL co-simulation of the card's configuration (PAIR, DSTEP, STREAM, LiteDRAM's
   controller at DDR3-1066, the core at 133.33 MHz), `rtl/exp/seq_vpu/run_cosim.sh` over
@@ -718,11 +718,6 @@ Per board:
   with the 15-bit mask on the xcku5p, the final's not run; -14 DSP, +14 RAMB36). The device has room; the reason is timing: at 250 MHz on the
   UltraScale+ stand-in the footprint path is today's worst (+0.027 ns) and v2's worst is the
   wait test (+0.068 ns with the 15-bit mask; the final's not run). Take it with the YPCB's validation.
-- **F2** (VU47P, UltraScale+ with HBM; no target yet): v2 as on the BCU1525. HBM raises the DRAM
-  rate that bounds decode by an order of magnitude or more, so the MXU's and the VPU's share of
-  decode grows (and the softmax's composites with the context): rerun section 5's
-  composite-width runs at HBM's rate and at long contexts before any VPU change; today's answer
-  (8 lanes) is for DDR3/DDR4, and those two only strengthen it.
 - **ASIC** (nangate45, docs/asic.md): explicit waits, no hazard check at all. The case is timing
   and scaling more than area: the sequencer's logic is 0.224 mm² of the card's 10.7 mm²
   (synthesis, measured), of which the check is ~0.15 mm² (estimated by the FPGA's ratio), and its

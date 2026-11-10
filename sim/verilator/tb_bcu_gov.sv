@@ -36,7 +36,9 @@ module tb_bcu_gov;
   logic [1:0] uart_sel;
   logic [2:0] led;
 
-  otpu_bcu_gov #(.CLK_HZ(MSC * 1000), .OFF_DLY(OFF), .HAS_REG(1'b1), .TEMP_STALE_MS(STALE)) dut (
+  otpu_bcu_gov #(.CLK_HZ(MSC * 1000), .OFF_DLY(OFF), .HAS_REG(1'b1), .TEMP_STALE_MS(STALE),
+                 .IMG_PLATFORM(7), .IMG_SLICES(2), .IMG_CARDS(2), .IMG_HASH(32'hE331_F79C),
+                 .IMG_BUILD(32'h1A2B_3C4D)) dut (
     .clk, .rst, .temp, .temp_alarm, .ot_alarm, .reg_t, .reg_age, .acc_on, .dimm_on, .dimm_ok,
     .uart_sel, .led,
     .s_awaddr(awaddr), .s_awvalid(awvalid), .s_awready(awready), .s_wdata(wdata),
@@ -91,7 +93,9 @@ module tb_bcu_gov;
                           TRIP = 12'h14, RESUME = 12'h18, HBMS = 12'h1C, KICK = 12'h20,
                           TRIPS = 12'h24, RUNMS = 12'h28, LIMITS = 12'h2C, REG = 12'h30,
                           RTRIP = 12'h34, RRES = 12'h38, RSTALE = 12'h3C, RAGE = 12'h40,
-                          RLIM = 12'h44, TAGE = 12'h48, TSTALE = 12'h4C;
+                          RLIM = 12'h44, TAGE = 12'h48, TSTALE = 12'h4C,
+                          IMAGE = 12'h50, IPLAT = 12'h54, IHASH = 12'h58, IBUILD = 12'h5C,
+                          IKHZ = 12'h60;
   localparam logic [31:0] GO = 1, SAFE = 2, CLEAR = 4;
 
   // ---- the domains' order: the accelerator off no later than the DIMMs, the DIMMs OFF cycles
@@ -139,6 +143,13 @@ module tb_bcu_gov;
     rst = 1'b0;
     repeat (5) @(negedge clk);
     rd(ID, v);     expect_eq("ID", v, 32'h474F_5631);
+    // the image's identity, in SAFE (nothing on yet): the top's parameters
+    rd(IMAGE, v);  expect_eq("IMAGE", v, 32'h494D_4731);
+    rd(IPLAT, v);  expect_eq("IMG_PLAT (cards, slices, platform)", v, 32'h0202_0007);
+    rd(IHASH, v);  expect_eq("IMG_HASH", v, 32'hE331_F79C);
+    rd(IBUILD, v); expect_eq("IMG_BUILD", v, 32'h1A2B_3C4D);
+    rd(IKHZ, v);   expect_eq("IMG_KHZ", v, MSC);
+    rd(12'h64, v); expect_eq("0x64 reads 0", v, 0);
     rd(LIMITS, v); expect_eq("LIMITS", v, {6'd0, 10'd704, 6'd0, 10'd724});
     rd(CTRL, v);   expect_eq("CTRL at reset (UART_SEL 1)", v, 32'h100);
     rd(TRIP, v);   expect_eq("TRIP at reset", v, 724);

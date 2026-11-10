@@ -355,7 +355,8 @@ class FakeBcu:
     die by default; `gov_valid` False: its TEMP_VALID clear; `temp_age_ms`: a build with the
     staleness check, its code that old, stale and not valid from 60 s; None: a build before it),
     `reg_c` the regulator's hottest (the watch's: the FakeBmc's readings); `sysmon` False: no
-    SYSMON (its registers read all ones).
+    SYSMON (its registers read all ones); `gov_image`: a build whose governor holds the image's
+    identity (gov.IMAGE ..), `build_id` its BUILD_ID.
     Writes at R_GOV and above are recorded in `writes` and change nothing (a monitor makes
     none)."""
     FENCED = 0xDEAD0FF0
@@ -365,7 +366,7 @@ class FakeBcu:
                  cause: int = 0x8, trips: tuple = (0, 0), run_ms: int = 0, kick_ms: int = 0xFFFF,
                  reg_age_ms: int = 4, bmc=None, devname: str = "fakebcu0", core_khz: int = 150000,
                  gov_valid: bool = True, sysmon: bool = True, temp_age_ms: int | None = None,
-                 **acc_kw):
+                 gov_image: bool = False, build_id: int = 0x1234ABCD, **acc_kw):
         from . import gov as G
         from .fake_bmc import FakeBmc
         self.G = G
@@ -377,13 +378,15 @@ class FakeBcu:
         self.cause, self.trips, self.run_ms, self.kick_ms = cause, trips, run_ms, kick_ms
         self.reg_age_ms, self.gov_valid, self.has_sysmon = reg_age_ms, gov_valid, sysmon
         self.temp_age_ms = temp_age_ms
+        self.gov_image, self.core_khz = gov_image, core_khz
         self.writes: list[tuple[int, int]] = []
         code = G.code_of(self.gov_die_c)
         kw = dict(regmap=R.CAPS2_SINCE, D=128, MCOLS=8, LANES=8, act_rows=16,
                   cfg=target_cfg("bcu1525-wg"), core_khz=core_khz, ddr_mts=2400, temp_code=code << 2,
                   dstep=True, stream=True, args=True, gen=True, chash=True, outer=False,
-                  dstep2=True, bmc=self.bmc, devname=devname)
+                  dstep2=True, bmc=self.bmc, devname=devname, build_id=build_id)
         self.acc = FakeTransport(**{**kw, **acc_kw})
+        self.build_id = build_id
 
     def _up(self) -> bool:
         return self.run and self.acc_on
@@ -409,7 +412,19 @@ class FakeBcu:
                 G.REG_TRIP: 312, G.REG_RESUME: 300, G.REG_STALE: 10000,
                 G.REG_AGE: self.reg_age_ms, G.REG_LIMITS: 300 << 16 | 312,
                 G.TEMP_STALE: 0 if age is None else 60000,
-                G.TEMP_AGE: 0 if age is None else min(age, 0x1FFFF) | stale << 31}.get(o, 0)
+                G.TEMP_AGE: 0 if age is None else min(age, 0x1FFFF) | stale << 31,
+                **self._image()}.get(o, 0)
+
+    def _image(self) -> dict:
+        """The governor's identity words (`gov_image`: a build with them), the accelerator's
+        own configuration as they hold it."""
+        if not self.gov_image:
+            return {}
+        from ..target import by_platform, cards
+        G, c = self.G, R.cfg(self.acc.cfg_words)
+        n = cards(by_platform(c["platform"]))
+        return {G.IMAGE: G.IMG_ID, G.IMG_PLAT: n << 24 | c["S"] << 16 | c["platform"],
+                G.IMG_HASH: c["hash"], G.IMG_BUILD: self.build_id, G.IMG_KHZ: self.core_khz}
 
     def _sysmon(self, o: int) -> int:
         G = self.G

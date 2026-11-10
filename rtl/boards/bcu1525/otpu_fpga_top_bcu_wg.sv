@@ -64,6 +64,11 @@
 `ifndef OTPU_WG_DMAP               // the DIMM slots' DIMMs (make_wg.py --fp; S 1: the identity)
 `define OTPU_WG_DMAP 8'hE4
 `endif
+`ifndef OTPU_WG_PLATFORM           // the image's identity for the governor (make_wg.py: the board's
+`define OTPU_WG_PLATFORM 0         // PLATFORM, ARCH_HASH and BUILD_ID, as OTPU_BOARD gives otpu_board)
+`define OTPU_WG_CFG_HASH 32'h0
+`define OTPU_WG_BUILD_ID 32'h0
+`endif
 `ifndef OTPU_WG_BHW                // the pairs' bank-half window, a channel's bytes' log2 (make_wg.py)
 `define OTPU_WG_BHW 0
 `endif
@@ -319,7 +324,14 @@ module otpu_fpga_top_bcu_wg #(
   logic [2:0] gov_led;
   logic signed [15:0] reg_hot;
   logic [15:0] reg_age;
-  otpu_bcu_gov #(.CLK_HZ(CORE_KHZ * 1000), .CLK_HZ1(CORE_KHZ1 * 1000), .HAS_REG(1'b1)) u_gov (
+`ifdef OTPU_WG_X2
+  localparam int GOV_CARDS = 2;
+`else
+  localparam int GOV_CARDS = 1;
+`endif
+  otpu_bcu_gov #(.CLK_HZ(CORE_KHZ * 1000), .CLK_HZ1(CORE_KHZ1 * 1000), .HAS_REG(1'b1),
+                 .IMG_PLATFORM(`OTPU_WG_PLATFORM), .IMG_SLICES(S), .IMG_CARDS(GOV_CARDS),
+                 .IMG_HASH(`OTPU_WG_CFG_HASH), .IMG_BUILD(`OTPU_WG_BUILD_ID)) u_gov (
     .clk(core_clk), .rst(gov_rst), .temp(device_temp), .temp_alarm, .ot_alarm, .reg_t(reg_hot),
     .reg_age, .acc_on, .dimm_on, .dimm_ok, .uart_sel(), .led(gov_led),
     .s_awaddr(gv_awaddr[11:0]), .s_awvalid(gv_awvalid), .s_awready(gv_awready),

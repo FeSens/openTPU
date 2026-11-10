@@ -8,7 +8,7 @@ weight chunk and row against the rows T of a pass, and what that gives a model's
 A pass of T rows over one 128-byte weight chunk costs max(stream, MXU) cycles:
 - stream: 1 / eta (eta: the chunks a cycle the memory delivers to the core's port, at most 1;
   the card's DDR3-1066 through LiteDRAM 0.82-0.85 while decoding, docs/board.md; DDR4 on the
-  BCU1525 and HBM on the F2 deliver more than the port takes: 1);
+  BCU1525 delivers more than the port takes: 1);
 - MXU (docs/isa.md MM): int8, ceil(T / MCOLS) (replayed groups); 4-bit, two blocks a chunk:
   1 with PAIR (T <= MCOLS / 2), else 2 ceil(T / MCOLS).
 Per row that is max(stream, MXU) / T. The floor (the MXU's multiply rate) is 1 / MCOLS cycles

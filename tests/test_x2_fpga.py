@@ -36,6 +36,8 @@ def test_x2_card_hash_and_topology(tmp_path, mhz):
     assert ".PLATFORM(7)" in vh and "`define OTPU_WG_S 2" in vh
     assert "`define OTPU_WG_BHW 30" in vh and "`define OTPU_WG_X2\n" in vh
     assert "`define OTPU_WG_HASH 32'hE331F79C" in vh
+    # (the governor's identity words: the card's platform and the machine's hash, in SAFE too)
+    assert "`define OTPU_WG_PLATFORM 7\n" in vh and "`define OTPU_WG_CFG_HASH 32'hE331F79C\n" in vh
     assert ".ARCH_HASH(32'he331f79c)" in vh
     machine = T.load("bcu1525-x2:st16")
     card = replace(machine, arch=dict(machine.arch, S=2))

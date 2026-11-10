@@ -421,7 +421,6 @@ What a 2x VPU gives each workload, in two views:
 |---|---|---|---|---|---|
 | YPCB-00338 (xc7k480t-2, 81% slices) | co-sim ≤1%; scoreboard 1.000x | 0.4-2.9% (MCOLS 4), 2.6-7.1% (MCOLS 8); 1.045x | 1.8-2.7%; 1.016x | 0.6-2.6%; 1.016x | no 2x VPU, no pumping |
 | BCU1525 (VU9P, 2 slices, DDR4) | 1.000x | 1.044x | 1.016x | 1.015x | 16 lanes only with MCOLS 8 and a 16-word stream engine |
-| AWS F2 (VU47P, HBM, S 4 at 250 MHz) | 1.000x | 1.041x | 1.015x | 1.011x | no; spend LUTs on slices |
 | ASIC (NanGate45 card architecture) | as the YPCB at the same MCOLS | | | | keep 8 lanes; a 16-word DSTEP path if Qwen3.5 prefill matters |
 
 On top of MCOLS 8 with 4x TMEM (8-row prompt runs), the scoreboard puts `--vpu 2` at:
@@ -447,9 +446,6 @@ Qwen3.5 through DSTEP, and little otherwise.
   is affordable there, but the stream engine must come along, or Qwen3.5 regresses to the VOP
   path. So: plain 16 lanes and a 16-word stream engine, no pumping (the fabric would need 400
   MHz at a 200 MHz core). Only once the 16-lane engine exists.
-- **AWS F2.** LUTs limit the slice count (~7 slices of today's size, docs/dsp_pumping.md 6). A
-  16-lane VPU costs a share of a slice for a few percent of prefill, while another slice adds a
-  whole slice's throughput to batched and MoE serving. Keep 8 lanes.
 - **ASIC.** No DSPs, so pumping means a faster clock on the same logic: no gain over a faster
   core. Widening is linear in area: the VPU is 1.161 mm² of the NanGate45 card build
   (docs/asic.md), plus the TMEM's bank macros. Keep 8 lanes. The DSTEP path (d) is the only

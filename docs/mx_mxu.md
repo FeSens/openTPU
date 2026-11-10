@@ -987,7 +987,7 @@ MX arrays of 8 rows with 4 lanes and of 16 rows with 8, against today's MCOLS 4:
 
 ### 6.2 An ideal port
 
-The BCU1525's and F2's slices: a 128-byte chunk a core cycle, 60 cycles of latency:
+The BCU1525's slices: a 128-byte chunk a core cycle, 60 cycles of latency:
 
 | workload | MCOLS 4 | MX 8 rows | change | MX 16 rows | change |
 |---|---:|---:|---:|---:|---:|
@@ -1011,11 +1011,6 @@ against its own board and clock:
 | BCU1525 DDR4-2400, 200 MHz | MX 16 rows, TMEM x4 | 1.00x | 1.93x | 2.50x | 1.00x | 1.48x |
 | BCU1525 DDR4-2400, 200 MHz | port 256 B + MXU x2 | 1.41x | 1.50x | 1.63x | 1.28x | 1.45x |
 | BCU1525 DDR4-2400, 200 MHz | port 256 B + MXU x2, 8 rows | 1.42x | 1.79x | 2.54x | 1.28x | 1.70x |
-| F2 (S 4, 250 MHz) | MX 8 rows | 1.00x | 1.26x | 1.57x | 1.00x | 1.19x |
-| F2 (S 4, 250 MHz) | MX 16 rows, TMEM x4 | 1.00x | 1.78x | 2.22x | 1.00x | 1.41x |
-| F2 (S 4, 250 MHz) | port 256 B + MXU x2 | 1.75x | 1.52x | 1.58x | 1.46x | 1.57x |
-| F2 (S 4, 250 MHz) | port 256 B + MXU x2, 8 rows | 1.75x | 1.80x | 2.31x | 1.46x | 1.80x |
-| F2 (S 4, 250 MHz) | port 512 B + MXU x4 | 2.51x | 2.00x | 2.21x | 1.80x | 2.11x |
 
 The scoreboard has no lane limit (E = MCOLS); the co-sim puts E = MCOLS/2 within 0.6% of that.
 "MXU x2 / x4" is where the MX column matters beyond the row count: two products per DSP (pumped
@@ -1070,7 +1065,7 @@ columns at 266.67 MHz, section 5):
    lever (-28 to -48% of those runs' cycles, decode unchanged) for a fifth of the LUTs (under half
    with the SRLs and LUT RAM) and an eighth of the flip-flops that MCOLS 8 costs today. 16 rows with
    a bigger TMEM (and the sequencer's wider ranges) on the bigger boards (scoreboard 1.48x on the
-   BCU1525, 1.41x on the F2, before a wider port). Pumped DSP48E1s on the 7-series, packed DSP48E2s
+   BCU1525, before a wider port). Pumped DSP48E1s on the 7-series, packed DSP48E2s
    on UltraScale+.
 
 **Decisions for the user** (not guessed here):
@@ -1132,7 +1127,7 @@ Staged so that each step is checked before the next one costs Vivado time.
 
 **3. 8 rows** on the YPCB: the pumped column (`rtl/exp/dsp_pump`, a second clock) or 8 physical
 columns, ACT RAM 8 rows a cycle, E = 4; on UltraScale+ the packed DSP48E2 column (`otpu_mx_us`).
-16 rows with 4x TMEM where the board has the RAM (BCU1525, F2), with `otpu_seq`'s TAW widened
+16 rows with 4x TMEM where the board has the RAM (BCU1525), with `otpu_seq`'s TAW widened
 to clog2(TMEM_WORDS).
 
 **Risks**

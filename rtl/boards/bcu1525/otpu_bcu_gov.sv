@@ -71,6 +71,15 @@
 //   0x48 TEMP_AGE RO [16:0] ms since the die's code last changed (counted while the temperature
 //                    alarm is clear, saturating), bit31 TEMP_STALE_MS reached
 //   0x4C TEMP_STALE RO the build's TEMP_STALE_MS (0 on a build before it: no TEMP_AGE)
+// The image's identity, answered in SAFE too (the accelerator's own configuration registers are
+// fenced until it is on: otpu_axil_off), the top's parameters as its accelerator reports them:
+//   0x50 IMAGE     RO  0x494D4731 ("IMG1"; 0 on a build before it: no identity here)
+//   0x54 IMG_PLAT  RO  [15:0] the platform id (CFG_PLATFORM), [23:16] this card's slices,
+//                      [31:24] the cards of its machine (0: a top without an accelerator)
+//   0x58 IMG_HASH  RO  the build's ARCH_HASH (CFG_HASH)
+//   0x5C IMG_BUILD RO  BUILD_ID (the tree's commit)
+//   0x60 IMG_KHZ   RO  the core clock, kHz (CLK_HZ's)
+// (0x64 .. 0x7C read 0; bits [11:7] of an address are not decoded.)
 module otpu_bcu_gov #(
   parameter int CLK_HZ     = 100_000_000,
   parameter int CLK_HZ1    = CLK_HZ,       // the fallback clock (otpu_clk_k), or CLK_HZ: none
@@ -86,7 +95,14 @@ module otpu_bcu_gov #(
   parameter int REG_RESUME_MAX = 300,       // 75.0 C
   parameter int REG_WARN_D     = 8,         // REG_WARN at REG_TRIP - 2 C
   parameter int REG_STALE_DEF  = 10000,     // ms
-  parameter int TEMP_STALE_MS  = 60000      // ms: a code unchanged this long is no reading
+  parameter int TEMP_STALE_MS  = 60000,     // ms: a code unchanged this long is no reading
+  // the image's identity (IMAGE .. IMG_KHZ): the accelerator's platform id, this card's slices,
+  // its machine's cards, the build's ARCH_HASH and BUILD_ID
+  parameter int IMG_PLATFORM = 0,
+  parameter int IMG_SLICES   = 0,
+  parameter int IMG_CARDS    = 0,
+  parameter logic [31:0] IMG_HASH  = 32'h0,
+  parameter logic [31:0] IMG_BUILD = 32'h0
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -283,6 +299,11 @@ module otpu_bcu_gov #(
           5'd17: s_rdata <= {16'(REG_RESUME_MAX), 16'(REG_TRIP_MAX)};
           5'd18: s_rdata <= {t_stale, 14'd0, t_age};
           5'd19: s_rdata <= 32'(TEMP_STALE_MS);
+          5'd20: s_rdata <= 32'h494D_4731;
+          5'd21: s_rdata <= {8'(IMG_CARDS), 8'(IMG_SLICES), 16'(IMG_PLATFORM)};
+          5'd22: s_rdata <= IMG_HASH;
+          5'd23: s_rdata <= IMG_BUILD;
+          5'd24: s_rdata <= 32'(CLK_HZ / 1000);
           default: s_rdata <= 32'd0;
         endcase
       end
