@@ -5,21 +5,23 @@ package otpu_pkg;
                          OP_LOOP = 8'h04, OP_BAR = 8'h05, OP_RLD = 8'h06, OP_WAITW = 8'h07,
                          OP_LD = 8'h10,
                          OP_ST = 8'h11,
-                         OP_DSTEP = 8'h12, OP_STREAM = 8'h13, OP_MM = 8'h20, OP_QACT = 8'h21,
+                         OP_DSTEP = 8'h12, OP_STREAM = 8'h13, OP_LDA = 8'h14, OP_MM = 8'h20,
+                         OP_QACT = 8'h21,
                          OP_QST = 8'h22,
                          OP_VOP = 8'h30, OP_GATHER = 8'h40;
 
   localparam logic [7:0] V_ADD = 0, V_SUB = 1, V_RSUB = 2, V_MUL = 3, V_MAX = 4, V_MIN = 5,
                          V_OUTER = 6, V_COPY = 8, V_EXP2 = 9, V_RECIP = 10, V_RSQRT = 11,
                          V_ABS = 12, V_FILL = 13, V_EXP2SUB = 14, V_LOG2 = 15, V_RSUM = 16,
-                         V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19, V_ARGMAX = 20;
+                         V_RMAX = 17, V_RSSQ = 18, V_RDOT = 19, V_ARGMAX = 20,
+                         V_SIGMOID = 21, V_SILU = 22, V_MAC = 23;
   // HALT flag bit0 CHAIN: load R[rb] instructions from DRAM R[ra] and start them; RLD flag
   // bit0 RAW: the word's bits instead of f2i, bit1 MUL: times R[rb] + w2 (docs/isa.md)
   localparam int HF_CHAIN = 0, RF_RAW = 0, RF_MUL = 1;
   // the composite functions' classes (otpu_se_comp's microcode; the VPU decodes a chunk's as it
   // loads it)
   localparam logic [2:0] CC_NONE = 3'd0, CC_EXP = 3'd1, CC_EXS = 3'd2, CC_RCP = 3'd3,
-                         CC_RSQ = 3'd4, CC_LOG = 3'd5;
+                         CC_RSQ = 3'd4, CC_LOG = 3'd5, CC_SIG = 3'd6, CC_SLU = 3'd7;
   function automatic logic [2:0] f_cc(input logic [7:0] f);
     case (f)
       V_EXP2:    return CC_EXP;
@@ -27,14 +29,22 @@ package otpu_pkg;
       V_RECIP:   return CC_RCP;
       V_RSQRT:   return CC_RSQ;
       V_LOG2:    return CC_LOG;
+      V_SIGMOID: return CC_SIG;
+      V_SILU:    return CC_SLU;
       default:   return CC_NONE;
     endcase
   endfunction
   // VOP OUTER flags: one decay word T[d] for all columns / decay 1.0 (T[d] not read)
-  localparam int VF_DSCALAR = 0, VF_DONE = 1;
+  localparam int VF_DSCALAR = 0, VF_DONE = 1, VF_FSUM = 2;
   // DSTEP / STREAM flags: the state starts at +0 (DRAM not read); STREAM's TMEM source and
   // destination and no write-back (not in the hardware subset)
   localparam int DF_ZERO = 0, STF_SRC_T = 1, STF_DST_T = 2, STF_NODST = 3;
+  // DSTEP's pair (DSTEP2, docs/isa.md): two heads, rows / 2 each; QKB: head b's q | k after
+  // head a's
+  localparam int DF_PAIR = 1, DF_QKB = 2;
+  // a DSTEP's (STREAM's) DRAM state in 16 bits, fp32 in the engine (otpu_dma ST16, docs/isa.md
+  // "ST16"); STREAM's source alone (ST16R) or its destination alone (ST16W) in 16 bits
+  localparam int DF_ST16 = 3, STF_ST16 = 4, STF_ST16R = 5, STF_ST16W = 6;
 
   localparam logic [1:0] B_FULL = 0, B_ROW = 1, B_COL = 2, B_SCALAR = 3;
 
@@ -49,6 +59,8 @@ package otpu_pkg;
     logic [1:0] g_src;   // 0 K0, 1 slot 3 column, 2 one
     logic       q_en;    // O on
     logic       pad64;   // cols = 64 presented as ns = 16: columns 64..127 read +0 (one tree)
+    logic       pair;    // DSTEP's pair (DSTEP2): rows >= rows / 2 are head b's (its vectors at
+                         //   the buffers' index + ns, its K0 and K1 the fill's second)
   } ss_cfg_t;
   localparam logic [1:0] SD_DELTA = 0, SD_DELTA1 = 1, SD_SCALE = 2, SD_DOT = 3;
   localparam logic [1:0] SG_K0 = 0, SG_COL = 1, SG_ONE = 2;
@@ -63,13 +75,35 @@ package otpu_pkg;
   // concurrently whenever their memory footprints do not conflict.
   localparam int U_DMA = 0, U_MXU = 1, U_Q = 2, U_VPU = 3, U_COLL = 4, NUNITS = 5;
 
+  // DRAM addresses (docs/isa.md) are AW bits: the units' AW parameter, 32 but on the BCU1525
+  // (36), at most AW_MAX. A register is AW bits and an address R[r] + w (w zero-extended) mod
+  // 2^AW; a command's w1..w3 carry that sum's bits AW - 1 .. 32 in w1h..w3h (0 at AW 32: no
+  // unit reads them there).
+  localparam int AW_MAX = 36;
+  localparam int AWX = AW_MAX - 32;
+  // a word address's bits at AW: AW - 2, and never fewer than 32 (the units' word addresses
+  // before AW: at AW 32 their two top bits are 0, as they were)
+  function automatic int waw(input int aw);
+    return (aw - 2 > 32) ? aw - 2 : 32;
+  endfunction
+
   // Instruction with register-relative fields already resolved: w1 += R[ra], w2 += R[rb],
-  // w3 += R[rc] (docs/isa.md).
+  // w3 += R[rc] (docs/isa.md). lg: an MM's rd field, log2 of its streamed operand's rows a group
+  // (docs/isa.md "Weight groups"; otpu_seq sets it only on a WG > 1 slice, else 0). w1h..w3h:
+  // w1..w3's bits AW - 1 .. 32 (above).
   typedef struct packed {
     logic [7:0]  op;
     logic [7:0]  flags;
+    logic [3:0]  lg;
+    logic [AWX-1:0] w1h, w2h, w3h;
     logic [31:0] w1, w2, w3, w4, w5, w6, w7;
   } cmd_t;
+
+  // word k (1..3) of c with its high bits: the byte address R[r] + w at AW_MAX bits (a unit
+  // takes its AW low bits)
+  function automatic logic [AW_MAX-1:0] cmd_a(input cmd_t c, input int k);
+    return (k == 1) ? {c.w1h, c.w1} : (k == 2) ? {c.w2h, c.w2} : {c.w3h, c.w3};
+  endfunction
 
   // Address ranges [lo, hi) in one of three spaces.
   localparam logic [1:0] SP_TMEM = 0, SP_DRAM = 1, SP_ACT = 2;
@@ -86,7 +120,7 @@ package otpu_pkg;
 
   function automatic int unit_of(input logic [7:0] op);
     case (op)
-      OP_LD, OP_ST, OP_DSTEP, OP_STREAM, OP_WAITW: return U_DMA;
+      OP_LD, OP_ST, OP_DSTEP, OP_STREAM, OP_WAITW, OP_LDA: return U_DMA;
       OP_MM:             return U_MXU;
       OP_QACT, OP_QST:   return U_Q;
       OP_VOP:            return U_VPU;
@@ -111,17 +145,21 @@ package otpu_pkg;
     return r;
   endfunction
 
-  // A QST's DRAM range widened to every word of the 64-byte beats it touches: [lo & ~63,
-  // hi | 63). The board's DRAM adapter writes a QST's partial beat whole after reading it (its
-  // fill read; otpu_native_dram), so another unit's write to the beat's other bytes in between
-  // would be lost: an ST, DSTEP or STREAM into one of these beats now waits for the QST, or the
-  // QST for it. (No carry: the ends only gain bits; an end on a beat boundary also takes the next
-  // beat but its last byte, a false conflict at worst.)
-  function automatic rng_t beats(input rng_t r);
+  // A QST's DRAM range widened to every word of the beats of 2^QB bytes it touches: [lo & ~m,
+  // hi | m), m = 2^QB - 1. The board's DRAM adapter writes a QST's partial beat whole after
+  // reading it (its fill read; otpu_native_dram SW_FILL), so another unit's write to the beat's
+  // other bytes in between would be lost: an ST, DSTEP or STREAM into one of these beats now
+  // waits for the QST, or the QST for it. QB is the adapter's fill beat where it is wider than
+  // 64 bytes (otpu_slice QB: its channel beat CB), else 6: the cards' 64-byte beats, and the
+  // QST's footprint wherever no beat is filled. (No carry: the ends only gain bits; an end on a
+  // beat boundary also takes the next beat but its last byte, a false conflict at worst.)
+  function automatic rng_t beats(input rng_t r, input int QB = 6);
     rng_t o;
+    logic [31:0] m;
+    m = (32'd1 << QB) - 32'd1;
     o = r;
-    o.lo = {r.lo[31:6], 6'd0};
-    o.hi = r.hi | 32'd63;
+    o.lo = r.lo & ~m;
+    o.hi = r.hi | m;
     return o;
   endfunction
 
@@ -159,12 +197,13 @@ package otpu_pkg;
 
   function automatic logic is_binary(input logic [7:0] f);
     return f == V_ADD || f == V_SUB || f == V_RSUB || f == V_MUL || f == V_MAX || f == V_MIN ||
-           f == V_FILL || f == V_EXP2SUB;
+           f == V_FILL || f == V_EXP2SUB || f == V_SIGMOID || f == V_SILU;
   endfunction
 
-  // the functions that read operand B in its bmode (OUTER's is always B_ROW)
+  // the functions that read operand B in its bmode (OUTER's is always B_ROW; MAC's B_COL or
+  // B_SCALAR)
   function automatic logic reads_b(input logic [7:0] f);
-    return is_binary(f) || f == V_RDOT || f == V_OUTER;
+    return is_binary(f) || f == V_RDOT || f == V_OUTER || f == V_MAC;
   endfunction
 
   function automatic logic is_reduce(input logic [7:0] f);
@@ -187,35 +226,67 @@ package otpu_pkg;
   // Everything an instruction may read or write (docs/isa.md), conservatively as intervals.
   // Two steps so that hardware can register in between: fp_prod (the multiplications) and
   // fp_ranges (the intervals); footprint() is their composition.
-  typedef struct packed { logic [31:0] p0, p1, p2, p3; } fpm_t;
-  // the multiplications as (a, w) pairs; a < 2^24 whenever the product is used
-  typedef struct packed { logic [3:0][23:0] a; logic [3:0][31:0] w; } fpo_t;
+  typedef struct packed { logic [31:0] p0, p1, p2, p3, p4; } fpm_t;
+  // the multiplications as (a, w) pairs; a < 2^24 whenever the product is used (the fifth:
+  // QST GRP's alone)
+  typedef struct packed { logic [4:0][23:0] a; logic [4:0][31:0] w; } fpo_t;
   // partial products: low 32 bits of a * w[15:0], low 16 bits of a * w[31:16] (one DSP each)
-  typedef struct packed { logic [3:0][31:0] pl; logic [3:0][15:0] ph; } fpp_t;
+  typedef struct packed { logic [4:0][31:0] pl; logic [4:0][15:0] ph; } fpp_t;
 
-  function automatic fpo_t fp_ops(input cmd_t c, input int D, input int S);
+  // HL: QST HL's fields (w5 bit31: srs w5[19:0], the lo part HLD = w5[30:20] KiB after the hi
+  // part; docs/isa.md QST) and MM SPL's (w7 bit31: srs w7[19:0], lo's rows HLD = w7[30:20] KiB
+  // after hi's; "Split terms"). Only otpu_seq's WAITC checks pass it (QST HL and MM SPL need the
+  // wait entries: the scoreboard's footprint, in hardware, stays the one before them)
+  // QO: quantize-once (otpu_seq QONCE; docs/isa.md "Quantize once"): QACT flag ST (srs in w6, its
+  // rows' bytes and records to DRAM at w3, w7 apart) and LDA (such rows at w1, w3 apart, into
+  // ACT RAM)
+  function automatic fpo_t fp_ops(input cmd_t c, input int D, input int S, input bit HL = 1'b0,
+                                  input bit QO = 1'b0);
     fpo_t o;
-    logic [31:0] rows, n, kb, m;
+    logic [31:0] rows, n, kb, m, gs;
+    logic [2:0]  lg;
     o = '0;
     case (c.op)
       OP_MM: begin
+        // (groups of 2^lg rows: the last row's group, at the group strides)
         n = 32'(c.w4[15:0]); m = 32'(c.w6[23:16]);
-        o.a[0] = 24'(n - 1); o.w[0] = c.w5;
-        o.a[1] = 24'(n - 1); o.w[1] = c.w7;
+        o.a[0] = 24'((n - 1) >> c.lg); o.w[0] = c.w5;
+        o.a[1] = 24'((n - 1) >> c.lg); o.w[1] = (HL && c.w7[31]) ? {12'd0, c.w7[19:0]} : c.w7;
         o.a[2] = 24'(m - 1); o.w[2] = 32'(c.w6[15:0]);
         o.a[3] = 24'(m);     o.w[3] = 32'(c.w6[15:0]);
       end
       OP_QACT: begin
         rows = 32'(c.w2[7:0]);
+        o.a[0] = 24'(rows - 1); o.w[0] = (QO && c.flags[6]) ? c.w6 : c.w3;
+        if (QO && c.flags[6]) begin o.a[1] = 24'(rows - 1); o.w[1] = c.w7; end
+      end
+      OP_LDA: if (QO) begin
+        rows = 32'(c.w2[7:0]);
         o.a[0] = 24'(rows - 1); o.w[0] = c.w3;
       end
       OP_QST: begin
         rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
-        o.a[0] = 24'(rows - 1);   o.w[0] = c.w5;
-        o.a[1] = 24'(rows - 1);   o.w[1] = c.w6;
-        o.a[2] = 24'(kb * D - 1); o.w[2] = c.w7;
-        // a scale row's words (not ROW): S and ceil(KB/4) words of d bytes
-        o.a[3] = 24'(rows);       o.w[3] = 32'd1 + ((kb + 32'd3) >> 2);
+        o.a[0] = 24'(rows - 1);   o.w[0] = (HL && c.w5[31]) ? {12'd0, c.w5[19:0]} : c.w5;
+        if (c.flags[2]) begin
+          // GRP (rows R[rd] + w6 .. of a matrix in groups of R = 2^LG rows, chunks P = R x D):
+          // the first row's group and the groups the rows reach, at the group stride gs = KB x
+          // P, and their scale areas, es apart; COL: es the group stride, a row one column
+          lg = c.flags[6:4];
+          gs = (kb * D) << lg;
+          if (c.flags[3]) begin
+            o.a[1] = 24'((kb * D - 1) >> lg); o.w[1] = c.w7;
+          end else begin
+            o.a[1] = 24'(c.w6 >> lg);                        o.w[1] = gs;
+            o.a[2] = 24'(((32'd1 << lg) + rows - 2) >> lg) + 1; o.w[2] = gs;
+            o.a[3] = 24'(c.w6 >> lg);                        o.w[3] = c.w7;
+            o.a[4] = 24'(((32'd1 << lg) + rows - 2) >> lg) + 1; o.w[4] = c.w7;
+          end
+        end else begin
+          o.a[1] = 24'(rows - 1);   o.w[1] = c.w6;
+          o.a[2] = 24'(kb * D - 1); o.w[2] = c.w7;
+          // a scale row's words (not ROW): S and ceil(KB/4) words of d bytes
+          o.a[3] = 24'(rows);       o.w[3] = 32'd1 + ((kb + 32'd3) >> 2);
+        end
       end
       OP_VOP: begin
         rows = 32'(c.w4[15:0]);
@@ -239,7 +310,7 @@ package otpu_pkg;
 
   function automatic fpp_t fp_part(input fpo_t o);
     fpp_t p;
-    for (int i = 0; i < 4; i++) begin
+    for (int i = 0; i < 5; i++) begin
       p.pl[i] = 32'({8'd0, o.a[i]} * {16'd0, o.w[i][15:0]});
       p.ph[i] = 16'({8'd0, o.a[i]} * {16'd0, o.w[i][31:16]});
     end
@@ -252,16 +323,22 @@ package otpu_pkg;
     m.p1 = p.pl[1] + {p.ph[1], 16'd0};
     m.p2 = p.pl[2] + {p.ph[2], 16'd0};
     m.p3 = p.pl[3] + {p.ph[3], 16'd0};
+    m.p4 = p.pl[4] + {p.ph[4], 16'd0};
     return m;
   endfunction
 
-  function automatic fpm_t fp_prod(input cmd_t c, input int D, input int S);
-    return fp_sum(fp_part(fp_ops(c, D, S)));
+  function automatic fpm_t fp_prod(input cmd_t c, input int D, input int S, input bit HL = 1'b0,
+                                   input bit QO = 1'b0);
+    return fp_sum(fp_part(fp_ops(c, D, S, HL, QO)));
   endfunction
 
-  function automatic fp_t fp_ranges(input cmd_t c, input fpm_t p, input int D, input int S);
+  // DP: the sequencer takes DSTEP's pair (DSTEP2): its q | k (QKB) and decay .. beta ranges; QB:
+  // a QST's beats (beats())
+  function automatic fp_t fp_ranges(input cmd_t c, input fpm_t p, input int D, input int S,
+                                    input bit DP = 1'b0, input int QB = 6, input bit HL = 1'b0,
+                                    input bit QO = 1'b0);
     fp_t f;
-    logic [31:0] rows, cols, n, kb, m;
+    logic [31:0] rows, cols, n, kb, m, nc;
     f = '0;
     case (c.op)
       OP_LD: begin
@@ -287,31 +364,38 @@ package otpu_pkg;
         f.rd[3] = mk(SP_TMEM, c.w6, 32'(c.w1[31:16]) + 32'd1);
       end
       OP_DSTEP: begin
-        // the state is read and written in place (a write range); q | k, v, decay .. beta
-        // are read, o written
+        // the state is read and written in place (a write range: 16-bit values with ST16);
+        // q | k, v, decay .. beta are read, o written
         rows = 32'(c.w4[15:0]); cols = 32'(c.w4[31:16]);
         if (rows != 0 && cols != 0) begin
-          f.wr[0] = mk(SP_DRAM, c.w1, (p.p0 + cols) << 2);
+          f.wr[0] = mk(SP_DRAM, c.w1, (p.p0 + cols) << (c.flags[DF_ST16] ? 1 : 2));
           f.wr[1] = mk(SP_TMEM, c.w6, rows);
-          f.rd[0] = mk(SP_TMEM, c.w2, cols << 1);
+          // (a pair's: head b's q | k after head a's with QKB, its e and beta a word on)
+          f.rd[0] = mk(SP_TMEM, c.w2, (DP && c.flags[DF_QKB]) ? cols << 2 : cols << 1);
           f.rd[1] = mk(SP_TMEM, c.w3, rows);
-          f.rd[2] = mk(SP_TMEM, c.w5, c.w7 + 1);
+          f.rd[2] = mk(SP_TMEM, c.w5, c.w7 + ((DP && c.flags[DF_PAIR]) ? 32'd2 : 32'd1));
         end
       end
       OP_MM: begin
         n = 32'(c.w4[15:0]); kb = 32'(c.w4[23:16]); m = 32'(c.w6[23:16]);
         if (n != 0 && kb != 0 && m != 0) begin
-          f.rd[0] = mk(SP_DRAM, c.w1, p.p0 + kb * D);
+          // SPL (HL): a block of hi's rows, a block of lo's HLD after them (rd[3]: SPL takes no
+          // ASCALE), KB - 1 ACT blocks
+          f.rd[0] = mk(SP_DRAM, c.w1, p.p0 + (((HL && c.w7[31]) ? 32'(D) : kb * D) << c.lg));
+          if (HL && c.w7[31])
+            f.rd[3] = mk(SP_DRAM, c.w1 + {c.w7[30:20], 10'd0}, p.p0 + (32'(D) << c.lg));
           // a scale row's bytes up to block k0 + KB's (docs/isa.md "Weight formats"; PAIR's odd
           // KB: one block more): RSC Sw; int8x Sw and a byte a block; int4x / fp4x6 Sw, a
-          // reserved word and a word a block; NVFP4 Sw, three reserved words and 8 bytes a block
+          // reserved word and a word a block; NVFP4 Sw, three reserved words and 8 bytes a block.
+          // A group's area: 2^lg times a row's ("Weight groups")
           if (!c.flags[0])
-            f.rd[1] = mk(SP_DRAM, c.w2, p.p1 + (c.flags[7] ? 32'd4 :
+            f.rd[1] = mk(SP_DRAM, c.w2, p.p1 + ((c.flags[7] ? 32'd4 :
                          (c.flags[5:4] == 2'd0) ? 32'd4 + 32'(c.w4[31:24]) + kb :
                          (c.flags[5:4] == 2'd3) ? 32'd24 + ((32'(c.w4[31:24]) + kb) << 3) :
-                                                  32'd12 + ((32'(c.w4[31:24]) + kb) << 2)));
+                                                  32'd12 + ((32'(c.w4[31:24]) + kb) << 2))
+                                                 << c.lg));
           if (c.flags[3])  f.rd[3] = mk(SP_TMEM, c.w2, m);                         // ASCALE
-          f.rd[2] = mk(SP_ACT, 32'(c.w6[31:24]), kb);
+          f.rd[2] = mk(SP_ACT, 32'(c.w6[31:24]), (HL && c.w7[31]) ? kb - 1 : kb);
           f.wr[0] = mk(SP_TMEM, c.w3, p.p2 + n);
           if (c.flags[2]) f.wr[1] = mk(SP_TMEM, c.w3 + p.p3, m);                   // RMAX
         end
@@ -323,14 +407,37 @@ package otpu_pkg;
           if (c.flags[1]) f.rd[1] = mk(SP_TMEM, c.w4, kb * D);                     // CSCALE
           if (c.flags[2]) f.rd[2] = mk(SP_TMEM, c.w5, rows);                       // RSCALE
           f.wr[0] = mk(SP_ACT, 32'(c.w2[15:8]), kb);
+          // QO ST: the rows' bytes and records in DRAM
+          if (QO && c.flags[6]) f.wr[1] = mk(SP_DRAM, c.w3, p.p1 + kb * D + (kb << 3));
+        end
+      end
+      OP_LDA: if (QO) begin
+        rows = 32'(c.w2[7:0]); kb = 32'(c.w2[31:16]);
+        if (rows != 0 && kb != 0) begin
+          f.rd[0] = mk(SP_DRAM, c.w1, p.p0 + kb * D + (kb << 3));
+          f.wr[0] = mk(SP_ACT, 32'(c.w2[15:8]), kb);
         end
       end
       OP_QST: begin
         rows = 32'(c.w4[15:0]); kb = 32'(c.w4[31:16]);
         if (rows != 0 && kb != 0) begin
           f.rd[0] = mk(SP_TMEM, c.w1, p.p0 + kb * D);
-          f.wr[0] = beats(mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1));
-          f.wr[1] = beats(mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3)));
+          if (c.flags[2] && c.flags[3]) begin             // GRP COL: the columns' chunks
+            // (n0 / D) x P and ((D + rows - 2) / D + 1) x P, P = D x 2^LG: shifts
+            nc = ((32'(D) + rows - 2) / 32'(D) + 1) * 32'(D);
+            f.wr[0] = beats(mk(SP_DRAM, c.w2 + ((c.w6 & ~(32'(D) - 1)) << c.flags[6:4]),
+                               p.p1 + (nc << c.flags[6:4])), QB);
+            f.wr[1] = beats(mk(SP_DRAM, c.w3, 4 * rows), QB);
+          end else if (c.flags[2]) begin                  // GRP: the groups, their areas
+            f.wr[0] = beats(mk(SP_DRAM, c.w2 + p.p1, p.p2), QB);
+            f.wr[1] = beats(mk(SP_DRAM, c.w3 + p.p3, p.p4), QB);
+            // HL: the lo part's groups HLD after (its scale areas too, which the three write
+            // ranges leave out: the wait entries' (opentpu/waits.py) and the ISA's check hold them)
+            if (HL && c.w5[31]) f.wr[2] = beats(mk(SP_DRAM, c.w2 + p.p1 + {c.w5[30:20], 10'd0}, p.p2), QB);
+          end else begin
+            f.wr[0] = beats(mk(SP_DRAM, c.w2, p.p1 + p.p2 + 1), QB);
+            f.wr[1] = beats(mk(SP_DRAM, c.w3, 4 * (c.flags[0] ? rows : p.p3)), QB);
+          end
         end
       end
       OP_VOP: begin
@@ -343,6 +450,8 @@ package otpu_pkg;
             f.rd[2] = mk(SP_TMEM, c.w7, cols);
           end else if (c.w6[23:16] != V_FILL)
             f.rd[0] = mk(SP_TMEM, c.w2, p.p0 + cols);
+          // MAC reads dst in place (listed as read and written)
+          if (c.w6[23:16] == V_MAC) f.rd[2] = mk(SP_TMEM, c.w1, p.p2 + cols);
           if (reads_b(c.w6[23:16])) begin
             case (c.w6[25:24])
               B_FULL: f.rd[1] = mk(SP_TMEM, c.w3, p.p1 + cols);
@@ -357,6 +466,8 @@ package otpu_pkg;
             f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + 1);
           else
             f.wr[0] = mk(SP_TMEM, c.w1, p.p2 + cols);
+          // EXP2SUB FSUM: its row sums at w7 (+ R[rd]), a word a row
+          if (c.flags[VF_FSUM] && c.w6[23:16] == V_EXP2SUB) f.wr[1] = mk(SP_TMEM, c.w7, rows);
         end
       end
       OP_GATHER: begin
@@ -380,8 +491,10 @@ package otpu_pkg;
     return f;
   endfunction
 
-  function automatic fp_t footprint(input cmd_t c, input int D, input int S);
-    return fp_ranges(c, fp_prod(c, D, S), D, S);
+  function automatic fp_t footprint(input cmd_t c, input int D, input int S,
+                                    input bit DP = 1'b0, input int QB = 6, input bit HL = 1'b0,
+                                    input bit QO = 1'b0);
+    return fp_ranges(c, fp_prod(c, D, S, HL, QO), D, S, DP, QB, HL, QO);
   endfunction
 
   // ---- activity and trace events (docs/observability.md). Every field describes cycle `cyc`
@@ -429,6 +542,34 @@ package otpu_pkg;
     logic                    h;
     logic [NH-1:0][31:0]     h_v;       // bmxu bdma amxu aq
   } perf_t;
+
+  // The cards' links (otpu_board NC > 1; otpu_coll_xc): a link port's AXI-Stream ends on the
+  // core clock (qsfp-link's lt_port: 256-bit words, a message a header word and LEN payload
+  // words) as otpu_board sees them, and its status. The header's low 64 bits are lt_port's
+  // (TYPE, FLAGS, LEN, ARG, AUX, CHK; the port fills FLAGS and CHK), the collective's fields
+  // above them (LKH_*: bit offsets in the header word).
+  typedef struct packed {
+    logic         s_tready;     // TX: the port takes the word
+    logic         m_tvalid;     // RX: a word
+    logic         m_thdr;       //   a message's header
+    logic         m_tlast;      //   its last word
+    logic [255:0] m_tdata;
+    logic         up;           // the link is up (lanes, IDENT exchanged)
+    logic         rx_err;       // a message failed its check (pulse)
+    logic         abort_in;     // the peer sent ABORT (pulse)
+  } lk_in_t;
+  typedef struct packed {
+    logic         s_tvalid;
+    logic         s_tlast;
+    logic [255:0] s_tdata;
+    logic         m_tready;
+    logic         abort_req;    // send ABORT now, ahead of everything, without credits (pulse)
+    logic [7:0]   card;         // CARD_ID (the port's IDENT)
+  } lk_out_t;
+  localparam logic [7:0] LK_DATA = 8'h44;                  // TYPE: the hub's messages
+  localparam logic [7:0] LK_PIECE = 8'd1, LK_BAR = 8'd2;   // AUX: a GATHER piece, a BAR token
+  localparam int LKH_KIND = 8, LKH_SEQ = 16, LKH_LEN = 32, LKH_TYPE = 56;   // lt_port's
+  localparam int LKH_GS = 64, LKH_SRC = 72, LKH_HOPS = 80, LKH_ROW = 96, LKH_COL = 112;
 endpackage
 
 // A rotator port's read by TMEM bank (otpu_tmem PBR), for a unit to register beside its request

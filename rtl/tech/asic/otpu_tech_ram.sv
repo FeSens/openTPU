@@ -142,7 +142,8 @@ module otpu_ram_1r1w #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
   parameter string STYLE = "block",
-  parameter bit    ZERO  = 1'b1
+  parameter bit    ZERO  = 1'b1,
+  parameter bit    OREG  = 1'b0      // the read a second edge later (the generic file's)
 ) (
   input  logic                 clk,
   input  logic                 we,
@@ -152,8 +153,57 @@ module otpu_ram_1r1w #(
   input  logic [$clog2(N)-1:0] ra,
   output logic [W-1:0]         rd
 );
+  logic [W-1:0] rq;
   otpu_ram_tiled #(.W(W), .N(N), .KIND(0)) u_t (
-    .clk, .we, .wm('1), .wa, .wd, .re, .ra, .rd);
+    .clk, .we, .wm('1), .wa, .wd, .re, .ra, .rd(rq));
+  if (OREG) begin : g_oreg
+    always_ff @(posedge clk) rd <= rq;
+  end else begin : g_nore
+    assign rd = rq;
+  end
+endmodule
+
+// two clocks (the generic file's): no macro here; only the WG targets' posted chunk FIFO uses it
+module otpu_ram_1r1w_2c #(
+  parameter int    W     = 32,
+  parameter int    N     = 1024,
+  parameter string STYLE = "block",
+  parameter bit    ZERO  = 1'b1
+) (
+  input  logic                 wclk,
+  input  logic                 we,
+  input  logic [$clog2(N)-1:0] wa,
+  input  logic [W-1:0]         wd,
+  input  logic                 rclk,
+  input  logic                 re,
+  input  logic [$clog2(N)-1:0] ra,
+  output logic [W-1:0]         rd
+);
+  initial $fatal(1, "otpu_ram_1r1w_2c: no two-clock SRAM macro (otpu_mxu XPOST is the WG targets')");
+  assign rd = '0;
+endmodule
+
+// two clocks with field writes (the generic file's): no macro here either (otpu_mxu XPOST's
+// remainder RAM)
+module otpu_ram_1r1w_2c_be #(
+  parameter int    W     = 36,
+  parameter int    N     = 512,
+  parameter int    NB    = 4,
+  parameter string STYLE = "block",
+  parameter bit    ZERO  = 1'b1
+) (
+  input  logic                 wclk,
+  input  logic                 we,
+  input  logic [NB-1:0]        wbe,
+  input  logic [$clog2(N)-1:0] wa,
+  input  logic [W-1:0]         wd,
+  input  logic                 rclk,
+  input  logic                 re,
+  input  logic [$clog2(N)-1:0] ra,
+  output logic [W-1:0]         rd
+);
+  initial $fatal(1, "otpu_ram_1r1w_2c_be: no two-clock SRAM macro (otpu_mxu XPOST is the WG targets')");
+  assign rd = '0;
 endmodule
 
 // Read ahead (rtl/tech/generic has the contract): small and asynchronous-read, so flip-flops and

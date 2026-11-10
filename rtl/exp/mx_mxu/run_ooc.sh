@@ -1,5 +1,5 @@
 #!/bin/bash
-# EXPERIMENTAL (docs/mx_mxu.md): the experiment's Vivado runs in order, one at a time (omarchy
+# EXPERIMENTAL (docs/mx_mxu.md): the experiment's Vivado runs in order, one at a time (the build host
 # only, under ~/otpu-build/slot.sh). Usage, from the tree:
 #   rtl/exp/mx_mxu/run_ooc.sh <outdir> <step> ...
 # steps: k7-base4, k7-base8 (base_top MCOLS 4 / 8, DSP48E1), k7-mx<NCOL>e<E> (mx_top pumped),

@@ -29,6 +29,9 @@ module tb_fp;
         12: got = fp_log2(a);
         13: got = fp_mm(a, b, 1'b0);
         14: got = fp_mm(a, b, 1'b1);
+        15: got = {24'd0, q8lo(a)};                 // the split's lo byte (otpu_quant SPLIT)
+        16: got = {24'd0, qlo_q8(qlo_s1(a))};       // q8 from the split's shift
+        17: got = sc_lo(a);                         // the lo part's scale S * 2^-8
         default: got = 32'hDEADBEEF;
       endcase
       cases++;

@@ -322,7 +322,8 @@ module otpu_tmem_pump #(
     for (genvar b = 0; b < LANES; b++) begin : g_bank
       logic [31:0] qa, qb;
       otpu_pump_bank #(.N(BD), .STYLE(STYLE), .FW(FW)) u_pb (
-        .clk, .clk_f, .wv(pw_v[b]), .wa(pw_a[b]), .wd(pw_d[b]),
+        .clk, .clk_f, .rst(1'b0), .wv(pw_v[b]), .wa(pw_a[b]), .wd(pw_d[b]),
+        .wv2(1'b0), .wa2('0), .wd2('0),
         .rena(HA >= 0 ? h_en[HA < 0 ? 0 : HA][b] : 1'b0), .ra(h_a[HA < 0 ? 0 : HA][b]),
         .renb(HB >= 0 ? h_en[HB < 0 ? 0 : HB][b] : 1'b0), .rb(h_a[HB < 0 ? 0 : HB][b]),
         .qa, .qb);

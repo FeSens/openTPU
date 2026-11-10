@@ -1,7 +1,7 @@
 #!/bin/bash
 # EXPERIMENTAL (docs/mx_mxu.md): tb_mx (mx_top, NCOL 2, E 2) in xsim on the unisim models, for
 # one family: x7 (pumped DSP48E1s, MMCME2_ADV) or us (packed DSP48E2s). Vivado's simulator: on
-# omarchy only (never on the Mac). Usage, from the tree's root:
+# the build host only (never on a laptop). Usage, from the tree's root:
 #   rtl/exp/mx_mxu/run_xsim.sh <workdir> x7|us
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -21,7 +21,7 @@ xvlog -sv "$ROOT/rtl/vpu/otpu_fp.sv" "$ROOT/rtl/vpu/otpu_fpipe.sv" otpu_skew.sv 
   "$ROOT/rtl/exp/mx_mxu/otpu_mx_lane.sv" "$ROOT/rtl/exp/mx_mxu/mx_top.sv" \
   "$ROOT/rtl/exp/mx_mxu/tb_mx.sv" > xvlog_$FAM.log
 xvlog "$XV/data/verilog/src/glbl.v" >> xvlog_$FAM.log
-# xsim's front end links libncurses.so.5 / libtinfo.so.5; a host with only ncurses 6 (omarchy,
+# xsim's front end links libncurses.so.5 / libtinfo.so.5; a host with only ncurses 6 (the build host,
 # Arch) gets local links to the 6 libraries
 if ! ldconfig -p 2>/dev/null | grep -q libncurses.so.5; then
   mkdir -p lib5

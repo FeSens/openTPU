@@ -4,7 +4,7 @@
 # cosim-arguments" (a zero image from config.json, a layer prefix); every run is the board's
 # configuration (PAIR, DSTEP, STREAM; LiteDRAM's controller at DDR3-1066, the core at 133.33 MHz).
 # Results: <outdir>/<TAG>.log, and perf_qwen's JSON lines in <outdir>/<list name>.jsonl. A tag
-# whose log ends in rc=0 is skipped. LOCK=<file>: each run under lockf on that file (the Mac's
+# whose log ends in rc=0 is skipped. LOCK=<file>: each run under lockf on that file (a laptop's
 # shared heavy-job lock). Usage, from anywhere:
 #   rtl/exp/vpu_pump/run_cosim.sh <outdir> <P> <list> ...
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)

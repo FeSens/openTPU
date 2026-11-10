@@ -1,7 +1,7 @@
 # EXPERIMENTAL (docs/mx_mxu.md): the setup slack of the MX datapath's new paths on a routed
 # checkpoint of mx_top (ooc.tcl's routed.dcp): the shift into the column ends' B ports, the
 # accumulating DSP (its OPMODE register and P), the lane's i2f48, PAIR's 48-bit add and the
-# result FIFO's write. Vivado on omarchy:
+# result FIFO's write. Vivado on the build host:
 #   vivado -mode batch -nojournal -source rtl/exp/mx_mxu/paths.tcl -tclargs <routed.dcp>
 open_checkpoint [lindex $argv 0]
 proc worst {tag pins} {

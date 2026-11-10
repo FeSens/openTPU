@@ -1,5 +1,5 @@
 #!/bin/bash
-# EXPERIMENTAL (docs/tmem_pump.md): the experiment's Vivado runs, one at a time (omarchy only,
+# EXPERIMENTAL (docs/tmem_pump.md): the experiment's Vivado runs, one at a time (the build host only,
 # through ~/otpu-build/slot.sh). Usage, from the tree:
 #   rtl/exp/tmem_pump/run_ooc.sh <outdir> [step ...]
 # Steps (xc7k480tffg1156-2 at 133.33 MHz, the pumped copies at 266.67):
@@ -15,7 +15,7 @@
 #   ku-v2b-200, ku-v2u-200  pumped 3 copies at 200 / 400 MHz (the BCU1525's likely core clock)
 # The boards' own parts at 250 / 500 MHz (need a Virtex UltraScale+ license; not run, xcku5p stands in):
 #   vu9-v2b, vu9-v2u    pumped 3 copies, block RAM / UltraRAM, xcvu9p-fsgd2104-2L-e (BCU1525)
-#   vu47-v2b, vu47-v2u  the same on xcvu47p-fsvh2892-2-e (AWS F2)
+#   vu47-v2b, vu47-v2u  the same on xcvu47p-fsvh2892-2-e
 # One copy pumped at 3x / 4x (VAR 5, PK 3 / 4: 5 / 7 banked slots, reads a cycle later):
 #   k7-p1x3  xc7k480t, 133.33 / 400 MHz      k7-p1x4  xc7k480t, 133.33 / 533.33 MHz
 #   ku-p1x3b-133, ku-p1x3u-133  xcku5p, 133.33 / 400 MHz, block RAM / UltraRAM

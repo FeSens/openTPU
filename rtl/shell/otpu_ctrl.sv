@@ -50,7 +50,8 @@
 //                      decode loop's instructions
 //                      (RLD, VOP ARGMAX, HALT CHAIN; docs/isa.md, docs/autodecode.md), bit31
 //                      WAITW (the DMA waits for a word the host writes; docs/isa.md)
-//   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter)
+//   0x44 CORE_KHZ  RO  the core clock in kHz (build parameter; CORE_KHZ1 once clk133.tcl set the
+//                      fallback clock's select: otpu_ctrl.sv's otpu_clk_k)
 //   0x48 BUILD_ID  RO  build parameter (the low 32 bits of the git commit)
 //   0x4C TEMP      RO  bit31 valid, [11:0] XADC die-temperature code
 //   0x50 SNAP      W   latch every free-running counter into its shadow; R: snapshots taken
@@ -58,7 +59,37 @@
 //   0x58 ACT_ROWS  RO  ACT RAM rows: the most rows of one MM (build parameter; CAPS bit24)
 //   0x5C CAPS2     RO  (version 5; CAPS is full) bit0 GATHER: the collective unit runs GATHER
 //                      (always at S > 1; at S = 1 unless built without it, otpu_board COLL_GATHER:
-//                      then BAR alone, and a GATHER raises ERROR)
+//                      then BAR alone, and a GATHER raises ERROR); bit1 NO_OUTER: the VPU was
+//                      built without VOP OUTER (otpu_board OUTER 0; clear on every build before);
+//                      bit2 DSTEP2: the DMA and the stream engine run DSTEP's pair (otpu_board
+//                      DSTEP2); bit3 SE_OWN: the streams run on an engine of their own beside the
+//                      VPU (otpu_board SE_R > 0: otpu_se_eng); bit4 BMC: the board's
+//                      management controller's UART bridge at BAR0 0x20000 (the
+//                      BCU1525's top, otpu_bmc_uart; HAS_BMC); bit5 KT: the MXU takes MM's K
+//                      tail (otpu_board KT, WG > 1: a grouped MM with rs bit 0, docs/isa.md);
+//                      bits 11:6 BHW: the memory's bank-half window, the slice's first 2^BHW
+//                      bytes (the BCU1525's pairs, otpu_mig_pair: the images' layout; 0 none,
+//                      every build before); bit12 ICACHE: IMEM is an instruction cache over
+//                      the program in DRAM (otpu_seq ICACHE: LOAD copies nothing, CFG_IMEM is
+//                      the longest program); bits 14:13 ST16: DSTEP's (STREAM's) DRAM state in
+//                      16 bits with its flag ST16 (otpu_dma ST16: 1 e6m9, 2 bf16; 0 none);
+//                      bit15 XCARD: the collective spans cards; bit16 FSUM: VOP EXP2SUB's fused
+//                      row sums (otpu_board VPU_FSUM, otpu_vpu FSUM: flag FSUM, docs/isa.md);
+//                      bit17 SPLITQ: QACT / QST flag LO, the split's lo part (otpu_board
+//                      QUANT_SPLIT, otpu_quant SPLIT; docs/isa.md "Quantization"); bit18
+//                      ST16S: STREAM's flags ST16R / ST16W, one side alone 16-bit (otpu_board
+//                      ST16S, otpu_dma ST16S; docs/isa.md "ST16"); bit21 QHL: QACT flag HL,
+//                      q and lo from one read (otpu_board QUANT_HL, otpu_quant HL)
+//                      bit19 VSIG: VOP SIGMOID / SILU (otpu_board VPU_SIG, otpu_vpu VSIG)
+//                      bit20 VMAC: VOP MAC (otpu_board VPU_MAC, otpu_vpu MAC, docs/isa.md)
+//                      bit22 QSTHL: QST HL, a GRP ROW QST's hi and lo from one read
+//                      (otpu_board QUANT_QSTHL, otpu_quant QSTHL)
+//                      bit23 OUTER1: VOP OUTER with decay one on MAC's datapath, a VPU
+//                      without OUTER (otpu_board VPU_OUTER1, otpu_vpu OUTER1)
+//                      bit24 QONCE: QACT flag ST and LDA, the rows quantized once (otpu_board
+//                      QONCE; otpu_quant, otpu_dma LDA; docs/isa.md "Quantize once")
+//                      bit25 SPLMM: MM SPL, a split's terms as one MM (otpu_board
+//                      MXU_SPL, otpu_mxu SPL; docs/isa.md "Split terms")
 //   0x60 + 4k      RW  ARG0..ARG7: the run's arguments, R8..R15 when RUN rises (CAPS bit25;
 //                      docs/isa.md "Arguments"); reset 0
 //   0x80 CFG_SLICES   RO  slices S (version 4: the configuration the target file built,
@@ -67,10 +98,13 @@
 //   0x88 CFG_IMEM     RO  IMEM words per slice (8 per instruction)
 //   0x8C CFG_ACT      RO  ACT RAM blocks
 //   0x90 CFG_DRAM     RO  [7:0] log2 DRAM bytes per slice, [15:8] memory channels per slice,
-//                         [23:16] log2 bytes a slice addresses per channel
+//                         [23:16] log2 bytes a slice addresses per channel, [31:24] log2(channel
+//                         beat bytes / 64) (the WG targets' 128-byte beats: 1)
 //   0x94 CFG_UARCH    RO  [3:0] MXU_IMPL, [7:4] TMEM_IMPL, [15:8] VPU_CL, [23:16] ULANES,
-//                         [24] SEQ_WC (otpu_seq's wait entries: every program needs them, docs/isa.md)
-//   0x98 CFG_PLATFORM RO  the target's platform id (1 YPCB-00338, 2 BCU1525; 256 and up ASICs)
+//                         [24] SEQ_WC (otpu_seq's wait entries: every program needs them, docs/isa.md),
+//                         [27:25] log2 WG (weight rows a group, docs/isa.md "Weight groups"; 0: WG 1),
+//                         [28] ICACHE (IMEM an instruction cache, CAPS2 bit12)
+//   0x98 CFG_PLATFORM RO  the target's platform id (1 YPCB-00338, 2 BCU1525, 5 .. 7 its WG builds; 256 and up ASICs)
 //   0x9C CFG_HASH     RO  opentpu.target.arch_hash of the target's Config at build time
 //   0xA0 + 4s         (reserved: slice s's DRAM window, docs/targets.md)
 //   0xC0 + 4s ICOUNT_s RO slice s's instructions retired (S > 1; ICOUNT is slice 0's)
@@ -89,6 +123,14 @@
 //                        (LM73 sensor bus), bit2 SCL1, bit3 SDA1 (PCIe edge SMBus); reset 0
 //   0x224 I2C_IN     RO  the pin levels (synchronized by otpu_board): bit0 SCL0, bit1 SDA0,
 //                        bit2 SCL1, bit3 SDA1, bit4 ALERT0 (LM73 ALERT, active low)
+//   0x300 X2_CARD   RW  [7:0] CARD_ID, [15:8] NCARDS (reset 0/1); NC > 1 only
+//   0x304 X2_CTRL   W   bit0 clear stickies, bit1 hello, bit2 LRST (16 cycles), bit3 ping
+//   0x30C X2_SEQ    RO  low 16 bits of collectives issued since link reset, across RUN resets;
+//                       incremented once when all local slices issue GATHER or BAR (even aborted)
+//   0x360 COLL_STATUS RO bit0 aborted, bit1 watchdog, bit2 header, bit3 link check, bit4 ABORT,
+//                       [6:5] links up; aborted / watchdog also set STATUS ERROR
+//   0x364 COLL_WD   RW  progress watchdog core cycles (0 off; reset 2^26)
+//   Other 0x308..0x35F: link port CSRs (docs/x2_link.md); NC 1 reads zero
 // Reads answer three cycles after the address is taken (a registered address, a registered
 // multiplexer, the data register), which also gives the trace RAM time after TRACE_ADDR moves.
 module otpu_ctrl #(
@@ -97,6 +139,7 @@ module otpu_ctrl #(
   parameter int LANES = 8,
   parameter int ACT_ROWS = MCOLS,
   parameter int CORE_KHZ = 100000,
+  parameter int CORE_KHZ1 = CORE_KHZ,    // the fallback clock (otpu_clk_k), or CORE_KHZ: none
   parameter logic [31:0] BUILD_ID = 32'h0,
   parameter int DDR_MTS = 0,             // DDR3 data rate (MT/s); 0: not given
   parameter int TRACE_DEPTH = 16384,     // 0: no trace buffer
@@ -107,8 +150,27 @@ module otpu_ctrl #(
   parameter bit DSTEP = 1'b1,            // CAPS bit6 and bit26: the stream engine (DSTEP, STREAM)
   parameter bit HOSTCAL = 1'b0,          // CAPS bit27: the host calibrates the DDR3 controllers
   parameter bit COLL_GATHER = 1'b1,      // CAPS2 bit0 (with S > 1): the collective unit runs GATHER
+  parameter bit OUTER = 1'b1,            // CAPS2 bit1 clear: the VPU runs VOP OUTER
+  parameter bit PAIR = 1'b1,             // CAPS bit5: column reuse (0: otpu_board at WG > 1, whose
+                                         //   MXU runs every MM in groups and refuses PAIR)
+  parameter bit DSTEP2 = 1'b0,           // CAPS2 bit2: DSTEP's pair
+  parameter bit SE_OWN = 1'b0,           // CAPS2 bit3: the streams on an engine of their own
+  parameter bit HAS_BMC = 1'b0,          // CAPS2 bit4: the BMC's UART bridge (BAR0 0x20000, the top's)
+  parameter bit KT = 1'b0,               // CAPS2 bit5: MM's K tail (otpu_mxu KT)
+  parameter bit FSUM = 1'b0,             // CAPS2 bit16: EXP2SUB's fused row sums (otpu_vpu FSUM)
+  parameter bit SPLITQ = 1'b0,           // CAPS2 bit17: QACT / QST flag LO (otpu_quant SPLIT)
+  parameter bit ST16S  = 1'b0,           // CAPS2 bit18: STREAM's flags ST16R / ST16W (otpu_dma ST16S)
+  parameter bit QHL    = 1'b0,           // CAPS2 bit21: QACT flag HL (otpu_quant HL)
+  parameter bit QSTHL  = 1'b0,           // CAPS2 bit22: QST HL (otpu_quant QSTHL)
+  parameter bit VSIG = 1'b0,             // CAPS2 bit19: VOP SIGMOID / SILU (otpu_vpu VSIG)
+  parameter bit VMAC = 1'b0,             // CAPS2 bit20: VOP MAC (otpu_vpu MAC)
+  parameter bit OUTER1 = 1'b0,           // CAPS2 bit23: VOP OUTER decay one (otpu_vpu OUTER1)
+  parameter bit QONCE  = 1'b0,           // CAPS2 bit24: QACT flag ST and LDA (otpu_quant, otpu_dma)
+  parameter bit SPLMM = 1'b0,            // CAPS2 bit25: MM SPL (otpu_mxu SPL)
+  parameter int BHW = 0,                 // CAPS2 bits 11:6: the bank-half window's slice bytes, log2
   parameter int LDP = 2,                 // cycles after LOAD before the loaders' busy shows (>= 2)
   // the configuration registers (CFG_*, register map 4): the target's values
+  parameter int NC         = 1,          // cards built into the hub (CAPS2 bit15 XCARD)
   parameter int S          = 1,
   parameter int TMEM_WORDS = 1 << 16,
   parameter int IMEM_WORDS = 1 << 15,
@@ -116,11 +178,15 @@ module otpu_ctrl #(
   parameter int DRAM_LOG2  = 32,         // log2 DRAM bytes per slice
   parameter int NCH        = 2,          // memory channels per slice
   parameter int CH_LOG2    = 31,         // log2 bytes a slice addresses per channel
+  parameter int CB         = 64,         // channel beat bytes (CFG_DRAM [31:24]: log2(CB / 64))
   parameter int MXU_IMPL   = 2,
   parameter int TMEM_IMPL  = 0,
   parameter int VPU_CL     = 2,
   parameter int ULANES     = 8,
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
+  parameter int WG         = 1,          // weight rows a group (CFG_UARCH [27:25]: log2 WG)
+  parameter bit ICACHE     = 1'b0,       // IMEM an instruction cache (CAPS2 bit12, CFG_UARCH bit28)
+  parameter int ST16       = 0,          // DSTEP's state in 16 bits: 1 e6m9, 2 bf16 (CAPS2 bits 14:13)
   parameter int PLATFORM   = 0,
   parameter logic [31:0] ARCH_HASH = 32'h0,
   // the free-running counters' increment widths (2 and 2 for the YPCB's one slice on two
@@ -170,7 +236,7 @@ module otpu_ctrl #(
   // activity for the free-running counters (any registered or combinational source)
   input  logic        mxu_busy, mxu_mac, vpu_busy, qnt_busy, dma_busy, tmem_deny,
   input  logic        mxu_starve,        // the MXU streams a command and has no chunk
-  input  logic [CW-1:0] dram_rd, dram_wr,  // 64-byte beats this cycle (every slice's channels)
+  input  logic [CW-1:0] dram_rd, dram_wr,  // CB-byte beats this cycle (every slice's channels)
   input  logic        dram_wait,
   input  logic [IW-1:0] instr,           // instructions retired this cycle (every slice's)
   // trace buffer (otpu_trace)
@@ -184,16 +250,32 @@ module otpu_ctrl #(
   input  logic [63:0] tr_rdata,
   // I2C pins (the host bit-bangs them: opentpu/host/i2c.py)
   output logic [3:0]  i2c_lo,
-  input  logic [4:0]  i2c_in
+  input  logic [4:0]  i2c_in,
+  // X2 window: the hub's configuration and status, the link port's combinational CSR mux.
+  // x2_lrst lasts 16 cycles; the board ORs it with rst for both sides of the link crossing.
+  output logic [7:0]  x2_card, x2_ncards,
+  output logic        x2_lrst,
+  output logic [31:0] coll_wd,
+  input  logic [7:0]  coll_status,
+  input  logic [15:0] x2_seq,
+  output logic        x2_c_we,
+  output logic [7:0]  x2_c_addr,
+  output logic [31:0] x2_c_wd,
+  input  logic [31:0] x2_c_rd
 );
   localparam int NFR = 13;
   localparam logic [31:0] CAPS = {1'b1, 1'b1, 1'b1, 1'b0, HOSTCAL, DSTEP, 2'd3,  // bit31 WAITW, bit30 GEN, bit29 MX, bit27 HOSTCAL, bit26 STREAM, bit25 ARG, bit24 ACT_ROWS
                                   8'($clog2(PQ_WIN)),
                                   8'(TRACE_DEPTH != 0 ? $clog2(TRACE_DEPTH) : 0),
-                                  CHASH, DSTEP, 1'b1, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
+                                  CHASH, DSTEP, PAIR, 1'b1, DDR_MTS != 0, HAS_I2C, HAS_TEMP,
                                   TRACE_DEPTH != 0};
 
-  localparam logic [31:0] CAPS2 = {31'd0, COLL_GATHER || S > 1};   // bit0 GATHER
+  // bit25 SPLMM, bit24 QONCE, bit23 OUTER1, bit22 QSTHL, bit21 QHL, bit20 VMAC, bit19 VSIG, bit18 ST16S, bit17 SPLITQ, bit16 FSUM, bit15 XCARD, bits 14:13 ST16, bit12 ICACHE, bits 11:6 BHW, bit5 KT,
+  // bit4 BMC, bit3 SE_OWN, bit2 DSTEP2, bit1 NO_OUTER, bit0 GATHER
+  initial if (BHW < 0 || BHW > 63) $fatal(1, "otpu_ctrl: BHW %0d (0 .. 63)", BHW);
+  initial if (ST16 < 0 || ST16 > 2) $fatal(1, "otpu_ctrl: ST16 %0d (0 .. 2)", ST16);
+  localparam logic [31:0] CAPS2 = {6'd0, SPLMM, QONCE, OUTER1, QSTHL, QHL, VMAC, VSIG, ST16S, SPLITQ, FSUM, NC > 1, 2'(ST16), ICACHE, 6'(BHW), KT, HAS_BMC, SE_OWN, DSTEP2, !OUTER,
+                                   COLL_GATHER || S > 1};
 
   logic [63:0] cycles;
   logic [31:0] n_brd, n_bwr, n_ard, n_awr, n_bst, scratch;
@@ -204,7 +286,7 @@ module otpu_ctrl #(
 
   // ---- write channel: take address and data together
   logic       w_go, tr_inc;
-  assign s_awready = s_awvalid && s_wvalid && !s_bvalid;
+  assign s_awready = s_awvalid && s_wvalid && !s_bvalid && !(NC > 1 && r_p[0]);
   assign s_wready  = s_awready;
   assign w_go      = s_awready;
   assign s_bresp   = 2'b00;
@@ -249,6 +331,41 @@ module otpu_ctrl #(
         endcase
       end
     end
+  end
+
+  // ---- X2: independent of RUN. The window exists only with the remote hub; a one-card
+  // build reads zeros here and sends no writes to a link port. As with the other registers,
+  // writes use the whole word (the control master supplies all byte strobes).
+  if (NC > 1) begin : g_x2
+    logic [4:0] lrst_left;
+    assign x2_lrst = lrst_left != 0;
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        x2_card <= 8'd0;
+        x2_ncards <= 8'd1;
+        coll_wd <= 32'd1 << 26;
+        lrst_left <= '0;
+      end else begin
+        if (lrst_left != 0) lrst_left <= lrst_left - 1'b1;
+        if (w_go) case (s_awaddr[11:2])
+          10'h0C0: {x2_ncards, x2_card} <= s_wdata[15:0];
+          10'h0C1: if (s_wdata[2]) lrst_left <= 5'd16;
+          10'h0D9: coll_wd <= s_wdata;
+          default: ;
+        endcase
+      end
+    end
+    // A concurrent write and read each keep their address: the write is sampled at this
+    // edge, then the registered read address drives the mux before r_d samples it.
+    assign x2_c_we = !rst && w_go && s_awaddr[11:8] == 4'h3 &&
+                     (s_awaddr[7:2] == 6'h01 ||
+                      (s_awaddr[7:2] >= 6'h02 && s_awaddr[7:2] <= 6'h17 &&
+                       s_awaddr[7:2] != 6'h03));
+    assign x2_c_addr = x2_c_we ? {s_awaddr[7:2], 2'b00} : {r_a[5:0], 2'b00};
+    assign x2_c_wd = s_wdata;
+  end else begin : g_no_x2
+    assign {x2_card, x2_lrst, coll_wd, x2_c_we, x2_c_addr, x2_c_wd} = '0;
+    assign x2_ncards = 8'd1;
   end
 
   // ---- per-run counters
@@ -302,6 +419,16 @@ module otpu_ctrl #(
     end
   end
 
+  // CORE_KHZ's register: CORE_KHZ1 once clk133.tcl set otpu_clk_sel's INIT
+  logic [31:0] core_khz;
+  if (CORE_KHZ1 != CORE_KHZ) begin : g_clk1
+    logic sel;
+    otpu_clk_sel u_sel (.clk, .sel);
+    otpu_clk_k #(.W(32), .K0(32'(CORE_KHZ)), .K1(32'(CORE_KHZ1))) u_khz (.sel, .k(core_khz));
+  end else begin : g_clk0
+    assign core_khz = 32'(CORE_KHZ);
+  end
+
   // ---- read channel: one read at a time; address, multiplexer and data registered
   logic [9:0]  r_a;
   logic [1:0]  r_p;
@@ -327,7 +454,7 @@ module otpu_ctrl #(
       10'h001: r_d <= {16'(D), 8'(MCOLS), 8'(LANES)};
       10'h002: r_d <= {31'd0, run};
       10'h003: r_d <= {22'd0, ecc_ded, wait_to, run, calib, axi_err, wr_idle, ld_busy || ld_pend,
-                       error, halted};
+                       error || (NC > 1 && |coll_status[1:0]), halted};
       10'h004: r_d <= ld_addr;
       10'h005: r_d <= ld_n;
       10'h006: r_d <= cycles[31:0];
@@ -341,7 +468,7 @@ module otpu_ctrl #(
       10'h00E: r_d <= scratch;
       10'h00F: r_d <= 32'd5;
       10'h010: r_d <= CAPS;
-      10'h011: r_d <= 32'(CORE_KHZ);
+      10'h011: r_d <= core_khz;
       10'h012: r_d <= BUILD_ID;
       10'h013: r_d <= {temp_v, 19'd0, temp};
       10'h014: r_d <= n_snap;
@@ -354,8 +481,9 @@ module otpu_ctrl #(
       10'h021: r_d <= 32'(TMEM_WORDS);
       10'h022: r_d <= 32'(IMEM_WORDS);
       10'h023: r_d <= 32'(ACT_BLOCKS);
-      10'h024: r_d <= {8'd0, 8'(CH_LOG2), 8'(NCH), 8'(DRAM_LOG2)};
-      10'h025: r_d <= {7'd0, SEQ_WC, 8'(ULANES), 8'(VPU_CL), 4'(TMEM_IMPL), 4'(MXU_IMPL)};
+      10'h024: r_d <= {8'($clog2(CB / 64)), 8'(CH_LOG2), 8'(NCH), 8'(DRAM_LOG2)};
+      10'h025: r_d <= {3'd0, ICACHE, 3'($clog2(WG)), SEQ_WC, 8'(ULANES), 8'(VPU_CL), 4'(TMEM_IMPL),
+                       4'(MXU_IMPL)};
       10'h026: r_d <= 32'(PLATFORM);
       10'h027: r_d <= ARCH_HASH;
       10'h080: r_d <= {28'd0, tr_busy, tr_stop, 1'b0, tr_en};
@@ -366,8 +494,14 @@ module otpu_ctrl #(
       10'h085: r_d <= tr_rdata[63:32];
       10'h088: r_d <= {28'd0, i2c_lo};
       10'h089: r_d <= {27'd0, i2c_in};
+      10'h0C0: r_d <= NC > 1 ? {16'd0, x2_ncards, x2_card} : 32'd0;
+      10'h0C1: r_d <= '0;
+      10'h0C3: r_d <= NC > 1 ? {16'd0, x2_seq} : 32'd0;
+      10'h0D8: r_d <= NC > 1 ? {24'd0, coll_status} : 32'd0;
+      10'h0D9: r_d <= coll_wd;
       default:
-        if (S > 1 && r_a[9:4] == 6'h03 && 32'(r_a[3:0]) < 32'(S))
+        if (r_a[9:6] == 4'h3) r_d <= NC > 1 && r_a[5:0] <= 6'h17 ? x2_c_rd : 32'd0;
+        else if (S > 1 && r_a[9:4] == 6'h03 && 32'(r_a[3:0]) < 32'(S))
           r_d <= ic_all[r_a[3:0]];
         else if (r_a[9:6] == 4'h1 && r_a[5:1] < 5'(NFR))
           r_d <= r_a[0] ? fr_s[r_a[5:1]][63:32] : fr_s[r_a[5:1]][31:0];
@@ -487,4 +621,49 @@ module otpu_axil_iso #(
       end
     end
   end
+endmodule
+
+// A clock's constant with a second value, for one synthesis implemented at either of two clocks
+// (boards/bcu1525/vivado/clk133.tcl: the BCU1525 WG build's 150 MHz synthesis at 133.33 MHz). A
+// consumer with a fallback clock (CLK_HZ1 or CORE_KHZ1 not its clock: otpu_ctrl above,
+// otpu_bmc_uart, otpu_bmc_watch, otpu_bcu_gov; here as every build with one reads this file) has
+// one otpu_clk_sel and an otpu_clk_k on it for each constant. otpu_clk_sel's flip-flop holds its
+// configuration value: INIT 0 as synthesized, every k its K0; clk133.tcl sets INIT 1 before
+// opt_design, every k its K1. Both values stay in the netlist: the flip-flop is an FDRE primitive,
+// DONT_TOUCH (D = Q), in a hierarchy of its own, kept and DONT_TOUCH, and each mux is one too, so
+// neither synthesis nor opt_design sees a constant select (or pushes a mux's inverters into its
+// loads). An inferred register with D = Q and an initial value is a constant to a synthesis
+// that reads the initial value: yosys's opt_dff folds one to 0 through its keep and dont_touch
+// (test_bcuwg_build's test_wg_clk133_constants_survive_synthesis). An instantiated primitive is
+// not inferred, and DONT_TOUCH keeps it as it is. clk133.tcl's report reads each otpu_clk_k's
+// outputs back from the netlist (a bit: the select, its inverse or a constant) as its two values.
+// The primitive is AMD's: the fallback is elaborated only on the BCU1525 WG top, an UltraScale+
+// part (boards/bcu1525/sim/unisim_stubs.sv models it for the lints). No reset: the flip-flop's
+// INIT is its value (no fallback, and no otpu_clk_sel, where a flip-flop has no INIT: the ASIC's
+// CLK_HZ1 is its CLK_HZ).
+(* keep_hierarchy = "yes", dont_touch = "true" *)
+module otpu_clk_sel (
+  input  logic clk,
+  output logic sel
+);
+  (* dont_touch = "true" *) logic q;
+  // FPGA-only, no reset by design: the power-up value is the configuration's INIT (0 as synthesized)
+  // and D = Q holds it. It changes only through INIT: clk133.tcl before opt_design, or the INIT of a
+  // routed checkpoint's u_sel_ff before write_bitstream (with the MMCM's divides; the timing is then
+  // reported again, not optimized). Not a register to "fix" with a reset or a write path.
+  (* DONT_TOUCH = "TRUE" *)
+  FDRE #(.INIT(1'b0)) u_sel_ff (.C(clk), .CE(1'b1), .R(1'b0), .D(q), .Q(q));
+  assign sel = q;
+endmodule
+
+(* keep_hierarchy = "yes", dont_touch = "true" *)
+module otpu_clk_k #(
+  parameter int W = 24,
+  parameter logic [W-1:0] K0 = '0,        // at the build's clock (sel 0)
+  parameter logic [W-1:0] K1 = '0         // at the fallback clock (sel 1)
+) (
+  input  logic         sel,
+  output logic [W-1:0] k
+);
+  assign k = sel ? K1 : K0;
 endmodule

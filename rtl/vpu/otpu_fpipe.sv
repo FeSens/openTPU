@@ -7,6 +7,8 @@
 //   otpu_fmma    y = (a * b) + (c * e)    three roundings; with e = 1.0 it is otpu_fmadd
 //                                         (c * 1.0 == c bit for bit after the adder's flush)
 //   otpu_delay   N-cycle delay line (SRL-friendly: no reset)
+//   otpu_vdelay  N-cycle delay line whose every stage resets: the valids beside an otpu_delay's
+//                payload
 
 module otpu_delay #(parameter int W = 32, parameter int N = 1) (
   input  logic         clk,
@@ -31,6 +33,32 @@ module otpu_delay #(parameter int W = 32, parameter int N = 1) (
       qr <= r[N-2];
     end
     assign q = qr;
+  end
+endmodule
+
+// A line's valids (control: docs/asic.md "Power-up state"). An otpu_delay that advances only with
+// its unit's enable keeps its power-up stages, or a stopped run's, until the unit's next
+// operation, where a stray valid writes or counts; here every stage resets (synchronous, to 0:
+// the R pin, so flip-flops, not a shift-register LUT). The payload beside it stays in an
+// otpu_delay.
+module otpu_vdelay #(parameter int W = 1, parameter int N = 1) (
+  input  logic         clk,
+  input  logic         rst,
+  input  logic         en,
+  input  logic [W-1:0] d,
+  output logic [W-1:0] q
+);
+  if (N == 0) begin : g_wire
+    assign q = d;
+  end else begin : g_regs
+    logic [N-1:0][W-1:0] vq;
+    always_ff @(posedge clk)
+      if (rst) vq <= '0;
+      else if (en) begin
+        vq[0] <= d;
+        for (int k = 1; k < N; k++) vq[k] <= vq[k-1];
+      end
+    assign q = vq[N-1];
   end
 endmodule
 

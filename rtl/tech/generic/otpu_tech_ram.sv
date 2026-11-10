@@ -8,15 +8,19 @@
 // promise it (a 1R1W macro's same-address read is undefined), so a user must not depend on it
 // (otpu_tmem bypasses the write it would hit); otpu_ram_1rw1r is read-first on both families
 // (below). STYLE is the FPGA's ram_style ("block",
-// "distributed" or "auto"); the macros ignore it. In simulation every word starts at 0, unless
+// "distributed", "ultra": UltraScale+ UltraRAM, or "auto"); the macros ignore it. In simulation every word starts at 0, unless
 // ZERO is 0 (a user that loads the memory from its own initial block: their order is undefined).
 
-// One read port and one write port (simple dual-port).
+// One read port and one write port (simple dual-port). OREG (STYLE "ultra" only): the read data a
+// second edge later, through UltraRAM's output register (a register on the macros): rd is the word
+// read at ra two edges before (re's hold reaches rd an edge later). The other styles' read
+// register is rd itself (otpu_mxu_stage.tcl finds the staging's LUT RAMs' by name: g_lut.rd_reg).
 module otpu_ram_1r1w #(
   parameter int    W     = 32,
   parameter int    N     = 1024,
   parameter string STYLE = "block",
-  parameter bit    ZERO  = 1'b1
+  parameter bit    ZERO  = 1'b1,
+  parameter bit    OREG  = 1'b0
 ) (
   input  logic                 clk,
   input  logic                 we,
@@ -26,6 +30,7 @@ module otpu_ram_1r1w #(
   input  logic [$clog2(N)-1:0] ra,
   output logic [W-1:0]         rd
 );
+  initial if (OREG && STYLE != "ultra") $fatal(1, "otpu_ram_1r1w: OREG at STYLE %s", STYLE);
   if (STYLE == "distributed") begin : g_lut
     (* ram_style = "distributed" *) logic [W-1:0] mem [N];
     always_ff @(posedge clk) begin
@@ -44,12 +49,106 @@ module otpu_ram_1r1w #(
 `ifndef SYNTHESIS
     initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
 `endif
+  end else if (STYLE == "ultra") begin : g_uram
+    (* ram_style = "ultra" *) logic [W-1:0] mem [N];
+    logic [W-1:0] rq;                      // OREG: the registered read, rd its output register
+    always_ff @(posedge clk) begin
+      if (we) mem[wa] <= wd;
+      if (re) begin
+        if (OREG) rq <= mem[ra];
+        else rd <= mem[ra];
+      end
+      if (OREG) rd <= rq;
+    end
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
   end else begin : g_bram
     (* ram_style = "block" *) logic [W-1:0] mem [N];
     always_ff @(posedge clk) begin
       if (we) mem[wa] <= wd;
       if (re) rd <= mem[ra];
     end
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
+  end
+endmodule
+
+// One write port and one read port on two clocks (simple dual-port: the write on wclk, the read
+// on rclk); STYLE "block" or "distributed" (UltraRAM has one clock). A read of a word written
+// within a few edges of either clock is undefined: the user orders them (otpu_mxu XPOST reads an
+// entry once its writes are counted across the clocks).
+module otpu_ram_1r1w_2c #(
+  parameter int    W     = 32,
+  parameter int    N     = 1024,
+  parameter string STYLE = "block",
+  parameter bit    ZERO  = 1'b1
+) (
+  input  logic                 wclk,
+  input  logic                 we,
+  input  logic [$clog2(N)-1:0] wa,
+  input  logic [W-1:0]         wd,
+  input  logic                 rclk,
+  input  logic                 re,
+  input  logic [$clog2(N)-1:0] ra,
+  output logic [W-1:0]         rd
+);
+  initial if (STYLE != "block" && STYLE != "distributed")
+    $fatal(1, "otpu_ram_1r1w_2c: STYLE %s (block or distributed)", STYLE);
+  if (STYLE == "distributed") begin : g_lut
+    (* ram_style = "distributed" *) logic [W-1:0] mem [N];
+    always_ff @(posedge wclk) if (we) mem[wa] <= wd;
+    always_ff @(posedge rclk) if (re) rd <= mem[ra];
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
+  end else begin : g_bram
+    (* ram_style = "block" *) logic [W-1:0] mem [N];
+    always_ff @(posedge wclk) if (we) mem[wa] <= wd;
+    always_ff @(posedge rclk) if (re) rd <= mem[ra];
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
+  end
+endmodule
+
+// otpu_ram_1r1w_2c with write enables by field: wbe[k] writes field k of NB (W / NB bits each:
+// W 36, NB 4 is a RAMB18's 512 x 36 with its 9-bit byte writes, the parity bits in the bytes).
+module otpu_ram_1r1w_2c_be #(
+  parameter int    W     = 36,
+  parameter int    N     = 512,
+  parameter int    NB    = 4,
+  parameter string STYLE = "block",
+  parameter bit    ZERO  = 1'b1
+) (
+  input  logic                 wclk,
+  input  logic                 we,
+  input  logic [NB-1:0]        wbe,
+  input  logic [$clog2(N)-1:0] wa,
+  input  logic [W-1:0]         wd,
+  input  logic                 rclk,
+  input  logic                 re,
+  input  logic [$clog2(N)-1:0] ra,
+  output logic [W-1:0]         rd
+);
+  localparam int B = W / NB;
+  initial if (W % NB != 0 || (STYLE != "block" && STYLE != "distributed"))
+    $fatal(1, "otpu_ram_1r1w_2c_be: W %0d in NB %0d fields, STYLE %s (block or distributed)", W,
+           NB, STYLE);
+  if (STYLE == "distributed") begin : g_lut
+    (* ram_style = "distributed" *) logic [W-1:0] mem [N];
+    always_ff @(posedge wclk)
+      for (int k = 0; k < NB; k++) if (we && wbe[k]) mem[wa][B*k +: B] <= wd[B*k +: B];
+    always_ff @(posedge rclk) if (re) rd <= mem[ra];
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
+  end else begin : g_bram
+    (* ram_style = "block" *) logic [W-1:0] mem [N];
+    always_ff @(posedge wclk)
+      for (int k = 0; k < NB; k++) if (we && wbe[k]) mem[wa][B*k +: B] <= wd[B*k +: B];
+    always_ff @(posedge rclk) if (re) rd <= mem[ra];
 `ifndef SYNTHESIS
     initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
 `endif
@@ -102,12 +201,10 @@ module otpu_ram_1r1w_ra #(
     wq <= wd;
   end
   assign rd = by ? wq : q;
-`ifndef SYNTHESIS
-  initial begin q = '0; wq = '0; by = 1'b0; end
-`endif
 endmodule
 
-// One read port and one write port with byte enables (wbe[k]: write byte k of wd).
+// One read port and one write port with byte enables (wbe[k]: write byte k of wd); STYLE "block",
+// "ultra" or "auto".
 module otpu_ram_1r1w_be #(
   parameter int    W     = 64,           // a multiple of 8
   parameter int    N     = 1024,
@@ -126,6 +223,15 @@ module otpu_ram_1r1w_be #(
   initial if (W % 8 != 0) $fatal(1, "otpu_ram_1r1w_be: W %0d is not a multiple of 8", W);
   if (STYLE == "block") begin : g_bram
     (* ram_style = "block" *) logic [W-1:0] mem [N];
+    always_ff @(posedge clk) begin
+      for (int k = 0; k < W / 8; k++) if (we && wbe[k]) mem[wa][8*k +: 8] <= wd[8*k +: 8];
+      if (re) rd <= mem[ra];
+    end
+`ifndef SYNTHESIS
+    initial if (ZERO) for (int i = 0; i < N; i++) mem[i] = '0;
+`endif
+  end else if (STYLE == "ultra") begin : g_uram
+    (* ram_style = "ultra" *) logic [W-1:0] mem [N];
     always_ff @(posedge clk) begin
       for (int k = 0; k < W / 8; k++) if (we && wbe[k]) mem[wa][8*k +: 8] <= wd[8*k +: 8];
       if (re) rd <= mem[ra];

@@ -1,5 +1,5 @@
 #!/bin/bash
-# EXPERIMENTAL (docs/vpu_pump.md): the experiment's Vivado runs, one after another (omarchy only,
+# EXPERIMENTAL (docs/vpu_pump.md): the experiment's Vivado runs, one after another (the build host only,
 # through ~/otpu-build/slot.sh). Usage, from the tree:
 #   rtl/exp/vpu_pump/run_ooc.sh <outdir> [step ...]
 # steps:

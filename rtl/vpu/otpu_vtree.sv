@@ -209,15 +209,20 @@ module otpu_vtree
   assign root = LN2 ? xs[0] : xl[LW][0];
   assign root_v = root_v_i;
 `ifndef SYNTHESIS
+  // the checks start once the reset has held two edges (registers start arbitrary, and so does a
+  // unit's reset register until the slice's reset pipeline fills: otpu_slice)
+  bit rst_p, rst_seen;
+  initial begin rst_p = 1'b0; rst_seen = 1'b0; end
+  always @(posedge clk) begin rst_p <= rst; if (rst && rst_p) rst_seen <= 1'b1; end
   // the tree schedule needs rows a multiple of RL cycles apart: level 0 (issuing while the
   // subs >= RL/2 are on `pacc`) must never meet another level
   always_ff @(posedge clk)
-    if (!rst && en && cap && sub >= 8'(RL / 2) && lv != 0)
+    if (!rst && rst_seen && en && cap && sub >= 8'(RL / 2) && lv != 0)
       $fatal(1, "otpu_vtree: tree schedule collision");
   // lane level 2 shares level 1's adders: it must never issue with level 1 (LN2: the lane
   // levels L1a, L1b, L2 and L3 share u_ln and must never issue together)
   always_ff @(posedge clk)
-    if (!rst && en && (LN2 ? !$onehot0({rsr[DL + LA - 1], ln_l1b, ln_l2, ln_l3})
+    if (!rst && rst_seen && en && (LN2 ? !$onehot0({rsr[DL + LA - 1], ln_l1b, ln_l2, ln_l3})
                            : SH2 && l2_v && rsr[DL + LA - 1]))
       $fatal(1, "otpu_vtree: lane level schedule collision");
 `endif

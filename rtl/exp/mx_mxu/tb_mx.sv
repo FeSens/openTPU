@@ -9,7 +9,7 @@
 //     an independent i2f48 (round to nearest even) and the otpu_fp multiply / add;
 //   - a separate lane fed with edge-case integers (powers of two, ties, all ones, +-2^47 - 1):
 //     y = i2f48(x) exactly.
-// Run: rtl/exp/mx_mxu/run_xsim.sh (omarchy).
+// Run: rtl/exp/mx_mxu/run_xsim.sh (the build host).
 `timescale 1ps / 1ps
 module tb_mx;
   import otpu_fp::*;

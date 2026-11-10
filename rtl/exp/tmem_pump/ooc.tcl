@@ -1,5 +1,5 @@
 # EXPERIMENTAL (docs/tmem_pump.md): out-of-context synthesis + implementation of the TMEM
-# experiment's top (tmem_pump_top) with its clocks from an MMCM. Vivado on omarchy only:
+# experiment's top (tmem_pump_top) with its clocks from an MMCM. Vivado on the build host only:
 #   vivado -mode batch -nojournal -source rtl/exp/tmem_pump/ooc.tcl -tclargs <out> <VAR> \
 #     <WORDS> <PART> <FAMILY> <STYLE> <CLKIN_NS> <MULT> <DIV_S> <DIV_F> [PK] [CASC]
 # VAR: tmem_pump_top's (0 otpu_tmem IMPL 0, 1 IMPL 1, 2 pumped IMPL 0, 3 pumped NCP 4, 4 pumped

@@ -56,7 +56,7 @@ module tb_tmem_pump #(
   otpu_tmem #(.WORDS(WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(1), .GEN_R(GEN_R),
               .GEN_W(GEN_W), .SH_HOST(P_DMA), .SH_MASK(IMPL == 0 ? SH_MASK : '0), .SID(0),
               .IMPL(IMPL), .NCP(NCP), .CPY(CPY3), .RQ(RQ), .PRANK(PRANK)) u_ref (
-    .clk, .clk_f(1'b0), .r_en, .r_req, .r_addr, .r_data(rd_ref), .w_en, .w_req, .w_gnt, .w_addr,
+    .clk, .clk_f(1'b0), .rst(1'b0), .r_en, .r_req, .r_addr, .r_data(rd_ref), .w_en, .w_req, .w_gnt, .w_addr,
     .w_data, .dump(1'b0));
   otpu_tmem_pump #(.WORDS(WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .GEN_R(GEN_R),
                    .GEN_W(GEN_W), .SH_HOST(P_DMA), .SH_MASK(IMPL == 0 ? SH_MASK : '0),

@@ -16,6 +16,11 @@
 // clear (ustart), and it may consume the stream once all dependencies are clear (urel). Deep
 // prefetch therefore overlaps the stream with whatever produces the MM's stationary operand.
 //
+// WAITC with FOLLOW (FOL; otpu_slice: at S > 1): a VOP whose wait entry has FOLLOW (docs/isa.md "Wait counts") waits for
+// the GATHER its collective count names to start, not to complete (its other waits as any), and
+// starts on the VPU with ufol while that GATHER is still running: the VPU then reads its A only
+// as far as the GATHER's writes into this slice's TMEM have come (otpu_vpu FOLLOW).
+//
 // RLD (docs/isa.md) is dispatched like a unit instruction (to the collective unit, whose slice
 // reads the TMEM word itself); R then holds the next instruction until the value comes back
 // (rl_v): younger instructions may use R[rd] in their addresses and LOOP counts. The hold
@@ -28,6 +33,27 @@
 // fa: the exact pc that R moves to next (computed from flip-flops only). When R moves on, the
 // instruction at fa is registered into ir, so no R-stage path starts at the RAM output. This
 // costs one cycle at the program start (ir is empty after reset).
+//
+// ICACHE (docs/icache.md): IMEM is an instruction cache over the program in DRAM instead of a
+// copy of it. IC_LINES lines of 32 instructions (1 KiB) and their wait entries, direct-mapped by
+// the instruction's line in the program (pc / 32: the program starts a line), the same RAMs read
+// the same way (a row of IPR instructions at fa_n, a row of 4 wait entries), only shallower.
+// A line comes in on port B (otpu_slice: ahead of the units, its reads told apart by their
+// order): its 1024 / D instruction chunks and, at WAITC, its wait entries' 256 / D chunks, each
+// of those first and then four instruction chunks, so that the entries' rows (IPR a chunk, one a
+// cycle from ic_st) are written before the next entry chunk can come. The program's line L is
+// at ic_base + 1024 L, its entries at the entries' start (the chunk after its last instruction,
+// as the loader reads them) + 256 L. ic_rv_ok says irow holds fa's row as read while its line was
+// in the cache: R takes the instruction only then (a flip-flop on ld, as rl_wait). It is the
+// presence of fa_n's line at the read, chosen as fa_n is from each candidate's (fa's line, the
+// next, the two loop starts on the stack, a LOOP's targets: each looked up from flip-flops). A
+// line not there is filled (the demand, first), and its row read again once it is (ic_rf: fa_n
+// = fa); a line's tag changes when its fill starts and it is valid once its last chunk is
+// written. The prefetcher walks the IC_PF lines that follow fa's along the loop stack's two top
+// loops (a loop end with iterations left goes back to its start,
+// docs/icache.md) whenever fa enters a line, and fills those not there, never into
+// fa's own line's slot. The lines are valid until ic_inv (a LOAD or a HALT CHAIN: otpu_slice),
+// across runs. IMEM_WORDS is then the longest program (its instructions' address bits).
 module otpu_seq
   import otpu_pkg::*;
 #(
@@ -39,6 +65,9 @@ module otpu_seq
   parameter int WIN        = 16,
   parameter bit STREAMS    = 1'b1,    // the stream engine (otpu_slice HAS_SS); 0: DSTEP and STREAM
                                       //   are illegal instructions (ERROR), not a wait for SE
+  parameter int WG         = 1,       // weight rows a group (otpu_mxu WG): an MM's rd field is its
+                                      //   cmd_t lg above 1 (docs/isa.md "Weight groups"), else 0;
+                                      //   above 1 QST GRP's first row is R[rd] + w6
   // EXPERIMENTAL (docs/seq_vpu.md, docs/isa.md "Wait counts"): WAITC 1 takes the dependencies
   // from a wait entry the compiler writes beside each instruction instead of comparing
   // footprints: per in-order unit (DMA, MXU, QUANT, COLL) a 4-bit count k (0: no wait, else
@@ -46,13 +75,33 @@ module otpu_seq
   // start's k for the DMA and the quantizer), and for the VPU, which starts its oldest ready
   // instruction, a mask of the VPU instructions 1..31 back it waits for. No footprints, no range
   // compares. 0: today's scoreboard.
-  parameter bit WAITC      = 1'b0
+  parameter bit WAITC      = 1'b0,
+  parameter string STYLE   = "auto",  // IMEM's and the wait entries' RAMs (otpu_ram_1r1w STYLE; "ultra":
+                                      //   the WG targets' UltraRAM)
+  parameter string WSTYLE  = "",      // the wait entries' RAMs, if not STYLE's (the WG targets': IMEM in
+                                      //   block RAM, the wait entries in UltraRAM)
+  parameter bit DSTEP2     = 1'b0,    // DSTEP's pair (otpu_dma DSTEP2): its footprint's ranges
+  parameter bit FOLLOW     = 1'b0,    // WAITC: the wait entries' FOLLOW (otpu_slice: at S > 1)
+  parameter int QB         = 6,       // a QST's footprint in beats of 2^QB bytes (otpu_pkg beats():
+                                      //   the DRAM adapter's fill beat, otpu_slice QB)
+  // the registers' and DRAM addresses' bits (otpu_pkg AW_MAX; docs/isa.md): LI / ADDI take
+  // {w2, w1}, the address words R[r] + w mod 2^AW (cmd_t w1h..w3h); 32 ignores w2. The footprint
+  // scoreboard (WAITC 0) keeps 32-bit ranges: at AW > 32 an instruction with an address bit above
+  // 31 (w1h..w3h not 0) conflicts with everything (all), so no range compare widens
+  parameter int AW         = 32,
+  parameter bit ICACHE     = 1'b0,    // IMEM an instruction cache over the program in DRAM (above)
+  parameter int IC_LINES   = 16,      // ICACHE: its lines of 32 instructions (a power of two)
+  parameter int IC_PF      = 2,       // ICACHE: the lines prefetched ahead of fa's (1 .. 4)
+  // quantize-once (Config.QONCE; docs/isa.md "Quantize once"; otpu_pkg QO): QACT flag ST (w3 +=
+  // R[rc]: its DRAM rows) and LDA (otpu_dma LDA: w1 += R[ra], w2 and w3 immediates)
+  parameter bit QONCE      = 1'b0
 ) (
   input  logic                clk,
   input  logic                rst,
   output cmd_t                ucmd   [NUNITS],
   output logic [NUNITS-1:0]   ustart,
   output logic                urel,        // MXU: release the oldest started, unreleased MM
+  output logic                ufol,        // VPU (FOL): the start follows a running GATHER
   input  logic [NUNITS-1:0]   urdy,
   input  logic [NUNITS-1:0]   udone,
   output logic                halted,
@@ -61,7 +110,7 @@ module otpu_seq
   output seq_ev_t             ev,          // trace and activity events, a cycle late (otpu_pkg)
   input  logic [31:0]         rinit  [8],  // R8..R15 while in reset: the run's arguments
   input  logic                rl_v,        // RLD's value is back: R[rd] = rl_val
-  input  logic [31:0]         rl_val,
+  input  logic [AW-1:0]       rl_val,
   output logic                ch_req,      // the halt is a HALT CHAIN: to ch_addr, ch_n
   output logic [31:0]         ch_addr,
   output logic [31:0]         ch_n,
@@ -73,13 +122,32 @@ module otpu_seq
   // DRAM, instructions 4 * sc_row .. 4 * sc_row + 3)
   input  logic                sc_we,
   input  logic [31:0]         sc_row,
-  input  logic [255:0]        sc_data
+  input  logic [255:0]        sc_data,
+  // ICACHE: the program (ic_base its byte address, ic_n its instructions), taken while ic_inv,
+  // which empties the cache; the fills' port B reads (ic_addr a word address, ic_gnt taken this
+  // cycle) and their data, in order (ic_rv: im_data is a fill's chunk); ic_busy: a fill issuing
+  // or in flight
+  input  logic                ic_inv,
+  input  logic [31:0]         ic_base,
+  input  logic [31:0]         ic_n,
+  output logic                ic_req,
+  output logic [31:0]         ic_addr,
+  input  logic                ic_gnt,
+  input  logic                ic_rv,
+  output logic                ic_busy
 );
   localparam int SW = $clog2(WIN);
   localparam int IPR = D / 32;                   // instructions per IMEM row
-  localparam int NROW = IMEM_WORDS / (8 * IPR);
+  // IMEM's rows: the program's, or ICACHE's lines' (a row's index is then fa's mod the cache's)
+  localparam int NROW = ICACHE ? IC_LINES * 32 / IPR : IMEM_WORDS / (8 * IPR);
   localparam int RW = $clog2(NROW);
   initial if (D % 32 != 0) $fatal(1, "otpu_seq: D must be a multiple of 32");
+  // ICACHE: an entry chunk's IPR rows are written one a cycle before the next can come (four
+  // instruction chunks after it); the tags are a program line's bits above the slot's
+  initial if (ICACHE && (D > 128 || IC_LINES < 2 || (IC_LINES & (IC_LINES - 1)) != 0 ||
+                         IC_PF < 1 || IC_PF > 4 || IMEM_WORDS / 256 <= IC_LINES))
+    $fatal(1, "otpu_seq: ICACHE needs D <= 128, IC_LINES a power of two below IMEM's lines, IC_PF 1 .. 4");
+  initial if (AW < 32 || AW > AW_MAX) $fatal(1, "otpu_seq: AW %0d (32 .. %0d)", AW, AW_MAX);
   logic [D*8-1:0] irow;           // the RAM output: the row holding fa
   logic [255:0]   ir;             // the instruction at pc
   logic           ir_v;           // ir is valid (0 only in the first cycle after reset)
@@ -87,9 +155,19 @@ module otpu_seq
   logic [31:0]    fa_n;           // fa's next value when it moves (the RAM address)
   logic           fe;             // fa moves (the RAM's read enable; otherwise it keeps fa's row)
   logic           ld;             // R moves on to the instruction at fa
+  logic           adv;            // R's instruction retires or is handed over this cycle
+  // ICACHE (above; constants without it): fa's row is good (1 without ICACHE), read it again,
+  // the candidates' lines there (fa's, the next, the loop starts on the stack's top two, a
+  // LOOP's skip and enter targets), fa_n's at fe and the candidate a loop start gives (ic_hp);
+  // the fills' rows into IMEM and into the wait entries' RAM
+  logic           ic_ok, ic_rf, ic_pn, ic_hp;
+  logic           ic_pfa, ic_pfa1, ic_ps1, ic_ps2, ic_plz, ic_ple;
+  logic           ic_we, ic_swe;
+  logic [31:0]    ic_row, ic_srow;
+  logic [255:0]   ic_sdata;
 
   logic [31:0] pc, cyc;
-  logic [31:0] R [16];
+  logic [AW-1:0] R [16];
   logic        stopping;         // HALT fetched: wait for the window to drain
   logic        rl_wait;          // an RLD is out: R holds until its value is back
   logic [3:0]  rl_rd;
@@ -114,12 +192,13 @@ module otpu_seq
   //   MM:     d = rd0, rd1        t0 = hull(wr0, wr1) W (RMAX), t2 = rd3 (ASCALE), a = rd2
   //   QACT:                       t0 = rd0, t1 = rd1 (CSCALE), t2 = rd2 (RSCALE), a = wr0 W
   //   QST:    d = wr0, wr1 (dw)   t0 = rd0
-  //   VOP:                        t0 = wr0 W, t1 = rd0, t2 = rd1, t3 = rd2 (OUTER)
+  //   VOP:                        t0 = hull(wr0, wr1) W (FSUM), t1 = rd0, t2 = rd1, t3 = rd2 (OUTER)
   //   GATHER:                     t0 = wr0 W, t1 = rd0
   // Only t0 may be written, so a footprint pair has 9 TMEM range pairs to compare. MM's RMAX
   // (the row maxima, the spare row after the output tile) is folded into its output range: the
   // hull [min lo, max hi) covers both, so every dependency on either is kept (ovr() is monotone
-  // in the range); it adds only the output tile's padding words between them (ors - N).
+  // in the range); it adds only the output tile's padding words between them (ors - N). So is
+  // an EXP2SUB's FSUM row sums (the compiler puts them right after the tile: the same hull).
   // An instruction's DRAM ranges are all reads or all writes, hence one dw bit. ACT ranges
   // start below 2^8 (an 8-bit field) and are at most 2^16 - 1 long, so [alo, ahi) is exact.
   // TMEM ranges keep TAW/TAW+1 bits: TMEM holds 2^16 words (more in a configuration with a
@@ -175,7 +254,7 @@ module otpu_seq
 
   function automatic fps_t fp_seg(input logic [7:0] op, input fp_t f);
     fps_t s;
-    rng_t a, t0, t1, t2, t3, t4, h;  // ACT; TMEM t0, t1, t2, t3, t4; MM's RMAX (into t0)
+    rng_t a, t0, t1, t2, t3, t4, h;  // ACT; TMEM t0, t1, t2, t3, t4; MM's RMAX, FSUM's sums (into t0)
     logic w0;
     s = '0; a = '0; t0 = '0; t1 = '0; t2 = '0; t3 = '0; t4 = '0; h = '0; w0 = 1'b0;
     case (op)
@@ -191,11 +270,20 @@ module otpu_seq
       end
       OP_MM: begin
         s.d[0] = r32(f.rd[0]); s.d[1] = r32(f.rd[1]);
-        t0 = f.wr[0]; w0 = 1'b1; h = f.wr[1]; t2 = f.rd[3];
+        t0 = f.wr[0]; w0 = 1'b1; h = f.wr[1];
+        // rd[3]: ASCALE's TMEM words, or SPL's lo rows (WAITC's footprint), d[0]'s hull with them
+        if (f.rd[3].sp == SP_DRAM) begin
+          if (f.rd[3].v) s.d[0].hi = f.rd[3].hi;
+        end else t2 = f.rd[3];
         a = f.rd[2];
       end
       OP_QACT: begin
         t0 = f.rd[0]; t1 = f.rd[1]; t2 = f.rd[2];
+        s.aw = 1'b1; a = f.wr[0];
+        if (QONCE && f.wr[1].v) begin s.dw = 1'b1; s.d[0] = r32(f.wr[1]); end   // (ST)
+      end
+      OP_LDA: if (QONCE) begin
+        s.d[0] = r32(f.rd[0]);
         s.aw = 1'b1; a = f.wr[0];
       end
       OP_QST: begin
@@ -203,7 +291,7 @@ module otpu_seq
         t0 = f.rd[0];
       end
       OP_VOP: begin
-        t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2];
+        t0 = f.wr[0]; w0 = 1'b1; h = f.wr[1]; t1 = f.rd[0]; t2 = f.rd[1]; t3 = f.rd[2];
       end
       OP_GATHER: begin
         t0 = f.wr[0]; w0 = 1'b1; t1 = f.rd[0];
@@ -385,24 +473,38 @@ module otpu_seq
   // The RAM reads fa_n on the cycles fa moves (fe) and holds fa's row otherwise: the decision
   // whether R moves on (the dispatch, from the window) reaches the read enable, not the
   // address multiplexer (the sequencer's worst path at 125 MHz ran window -> ld -> address)
-  // IMEM: a technology RAM (rtl/tech), one row write (the loader) and one row read per cycle
-  otpu_ram_1r1w #(.W(D*8), .N(NROW), .STYLE("auto"), .ZERO(1'b0)) u_imem (
-    .clk, .we(im_we), .wa(RW'(im_row)), .wd(im_data), .re(fe), .ra(RW'(fa_n / IPR)), .rd(irow));
+  // IMEM: a technology RAM (rtl/tech), one row write (the loader) and one row read per cycle.
+  // The simulation's loads below name the RAM's g_auto words, so it simulates STYLE as "auto"
+  // (the styles are the same code but for the synthesis attribute)
+`ifdef SYNTHESIS
+  localparam string IST = STYLE;
+  localparam string WST = (WSTYLE == "") ? STYLE : WSTYLE;
+`else
+  localparam string IST = "auto";
+  localparam string WST = "auto";
+`endif
+  otpu_ram_1r1w #(.W(D*8), .N(NROW), .STYLE(IST), .ZERO(1'b0)) u_imem (
+    .clk, .we(ICACHE ? ic_we : im_we), .wa(RW'(ICACHE ? ic_row : im_row)), .wd(im_data), .re(fe),
+    .ra(RW'(fa_n / IPR)), .rd(irow));
   always_ff @(posedge clk) begin
     fa <= fa_d;
     if (rst) ir_v <= 1'b0;
     else if (ld) begin
       ir <= irow[256 * (fa % IPR) +: 256];
       ir_v <= 1'b1;
-    end
+    end else if (ICACHE && ir_v && !stopping && !halted && !rl_wait && adv)
+      ir_v <= 1'b0;     // R's instruction left and fa's line is not there yet: R empties
   end
   // WAITC: the sidecar RAM of wait entries, read beside IMEM: rows of 4 entries of SWW bits
-  // (the counts' 28, the VPU mask's VMW; 1024 x 236 bits for a 4096-instruction IMEM). The
+  // (the counts' 28, the VPU mask's VMW, FOL's FOLLOW; 1024 x 236 bits for a 4096-instruction
+  // IMEM, 240 with FOLLOW). The
   // loader writes a row from 4 entries as they are in DRAM (64 bits each: the counts' word,
   // then the mask's)
   localparam int VMW = 31;        // the VPU mask: the VPU instructions 1..VMW back
-  localparam int SWW = 28 + VMW;
-  localparam int NSROW = IMEM_WORDS / 32;
+  // FOLLOW (the counts' word's bit 28), above the mask (FOL: a GATHER runs across slices)
+  localparam bit FOL = WAITC && FOLLOW;
+  localparam int SWW = 28 + VMW + (FOL ? 1 : 0);
+  localparam int NSROW = ICACHE ? IC_LINES * 8 : IMEM_WORDS / 32;
   localparam int SRW = $clog2(NSROW);
   logic [SWW-1:0] ir_sync;        // the wait entry of the instruction at pc
   if (WAITC) begin : g_sync
@@ -411,22 +513,26 @@ module otpu_seq
 `ifdef SYNTHESIS
     assign sc_off = 1'b0;
 `endif
+    wire [255:0] sc_d = ICACHE ? ic_sdata : sc_data;
     always_comb
-      for (int e = 0; e < 4; e++)
-        sc_pk[SWW * e +: SWW] = {sc_data[64 * e + 32 +: VMW], sc_data[64 * e +: 28]};
-    otpu_ram_1r1w #(.W(4 * SWW), .N(NSROW), .STYLE("auto"), .ZERO(1'b0)) u_sync (
-      .clk, .we(sc_we && !sc_off), .wa(SRW'(sc_row)), .wd(sc_pk), .re(fe),
-      .ra(SRW'(fa_n / 4)), .rd(srow));
+      for (int e = 0; e < 4; e++) begin
+        logic [28+VMW:0] x;
+        x = {sc_d[64 * e + 28], sc_d[64 * e + 32 +: VMW], sc_d[64 * e +: 28]};
+        sc_pk[SWW * e +: SWW] = x[SWW-1:0];
+      end
+    otpu_ram_1r1w #(.W(4 * SWW), .N(NSROW), .STYLE(WST), .ZERO(1'b0)) u_sync (
+      .clk, .we((ICACHE ? ic_swe : sc_we) && !sc_off), .wa(SRW'(ICACHE ? ic_srow : sc_row)),
+      .wd(sc_pk), .re(fe), .ra(SRW'(fa_n / 4)), .rd(srow));
     always_ff @(posedge clk) if (!rst && ld) ir_sync <= srow[SWW * (fa % 4) +: SWW];
 `ifndef SYNTHESIS
     // simulation: the wait entries from +hz_sync_s<SID>=FILE or +hz_sync=FILE (lines "pc k0 ..
-    // k6 n [mask]": opentpu.waits' with the VPU mask; +hz_kout's, the oracle's, without: the
+    // k6 n [mask [follow]]": opentpu.waits' with the VPU mask; +hz_kout's, the oracle's, without: the
     // mask is then the VPU instructions k3 .. VMW back), each count clamped to +hz_kclamp; an
     // instruction the file does not name waits for every unit's last instruction and the
     // VPU's VMW. With a file the loader's entries (boot, HALT CHAIN) are dropped
     initial begin
       string fn, ln;
-      int fd, pc, r, n, kc, mk;
+      int fd, pc, r, n, kc, mk, fo;
       int k [7];
       kc = 0;
       fn = "";
@@ -435,14 +541,16 @@ module otpu_seq
         for (int w = 0; w < 4; w++) u_sync.g_auto.mem[rr][SWW * w +: SWW] = {{VMW{1'b1}}, 28'h111_1111};
       if (!$value$plusargs($sformatf("hz_sync_s%0d=%%s", SID), fn))
         void'($value$plusargs("hz_sync=%s", fn));
+      if (ICACHE) fn = "";          // (the cache's lines take theirs from DRAM)
       sc_off = (fn != "");
       if (fn != "") begin
         fd = $fopen(fn, "r");
         if (fd == 0) $fatal(1, "otpu_seq: +hz_sync=%s: cannot open", fn);
         while ($fgets(ln, fd) != 0) begin
           mk = -1;
-          r = $sscanf(ln, "%d %d %d %d %d %d %d %d %d %d", pc, k[0], k[1], k[2], k[3], k[4],
-                      k[5], k[6], n, mk);
+          fo = 0;
+          r = $sscanf(ln, "%d %d %d %d %d %d %d %d %d %d %d", pc, k[0], k[1], k[2], k[3], k[4],
+                      k[5], k[6], n, mk, fo);
           if (r >= 8 && pc >= 0 && pc < IMEM_WORDS / 8) begin
             logic [SWW-1:0] wd;
             wd = '0;
@@ -450,6 +558,7 @@ module otpu_seq
               wd[4 * j +: 4] = 4'((kc > 0 && k[j] > kc) ? kc : (k[j] > 15) ? 15 : k[j]);
             if (r >= 10) wd[28 +: VMW] = VMW'(mk);
             else if (k[3] > 0) wd[28 +: VMW] = {VMW{1'b1}} << ((k[3] > 15 ? 15 : k[3]) - 1);
+            if (FOL && r >= 11 && fo != 0) wd[SWW-1] = 1'b1;
             u_sync.g_auto.mem[pc / 4][SWW * (pc % 4) +: SWW] = wd;
           end
         end
@@ -469,31 +578,48 @@ module otpu_seq
   wire [3:0] rd    = iw[0][23:20];
   wire [7:0] flags = iw[0][31:24];
 
-  function automatic logic [31:0] rv(input logic [3:0] r);
-    return (r == 0) ? 32'd0 : R[r];
+  function automatic logic [AW-1:0] rv(input logic [3:0] r);
+    return (r == 0) ? '0 : R[r];
+  endfunction
+  // its low 32 bits: everything but a DRAM address (TMEM addresses, counts, LOOP's trip count,
+  // WAITW's reference, HALT CHAIN's program)
+  function automatic logic [31:0] rv32(input logic [3:0] r);
+    return 32'(rv(r));
   endfunction
 
   // STREAM: src (w2) and dst (w3) += R[ra], vec (w4) += R[rb], x (w5) += R[rc], k (w6) += R[rd].
   // The others: w1 += R[ra], w2 += R[rb] and w3 += R[rc] where docs/isa.md writes the field as
-  // R[x] + w; the counts and shapes there are immediates: QACT's w2 (rows, ab, KB) and w3 (srs),
-  // LD's and ST's w3 (n), GATHER's w3 (rows, cols) (the enables decode the opcode beside the
-  // register reads)
+  // R[x] + w; the counts and shapes there are immediates: QACT's w2 (rows, ab, KB) and w3 (srs;
+  // QONCE's ST: its DRAM rows, R[rc] + w3, srs in w6), LDA's w2 and w3 (rows, ab, KB; the row
+  // stride), LD's and ST's w3 (n), GATHER's w3 (rows, cols) (the enables decode the opcode beside the
+  // register reads). VOP: w7 += R[rd]; at WG > 1 QST GRP (flags bit2): its first row w6 += R[rd].
+  // w1..w3 at AW bits (their high bits w1h..w3h: the address words; the others' are not read),
+  // w4..w7 at 32 (TMEM addresses, counts)
   cmd_t dcmd;
   wire  is_str = (op == OP_STREAM);
-  wire  rel2 = (op != OP_QACT);
-  wire  rel3 = !(op == OP_QACT || op == OP_LD || op == OP_ST || op == OP_GATHER);
+  wire  rel6 = is_str || (WG > 1 && op == OP_QST && flags[2]);
+  wire  rel2 = (op != OP_QACT) && !(QONCE && op == OP_LDA);
+  wire  rel3 = !((op == OP_QACT && !(QONCE && flags[6])) || op == OP_LD || op == OP_ST ||
+                 op == OP_GATHER || (QONCE && op == OP_LDA));
+  logic [AW-1:0] a1, a2, a3;
   always_comb begin
     dcmd.op = op; dcmd.flags = flags;
-    dcmd.w1 = iw[1] + (is_str ? 32'd0 : rv(ra));
-    dcmd.w2 = iw[2] + (is_str ? rv(ra) : rel2 ? rv(rb) : 32'd0);
-    dcmd.w3 = iw[3] + (is_str ? rv(ra) : rel3 ? rv(rc) : 32'd0);
-    dcmd.w4 = iw[4] + (is_str ? rv(rb) : 32'd0);
-    dcmd.w5 = iw[5] + (is_str ? rv(rc) : 32'd0);
-    dcmd.w6 = iw[6] + (is_str ? rv(rd) : 32'd0);
-    dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv(rd) : 32'd0);        // VOP: w7 += R[rd]
+    dcmd.lg = (WG > 1 && op == OP_MM) ? rd : 4'd0;
+    a1 = AW'(iw[1]) + (is_str ? AW'(0) : rv(ra));
+    a2 = AW'(iw[2]) + (is_str ? rv(ra) : rel2 ? rv(rb) : AW'(0));
+    a3 = AW'(iw[3]) + (is_str ? rv(ra) : rel3 ? rv(rc) : AW'(0));
+    dcmd.w1 = 32'(a1); dcmd.w2 = 32'(a2); dcmd.w3 = 32'(a3);
+    dcmd.w1h = AWX'(AW_MAX'(a1) >> 32);
+    dcmd.w2h = AWX'(AW_MAX'(a2) >> 32);
+    dcmd.w3h = AWX'(AW_MAX'(a3) >> 32);
+    dcmd.w4 = iw[4] + (is_str ? rv32(rb) : 32'd0);
+    dcmd.w5 = iw[5] + (is_str ? rv32(rc) : 32'd0);
+    dcmd.w6 = iw[6] + (rel6 ? rv32(rd) : 32'd0);
+    dcmd.w7 = iw[7] + ((op == OP_VOP) ? rv32(rd) : 32'd0);
   end
   int dunit;
-  always_comb dunit = (!STREAMS && (op == OP_DSTEP || op == OP_STREAM)) ? -1 : unit_of(op);
+  always_comb dunit = ((!STREAMS && (op == OP_DSTEP || op == OP_STREAM)) || (!QONCE && op == OP_LDA))
+                      ? -1 : unit_of(op);
 
   // ---- dispatch pipeline: R (the instruction at pc: registers resolved) -> P (footprint
   // partial products) -> S (products) -> Q (footprint ranges) -> C (dependencies on the window,
@@ -531,7 +657,7 @@ module otpu_seq
   // ---- free slot and the new instruction's dependencies
   logic [SW-1:0]   free_slot;
   logic [WIN-1:0]  ndep, ndepd;
-  always_comb q_fp = fp_ranges(q_cmd, q_pr, D, S);
+  always_comb q_fp = fp_ranges(q_cmd, q_pr, D, S, DSTEP2, QB, 1'b0, QONCE);
   always_comb begin
     have_free = 1'b0; free_slot = '0;
     for (int i = WIN - 1; i >= 0; i--)
@@ -578,6 +704,11 @@ module otpu_seq
   localparam int CW = 8;
   localparam int NWT = NUNITS + 2;
   logic [CW-1:0]    wd_n [NUNITS], wc_n [NUNITS];
+  // FOL: the collective unit runs an instruction (c_run: it starts and completes them in order,
+  // one at a time), a slot's FOLLOW, and per slot that it follows a GATHER still running (f_live:
+  // its collective count not completed)
+  logic             c_run;
+  logic [WIN-1:0]   sfol, f_live;
   localparam int VN = VMW + 1;                // VPU indices kept (mod VN)
   localparam int VIW = $clog2(VN);
   logic [VN-1:0]    vout;                     // VPU instructions outstanding (index mod VN)
@@ -645,11 +776,17 @@ module otpu_seq
   always_comb
     for (int i = 0; i < WIN; i++) begin
       logic [NWT-1:0] ok;
+      logic [CW-1:0] dc;
       for (int j = 0; j < NWT; j++) begin
         logic [CW-1:0] df;
         df = wc_n[wunit(j)] - wt[i][j];
         ok[j] = !wv[i][j] || !df[CW-1];
       end
+      // FOLLOW: the collective's count is met at the GATHER's start, when it is the one running
+      // (wc_n one short of the count)
+      dc = wc_n[U_COLL] - wt[i][U_COLL];
+      if (FOL && sfol[i] && c_run && &dc) ok[U_COLL] = 1'b1;
+      f_live[i] = FOL && sfol[i] && wv[i][U_COLL] && dc[CW-1];
       w_all[i] = &ok[NUNITS-1:0] && vpend[i] == '0;
 `ifndef SYNTHESIS
       if (wc_vx) w_all[i] = &ok[NUNITS-1:0] && vxd[i] == '0;
@@ -664,6 +801,27 @@ module otpu_seq
       w_all_q <= w_all & ~(c_go ? WIN'(1) << free_slot : '0);
       w_dram_q <= w_dram & ~(c_go ? WIN'(1) << free_slot : '0);
     end
+  // A slot's producer masks (vpend, WAITC's VPU producers; sdepd, the DRAM part of sdep: the MXU's
+  // stream start) clear as their producers complete and load at the slot's dispatch, outside the
+  // reset: read only for live slots (sv, reset), as the rest of a slot's payload. Held through the
+  // reset, the whole array's enable was the reset (a BCU1525 build at 150 MHz: the slice's c_rst
+  // -> srst -> vpend's enable, 1,024 flip-flops behind a BUFGCE, 6.96 ns, -0.019 ns)
+  logic [VN-1:0] vm;                          // the VPU mask: bit r - 1 names the VPU instruction
+  always_comb begin                           //   r back (index wd_n - r)
+    vm = '0;
+    for (int r = 1; r <= VMW; r++)
+      if (c_sync[28 + r - 1]) vm[VIW'(wd_n[U_VPU] - CW'(r))] = 1'b1;
+  end
+  always_ff @(posedge clk) begin
+    for (int i = 0; i < WIN; i++) begin
+      sdepd[i] <= sdepd[i] & ~fin;
+      if (WAITC) vpend[i] <= vpend[i] & ~v_fin;
+    end
+    if (c_go) begin
+      sdepd[free_slot] <= ndepd;
+      if (WAITC) vpend[free_slot] <= vm & vout & ~v_fin;
+    end
+  end
 
   // ---- loop-end handling for the instruction at pc
   logic        at_end;
@@ -689,7 +847,6 @@ module otpu_seq
   //   C: advance() at a loop end pops                    -- the next entry decides
   //   D: the stack is unchanged (also the load after reset and a skipped LOOP)
   // A LOOP's first cycle picks the enter/skip target a cycle ahead (pc holds, the RAM reads it).
-  logic        adv;              // R's instruction retires or is handed over this cycle
   logic        hit1, hit2;       // fa ends the loop on top of the stack / the one below it
   logic        hit;              // fa's successor is a loop start ...
   logic [31:0] hit_pc;           // ... this one
@@ -703,26 +860,271 @@ module otpu_seq
       OP_LOOP: adv = lp;
       default: adv = dunit >= 0 && r_take;
     endcase
-    ld = !ir_v || (!stopping && !halted && !rl_wait && adv);
+    ld = ic_ok && (!ir_v || (!stopping && !halted && !rl_wait && adv));
     hit1 = (sp != 0) && (stk_end[sp-1] == fa);
     hit2 = (sp >= 2) && (stk_end[sp-2] == fa);
     hit = hit1 && stk_rem[sp-1] > 1;                                          // D
     hit_pc = stk_start[sp-1];
+    ic_hp = ic_ps1;
     if (ir_v && op == OP_LOOP) begin
-      if (lp_cnt != 0) begin hit = lp_len == 1 && lp_cnt > 1; hit_pc = fa; end  // A
+      if (lp_cnt != 0) begin
+        hit = lp_len == 1 && lp_cnt > 1; hit_pc = fa; ic_hp = ic_pfa;                // A
+      end
     end else if (ir_v && at_end) begin
       if (stk_rem[sp-1] > 1) hit = hit1 && stk_rem[sp-1] > 2;                // B
-      else begin hit = hit2 && stk_rem[sp-2] > 1; hit_pc = stk_start[sp-2]; end // C
+      else begin
+        hit = hit2 && stk_rem[sp-2] > 1; hit_pc = stk_start[sp-2]; ic_hp = ic_ps2;   // C
+      end
     end
     succ = hit ? hit_pc : fa + 1;
     // a + b == 0 without the carry chain: every sum bit is 0 iff a ^ b is the carry, (a | b) << 1
-    lp_a = rv(ra);
+    lp_a = rv32(ra);
     lp_z = (lp_a ^ iw[2]) == ((lp_a | iw[2]) << 1);
-    if (rst) fa_n = '0;
-    else if (ir_v && op == OP_LOOP && !lp) fa_n = lp_z ? pc + 1 + iw[1] : pc + 1;
-    else fa_n = succ;
-    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted && !rl_wait) || ld;
+    // ICACHE: ic_pn, fa_n's line there, as fa_n is chosen; ic_rf reads fa's row again
+    if (rst) begin
+      fa_n = '0; ic_pn = 1'b0;
+    end else if (ir_v && op == OP_LOOP && !lp) begin
+      fa_n = lp_z ? pc + 1 + iw[1] : pc + 1; ic_pn = lp_z ? ic_plz : ic_ple;
+    end else if (ic_rf) begin
+      fa_n = fa; ic_pn = ic_pfa;
+    end else begin
+      fa_n = succ; ic_pn = hit ? ic_hp : ic_pfa1;
+    end
+    fe = rst || (ir_v && op == OP_LOOP && !lp && !stopping && !halted && !rl_wait) || ld || ic_rf;
     fa_d = fe ? fa_n : fa;
+  end
+
+  // ---- ICACHE (above): the tags, the prefetcher and the fills
+  localparam int PCW = $clog2(IMEM_WORDS / 8);      // the longest program's pc bits
+  localparam int LNW = PCW - 5;                     // a program line's
+  localparam int SB  = $clog2(IC_LINES);            // a slot's
+  localparam int TGW = (LNW > SB) ? LNW - SB : 1;   // a tag's
+  localparam int LB  = 32 / IPR;                    // a line's instruction chunks
+  localparam int EB  = WAITC ? LB / 4 : 0;          // its entry chunks (four instruction ones each)
+  localparam int NB  = LB + EB;                     // a fill's port B reads
+  localparam int NF  = 4;                           // fills under way
+  localparam int CWD = D / 4;                       // a chunk's words (port B addresses)
+  localparam int SMAX = 2 * IC_PF + 4;              // the prefetcher's steps from a line
+  if (ICACHE) begin : g_ic
+    typedef logic [LNW-1:0] ln_t;
+    typedef logic [IC_LINES-1:0][TGW-1:0] tags_t;
+    tags_t               tg;                        // each slot's line, above its slot bits
+    logic [IC_LINES-1:0] vl, pd;                    // the slot's line is there; its fill is under way
+    logic [31:0]         base_w, ent_w;             // the program's and its entries' first words
+    logic [LNW:0]        nl;                        // the program's lines
+    // a program line is in the cache
+    function automatic logic has(input ln_t l, input tags_t t, input logic [IC_LINES-1:0] v);
+      return v[SB'(l)] && t[SB'(l)] == TGW'(l >> SB);
+    endfunction
+    function automatic ln_t lof(input logic [31:0] a);
+      return ln_t'(a >> 5);
+    endfunction
+
+    // the candidates of fa_n, looked up from flip-flops (fa beyond the longest program: none)
+    ln_t lfa;
+    always_comb begin
+      lfa = lof(fa);
+      ic_pfa  = (fa >> PCW) == 0 && has(lfa, tg, vl);
+      ic_pfa1 = (fa[4:0] != 5'd31) ? ic_pfa : (fa + 1) >> PCW == 0 && has(lfa + 1'b1, tg, vl);
+      ic_ps1  = has(lof(stk_start[sp - 1]), tg, vl);
+      ic_ps2  = has(lof(stk_start[sp - 2]), tg, vl);
+      ic_plz  = has(lof(pc + 1 + iw[1]), tg, vl);
+      ic_ple  = has(lof(pc + 1), tg, vl);
+    end
+    // fa's row is good: read at fe with its line there (R holds it otherwise: the RAM keeps its
+    // row while fa stays, even if the line goes)
+    logic rv;
+    always_ff @(posedge clk)
+      if (rst || ic_inv) rv <= 1'b0;
+      else if (fe) rv <= ic_pn;
+    assign ic_ok = rv;
+    // read fa's row again once its line is there (not in a LOOP's first cycle, which moves fa)
+    assign ic_rf = !rst && !rv && ic_pfa && !(ir_v && op == OP_LOOP && !lp);
+    // the demand: fa's line, not there and no fill into its slot under way (nor past the
+    // program's end, nor behind a HALT)
+    wire dem = !rst && !rv && !ic_pfa && !pd[SB'(lfa)] && (fa >> PCW) == 0 &&
+               (LNW+1)'(lfa) < nl && !stopping && !halted && !(ir_v && op == OP_HALT);
+
+    // the prefetcher: from fa as it enters a line, the lines that follow along the stack's top
+    // two loops as they stand (a loop end with iterations left goes back to the loop's start,
+    // unless the loop is in the line: then it is left; a loop left pops), the first IC_PF
+    // distinct ones other than fa's, each filled if not there, its slot not under a fill and
+    // not fa's line's; at most SMAX steps, none past the program's end. A step takes two
+    // cycles: the next position and its line from the walk's state into flip-flops (w_c*), then
+    // the step from them (the lookup, the fill), so neither cycle holds both the position's
+    // arithmetic and the tags'
+    logic           w_go, w_v;
+    ln_t            w_l0;                           // the line it walks from
+    logic [PCW:0]   w_pos;
+    logic [PCW:0]   w_s [2], w_e [2];               // the loops' first and last instructions
+    logic [3:0]     w_r [2];                        // their iterations left (at most 15)
+    logic [1:0]     w_lv;                           // the loops it follows (w_*[0] the top)
+    logic [2:0]     w_n;                            // lines found
+    logic [3:0]     w_k;                            // steps
+    ln_t            w_c [IC_PF];
+    logic [PCW:0]   w_np;
+    ln_t            w_l;
+    logic           w_wrap, w_pop, w_end;
+    always_comb begin
+      logic [PCW:0] ql;
+      logic at;
+      ql = w_pos >> 5;
+      at = w_lv != 0 && w_e[0] >= w_pos && (w_e[0] >> 5) == ql;
+      w_wrap = at && w_r[0] > 1 && (w_s[0] >> 5) != ql;
+      w_pop = at && !w_wrap;
+      w_np = w_wrap ? w_s[0] : w_pop ? w_e[0] + 1'b1 : (ql + 1'b1) << 5;
+      w_l = ln_t'(w_np >> 5);
+      w_end = (w_np >> PCW) != 0 || (LNW+1)'(w_l) >= nl;
+    end
+    // the step's candidate (w_cv: computed from the walk's state as it stands)
+    logic           w_cv, w_cwrap, w_cpop, w_cend;
+    logic [PCW:0]   w_cnp;
+    ln_t            w_cl;
+    logic           w_seen, w_want;
+    always_comb begin
+      w_seen = w_cl == w_l0;
+      for (int c = 0; c < IC_PF; c++) if (c < int'(w_n) && w_c[c] == w_cl) w_seen = 1'b1;
+      w_want = !w_cend && !w_seen && !has(w_cl, tg, vl) && !pd[SB'(w_cl)] &&
+               SB'(w_cl) != SB'(lfa);
+    end
+    function automatic logic [3:0] sat15(input logic [31:0] x);
+      return (x > 15) ? 4'd15 : 4'(x);
+    endfunction
+
+    // a fill starts: the demand's, else the prefetcher's (it holds meanwhile)
+    logic           is_v;                           // a fill's reads issuing
+    logic [2:0]     fc;                             // fills under way (issuing or in flight)
+    wire            can = !is_v && fc < 3'(NF);
+    wire            w_step = w_go && w_v && w_cv && lfa == w_l0;
+    wire            fs_d = dem && can;
+    wire            fs_w = !dem && w_step && w_want && can && !stopping && !halted;
+    wire [LNW-1:0]  fs_l = fs_d ? lfa : w_cl;
+    always_ff @(posedge clk)
+      if (rst || ic_inv) begin
+        w_go <= 1'b0; w_v <= 1'b0; w_cv <= 1'b0;
+      end else if (!w_v || lfa != w_l0) begin       // fa entered a line: walk from it
+        w_go <= 1'b1; w_v <= 1'b1; w_cv <= 1'b0; w_l0 <= lfa; w_pos <= (PCW+1)'(fa);
+        w_n <= '0; w_k <= '0;
+        w_lv <= (sp >= 2) ? 2'd2 : 2'(sp);
+        w_s[0] <= (PCW+1)'(stk_start[sp - 1]); w_e[0] <= (PCW+1)'(stk_end[sp - 1]);
+        w_r[0] <= sat15(stk_rem[sp - 1]);
+        w_s[1] <= (PCW+1)'(stk_start[sp - 2]); w_e[1] <= (PCW+1)'(stk_end[sp - 2]);
+        w_r[1] <= sat15(stk_rem[sp - 2]);
+      end else if (!w_cv) begin
+        w_cv <= 1'b1; w_cnp <= w_np; w_cl <= w_l; w_cwrap <= w_wrap; w_cpop <= w_pop;
+        w_cend <= w_end;
+      end else if (w_step && !(w_want && !fs_w)) begin
+        w_cv <= 1'b0;
+        w_pos <= w_cnp;
+        if (w_cwrap) w_r[0] <= w_r[0] - 1'b1;
+        if (w_cpop) begin
+          w_s[0] <= w_s[1]; w_e[0] <= w_e[1]; w_r[0] <= w_r[1]; w_lv <= w_lv - 1'b1;
+        end
+        if (!w_cend && !w_seen) begin
+          w_c[w_n[$clog2(IC_PF > 1 ? IC_PF : 2)-1:0]] <= w_cl;
+          w_n <= w_n + 1'b1;
+        end
+        w_k <= w_k + 1'b1;
+        if (w_cend || (!w_seen && 32'(w_n) + 1 == IC_PF) || 32'(w_k) + 1 == SMAX) w_go <= 1'b0;
+      end
+
+    // the fills: one issuing (its NB reads in order: at WAITC each entry chunk, then four
+    // instruction chunks), NF under way, their slots in order (fq), the chunks back in order
+    logic [5:0]     is_k;                           // reads issued
+    logic [2:0]     is_ph;                          // at WAITC: 0 an entry chunk, 1-4 instructions
+    logic [31:0]    ip, ep;                         // the next instruction / entry chunk's word
+    logic [SB-1:0]  fq [NF];
+    logic [1:0]     fq_h, fq_t;
+    logic [5:0]     rb_k;                           // the fill's chunks back
+    logic [2:0]     rb_ph;
+    logic [$clog2(LB)-1:0] rb_i;                    // its instruction chunk
+    logic [3:0]     rb_m;                           // its entry chunk
+    logic [D*8-1:0] st_d;                           // an entry chunk's rows after its first
+    logic [2:0]     st_n;
+    logic [31:0]    st_row;
+    wire            is_e = EB > 0 && is_ph == 3'd0;
+    wire            rb_e = EB > 0 && rb_ph == 3'd0;
+    wire [SB-1:0]   sh = fq[fq_h];
+    wire            done = ic_rv && 32'(rb_k) == NB - 1;
+    assign ic_req = is_v;
+    assign ic_addr = is_e ? ep : ip;
+    assign ic_busy = is_v || fc != '0;
+    // the chunks into IMEM's rows (the slot's, LB of them) and the wait entries' (8: the first
+    // of an entry chunk's IPR rows as it comes, the others from st_d the cycles after)
+    assign ic_we = ic_rv && !rb_e;
+    assign ic_row = 32'(sh) * LB + 32'(rb_i);
+    always_comb begin
+      ic_swe = 1'b0; ic_srow = st_row; ic_sdata = st_d[255:0];
+      if (ic_rv && rb_e) begin
+        ic_swe = 1'b1; ic_srow = 32'(sh) * 8 + 32'(rb_m) * IPR; ic_sdata = im_data[255:0];
+      end else if (st_n != '0) ic_swe = 1'b1;
+    end
+    always_ff @(posedge clk) begin
+      if (ic_inv) begin
+        vl <= '0; pd <= '0; is_v <= 1'b0; fc <= '0; fq_h <= '0; fq_t <= '0;
+        rb_k <= '0; rb_ph <= '0; rb_i <= '0; rb_m <= '0; st_n <= '0;
+        base_w <= ic_base >> 2;
+        ent_w <= (ic_base >> 2) + ((ic_n + IPR - 1) / IPR) * CWD;
+        nl <= (ic_n >= IMEM_WORDS / 8) ? (LNW+1)'(IMEM_WORDS / 256) : (LNW+1)'((ic_n + 31) >> 5);
+      end else begin
+        fc <= fc + 3'(fs_d || fs_w) - 3'(done);
+        if (fs_d || fs_w) begin
+          tg[SB'(fs_l)] <= TGW'(fs_l >> SB); vl[SB'(fs_l)] <= 1'b0; pd[SB'(fs_l)] <= 1'b1;
+          is_v <= 1'b1; is_k <= '0; is_ph <= '0;
+          ip <= base_w + (32'(fs_l) << 8);
+          ep <= ent_w + (32'(fs_l) << 6);
+          fq[fq_t] <= SB'(fs_l); fq_t <= fq_t + 1'b1;
+        end else if (is_v && ic_gnt) begin
+          if (is_e) ep <= ep + CWD; else ip <= ip + CWD;
+          is_ph <= (is_ph == 3'd4) ? 3'd0 : is_ph + 1'b1;
+          is_k <= is_k + 1'b1;
+          if (32'(is_k) == NB - 1) is_v <= 1'b0;
+        end
+        if (ic_rv) begin
+          rb_k <= rb_k + 1'b1;
+          rb_ph <= (rb_ph == 3'd4) ? 3'd0 : rb_ph + 1'b1;
+          if (rb_e) rb_m <= rb_m + 1'b1; else rb_i <= rb_i + 1'b1;
+          if (done) begin
+            vl[sh] <= 1'b1; pd[sh] <= 1'b0; fq_h <= fq_h + 1'b1;
+            rb_k <= '0; rb_ph <= '0; rb_i <= '0; rb_m <= '0;
+          end
+        end
+        if (ic_rv && rb_e) begin
+          st_d <= im_data >> 256; st_n <= 3'(IPR - 1);
+          st_row <= 32'(sh) * 8 + 32'(rb_m) * IPR + 1;
+        end else if (st_n != '0) begin
+          st_d <= st_d >> 256; st_n <= st_n - 1'b1; st_row <= st_row + 1;
+        end
+      end
+    end
+`ifndef SYNTHESIS
+    always @(posedge clk)
+      if (!ic_inv && ic_rv && rb_e && st_n != '0)
+        $fatal(1, "otpu_seq: an entry chunk came before the last one's rows were written");
+    always @(posedge clk)
+      if (!ic_inv && ic_rv && fc == '0)
+        $fatal(1, "otpu_seq: a fill's chunk with no fill under way");
+    // the run's fills (demand, prefetch) and the cycles R waited for fa's row (ICACHE line)
+    int st_fd, st_fp, st_stall;
+    always @(posedge clk) begin
+      if (!ic_inv && fs_d) st_fd++;
+      if (!ic_inv && fs_w) st_fp++;
+      if (!rst && !rv && (!ir_v || (!stopping && !halted && !rl_wait && adv))) st_stall++;
+    end
+    final $display("ICACHE s%0d lines=%0d pf=%0d fills=%0d demand=%0d prefetch=%0d stall=%0d",
+                   SID, IC_LINES, IC_PF, st_fd + st_fp, st_fd, st_fp, st_stall);
+`endif
+  end else begin : g_noic
+    assign ic_ok = 1'b1;
+    assign ic_rf = 1'b0;
+    assign {ic_pfa, ic_pfa1, ic_ps1, ic_ps2, ic_plz, ic_ple} = '0;
+    assign {ic_we, ic_swe} = '0;
+    assign ic_row = '0;
+    assign ic_srow = '0;
+    assign ic_sdata = '0;
+    assign ic_req = 1'b0;
+    assign ic_addr = '0;
+    assign ic_busy = 1'b0;
   end
 
   // A dependency on an instruction that has already started on the SAME unit is satisfied:
@@ -841,6 +1243,14 @@ module otpu_seq
   // pins, -0.49 ns; vout -> c_go -> their write enables, 868, -0.34)
   cmd_t c_cmd_w;
   always_ff @(posedge clk) c_cmd_w <= c_cmd;
+  // the address words' bits AW_MAX - 1 .. AW are 0 (so at AW 32 the store's h columns go unread)
+  localparam logic [AWX-1:0] HM = AWX'((64'd1 << (AW - 32)) - 1);
+  function automatic cmd_t hmask(input cmd_t c);
+    cmd_t o;
+    o = c;
+    o.w1h = c.w1h & HM; o.w2h = c.w2h & HM; o.w3h = c.w3h & HM;
+    return o;
+  endfunction
   logic [SW-1:0] ucs [NUNITS];
   for (genvar u = 0; u < NUNITS; u++) begin : g_cmd
     (* ram_style = "distributed" *) logic [$bits(cmd_t)-1:0] m [WIN];
@@ -858,7 +1268,7 @@ module otpu_seq
     end
     always_ff @(posedge clk) if (we) m[wa] <= WAITC ? c_cmd_w : c_cmd;
     always_ff @(posedge clk) if (!rst && q_en) q <= m[start_slot[u]];
-    assign ucmd[u] = cmd_t'(q);
+    assign ucmd[u] = hmask(cmd_t'(q));
 `ifndef SYNTHESIS
     // the copy is the started slot's command when the unit reads it (at ustart; the collective
     // while its request is pending); no start reads a slot whose write is still on its way
@@ -873,6 +1283,15 @@ module otpu_seq
     end
 `endif
   end
+  // FOL: the VPU's start follows a GATHER still running (f_live of the slot it starts, loaded as
+  // the command copy is; not if the collective completes that cycle, which the VPU would miss)
+  if (FOL) begin : g_fol
+    always_ff @(posedge clk)
+      if (rst) ufol <= 1'b0;
+      else if (urdy[U_VPU] && !ustart[U_VPU]) ufol <= |(sel[U_VPU] & f_live) && !udone[U_COLL];
+  end else begin : g_nfol
+    assign ufol = 1'b0;
+  end
 
 `ifndef SYNTHESIS
   // shadow of c_fp / sfp in otpu_pkg form: the scoreboard is checked against conflict(), on
@@ -883,7 +1302,7 @@ module otpu_seq
   logic [7:0]  sidx [WIN];                   // WAITC: the slot's index among its unit's
   logic [31:0] spc [WIN];
 
-  // fp_seg's hull in otpu_pkg form: two TMEM write ranges (only MM with RMAX) become one
+  // fp_seg's hull in otpu_pkg form: two TMEM write ranges (MM with RMAX, VOP with FSUM) become one
   function automatic fp_t fp_hull(input fp_t f);
     fp_t o;
     o = f;
@@ -893,6 +1312,89 @@ module otpu_seq
       o.wr[1].v = 1'b0;
     end
     return o;
+  endfunction
+
+  // AW > 32: an instruction's DRAM ranges at AW bits for WAITC's check (the waits pass places
+  // them there; fp_t's are their low 32 bits, so two ranges 4 GiB apart alias in it). A range is
+  // its base word's address at AW bits ({wkh, wk}, cut to its beat: QST's 2^QB bytes, else a
+  // byte) plus its ends in the footprint of the command with that word cut to its offset in the
+  // beat; WAITW's (a DRAM range of no word): all of DRAM. Slots 0..3 the reads, 4..6 the writes
+  typedef struct packed { logic v, w; logic [AW_MAX:0] lo, hi; } dr_t;
+  typedef dr_t [6:0] fpd_t;
+  fpd_t c_dw;
+  fpd_t sfp_dw [WIN];
+
+  // the word (1..3) slot s's DRAM range starts at (fp_ranges); 0: none (all of DRAM)
+  function automatic int fpd_word(input logic [7:0] op, input int s);
+    case (op)
+      OP_LD:           return (s == 0) ? 1 : 0;
+      OP_MM:           return (s == 0 || s == 3) ? 1 : (s == 1) ? 2 : 0;   // (3: SPL's lo)
+      OP_ST, OP_DSTEP: return (s == 4) ? 1 : 0;
+      OP_STREAM:       return (s == 4) ? 2 : (s == 6) ? 3 : 0;
+      OP_QST:          return (s == 4 || s == 6) ? 2 : (s == 5) ? 3 : 0;   // (6: HL's lo)
+      OP_QACT:         return (QONCE && s == 5) ? 3 : 0;                    // (ST's rows)
+      OP_LDA:          return (QONCE && s == 0) ? 1 : 0;
+      default:         return 0;
+    endcase
+  endfunction
+
+  function automatic fpd_t fp_dram(input cmd_t c);
+    cmd_t z;
+    fp_t f;
+    fpd_t o;
+    logic [31:0] m;
+    m = (c.op == OP_QST) ? (32'd1 << QB) - 32'd1 : 32'd0;
+    z = c;
+    for (int s = 0; s < 7; s++)
+      case (fpd_word(c.op, s))
+        1: z.w1 = c.w1 & m;
+        2: z.w2 = c.w2 & m;
+        3: z.w3 = c.w3 & m;
+        default: ;
+      endcase
+    f = footprint(z, D, S, DSTEP2, QB, WAITC, QONCE);
+    for (int s = 0; s < 7; s++) begin
+      rng_t r;
+      int k;
+      logic [AW_MAX:0] b;
+      r = (s < 4) ? f.rd[s] : f.wr[s - 4];
+      k = fpd_word(c.op, s);
+      b = (k == 0) ? '0 : {1'b0, cmd_a(c, k) & ~AW_MAX'(m)};
+      o[s].v = r.v && r.sp == SP_DRAM;
+      o[s].w = (s >= 4);
+      o[s].lo = (k == 0) ? '0 : b + (AW_MAX + 1)'(r.lo);
+      o[s].hi = (k == 0) ? (AW_MAX + 1)'(1) << AW : b + (AW_MAX + 1)'(r.hi);
+    end
+    return o;
+  endfunction
+
+  // conflict() (dram: conflict_dram()) with the DRAM ranges at AW bits (nd, ed: fp_dram's)
+  function automatic logic conflict_aw(input fp_t n, input fpd_t nd, input fp_t e,
+                                       input fpd_t ed, input bit dram);
+    fp_t a, b;
+    if (n.all || e.all) return 1'b1;
+    a = n; b = e;
+    for (int i = 0; i < 4; i++) begin
+      if (dram || a.rd[i].sp == SP_DRAM) a.rd[i].v = 1'b0;
+      if (dram || b.rd[i].sp == SP_DRAM) b.rd[i].v = 1'b0;
+    end
+    for (int i = 0; i < 3; i++) begin
+      if (dram || a.wr[i].sp == SP_DRAM) a.wr[i].v = 1'b0;
+      if (dram || b.wr[i].sp == SP_DRAM) b.wr[i].v = 1'b0;
+    end
+    if (conflict(a, b)) return 1'b1;
+    for (int i = 0; i < 7; i++)
+      for (int j = 0; j < 7; j++)
+        if (nd[i].v && ed[j].v && (nd[i].w || ed[j].w) && nd[i].lo < ed[j].hi &&
+            ed[j].lo < nd[i].hi)
+          return 1'b1;
+    return 1'b0;
+  endfunction
+
+  // WAITC's check: does C's instruction conflict with slot i (dram: in DRAM)
+  function automatic logic wc_conf(input int i, input bit dram);
+    if (AW > 32) return conflict_aw(c_ref, c_dw, sfp_ref[i], sfp_dw[i], dram);
+    return dram ? conflict_dram(c_ref, sfp_ref[i]) : conflict(c_ref, sfp_ref[i]);
   endfunction
 `endif
 
@@ -908,9 +1410,11 @@ module otpu_seq
       icount <= '0;
       sv <= '0; sstarted <= '0; sready <= '0;
       for (int i = 0; i < 8; i++) R[i] <= '0;
-      for (int i = 0; i < 8; i++) R[8 + i] <= rinit[i];
+      for (int i = 0; i < 8; i++) R[8 + i] <= AW'(rinit[i]);
       for (int u = 0; u < NUNITS; u++) begin uq_h[u] <= '0; uq_t[u] <= '0; end
       for (int u = 0; u < NUNITS; u++) begin wd_n[u] <= '0; wc_n[u] <= '0; end
+      c_run <= 1'b0;
+      sfol <= '0;
       vout <= '0;
       vnx_q <= 1'b0;
       for (int i = 0; i < WIN; i++) sdep[i] <= '0;
@@ -978,14 +1482,13 @@ module otpu_seq
               if (rk == 0 || rk > CW'(wc_vg))
                 $fatal(1, "otpu_seq: WAITC: pc %0d: VPU slot %0d (pc %0d) %0d back", c_pc, i,
                        spc[i], rk);
-              if (conflict(c_ref, sfp_ref[i]) && !c_sync[28 + int'(rk) - 1])
+              if (wc_conf(i, 1'b0) && !c_sync[28 + int'(rk) - 1])
                 $fatal(1, "otpu_seq: WAITC: pc %0d's VPU mask %h misses slot %0d (pc %0d, %0d back)",
                        c_pc, c_sync[28 +: VMW], i, spc[i], rk);
             end
             for (int j = 0; j < NWT; j++)
               if (wunit(j) == ui && ui != int'(c_unit) && ui != U_VPU &&
-                  ((j < NUNITS) ? conflict(c_ref, sfp_ref[i]) :
-                   c_cmd.op == OP_MM && conflict_dram(c_ref, sfp_ref[i]))) begin
+                  ((j < NUNITS) ? wc_conf(i, 1'b0) : c_cmd.op == OP_MM && wc_conf(i, 1'b1))) begin
                 logic [3:0] k;
                 logic [CW-1:0] df;
                 k = c_sync[4 * j +: 4];
@@ -1007,7 +1510,6 @@ module otpu_seq
       end
       for (int i = 0; i < WIN; i++) begin
         sdep[i] <= sdep[i] & ~fin;
-        sdepd[i] <= sdepd[i] & ~fin;
         if (fin[i]) begin
           sv[i] <= 1'b0;
         end
@@ -1028,6 +1530,8 @@ module otpu_seq
 `endif
       if (WAITC) begin
         for (int u = 0; u < NUNITS; u++) if (udone[u] && u != U_VPU) wc_n[u] <= wc_n[u] + 1'b1;
+        if (can_start[U_COLL]) c_run <= 1'b1;
+        else if (udone[U_COLL]) c_run <= 1'b0;
         vout <= (vout & ~v_fin) |
                 ((c_go && c_unit == U_VPU) ? VN'(1) << wd_n[U_VPU][VIW-1:0] : '0);
         // (a VPU dispatch sets bit wd_n and moves wd_n on: the next index's bit is wd_n + 2's)
@@ -1037,7 +1541,6 @@ module otpu_seq
           i2 = VIW'(wd_n[U_VPU] + 2'd2);
           vnx_q <= (c_go && c_unit == U_VPU) ? vout[i2] && !v_fin[i2] : vout[i1] && !v_fin[i1];
         end
-        for (int i = 0; i < WIN; i++) vpend[i] <= vpend[i] & ~v_fin;
       end
       // readiness (for the profiler: when did the dependencies clear)
       for (int i = 0; i < WIN; i++)
@@ -1070,22 +1573,16 @@ module otpu_seq
         sstarted[free_slot] <= 1'b0;
         sready[free_slot] <= 1'b0;
         sdep[free_slot] <= ndep;
-        sdepd[free_slot] <= ndepd;
         sfp[free_slot] <= c_fp;
         if (WAITC) begin
-          logic [VN-1:0] m;
           for (int j = 0; j < NWT; j++) begin
             logic [3:0] k;
             k = c_sync[4 * j +: 4];
             wv[free_slot][j] <= k != 0 && wunit(j) != int'(c_unit) && wunit(j) != U_VPU;
             wt[free_slot][j] <= wd_n[wunit(j)] - CW'(k) + 1'b1;
           end
-          // the VPU mask: bit r - 1 names the VPU instruction r back (index wd_n - r)
-          m = '0;
-          for (int r = 1; r <= VMW; r++)
-            if (c_sync[28 + r - 1]) m[VIW'(wd_n[U_VPU] - CW'(r))] = 1'b1;
-          vpend[free_slot] <= m & vout & ~v_fin;
           vix[free_slot] <= VIW'(wd_n[c_unit]);
+          sfol[free_slot] <= FOL && c_sync[SWW-1] && c_unit == U_VPU;
           wd_n[c_unit] <= wd_n[c_unit] + 1'b1;
         end
 `ifndef SYNTHESIS
@@ -1101,6 +1598,7 @@ module otpu_seq
 `ifndef SYNTHESIS
         sfp_ref[free_slot] <= c_ref;
         sfp_raw[free_slot] <= c_raw;
+        sfp_dw[free_slot] <= c_dw;
 `endif
       end
       // ---- Q: footprint ranges
@@ -1109,12 +1607,15 @@ module otpu_seq
         if (q_v) begin
           c_cmd <= q_cmd; c_unit <= q_unit; c_pc <= q_pc;
           c_fp <= hz_coarse(fp_seg(q_cmd.op, q_fp));
+          // AW > 32: an address bit above 31 (the ranges are its low 32 bits) conflicts with all
+          if (AW > 32 && (q_cmd.w1h | q_cmd.w2h | q_cmd.w3h) != '0) c_fp.all <= 1'b1;
 `ifndef SYNTHESIS
           c_fpx <= fp_seg(q_cmd.op, q_fp);
 `endif
 `ifndef SYNTHESIS
           c_ref <= fp_hull(q_fp);
           c_raw <= q_fp;
+          c_dw <= fp_dram(q_cmd);
 `endif
         end
       end
@@ -1133,16 +1634,17 @@ module otpu_seq
           if (p_v) begin
             c_cmd <= p_cmd; c_unit <= p_unit; c_pc <= p_pc; c_sync <= p_sync;
 `ifndef SYNTHESIS
-            c_ref <= fp_hull(footprint(p_cmd, D, S));
-            c_raw <= footprint(p_cmd, D, S);
-            c_fpx <= fp_seg(p_cmd.op, footprint(p_cmd, D, S));
+            c_ref <= fp_hull(footprint(p_cmd, D, S, DSTEP2, QB, 1'b1, QONCE));   // (QST HL: WAITC's)
+            c_raw <= footprint(p_cmd, D, S, DSTEP2, QB, 1'b1, QONCE);
+            c_dw <= fp_dram(p_cmd);
+            c_fpx <= fp_seg(p_cmd.op, footprint(p_cmd, D, S, DSTEP2, QB, 1'b1, QONCE));
 `endif
           end
         end else begin
           s_v <= p_v;
           if (p_v) begin
             s_cmd <= p_cmd; s_unit <= p_unit; s_pc <= p_pc;
-            s_pp <= fp_part(fp_ops(p_cmd, D, S));
+            s_pp <= fp_part(fp_ops(p_cmd, D, S, 1'b0, QONCE));
           end
         end
       end
@@ -1161,21 +1663,21 @@ module otpu_seq
           OP_HALT: begin
             stopping <= 1'b1;
             ch_req <= flags[HF_CHAIN];
-            ch_addr <= rv(ra);
-            ch_n <= rv(rb);
+            ch_addr <= rv32(ra);
+            ch_n <= rv32(rb);
           end
           OP_LI: begin
-            if (rd != 0) R[rd] <= iw[1];
+            if (rd != 0) R[rd] <= AW'({iw[2], iw[1]});
             advance();
           end
           OP_ADDI: begin
-            if (rd != 0) R[rd] <= rv(ra) + iw[1];
+            if (rd != 0) R[rd] <= rv(ra) + AW'({iw[2], iw[1]});
             advance();
           end
           OP_LOOP: begin
             if (!lp) begin
               lp <= 1'b1;
-              lp_cnt <= rv(ra) + iw[2];
+              lp_cnt <= rv32(ra) + iw[2];
               lp_len <= iw[1];
             end else begin
               lp <= 1'b0;
@@ -1235,7 +1737,7 @@ module otpu_seq
 
   function automatic int hz_cls(input logic [7:0] op, input logic [7:0] f);
     case (op)
-      OP_LD: return 0;
+      OP_LD, OP_LDA: return 0;
       OP_ST: return 1;
       OP_DSTEP, OP_STREAM: return 2;
       OP_WAITW: return 3;
@@ -1510,17 +2012,22 @@ module otpu_seq
 `ifndef SYNTHESIS
   initial if (WIN > 32) $fatal(1, "otpu_seq: the trace events hold 32 window slots");
   // WAITC: a count of 4 bits names a unit's 15 last instructions; an in-order unit's 16th last
-  // has completed only if the window holds no more than 16
-  initial if (WAITC && WIN > 16) $fatal(1, "otpu_seq: WAITC needs WIN <= 16 (%0d)", WIN);
-  string dir;
-  logic [31:0] init_w [IMEM_WORDS];
-  initial begin
-    for (int i = 0; i < IMEM_WORDS; i++) init_w[i] = '0;
-    if ($value$plusargs("dir=%s", dir) && !$test$plusargs("boot"))
-      $readmemh($sformatf("%s/prog_%0d.hex", dir, SID), init_w);
-    for (int r = 0; r < NROW; r++)
-      for (int w = 0; w < 8 * IPR; w++)
-        u_imem.g_auto.mem[r][32 * w +: 32] = init_w[r * 8 * IPR + w];
+  // has completed only if the window holds no more than 16. At 32 the compiler's counts saturate
+  // at 15 (opentpu.waits, Config.WC_WIN: an older producer waited for through a younger one of its
+  // unit, which completes in order); the WAITC check above holds every entry to the window
+  initial if (WAITC && WIN > 16 && WIN != 32)
+    $fatal(1, "otpu_seq: WAITC needs WIN <= 16, or 32 (%0d)", WIN);
+  if (!ICACHE) begin : g_iminit       // (ICACHE: the program is in DRAM, +boot)
+    string dir;
+    logic [31:0] init_w [IMEM_WORDS];
+    initial begin
+      for (int i = 0; i < IMEM_WORDS; i++) init_w[i] = '0;
+      if ($value$plusargs("dir=%s", dir) && !$test$plusargs("boot"))
+        $readmemh($sformatf("%s/prog_%0d.hex", dir, SID), init_w);
+      for (int r = 0; r < NROW; r++)
+        for (int w = 0; w < 8 * IPR; w++)
+          u_imem.g_auto.mem[r][32 * w +: 32] = init_w[r * 8 * IPR + w];
+    end
   end
 `endif
 endmodule

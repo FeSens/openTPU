@@ -25,6 +25,12 @@
 // write pointer of its own then, replicated by synthesis (MAX_FANOUT) over the RAM's width (the
 // XDMA side at 250 MHz, PCIe Gen2).
 //
+// WCP > 1 (RWR): the RAM in WCP column groups of W / WCP bits, each written from copies of its own
+// of wready's flip-flop and of the write address (DONT_TOUCH: synthesis merged the address copy
+// above with the write pointer, wbin, and the merged register drove 171 RAM address pins, wready
+// 297 enables, over 100 rows of SLR0: bcu1525-s2's s2syn, -0.225 ns at 300 MHz). Cycle for cycle
+// the FIFO of WCP 1; WCP 1 (the default) is the RAM and its enables as above.
+//
 // In order (OOO = 0) the RAM writes the slot at the tail every cycle there is room (wready), and
 // a write only moves the tail: the RAM's write enables come from the pointers' registers (RWR:
 // from wready's flip-flop), not from the writer's valid (on the card the native adapter's write
@@ -36,7 +42,8 @@ module otpu_afifo #(
   parameter int W = 32,
   parameter int DEPTH = 16,
   parameter bit OOO = 1'b0,
-  parameter bit RWR = 1'b0
+  parameter bit RWR = 1'b0,
+  parameter int WCP = 1                     // RWR: the RAM's write enable and address in copies
 ) (
   input  logic         wclk,
   input  logic         wrst,
@@ -55,6 +62,8 @@ module otpu_afifo #(
 );
   localparam int AW = $clog2(DEPTH);
   initial if (DEPTH != (1 << AW) || DEPTH < 4) $fatal(1, "otpu_afifo: DEPTH must be a power of two >= 4");
+  initial if (WCP < 1 || (WCP > 1 && (!RWR || OOO || W % WCP != 0)))
+    $fatal(1, "otpu_afifo: WCP %0d (1, or with RWR and in order, a divisor of W)", WCP);
 
   (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
   logic [AW:0] wbin, wgray, rbin, rgray;
@@ -105,7 +114,25 @@ module otpu_afifo #(
       end
     end
   end
-  always_ff @(posedge wclk) if (OOO ? wput : wready) mem[waddr] <= wdata;
+  always_ff @(posedge wclk) if (WCP == 1 && (OOO ? wput : wready)) mem[waddr] <= wdata;
+  logic [W-1:0] rdata_c;                   // WCP > 1: the column groups' heads
+  if (WCP > 1) begin : g_wcp
+    localparam int GW = W / WCP;
+    (* dont_touch = "true" *) logic [WCP-1:0]         we_c = '0;
+    (* dont_touch = "true" *) logic [WCP-1:0][AW-1:0] wa_c = '0;
+    always_ff @(posedge wclk) begin
+      we_c <= {WCP{!wrst && ((wbin + (AW + 1)'(wput)) - rbin_w) != (AW + 1)'(DEPTH)}};
+      if (wrst) wa_c <= '0;
+      else if (wadv) wa_c <= {WCP{wbin[AW-1:0] + 1'b1}};
+    end
+    for (genvar g = 0; g < WCP; g++) begin : g_c
+      (* ram_style = "distributed" *) logic [GW-1:0] cmem [DEPTH];
+      always_ff @(posedge wclk) if (we_c[g]) cmem[wa_c[g]] <= wdata[g * GW +: GW];
+      assign rdata_c[g * GW +: GW] = cmem[rbin[AW-1:0]];
+    end
+  end else begin : g_w1
+    assign rdata_c = '0;
+  end
   if (OOO) begin : g_ooo
     always_ff @(posedge wclk) begin
       if (wrst) wvld <= '0;
@@ -124,7 +151,7 @@ module otpu_afifo #(
 
   // read side
   assign rvalid = !rrst && (rgray != wgray_r2);
-  assign rdata  = mem[rbin[AW-1:0]];
+  assign rdata  = WCP > 1 ? rdata_c : mem[rbin[AW-1:0]];
   assign rused  = g2b(wgray_r2) - rbin;
   always_ff @(posedge rclk) begin
     if (rrst) begin
