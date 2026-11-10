@@ -100,11 +100,11 @@ kernel 7.1.4, 2026-09-27; kernel and JTAG lines left out):
    ok    /etc/udev/rules.d/59-otpu-xdma.rules
    ok    /etc/udev/rules.d/60-otpu.rules
    ok    /etc/modprobe.d/otpu-xdma.conf: poll_mode=0
-== card 0000:01:00.0: [10ee:7028] subsystem 10ee:0007 revision 00
+== card 0000:BB:00.0: [10ee:7028] subsystem 10ee:0007 revision 00
    ok    class 0x070001: 16450 serial port (bitstream before the PCI identity change; ...)
    ok    link 2.5 GT/s PCIe x8 (the card's own speed, x8)
    ok    bound to xdma
-   ok    /dev/xdma0_{user,h2c_0,c2h_0} usable by bonetto
+   ok    /dev/xdma0_{user,h2c_0,c2h_0} usable by USER
    ok    ID register 0x4f545055 (OTPU)
 
 all in place
@@ -120,7 +120,7 @@ DKMS signs with its own key (`/var/lib/dkms/mok.pub`), which you enroll once wit
 
 **PCI identity.** Bitstreams built before the PCI identity change in `bd.tcl` report class
 07 00 01 (a 16450 serial port) with subsystem 10ee:0007 and revision 00. For those, the kernel's
-8250_pci driver probes the card first (seen in dmesg as `serial 0000:01:00.0: enabling device`)
+8250_pci driver probes the card first (seen in dmesg as `serial 0000:BB:00.0: enabling device`)
 and fails, and the udev rule then hands the card to xdma. Newer bitstreams report class
 12 00 00 (processing accelerator), subsystem 10ee:4f54 and revision 01, which no other driver
 claims. The device ID stays 7028 in both, as in the driver's `pci_ids[]`.
@@ -242,7 +242,7 @@ again: every later write is off, even with nothing else running.
   are clean, so the fault starts inside XDMA, not in `otpu_dma_split`, `otpu_mem_ch` or
   LiteDRAM.
 
-Card runs, 2026-10-01 (opentpu, Gen1 x8; XMON at 100 MHz, B at 133.33 MHz, both the same).
+Card runs, 2026-10-01 (the card host, Gen1 x8; XMON at 100 MHz, B at 133.33 MHz, both the same).
 The tools are `tools/acc_overlap.py` and `tools/xmon_card.py`. `XMON_MAXN` caps the host's
 calls; `XMON_PLACE` places its buffers.
 
@@ -283,7 +283,7 @@ The host's rules:
   (fewer outstanding read requests).
 
 **H2C rate at PCIe Gen2 x8.** `tools/h2c_sweep.py` measured it on the card (production 542fc43a,
-opentpu, 2026-10-02 11:50, card idle; the sweep's JSON: docs/data/h2c_sweep_542fc43a.json). The
+The card host, 2026-10-02 11:50, card idle; the sweep's JSON: docs/data/h2c_sweep_542fc43a.json). The
 writes go straight to `/dev/xdma0_h2c_0` from placed buffers. For each call it records the wall
 time and the thread's CPU time, which covers the driver's work: pinning, mapping, descriptors and
 unpinning.
@@ -352,7 +352,7 @@ card back. A port that retrains by itself (the development PC's) is never touche
 the port is held in D0: with runtime PM on, an empty port suspends 100 ms after its last device
 is removed, and a suspended port trains no link. The port is kept in `/run/otpu-card-ports`, so
 a later `--rescan` finds it when an earlier one left the card off the bus. The steps need
-`setpci` (pciutils). Why: on opentpu (Haswell PEG root port 00:01.0) the card did not come back
+`setpci` (pciutils). Why: on the card host (Haswell PEG root port 00:01.0) the card did not come back
 for 5 minutes of rescans after a JTAG load, and a warm reboot brought it back (2026-09-28, seen
 once; the steps above are not yet tried on that port).
 
@@ -466,6 +466,9 @@ otpu-chat --backend board                      # the full-screen interface
 otpu-chat --backend board --plain              # a line-by-line REPL instead
 otpu-chat --backend board --prompt "Why is the sky blue?"   # one-shot, plain output
 otpu-chat --backend board --clock-mhz 100      # override the core clock (v1 bitstreams)
+otpu-chat --backend board --dev /dev/xdma1     # another card (default: OTPU_DEV, else the one openTPU
+                                               # card present, else /dev/xdma0; any target's card: the
+                                               # host follows the bitstream's registers)
 otpu-chat --backend board --model lfm2         # LFM2.5-230M instead of Qwen3-0.6B
 otpu-chat --backend board --model qwen35       # Qwen3.5-0.8B (needs RDOT / OUTER / LOG2 in the bitstream)
 otpu-chat --backend board --model gemma4       # Gemma 4 E2B, its instruct checkpoint gemma-4-E2B-it
@@ -517,13 +520,13 @@ loaded in 2.0 s (the image read from the image cache in 0.3 s)
 ```
 
 The first open of a model, format and `--cap` builds it, its 4-bit matrices quantized in worker
-processes, one per CPU (`OTPU_BUILD_JOBS`): LFM2-2.6B fp4 in about 70 s on omarchy, where the
+processes, one per CPU (`OTPU_BUILD_JOBS`): LFM2-2.6B fp4 in about 70 s on the build host, where the
 build on one core took 12 minutes (16 on the card host). `opentpu.host.prebuild` builds the
 chat's image ahead (`otpu-lock --prebuild lfm2-2.6b:fp4:int8 -- otpu-chat ...`). The tokenizer
-loads on a thread meanwhile (importing transformers takes about 2.5 s). On omarchy, otpu-chat on
+loads on a thread meanwhile (importing transformers takes about 2.5 s). On the build host, otpu-chat on
 a fake card (the card's configuration; its upload a copy in memory) reaches the first prompt in
 2.1 to 2.5 s from the image cache, 18 to 20 s before it with every matrix in the 4-bit cache.
-On the card (opentpu, 4 cores / 8 threads, 2026-10-08, tree 171a1b50), LFM2-2.6B fp4 with its
+On the card (the card host, 4 cores / 8 threads, 2026-10-08, tree 171a1b50), LFM2-2.6B fp4 with its
 int8 head, a 48-token greedy reply: loaded in 4.3 to 4.6 s from the image cache (the image read
 in 0.3 s), 10.2 s from the start to the reply's end; 284 s to load with nothing cached (8
 workers); production's code before it (82ebb6c), with every matrix in the 4-bit cache, 54.9 s
@@ -885,7 +888,7 @@ goes on (`BoardBackend.start(stream=...)` / `wait(feed)`, `Engine.step(sink=...)
 - The sampler takes each chunk as it comes (`pick.stream(context)`, chat.sampler): the
   repetition penalty and the 64-logit block maxima of the top-k prefilter are applied per chunk,
   so after the halt only the selection is left (21-31 us against 44-108 us for the whole
-  vector on the Mac, the models' defaults). The picks are those of `pick(logits, context)`
+  vector on a laptop, the models' defaults). The picks are those of `pick(logits, context)`
   exactly, with the same random stream (tests/test_host.py).
 - A run that leaves a word of the region unwritten is an error, not stale logits; a run that
   is not a streamed decode step (a prefill, a batch) makes the next step mark the whole region
@@ -987,7 +990,7 @@ just before, lowered by any); a halt the streamed wait saw skips the sleep; the 
 halves its way to the target (a 50 ms sleep overshoots 2-3 ms on macOS). Measured on
 `FakeTransport` (`decode_profile.py --backend fake --fake-skew F [--fake-stream]`: CYCLES a
 fraction F off the wall time; the fake writes its logits piece by piece), Qwen3's 53 ms run
-on the loaded Mac, HALTED seen after the run's end: 0.00-0.02 ms without streaming (before:
+on a loaded laptop, HALTED seen after the run's end: 0.00-0.02 ms without streaming (before:
 3.2-3.7 ms, most of it the macOS sleep overshoot) and 0.07-0.18 ms streamed, at F = +0.25% and
 -2%. Not yet on the card.
 
@@ -1099,7 +1102,7 @@ long contexts the 16-33 ms trace that no longer keeps up): by the measurements a
 critical path would be ~0.25 ms per token (counters, the last chunk and the selection,
 Python). This is an *estimate*: it needs a bitstream with the ARG registers, not built yet. On
 `FakeTransport` (its DMA is a memory copy, so it shows the Python side only; LFM2.5-230M fp4 /
-int8 head, 48 tokens, an 11 ms run, the Mac above) `decode_profile.py` measures 0.215 ms of
+int8 head, 48 tokens, an 11 ms run, a laptop above) `decode_profile.py` measures 0.215 ms of
 critical path per token against 0.245 with `--per-position`.
 
 The price is on the device: the bucket's last block is computed in full, masked, so early in
@@ -1252,6 +1255,8 @@ otpu-smi 0.1.0                                                       2026-09-24 
 | `-i SEC` | the sampling interval of a single report (default 0.2 s) |
 | `--power-json FILE` | default `build/vivado/reports/power.json` |
 | `--sim` | the board model (below); `--fake`: an in-memory card with synthetic counters |
+| `--fake-bcu [safe\|run]` | an in-memory BCU1525 governor image: the governor, the SYSMON and a BMC2 bridge, the accelerator fenced (safe) or up (run) |
+| `--sysmon` | BCU1525: read the SYSMON's 13 registers every sample (its die, maximum, supplies); each read can freeze the governor's temperature bus for good (about 1 in 1000 a read), so off by default |
 
 The Caps row names the bits of CAPS that are set (trace depth, 4-bit weights, stream engine,
 decode loop, arguments, …; [observability.md](observability.md)). They were already in `--json`
@@ -1266,6 +1271,15 @@ RUNNING, MXU_BUSY, MXU_MAC -- MAC utilization --, VPU_BUSY, QNT_BUSY, DMA_BUSY, 
 DRAM_WAIT and, with register map 3, MXU_STARVE over the UPTIME delta, between two SNAPs) and
 the owning process.
 
+Every card is a device of its own, whatever its target: a Kintex-7 card and the BCU1525s of
+one host each get a table. A card of a two-card machine (CAPS2 bit15, `bcu1525-x2`) adds a
+Cards row, its place in the machine (`card 0 of 2`; `not set` before a host has set it up) with
+the collectives issued since the link reset, and a line for each QSFP28 link: up or DOWN, the
+card and port its peer's hello named, the last ping in core cycles, and after a `!` the sticky
+errors standing (CRC, watchdog, abort, dropped) with the CRC count
+([x2_link.md](x2_link.md) section 5; read only: the stickies stay for the host that owns the
+link). `--json` has the same under `x2`.
+
 **Power** is an estimate (the card cannot measure it): fixed + sum over units of the unit's
 dynamic power x its utilization, from Vivado's `report_power` of the build. `build.tcl` writes
 `reports/power.rpt`, `reports/power.xml` and, through `python3 -m opentpu.host.power`,
@@ -1274,6 +1288,21 @@ the power by hierarchy, and per unit -- found by instance name: `u_mxu` + `u_act
 `u_quant`, `u_dma`, `u_tmem`, `u_seq`, `u_mem` DRAM -- the dynamic watts and the counter that
 scales them; everything else, static power included, is fixed). Without the file, power is n/a.
 Copy the file next to the card's host at the same path, or pass `--power-json`.
+
+**The BCU1525** (an image with the thermal governor at BAR0 0x10000) has its board's rows
+instead, from registers alone: the governor's state and die, VCCINT's regulator input power
+(READ_PIN, from the BMC watch: labelled `VCCINT regulator input (not board total)`, with VIN and
+the reading's age), the regulator's temperatures, and with `-l` their trend. The SYSMON's own
+registers are not read by default: an AXI read of one can stop the wizard's temperature bus,
+the governor's die ([bcu1525_sysmon.md](bcu1525_sysmon.md)). Once the governor's die is
+gone (not valid, or with `-l` the same for 60 s: "gov frozen") each sample reads the SYSMON's
+temperature register alone, and that is the die; `--sysmon` reads all of it, the supplies
+included. With the accelerator off (governor SAFE: the control registers read 0xDEAD0FF0) the
+table is those rows and the link; with it on, a Config row and DRAM GB/s in the target's
+counter units are added. `--csv` adds `power_age_s`, `vin`, `die_sysmon_c`, `vreg_c`,
+`governor`, `die_gov_c` and `gov_frozen` after its other columns (empty on other cards).
+[bcu1525.md](bcu1525.md) section 13 has the rows, the card's output and why no BMC session is
+opened there.
 
 **`--sim`** runs against the Verilator board model. SimTransport starts a fresh simulation per
 flush, so both SNAPs happen inside one flush: the model loads the bring-up demo program, SNAPs,
@@ -1307,6 +1336,46 @@ register, exactly as on the card.
 `opentpu/host/fake.py`'s `FakeTransport` is an in-memory card with register map 2 (or 1):
 synthetic counters, a trace buffer served from a list, runs that take a set wall time. The
 host tests (`tests/test_host.py`) and `otpu-smi --fake` use it.
+
+## Simulation overrides
+
+Environment variables the simulators and the host read that are not a target's keys. The
+"timing only" ones change a Verilator model's microarchitecture and never a program, an image or
+a result: they exist to A/B a `[uarch]` setting without a target file. A target's own setting is
+the default of each; the model is rebuilt when one changes.
+
+| variable | values | what |
+|---|---|---|
+| `OTPU_SE_R` | 0, 1, 2, 4 | the streams (DSTEP, STREAM) on an engine of their own, R rows a cycle; 0: the VPU's ([se_engine.md](se_engine.md)). Timing only; the ISA simulator's ledger takes it too |
+| `OTPU_MXU_QD` | 2 .. 7 | the MXU's queued commands. Timing only |
+| `OTPU_DMA_LDQ` | 1, 2 | the DMA's commands in flight ([dma_ldq.md](dma_ldq.md)). Timing only |
+| `OTPU_NAT_XSTG`, `OTPU_NAT_XSTG_P` | 0 .. | register stages between a slice and its memory adapter, and the posted weight beats' ([native_channels.md](native_channels.md)). Timing only |
+| `OTPU_COLL_HUB` | 0, 1 | 0: the collective on the slices' own memory ports at S > 1 too, with no hub. Timing only |
+| `OTPU_XRS` | >= 2 | stages each way between the collective's hub and each slice. Timing only |
+| `OTPU_COLL_PIPE` | 0 .. | the hub's reads in flight (0: one at a time). Timing only |
+| `OTPU_QUANT_XD` | chunks | the quantizer's row buffer (0: QACT reads its rows from TMEM twice). Timing only |
+| `OTPU_QUANT_R1` | 1 | RSCALE's row factor read once a row. Timing only |
+| `OTPU_QUANT_PW` | chunks a cycle | a buffered QACT's pass 1 width. Timing only |
+| `OTPU_QUANT_SWW` | 1, 4 | the quantizer's write port in words: QST's pass 1 at 4 x SWW bytes a cycle. Timing only |
+| `OTPU_QUANT_QSTB` | 1 | QST's rows through the quantizer's row buffer. Timing only |
+| `OTPU_ICACHE`, `OTPU_IC_LINES`, `OTPU_IC_PF` | | the instruction cache, its lines and its prefetch ([icache.md](icache.md)) |
+| `OTPU_STALL`, `OTPU_SEED` | percent (20), seed (1) | the test memory's random stalls |
+| `OTPU_BW`, `OTPU_LAT` | percent (100), cycles (20) | the test memory's rate (percent of a beat a cycle a channel) and read latency |
+| `OTPU_MEM_MODEL` | core MHz | the test memory as the selected target's channels at that core clock (`sim_ch_gbps`, `sim_lat_ns`, the refresh keys; [native_channels.md](native_channels.md) section 4) |
+| `OTPU_SIM_TMP` | a directory | where a simulation keeps its DRAM images (default: the system's temporary directory, which is RAM on some hosts) |
+
+Read by the host and the compilers:
+
+| variable | values | what |
+|---|---|---|
+| `OTPU_DEV` | a device name | the card's name where the host is given none (default `/dev/xdma0`) |
+| `OTPU_KVSPLIT` | N | the decode buckets that split a copied KV head, over the target's `KVSPLIT` (0: never) |
+| `OTPU_HIGH` | 0, 1 | on a machine with more than 32 address bits: the image's weights above 4 GiB (1) or not (0), over the model's default |
+| `OTPU_POOL` | 1 | a MoE image keeps every expert resident in DRAM without the high layout |
+| `OTPU_MOE_GROUPS` | N | at S > 1: the tensor-parallel experts' activation gathers a layer |
+| `OTPU_SEXACT` | 0, 1 | S-exact images at S > 1 (`opentpu.llm.qwen35.s_exact_on`), over the target's `SEXACT` |
+| `OTPU_PROG_CACHE_GB` | GiB | the program cache's size before it evicts (to 90%) |
+| `OTPU_SERVE_QUIET` | set | `otpu-serve` without its line a request |
 
 ## Troubleshooting
 

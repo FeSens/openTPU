@@ -252,7 +252,7 @@ in short:
 
 ### Area and timing
 
-All runs are Vivado 2026.1 on omarchy, place and route on xc7k480t-ffg1156-2, using channel 0's
+All runs are Vivado 2026.1 on the build host, place and route on xc7k480t-ffg1156-2, using channel 0's
 real pins from the litex-boards platform. The core is LiteX and LiteDRAM 2026.8 (git), and the
 scripts are in `tools/litedram/ooc_ypcb.py`.
 
@@ -300,7 +300,7 @@ Notes:
   (**estimate**).
 - That saves about 15K LUTs and 23K FFs with no change to calibration or the PHY.
 
-The tournament's SmartConnect-pruning build (`omarchy:~/otpu-build/scprune-12c0d212`: bd.tcl
+The tournament's SmartConnect-pruning build (`BUILD_HOST:~/otpu-build/scprune-12c0d212`: bd.tcl
 only, with `m0` going only to `mig_0`, `m1` only to `mig_1`, and XDMA to both) is the
 lowest-effort baseline. It was still building when this was written.
 
@@ -422,7 +422,7 @@ lanes without ODELAY. The test image measures exactly that. It is built by
   calibrates, and runs the BIST over the whole 2 GiB channel.
 - `selftest` checks the algorithm against a simulated PHY.
 
-### Results on the card (2026-09-29, opentpu, DDR3-1066, channel 0, 72 bits)
+### Results on the card (2026-09-29, the card host, DDR3-1066, channel 0, 72 bits)
 
 The logs are in `docs/data/litedram/card-*.log`.
 
@@ -464,7 +464,7 @@ calibration, then a 64 MiB BIST write and read-back per lane)
   The root port stayed at LnkSta 0x1081 and nothing appeared on bus 01.
 - A warm reboot brought each image up: the test image enumerated as 10ee:7028/4C44, and
   production passed its selftest afterwards.
-- On opentpu, a reload therefore costs a reboot.
+- On the card host, a reload therefore costs a reboot.
 
 ### What the write scan measured (corrected reading)
 
@@ -520,7 +520,7 @@ session answers two questions:
   read-modify-write for LiteDRAM's ECC port or wr_bytes for the MIG. It replaces the SmartConnect.
 - The host calibration flow.
 
-### The two-channel image on the card (2026-09-29, opentpu)
+### The two-channel image on the card (2026-09-29, the card host)
 
 Logs: `docs/data/litedram/card2-*.log`. Both channels are built as in the one-channel image, with
 one difference: channel 1's DQS clock comes from a **second MMCM** (fine phase shift moves every
@@ -667,7 +667,7 @@ The temperature run rescans every 5 minutes and logs each group's run.
 - **Channel 0 in two groups:** group 0 (crossings -21..+4) about 78 steps; group 1 (lane 8 at
   +25, lanes 4-7 somewhere beyond +29) probably at least 40.
 
-### Builds (Vivado 2026.1, omarchy)
+### Builds (Vivado 2026.1, the build host)
 
 - **First attempt (DQ/DQS shifted):** routed, but bitgen refused it (FINE_PS_FRAC, above).
 - **CK shifted, falling-edge registers as a migen domain:** WNS -2.226 ns, 711 failing endpoints,
@@ -728,7 +728,7 @@ The temperature run rescans every 5 minutes and logs each group's run.
 
   `ldtest3e` bitstream md5: 79e977a4c8360812daa89a831f8cff4c.
 
-### `ldtest3` on the card (2026-09-29, opentpu, both channels, FPGA 54-55 C)
+### `ldtest3` on the card (2026-09-29, the card host, both channels, FPGA 54-55 C)
 
 The session stopped after each channel's calibration and forced-latency scan: calibration failed
 on both channels (one dead lane each), so the soak and the temperature run would have run
@@ -871,14 +871,14 @@ is this PHY.
 
 ### The production image on the card (ld-top 14875bf, 2026-09-29)
 
-The first fused image: accelerator plus this PHY. It ran on opentpu with host tree ld-top
+The first fused image: accelerator plus this PHY. It ran on the card host with host tree ld-top
 5e5a58a. Build facts:
 - MEM=litedram, MCOLS=4 (systolic MXU), core 100 MHz, FAST=1;
 - core at 8cbfd3b, without `rd_reg`;
 - routed WNS -2.78 ns. The failing paths were the ECC counters, a reset strobe into the 50 MHz
   domain and the serializer resets; none are read-data paths.
 
-**Measured** (logs in `~/otpu-build/fused-14875bf` on opentpu):
+**Measured** (logs in `~/otpu-build/fused-14875bf` on the card host):
 
 | check | channel 0 | channel 1 |
 |---|---|---|
@@ -918,9 +918,9 @@ Changes from 14875bf:
 - the SW hazard counts in `otpu_native_dram` without a reset;
 - the strategy `Performance_ExplorePostRoutePhysOpt` at a 100 MHz core.
 
-Routed: WNS +0.128 ns, WHS +0.016 ns, every constraint met. It ran on opentpu with host tree
+Routed: WNS +0.128 ns, WHS +0.016 ns, every constraint met. It ran on the card host with host tree
 ld-qual b719cd3, whose `otpu-selftest` calibrates a HOSTCAL image itself. Logs are in
-`~/otpu-build/fused-5e5a58ab` on opentpu. **Measured:**
+`~/otpu-build/fused-5e5a58ab` on the card host. **Measured:**
 
 | check | channel 0 | channel 1 |
 |---|---|---|
@@ -1095,8 +1095,8 @@ memory's BRAMs; not set up).
   BIST, the soak and a host calibration to compare against.
 
 **Verification.**
-- **Firmware against ddrcal** (`tests/test_selfcal.py`, **measured** on the Mac): the firmware,
-  built for the Mac, and `ddrcal` run on two identical simulated PHYs (`FakeBoard`). Their CSR
+- **Firmware against ddrcal** (`tests/test_selfcal.py`, **measured** on a laptop): the firmware,
+  built for a laptop, and `ddrcal` run on two identical simulated PHYs (`FakeBoard`). Their CSR
   write sequences must be identical (name, value, order), and the firmware's mailbox, decoded,
   must equal `calibrate_channel`'s result. The cases:
   - the production core's map at strides 4 and 1 (the whole 113-step scan on both channels);
@@ -1126,7 +1126,7 @@ memory's BRAMs; not set up).
   against 25 s per channel from the host. The CPU spends most of its time on instructions (CPI
   about 2.5, no bypassing), not on the bus (a CSR access on the bus in 2% of the cycles).
 
-### The test image on the card (`ldcpu-d5eb5270`, 2026-09-29, opentpu)
+### The test image on the card (`ldcpu-d5eb5270`, 2026-09-29, the card host)
 
 The isolated image: `ld_test.py --selfcal` (litedram-int dfa6a74 with the CPU at d5eb527, so
 `rd_reg` on: its first card run), both channels, stride 1. Session: `card_session.sh selfcal`,
@@ -1152,7 +1152,7 @@ after a JTAG load and a warm reboot. FPGA 58.3 C, board 50.8 C at the start. All
 - The host's calibration of the same channels: about 25 s each (the step's time less its BIST
   runs; not timed directly), as HOSTCAL on the fused image (section 8).
 - After the session: se-cand3 loaded back, warm reboot, `otpu-selftest` ALL PASS.
-- Logs: `ldcpu-d5eb5270/selfcal*.log` on opentpu.
+- Logs: `ldcpu-d5eb5270/selfcal*.log` on the card host.
 - One host fix came out of it before the rerun ran: `selfcal.release()` clears `selfcal_state`
   first. The firmware writes the state only once it starts, a millisecond after the release, and
   until then `wait()` saw the last run's done bit.
@@ -1175,10 +1175,10 @@ reads 0 there, and the host calibrates it as before.
 ### The fused image with the CPU on the card (08b898d5, 2026-09-29): qualified
 
 The production design with the CPU in its core: main f1f635a + ld-cpu2 (the core above, rd_reg
-off), MEM=litedram, MCOLS=4, FAST=1 at 100 MHz. Routed on opentpu (Vivado 2026.1): WNS +0.043 ns
+off), MEM=litedram, MCOLS=4, FAST=1 at 100 MHz. Routed on the card host (Vivado 2026.1): WNS +0.043 ns
 (LiteDRAM sys at 133.33 MHz; the 100 MHz core +0.171), every constraint met. On the card after
 a JTAG load and a warm reboot, host tree = this branch at 08b898d5; logs in
-`~/otpu-build/fused-sc-08b898d5` on opentpu. FPGA 59.9 C at the start, 64-67 C in the soak. All
+`~/otpu-build/fused-sc-08b898d5` on the card host. FPGA 59.9 C at the start, 64-67 C in the soak. All
 **measured**.
 
 | | channel 0 | channel 1 |
@@ -1337,7 +1337,7 @@ On a fresh load the phi4-mini xl qual alone read 23 corrected / 7 uncorrectable 
 minutes, with the windows under loadcal's load before and after it within a tap of each other
 (die 65 -> 73 C): the load, not drift.
 
-**What closes them** (opentpu's `~/otpu-build/bisect150/probe2.py`: every lane's window under one
+**What closes them** (the card host's `~/otpu-build/bisect150/probe2.py`: every lane's window under one
 core load at a time, 10 x 128 MiB per tap; the sum of each channel's nine lane windows, ch0 / ch1):
 
 | load | E3 (133.33) | r150fp (150) | h152 (152.38) |
@@ -1363,7 +1363,7 @@ core load at a time, 10 x 128 MiB per tap; the sum of each channel's nine lane w
   (16 rows of activations against fp4 weights, beside the DMA).
 - h152 is r150fp's routed design with its core MMCM retimed to the DDR3 bit clock: VCO 1066.67
   MHz (50 x 64 / 3), core_clk VCO / 7 = 152.38 MHz, core_clk2x VCO / 3.5 (the two outputs swap
-  pins, CLKOUT0 being the fractional one; omarchy's `~/otpu-build/tff/h152.tcl`; with the late
+  pins, CLKOUT0 being the fractional one; the build host's `~/otpu-build/tff/h152.tcl`; with the late
   constraints applied again core -0.013 ns, clk2x +0.011, WHS +0.013: for the card only). Every
   core edge then keeps one phase to the read capture's edges, as at 133.33 MHz. That gives back
   7-12 taps of the eighteen windows under the one-row MXU, 3-4 under prefill: under prefill a
@@ -1471,7 +1471,7 @@ card's channels behind the adapter (`otpu_top` AXI = 2):
   race the memory model's own clock. Before the dump it waits 256 cycles for the last writes to
   land.
 
-**Checks, measured** (Verilator 5.047 on omarchy; the card figures are sections 7 and 10):
+**Checks, measured** (Verilator 5.047 on the build host; the card figures are sections 7 and 10):
 
 | | simulation | card |
 |---|---|---|
@@ -1790,7 +1790,7 @@ layers simulated:
 - **One port:** every layer from the second on costs 99.4k to 99.6k, so the prefix build held
   (4.218 M against the whole model's 4.219 M).
 - **Two ports:** the prefix build gave 3.691 M, 5.4% short of the whole model.
-- **`tools/perf_ddr.py` now simulates the whole model** (2-3 minutes a point on the Mac).
+- **`tools/perf_ddr.py` now simulates the whole model** (2-3 minutes a point on a laptop).
   `--prefixes` keeps the old build.
 
 The whole model against the card (c2830d6's qual), Mcycles/token:
@@ -1901,7 +1901,7 @@ operating point: pos 544, KV capacity 2048, int8 LM head; main f311476 against m
     `test_ldc_sequential_is_the_card_bist` expects 90.4% / 89.8%.
 
 **On the card** (build `f8c6c950`, `deploy_memeff_f8c6c950`: main 3ff7cfd + memeff, 133.33 MHz,
-full effort, opentpu, 2026-10-01). Timing: WNS +0.104 ns, WHS +0.019 ns (build B, 79c5707a:
+full effort, the card host, 2026-10-01). Timing: WNS +0.104 ns, WHS +0.019 ns (build B, 79c5707a:
 +0.017 / +0.016). The A read FIFO is 2 x 171 RAM64M; its worst path is +0.350 ns, the tail
 register's fanout to the write addresses (0 levels, 97% route). Slice LUTs 173,379 (B 172,837),
 FF 133,503 (134,197), slices 75.0% (75.3%); `otpu_native_dram` +1,268 LUTs (APF, AD 64). The
@@ -2005,7 +2005,7 @@ token against main ff186b1, memeff):
 - **No build of its own** (under the ~1% a build and a card session would have to pay for): it
   rides with the next full build, whatever brings it.
 
-**The choosers' timing, out of context** (2026-10-02, omarchy: the generated core alone, both
+**The choosers' timing, out of context** (2026-10-02, the build host: the generated core alone, both
 channels, sys at 7.5 ns and the board's clock constraints, OBUFs on the PHY's single-ended outputs
 as the board top's synthesis puts them; Explore):
 - **The worst path through the multiplexer's cells** (`*choose*`, `*multiplexer*`,
@@ -2163,7 +2163,7 @@ window stays out: on top of VPU-first it is worth 0.08%, not the 1% that would p
 logic.
 
 **The slice out of context** (`otpu_slice` alone at the board's generics: MCOLS 4, LANES 8,
-WIN 16, RPB 64, WPB 1; 7.5 ns; the build's synthesis and implementation directives; omarchy).
+WIN 16, RPB 64, WPB 1; 7.5 ns; the build's synthesis and implementation directives; the build host).
 Synthesis spreads the arbiter's LUTs into the units and the grant ports leave the hierarchy, so
 the arbiter's paths are found by their ends: a unit's write request into another unit's grant.
 
@@ -2208,14 +2208,14 @@ change:
 simulator, and the ECC counters for fastmux's rtw 3). The decode table compares the six counters
 with the expected column.
 
-**The build** (omarchy, 2026-10-02 09:19-10:27, full effort; speculative while the models' RTL gate
+**The build** (the build host, 2026-10-02 09:19-10:27, full effort; speculative while the models' RTL gate
 ran, 64 / 64 passed):
 - WNS +0.026 ns, WHS +0.014 ns. The core clock has +0.054 ns (pa +0.055), LiteDRAM's sys clock
   +0.257 ns (pa +0.116), and userclk1 +0.048 ns: the reroute ran on 7 paths and was kept.
 - Slice LUTs 174,268 (pa 175,425), slices 76.3%; BRAM and DSPs as pa.
 - otpu.bit sha256 3c91fa6a46ff8296c12420749c27285911fdff2c43aa2f2a000f11ae8c65a93a.
 
-**On the card** (opentpu, 09:40-10:15, one otpu-lock; production pa restored after): `qual.sh fast`
+**On the card** (the card host, 09:40-10:15, one otpu-lock; production pa restored after): `qual.sh fast`
 gave 0 FAIL lines and 44 PASS. The decode counters land on the predictions:
 
 | | pa, Mcycles | expected | measured | change, predicted | change, measured |

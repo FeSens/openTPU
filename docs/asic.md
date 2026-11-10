@@ -61,6 +61,118 @@ area. The read data drives like NanGate45's BUF_X4 (its delay and transition ove
 card, below). IHP SG13G2 and commercial nodes have 2-port (1R1W) macros; GF180 has 1RW only, so a
 1RW TMEM is a later variant.
 
+## Power-up state
+
+A flip-flop's power-up value is not a specification: an FPGA's start at their INIT (0), an ASIC's
+at whatever the silicon gives, a four-state simulation's (XSim, yosys `sim`) at X. Control state
+(valids, grants, write enables, FSM states, counters, replay and age state) takes a synchronous
+reset, to the value it is meant to start at; data (a register read only once a reset valid says it
+was written: a command's fields, payload beside a valid, read data) and the RAMs' words do not.
+The resets are written `x <= rst ? '0 : d` or `if (rst) ... else if (en)`, the flip-flop's R pin
+(no LUT in front of it: TMEM's replay valids are 150 MHz replicas), never asynchronous.
+Data is outside the reset altogether, not held through it: a register the reset holds takes the
+reset in its enable. The sequencer's per-slot producer masks (`vpend`, `sdepd`) update every cycle,
+and held through the reset they had it as the whole array's enable (a BCU1525 build at 150 MHz: the
+sequencer's reset to `vpend`, 1,024 flip-flops behind a global buffer, 6.96 ns); they load at a
+slot's dispatch and are read only for live slots. The MXU's XPOST read addresses, delayed to each
+column's chain stage (`ar`, WASK), are data too: each column reads at its tap every cycle, and the
+PEs take its bytes only at a pop's delays, as they take the skews' bytes without WASK (a BCU1525
+build at 150 MHz: the MXU's reset copies into those 1,540 R pins its worst core paths, 5.7 ns of
+route). XPOST (WG = MCOLS = 8, D 128) is past `tools/reset_audit.py`'s small sizes.
+
+The RTL once zeroed some control state only in simulation-only `initial` blocks: a port of the RTL
+to a ZU7EV simulated with `SYNTHESIS` defined in XSim stopped at 85 us of a 91.5 us demo, a TMEM
+grant at X, the X circulating through the replay valids (`rpv`) and their ages, which Verilator's
+`--x-initial 0` (`opentpu/rtlsim.py`) and the FPGA's INIT zeros had hidden. TMEM's write stage,
+replays and ages and the pumped RAMs' phase, and the ACT RAM's write enables, now reset with the
+slice's power-on reset (`otpu_slice` `rst_mem`, from `sys_rst`: a run's reset leaves the memories'
+writes landing), on the ASIC and in the simulations; the FPGA builds leave it out
+(`OTPU_FPGA_INIT`, below). The valids the units carry beside a delay line's payload are in reset
+registers (`otpu_vdelay`: the VPU's lane taps and reductions, the MXU's row ends and ACC writes, the
+quantizer's chunks and scales, the stream tail's d and Y), and the VPU's Q capture and RMAX meta and
+the quantizer's stages and group RAM write enables reset.
+
+A struct that carries a valid resets its valid alone (`if (rst) m.v <= 1'b0` after the enabled
+load): the quantizer's chunks (`m0`, `mb1`, `mb2`, `mh`, `mc`) and write (`wq_r`), the VPU's RMAX
+tree meta (`mxh_m`, read through `live()`: its valid and tag) and the MXU's ACC entry `r1` (whose
+`xo` / `alr` then take no reset in their enable; its lanes go on into `u_rwv`'s reset stages behind
+its valid, and `rw.m` is read only under `rw.v`); every use of their other fields is under the
+valid (the BCU's quantizers too: QSTB's `m_ss` / `m_hl` / `baddr`, QONCE's byte writes, SW's
+`m_ws`), so the reset loads the valids alone. HL's and QSTB's flags beside `mb1` / `mb2`
+(`hb1`, `hb2`, `sb1`, `sb2`) keep theirs. The audit's class v checks that each such valid is known
+after the reset. The quantizer's delay lines whose last stage reset (`otpu_qdly`: the scale unit's
+Newton operands and flags, the write's fields behind its valid) carried no valid of their own, so
+under the same rule they take no reset: they are `otpu_delay` lines, data beside the valids in
+`otpu_vdelay` (`u_v`, `u_wqv`), which reset every stage and which the audit requires known. Their
+last stage stays a flip-flop in Vivado (`shreg_extract = "no"`, as in every `otpu_delay`);
+`otpu_qdly`'s reset did that for yosys's Xilinx mapping, which ignores the attribute (the quantizer
+tournament's evaluations).
+
+**The FPGA builds: `OTPU_FPGA_INIT`.** The ypcb-00338 and bcu1525 flows define it (their
+`create_project.tcl`, bcu1525's `create_project_wg.tcl` for the WG, two-slice and two-card builds,
+and their lints); `rst_mem` is then 0, so TMEM's and the ACT RAM's control state (`wi_en`,
+`wi_gnt`, `pw_v`, `rpv` / `rpvb` and their ages, `bh` / `bh1`, each pumped RAM's `sv` / `v1` and
+`tog` / `tq` / `evr`; `we_i` / `we_h`, `swe_i` / `swe_h`, `ssel`, `wsel`) has no reset there. What
+keeps it right:
+
+- *Configuration.* Every flip-flop starts at its INIT, 0: the state the reset gives, but for the
+  pumped RAMs' `tq`, which the reset sets to 1. `tq` and `evr` only sample `tog` (`tq` its copy a
+  fast edge later, `evr` whether they differ), so they hold the right phase from the first and
+  second fast edges after configuration, whatever they started at; nothing asks TMEM for anything
+  for milliseconds after it (PCIe enumeration, the host's program load).
+- *A stopped run* (the host clears RUN, a CHAIN reload, a timeout: `core_rst` / `srst`) never
+  reset this state, with or without the define: `rst_mem` follows `sys_rst` only, so that a run's
+  accepted writes land. It is a pipeline of the units' requests: `wi_en` / `wi_gnt` load the
+  write ports' requests and grants, `pw_v`, `sv` and `v1` the selected writes a cycle later, `we_i`
+  -> `we_h` and `swe_i` -> `swe_h` the quantizer's ACT writes, `ssel` / `wsel` their selects, `bh` /
+  `bh1` a read's bypass hit beside its data. With every unit in reset no request comes, and a few
+  core cycles later every write valid is 0, the writes in flight landed. Replays (`rpv`) retry
+  until they win their bank, the oldest first (their ages, read only while two replays run); with
+  no new request they have all won a few cycles later. `tog` toggles every core cycle whatever it
+  starts at (the pumped RAMs' phase: `tq` / `evr` follow it), so any known value is right. The
+  units stay in reset far longer: until the host loads the next program and sets RUN.
+- *`sys_rst` after configuration* (PERST#, the MMCM losing lock: `core_rst` follows it, so the
+  units are in reset too) is the same drain, with the core clock running: the reset block holds it
+  through its release sequence after the clock locks, far more cycles than the drain takes. Across
+  an unlocked clock any flip-flop can take a wrong value and a RAM write can land wrong, with the
+  reset or without it.
+
+The ASIC keeps the reset (no INIT: its flip-flops start at whatever the silicon gives, and a
+four-state `tog` from X stays X), and so do the simulations; `tests/test_reset_audit.py` reads the
+slice both ways (on the pumped TMEM and on wmx's VPU and quantizer: `rst_mem` a register without
+the define and gone with it, TMEM's and the ACT RAM's synchronous resets fewer, every other unit's
+the same) and checks that only the FPGA flows set it.
+
+Checks:
+
+- `python3 tools/reset_audit.py [--tmem]` (yosys with slang, `YOSYS`; ~70 s, < 1.5 GB): the slice
+  read as synthesis reads it (`-D SYNTHESIS`), every flip-flop and array (not the RAMs) at X, the
+  resets held 3 cycles with the inputs idle (yosys `sim`). Every flip-flop still X must be in its
+  ALLOW list with the reason it is data, no register a simulation-only `initial` sets may be X, and
+  no ALLOW entry may be stale; the four configurations (the ASIC's small point, the card's TMEM at
+  the core clock and pumped, a copy per read port). `--tmem`: TMEM under random conflicting traffic
+  from an X power-up (`sim/yosys/tb_tmem_x.sv`, the card's IMPL 3 with replays and ages) keeps its
+  lost, frz and blocks known, and without its reset port does not (the ZU7EV's fault, from the
+  first cycle). `tests/test_reset_audit.py` runs both, and reads the slice with and without
+  `OTPU_FPGA_INIT`.
+- `OTPU_X_INITIAL=unique OTPU_X_SEED=N`: the Verilator builds with `--x-initial unique` (and
+  `--no-assert-case`: a one-hot select is one-hot from its reset on, and Verilator checks `unique
+  case` from time 0) and their runs with random two-state power-up values;
+  `tests/test_rtl.py::test_random_power_up` runs random programs that way against the ISA (the
+  design's and the card's micro-architecture, several seeds): DRAM, and TMEM at the words the
+  program writes (a RAM's other words keep whatever the cycles before the reset held wrote). For
+  it the behavioural DRAM (`otpu_dram`) takes no request in `sys_rst`, as a controller in reset,
+  and the simulation-only checks start once their reset has held two edges (`rst_seen`: a unit's
+  reset register is itself arbitrary until the slice's reset pipeline fills). On 91df4109's RTL,
+  its checks made displays, 18 of 20 such runs failed (the card's micro-architecture: all 10 never
+  halted; the design's: 2 never halted, 6 wrote other DRAM); on this one 40 of 40 passed (20 seeds
+  each), no check tripping.
+
+iverilog (through sv2v) is no four-state check here: it compiles TMEM but its IMPL 3 never leaves
+the first clock edge (a zero-delay loop), so the four-state check is yosys's `sim`. The RAMs keep
+their simulation-only zero `initial` (the dumps compare every word against the ISA's); a RAM word is
+data, written before it is read.
+
 ## Results
 
 NanGate45 with `tools/asic/fakeram.py`'s macros, 2.5 ns asked (the targets' `core_mhz` 400), the
@@ -75,7 +187,7 @@ nangate45-small is the reference point: ORFS `openroad/orfs:latest` (pulled 2026
 utilisation; the same run with a native ORFS of the same date (f395e4b6, OpenROAD
 26Q4-110-g91e5f5ff2f) gives the same within the tools' noise (422 / 341 MHz, 0.79 W, 0 DRC), and
 its reports are in `asic/nangate45/results/small/`. The card is release r2's arch at ACT_ROWS 8
-(`targets/nangate45.toml`) through that native ORFS on hwe-bench, at 45% with the MXU's macros by
+(`targets/nangate45.toml`) through that native ORFS on the simulation host, at 45% with the MXU's macros by
 its columns and the TMEM's by its readers, with the ports' boundary registers and the VPU's grant
 copies (main 1aad9195, r4 below); "before" is the previous card point (2026-10-11: the card's arch before r2,
 ACT_ROWS 4 and three TMEM copies, at 35% on the macro placer's floorplan).
@@ -144,7 +256,7 @@ above). `asic/nangate45/mxu_macros.tcl` (ORFS `MACRO_PLACEMENT_TCL`, the card po
   it (ORFS's default fence is 0, no fence), so nothing else lands in the strip.
 
 Global placement's routability estimate (weighted congestion of the worst tiles; the share of the
-tiles overflowed), r2 at ACT_ROWS 16, `PLACE_DENSITY_LB_ADDON` 0.02, native ORFS on hwe-bench:
+tiles overflowed), r2 at ACT_ROWS 16, `PLACE_DENSITY_LB_ADDON` 0.02, native ORFS on the simulation host:
 
 | floorplan | die | first routability iteration | best | wire (global placement) |
 |---|---|---|---|---|

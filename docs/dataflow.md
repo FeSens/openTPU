@@ -7,7 +7,7 @@ otherwise); data movement is the name of the game; slices are NUMA regions; firs
 win. The lead's additions: rank by total share (not share of writes), DRAM bytes per token first
 (decode is DRAM-bound), then TMEM round trips; the V^T append and the DeltaNet state round trip
 as first-class items; per-family tables by context and by batch; KV options in bytes; a KV
-format change is a numerics decision (dKL over >= 2000 tokens, to the lead).
+format change is a numerics decision (dKL over >= 2000 tokens).
 
 Base: the MX build (`mx-column` 8b33206e: MX column, E = 4 shared epilogue lanes, ACT_ROWS 16,
 PAIR, DSTEP, STREAM), the card's arch (D 128, MCOLS 4, LANES 8, TMEM 64K words), fp4x6 layers
@@ -36,7 +36,7 @@ Nothing here ran on the card.
   upper bounds, section 5): decode 0.6-3.1% at MCOLS 4, 8 and 16 (decode stays DRAM-bound);
   prompt runs of 3-4 rows 3-12%; MoE layers 1.6-3.3%; Qwen3-0.6B's 16-row prompt tile -21% at
   MCOLS 8 and **-37% at MCOLS 16** (-26% / -49% at 4000). Without the fold MCOLS 8 -> 16 buys 16%
-  of that tile; with it, 47%. **At MCOLS 16 the VPU is the prefill bottleneck**: the lead adopted
+  of that tile; with it, 47%. **At MCOLS 16 the VPU is the prefill bottleneck**: the project adopted
   the fold as the precondition for scaling MCOLS (2026-10-12). Beside the time: TMEM's words
   -53 to -75%, the single pumped TMEM copy's cost (+1.1-1.7% against six copies, co-sim) gone,
   area about neutral (the composite unit moves from the VPU to QUANT), and under 2% of a
@@ -468,7 +468,7 @@ straight to a QACT pass through QUANT's row buffer instead of TMEM: the MXU -> T
 trip of the GLU's operands, q and the attention output.)
 
 - **VA and VB fall to 0.1-15% of today's**, the VPU's write port to 2-12%: TMEM's words fall
-  53-75%. With one pumped TMEM copy (tmem-pump's r2pgRs, NSB 2: the lead's pick) the replays come
+  53-75%. With one pumped TMEM copy (tmem-pump's r2pgRs, NSB 2: the pick) the replays come
   from requesters meeting on a bank in the same cycle; the fold removes the two busiest and,
   with the row buffer, half of Q's reads. Measured (5.3): the single copy's replays fall 98-99%
   and its cost against six copies goes from +1.1-1.7% to ~0.
@@ -481,7 +481,7 @@ trip of the GLU's operands, q and the attention output.)
 
 ### 4.6 ISA and compiler
 
-ISA (a proposal to the lead; bit-exact except where marked):
+ISA (a proposal; bit-exact except where marked):
 - QACT / QST: input modes EXP with a SUM output (the row's sum to an address), GLU (a function
   code; the second operand's address), NORM (a sum-of-squares span: the row or the head; a\*),
   ROPE (the head size; cos / sin addresses), an additive mask operand. They compose with CSCALE /
@@ -552,7 +552,7 @@ Qwen3-0.6B at 8K: KV 55.3% of the token, fp4 K + V -25.0%, fp4 V -13.4%; at 544 
     appended alone cannot set: it needs sealing (option 2 or 1 below). d/2 bytes a token either
     way; P.V pairs (PAIR) where 2G <= MCOLS.
 
-**The accuracy decides it, and it says no to 4-bit K** (the lead's rule: dKL against the MX int8
+**The accuracy decides it, and it says no to 4-bit K** (the rule: dKL against the MX int8
 KV, 2000 tokens of `docs/isa.md`, int8x weights, every other point as the device; `tools/formats_scan.py
 ppl MODEL ';kv=MODE'`, the float64 emulations with the KV format under test, Gemma 4's through
 `tools/gemma4_quant_eval.py`; dKL in % with its paired SE; simulated. The gains: fp4 V alone,
@@ -612,7 +612,7 @@ gain, a default 1 SE under):
   Option 1 also makes a V^T format's sealing natural (a 16-token NVFP4 group is 16 FIFO
   entries) and costs nothing in time. It is a next-generation item.
 
-**6 bits: the point between 4 and 8** (the lead, 2026-10-12: with no 4-bit K and almost no
+**6 bits: the point between 4 and 8** (2026-10-12: with no 4-bit K and almost no
 4-bit V, the next numerics point is between). Two forms, emulated as above (`;kv=int6k`, `fp6k`,
 `int6v`, `fp6vt`): **int6**, today's formats with values in +-31 (K: int8x's quantizer, a
 per-token Sw and the D-blocks' power-of-two offsets; V: one scale a token, folded into P as
@@ -671,7 +671,7 @@ ledger's runs, `tools/dataflow.py kv`):
   ties (+0.12 / +0.13). On Qwen3.5 the KV is a small share of the step and at batch 8 int6
   passes too; Gemma 4 is the family that needs a channel-scaled V at all (its V channels differ
   far more than its tokens: E2B-it's token-scaled 4-bit V was +23.5%).
-- **6-bit K fails where K matters.** At batch 8 and 4K (the lead's case; estimated gains):
+- **6-bit K fails where K matters.** At batch 8 and 4K (the case asked about; estimated gains):
   Qwen3-0.6B int6 +4.53 (0.18) / MXFP6 +2.36 (0.09) against a bar of 0.98, SmolLM3 +1.18 /
   +0.65 against 0.49, Phi-4-mini +0.78 / +1.06 against 0.57, LFM2-2.6B +0.19 / +0.52 against
   0.19, E2B-it +1.70 / +1.49 against 0.36, E4B-it +0.60 / +0.47 against 0.22. It passes only
@@ -685,7 +685,7 @@ ledger's runs, `tools/dataflow.py kv`):
   -10.1% per user at batch 8 / 4K), SmolLM3 4.6 KB of 37.7, Phi-4-mini 8.2 of 66.8, Qwen3.5-4B
   2.1 of 16.6, Gemma 4 2.4-2.5 of 18-19.
 
-**The proposal** (to the lead; deferred to the next release by the r2 consolidation): **V in
+**The proposal** (deferred to the next release by the r2 consolidation): **V in
 int6 with a token's scale** (today's format and layout at 6 bits), chosen per model and serving
 point by the formats rule, Gemma 4 excepted; **K stays int8** (N-pair for d 64), no 6-bit K
 path.
@@ -792,7 +792,7 @@ So multi-row DSTEP alone saves the state's DRAM bytes (37.7 MB a row / R: energy
 port's time for the other streams) but no cycles on the card; the time comes with the engine's
 width (chained engines, or the chunked form: the WY / chunkwise delta rule, the R-row update as
 MXU matmuls, the state once a chunk).
-**Owner: seq-vpu** (assigned by the lead on 2026-10-12, after its WAITC merge candidate). Its
+**Owner: seq-vpu** (assigned on 2026-10-12, after its WAITC merge candidate). Its
 design (branch dstep-mr, local): a multi-token STREAM (T tokens an instruction, per-token
 strides in the instruction, in place; every token's inputs loaded before the first step), the
 state rows circulating through the engine for T tokens (one engine, the FPGA's form) or P
@@ -921,7 +921,7 @@ column that does not read holds its last block, which only its own (undrained) p
 Cycle- and bit-exact by construction; a simulation check stops if an output row's column does not
 read at a pop. Test: `tests/test_rtl.py::test_act_reads_follow_the_mm_rows` (MCOLS 4 and 8, M 1
 to 9, int8 / int4 / fp4 / NVFP4, PAIR; with the MM replay and single-slice fuzzers: 26 passed,
-hwe-bench). Commit 20627927.
+the simulation host). Commit 20627927.
 
 **Per token, whole models** (simulated, ledger: physical = MCOLS rows read every advance, as the
 RTL did at each pop; gated = the MM's columns; GB, each block D + 8 bytes):
@@ -1000,7 +1000,7 @@ in_proj, gate / up, the router and the experts' gate / up, the LM head) by outpu
 intermediates (heads, F, DeltaNet's q / k / v / z, the experts' F) never leave their slice; per
 block one all-reduce of H (a PUTADD reduce-scatter, then a PUT all-gather) and the block's input
 norm(x), H wide, the narrowest activation, in every slice. It is tensor parallelism's (Megatron)
-pairing, and it is what the minimum of both costs gives from the shapes. **Adopted by the lead
+pairing, and it is what the minimum of both costs gives from the shapes. **Adopted
 (2026-10-12) as the S > 1 split**, with the attention and MoE rules below.
 
 Per decode token (with the head) and per prompt row (without), S = 2 and 4 (estimated from the
@@ -1075,7 +1075,7 @@ QACT: its TMEM read and pass gone, the bound of quantize-on-drain through QUANT'
 today's ISA takes with compiler changes alone: the residual as MM ACC, o / l as W_o's RSCALE, the
 gain as CSCALE, the pad copies), **T,GE** (+ the quantizer's GLU and EXP + SUM modes: the GLU, the
 gates, PLE, the softmax numerators, the mask). E = 4 at MCOLS 4 (the card) and MCOLS 8, E = 8 at
-MCOLS 16 (E = MCOLS / 2, the lead's sizing; the drain's rate is in the co-sim). The RTL of
+MCOLS 16 (E = MCOLS / 2, the sizing chosen; the drain's rate is in the co-sim). The RTL of
 `mx-column` 8b33206e with the ACT gating (20627927), LiteDRAM DDR3-1066, 133.33 MHz; zero images;
 2 layers unless noted.
 
@@ -1140,7 +1140,7 @@ and T,GE ran at MCOLS 8 and 16 only, after the MCOLS 4 runs.)
 
   Without the fold, MCOLS 8 -> 16 buys 16% at 544 (823,684 -> 695,359 cycles); with it, MCOLS 16's
   tile takes ~437K, 47% under MCOLS 8 without it. **At MCOLS 16 the VPU is the prefill bottleneck,
-  and the fold is the precondition for scaling the array** (adopted by the lead, 2026-10-12).
+  and the fold is the precondition for scaling the array** (adopted by 2026-10-12).
   SmolLM3's tiles gain less (-5.5% for 12 rows at MCOLS 8, -11.5% for 8 rows at MCOLS 16): its
   wider projections (H 2048, F 11008) keep the MXU the limit longer.
 - **The hybrids gain through the stream engine's input**: Qwen3.5-2B's 4-row run -11.7% at MCOLS 8
@@ -1172,7 +1172,7 @@ tiles at long context, or score lanes that speed q.K^T's drain, need MCOLS of th
 
 ### 5.3 TMEM replays on the single copy
 
-The single pumped TMEM copy (tmem-pump's r2pgRs: NSB 2, sides s, the lead's pick) against
+The single pumped TMEM copy (tmem-pump's r2pgRs: NSB 2, sides s, the pick) against
 today's six copies (i0), under the same transforms (co-sim on tmem-pump's tree b5d6bcef, the
 pre-MX MXU; Qwen3-0.6B, 2 layers; replays: TMEMSTAT's lost reads by requester):
 
@@ -1316,7 +1316,7 @@ Qwen3-0.6B's prompt tile -21% (-26% at 4000) at MCOLS 8 and **-37% (-49% at 4000
 where without it the second 8 columns buy 16%. Beside the time: TMEM's words -53 to -75% (4.5),
 the single pumped TMEM copy's replays and cost gone (5.3), about the same area (6.3), under 2% of a
 token's data-movement energy (6.1). The lead adopted it on 2026-10-12 as the precondition for
-scaling MCOLS. Release r2 (the lead's consolidation) carries the ACT gating (20627927) and the
+scaling MCOLS. Release r2 (the consolidation) carries the ACT gating (20627927) and the
 tools that measured all this (`tools/dataflow.py`, the KV formats in `tools/formats_scan.py`);
 the fold and every proposal below are next-release items.
 
@@ -1338,7 +1338,7 @@ the fold and every proposal below are next-release items.
 1. **The fold's ISA** (4.6): QACT / QST input modes EXP (+ SUM), GLU, NORM, ROPE, a mask operand;
    DSTEP input modes; MM unchanged. Bit-exact except qk-norm's gain before RoPE and NORM's 1 / rms
    in the row scale (one rounding each: a dKL check with the first build of the modes). Adopted
-   as the precondition for MCOLS 16 (the lead, 2026-10-12); the ISA comes with its RTL.
+   as the precondition for MCOLS 16 (2026-10-12); the ISA comes with its RTL.
 2. **ACT reads gated to the MM's columns**: done (20627927), in r2; accepted for the MCOLS 8
    tree.
 3. **KV** (4.8, dKL against MX int8 over 2000 tokens on 10 card models): **no 4-bit K** (+0.3
@@ -1354,12 +1354,12 @@ the fold and every proposal below are next-release items.
 4. **N-pair for LFM2's d 64 K** (int8, numerics-neutral): -6.4% of an LFM2.5-230M token at 4K,
    -10.6% at 8K, -1.1% of LFM2-2.6B's at 4K (MCOLS 8). A free item: PAIR's column split with the
    two halves drained as two outputs.
-5. **Multi-row DSTEP** (4.9): assigned to seq-vpu (the lead, 2026-10-12), after its WAITC merge
+5. **Multi-row DSTEP** (4.9): assigned to seq-vpu (2026-10-12), after its WAITC merge
    candidate; bit-exact; the state's DRAM bytes / R, and the time only with a wider engine
    (seq-vpu's bound: mr8 -0.05%, two chained engines -19.0% of a Qwen3.5-0.8B prompt run).
 6. **S > 1: fan-out MMs split by output, fan-in MMs by K** (4.12), one all-reduce of H a block
    over PUT / PUTADD; attention by KV head (by tokens where n_kv < S), MoE experts by F. Adopted
-   (the lead, 2026-10-12).
+   (2026-10-12).
 7. **k-major weight tiles** (4.11): recorded as a next-generation energy item.
 8. **The chunked delta rule and a short-K MM** (4.9.1, 2026-10-14): recorded as an ASIC
    architecture item. The DeltaNet state once a chunk instead of once a row: MiniCPM-V's image

@@ -77,7 +77,7 @@ PYTHONPATH=. python3 tools/scoreboard_cosim.py probe models/Qwen3-0.6B --tmem 65
     --act-rows 16 --buckets 1,4                # compile only: the rows a prefill run fits
 ```
 
-Run the co-sim on omarchy through `~/otpu-build/slot.sh`. A two-layer Qwen3 run needs about
+Run the co-sim on the build host through `~/otpu-build/slot.sh`. A two-layer Qwen3 run needs about
 4 GB and 10-40 minutes.
 
 ## 1. The workloads
@@ -686,7 +686,7 @@ The model shapes come from `scoreboard.py gen-models DIR...`, which reads the co
 and the safetensors headers, into `tools/scoreboard_models.json`. Refresh the rows a run fits
 with `tools/scoreboard_cosim.py probe`.
 
-The co-sim campaign (`tools/scoreboard_campaign.sh PART`, on hwe-bench as four slot jobs) runs a model's first one
+The co-sim campaign (`tools/scoreboard_campaign.sh PART`, on the simulation host as four slot jobs) runs a model's first one
 and two layers. The difference between them is a layer's cycles, with the run's own cost
 removed. In order, it covers:
 
@@ -698,6 +698,6 @@ removed. In order, it covers:
 6. Qwen3.5's DeltaNet layers at MCOLS 4 and 8: the 0.8B and 2B at R 4, and the 4B at R 2
    and R 3 (parts 3 and 4).
 
-It ran on hwe-bench on 2026-10-12: parts 1 and 2 took about 25 minutes each, parts 3 and 4
+It ran on the simulation host on 2026-10-12: parts 1 and 2 took about 25 minutes each, parts 3 and 4
 about 20. Its results are in
 `tools/scoreboard_cosim_runs.jsonl`, which `validate` and `scoreboard.py cosim FILE` read.

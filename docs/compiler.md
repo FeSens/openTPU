@@ -96,6 +96,53 @@ free again, taken last, and zeroed when an address or `scratch()` takes it. A bo
 end on the last instruction of an inner body (a `LoopBlock` or a guard emitted as
 instructions) ends with a `NOP` (docs/isa.md, `LOOP`).
 
+### Addresses above 4 GiB
+
+At AW > 32 (docs/isa.md "Address bits": the BCU1525's 36 bits, 32 GiB) an instruction's
+offset is a 32-bit word, zero-extended, so `Builder.addr` returns an address at or above 4 GiB
+(or a loop's below 0) as a register that holds a base plus an offset below 4 GiB:
+
+- **The window register** for a static address: one register, taken for good the first time,
+  `LI Rw, B` (LI's `{w2, w1}`) where the address leaves `[B, B + 4 GiB)`, B the address rounded
+  down to 256 MiB. The weights stream in order, so one LI serves the MMs of 4 GiB of them. Its
+  value counts only from the LI on in the same loop body: a loop's start or end forgets it (the
+  body runs again after its end, and an LI inside it is the window at the body's start).
+- **A biased key** for a loop's address: its register's key gains the term `(BIAS, B)`, it
+  starts at `LI r, B` (`ADDI r, R_arg, B` with a run-time term, the RLD MUL of the generate
+  loop's word then `ADDI r, r, B`) before the outermost of its loops, and the loops step and
+  reset it as any; B is the base of a live or spare register of the same terms that holds the
+  address within 4 GiB, else the address rounded down to 256 MiB. When its loops end it holds B
+  (a spare): the next run of the same base takes it with no LI (a layer run's weights after
+  another's); with no free register left it is taken back, zeroed or set where taken.
+- A bare run-time argument's address (`c * var` and a constant, no loop) at or above 4 GiB:
+  a biased key too, `ADDI r, R_arg, B` where it is used.
+- **A negative argument.** The host's argument words are zero-extended above AW 32, so
+  `c * var` with `c < 0` (a row counted down from a bucket's end: RunPos.bucket's
+  `-4 * tpos`) is the argument `-c * var~`, `var~ = bound - 1 - var` (`compiler.Comp`, named
+  `var~` in run_args and the program cache), and the address's constant less
+  `-c * (bound - 1)`; the variable needs a bound. The program's own loads of its arguments
+  (the generate loop's `RLD MUL` of a state word, `isa.rld_mul`) form `c * var` in AW bits
+  and keep `c`. At AW 32 every argument is as before.
+- A device value's address (a `DevVar` or a `Counter`: the program's own register) with a
+  constant at or above 4 GiB cannot be reached: the device value holds its base (an expert's
+  address `ADDI(RLD MUL(id, expert bytes), pool base)`).
+
+Steps and resets are `isa.wrap`'d into AW bits (a reset of a stride times a count of 4 GiB or
+more); at AW 32 every word is as before (LI and ADDI with `w2 = 0`). At AW 32 an address of 4
+GiB or more is an error (isa._w: an LD's word), where before AW it wrapped.
+
+A split image (qwen3 / qwen35 `Image(high)`: a unit's weights from 4 GiB, its states below)
+steps two registers in a layer loop where its units' one stride served. bcu1525-wg's programs
+fit (Qwen3.5-4B, 27B and 35B-A3B high, fp4: decode and generate at every bucket of a 4K
+context, at most 3947 instructions, the 27B's with its 24 pairs of DeltaNet heads unrolled and
+each key head's q and k projected once, qwen35.PAIR_LOOP_QK; the 27B's tile runs of 4 rows, at
+most 4045); on the m4 card's arch at AW 36 (board_config: group-major DeltaNet pairs, 7 or 8
+arguments) the resident decode of Qwen3.5-4B's dims from bucket 8 is one address register
+short ("out of address registers: R9 is taken, argument 6 needs it": the retired spares hold
+the registers an argument found late needs; test_4b_resident_decode_fits_imem). Open: moving
+an argument into a spare retired before its register was taken, as `_move_arg` does into a
+released argument's.
+
 ## The flash-attention loop, source to instructions
 
 `opentpu/kernels/attention.py` is an online-softmax (flash) attention, software-pipelined in the
@@ -206,6 +253,13 @@ Measured on the RTL at the board configuration (LANES = 8, AXI memory path, 80% 
   placement (`compiler.trace_fit`). The compiles that probe (a prefill run's rows, a prompt
   run, a generate bucket's single program) keep next-fit's answer and fall back to their
   smaller forms, so a program that fits next-fit is placed as before.
+- A hardware loop's body is traced once and runs again on the same words, so next-fit can put
+  a body tile on the words the body's first load writes: the next iteration's load then waits
+  for that tile's last use (a false WAR across iterations) and holds the in-order DMA queue
+  behind it. `ol.load_home(desc, key)` loads into the program's tile for `key`, allocated at its
+  first use and kept for the whole program, so no later tile takes its words (Qwen3.5's
+  DeltaNet layers load their input norm's gain so). `opentpu.profile`'s `Profile.loop_waits`
+  totals such waits from a trace.
 - **ACT RAM** blocks are freed when their `Stationary` dies and are reused round-robin, so a
   stationary operand that is still live is never overwritten.
 
@@ -265,6 +319,9 @@ Lens (`python -m opentpu.lens`) records these into profile files and explores th
 - A stationary operand that does not fit ACT RAM, or that was overwritten before a later use.
 - Running out of TMEM (the tile's words and the words in use) or address registers, or nesting
   loops deeper than 4.
+- At AW > 32, an address no register can reach ("Addresses above 4 GiB"): a device value's
+  plus a constant at or above 4 GiB, or one past 2^AW; a negative argument of a variable
+  with no bound.
 - Reading a tile that `.set()` has already moved into another tile.
 - Shape mismatches in stores, `set` and broadcasts, and unsupported strided views.
 - A KV head accessed from a slice that does not own it.

@@ -1,7 +1,7 @@
 # Targets: one design, many boards and chips
 
 openTPU builds for several targets from one source tree: the YPCB-00338 card in production, the
-BCU1525 (Virtex UltraScale+ VU9P, four DDR4 DIMMs), ASICs (NanGate45 with OpenROAD now), and
+BCU1525 (Virtex UltraScale+ VU9P, four DDR4 DIMMs: four targets, below), ASICs (NanGate45 with OpenROAD now), and
 whatever comes next. A target is one file, `targets/<name>.toml`; everything that depends on it
 is derived from that file by `opentpu/target.py`. The design rationale is in
 `docs/superpowers/specs/2026-10-10-multi-target-design.md`.
@@ -19,24 +19,69 @@ file's `[target] variant` is the default, and its `[arch]` / `[uarch]` state tha
 (`load` checks them). Each variant has its own CFG_HASH. The card's: m4 (release r2: 4 MX columns
 at E 4, 64K TMEM words) and m8 (8 at E 8, 128K words).
 
+## The BCU1525's targets
+
+One board, four target files, because the memory system and the number of slices change what
+the compiler sees ([bcu1525.md](bcu1525.md) for the board):
+
+| Target | Platform id | What | Memory | Docs |
+|---|---:|---|---|---|
+| `bcu1525` | 2 | two slices at MCOLS 4, two 64-byte channels a slice | LiteDRAM, DDR4-1200 | [bcu1525.md](bcu1525.md) |
+| `bcu1525-wg` | 5 | one slice at MCOLS 8 with weight groups (WG 8), 8 channels of 128-byte beats, two a DIMM; 36-bit DRAM addresses, 32 GiB | AMD's DDR4 MIG, DDR4-2400 | [bcu1525_wg.md](bcu1525_wg.md) |
+| `bcu1525-s2` | 6 | two such slices, a slice a die, two DIMMs (16 GiB) each, four channels a DIMM | the same | [bcu1525_s2.md](bcu1525_s2.md) |
+| `bcu1525-x2` | 7 | two cards of `bcu1525-s2` joined by QSFP28: the compiler sees S = 4, each card reports its own two slices (`[platform] cards = 2`) | the same, 8 DIMMs | [bcu1525_s2.md](bcu1525_s2.md) section 6 |
+
+Their variants. *Production* is what the cards run and what the documents' numbers are for;
+*experimental* variants build and simulate, and their programs and results may change:
+
+| Variant | Adds | State |
+|---|---|---|
+| `bcu1525-wg` (no variant) | | the first images; CFG_HASH 4b35ec47 |
+| `bcu1525-wg:kt` | MM's K tail (docs/isa.md "K tail") | superseded by `bhw` |
+| `bcu1525-wg:bhw` | `kt`, the bank-half window (BHW 33), the sequencer's window of 32 | superseded by `bhw16` |
+| **`bcu1525-wg:bhw16`** | `bhw` and the DeltaNet states in 16 bits (ST16 e6m9) | **production**, one card; CFG_HASH 4d5cbf8d |
+| `bcu1525-wg:ic` | IMEM as an instruction cache over the program in DRAM (docs/icache.md) | experimental: RTL and simulation |
+| `bcu1525-wg:bhw16fs` | `bhw16` and EXP2SUB's fused row sums (FSUM) | experimental |
+| `bcu1525-wg:wmx` | `bhw16`, the MXU's array pumped at 2x, the instruction cache, a second TMEM write a bank, new vector ops | experimental: `bcu1525-x2:wmx`'s slice on one card |
+| `bcu1525-s2` (no variant) | BHW 33, K tail, window 32, SEXACT and the pipelined collective hub are the target's own | on the card at 100 MHz; CFG_HASH f2f66919 |
+| `bcu1525-s2:kt` | nothing: an alias from before K tail was the default | alias |
+| **`bcu1525-s2:st16`** | the 16-bit states | on the card at 150 MHz; the image each card of the pair runs (CFG_HASH e331f79c) |
+| `bcu1525-x2:kt` | nothing | alias |
+| **`bcu1525-x2:st16`** | the 16-bit states | **production**, two cards |
+| `bcu1525-x2:wmx` | `st16`, the pumped MXU, the instruction cache, the VPU's composites in two passes, the chunked DeltaNet's quantizer | experimental: its 100 MHz build missed timing at its density (97-98% of the slice dies' CLB sites) |
+| `bcu1525-x2:b2` | `wmx` with the composites back at three stages, quantize-once, the DMA's second command, more | experimental: not built |
+
+A production variant's `[arch]` values are fixed by the bitstreams in use: change one and the
+CFG_HASH changes, and the host refuses programs compiled for the other.
+
 ## The four layers of a target
 
 | Section | What | Who depends on it |
 |---|---|---|
-| `[arch]` | the `opentpu.isasim.Config` fields: S, D, MCOLS, ACT_BLOCKS, ACT_ROWS, TMEM / IMEM words, DRAM bytes per slice, LANES, PAIR / DSTEP / STREAM, SEQ_WC (EXPERIMENTAL: the sequencer's wait entries, which the host loads with every program; docs/isa.md "Wait counts") | the compiler and the programs. Two targets with the same arch run the same programs |
+| `[arch]` | the `opentpu.isasim.Config` fields: S, D, MCOLS, ACT_BLOCKS, ACT_ROWS, TMEM / IMEM words, DRAM bytes per slice, LANES, PAIR / DSTEP / STREAM, SEQ_WC (EXPERIMENTAL: the sequencer's wait entries, which the host loads with every program; docs/isa.md "Wait counts"), OUTER (false: a VPU without VOP OUTER, otpu_board OUTER 0 and CAPS2 bit1; the WG targets', whose DeltaNet runs DSTEP), DSTEP2 (true: DSTEP's pair, otpu_board DSTEP2 1 and CAPS2 bit2; the WG targets') | the compiler and the programs. Two targets with the same arch run the same programs |
 | `[uarch]` | timing-only RTL parameters: MXU_IMPL, MXU_E (optional), VPU_CL, ULANES, TMEM_IMPL, RPB / WPB, WIN, FIFO_DEPTH, the trace buffer | the RTL, the co-simulation |
 | `[tech]` | the cell family (`rtl/tech/<family>`: generic, xilinx7, xilinxus, asic), the part or the PDK | the RTL file list |
-| `[platform]` | the board: memory type and rate, channels per slice, bytes a slice addresses per channel, the host link, the core clock | the board flow, the host runtime |
+| `[platform]` | the board: memory type and rate, channels per slice, bytes a slice addresses per channel, the channel beat (an FPGA's: the native adapter's NCH and CB, `rtl/mem/otpu_native_dram.sv`; NCH x channel bytes = DRAM bytes), the host link, the core clock | the board flow, the host runtime |
 
-Every `[arch]` field is stated: the file is the hardware's truth. `board_config()`, which the
-simulators and tests use, takes the target's sizes but keeps its optional features (PAIR,
-DSTEP, STREAM, SEQ_WC) off unless `OTPU_PAIR` / `OTPU_DSTEP` / `OTPU_STREAM` / `OTPU_SEQ_WC`
-turn them on, as it did before targets; `opentpu.target.config(name)` is the full truth.
+Every `[arch]` field is stated (but WG, OUTER and DSTEP2, which default to 1, true and false:
+the machine before them): the file is the hardware's truth. `board_config()`, which the
+simulators and tests use, takes the target's sizes, WG, OUTER and DSTEP2 but keeps its optional
+features (PAIR, DSTEP, STREAM,
+SEQ_WC) off unless `OTPU_PAIR` / `OTPU_DSTEP` / `OTPU_STREAM` / `OTPU_SEQ_WC` turn them on, as
+it did before targets; `opentpu.target.config(name)` is the full truth. A VPU without OUTER is
+in the CFG_HASH (`arch_hash`: the field only when off, so every build with it hashes as before);
+there the compiler refuses `outer(acc=...)` and the ISA simulator a VOP OUTER. DSTEP2 is in it
+only when on (DSTEP's pair; with DSTEP alone: `build_config`).
 
 ## What is derived
 
 - `target.config(t)`: the `Config`.
-- `target.sim_uarch(t)`: the Verilator builds' micro-architecture (`rtlsim.BOARD_UARCH`).
+- `target.sim_uarch(t)`: the Verilator builds' micro-architecture (`rtlsim.BOARD_UARCH`), with
+  an FPGA target's memory channels (`NCH`, `CB`) where they are not the two 64-byte channels the
+  simulation tops default to.
+- `target.mem_model(t, mhz)`: the co-simulation's channel model from the `sim_*` platform keys
+  (per channel the sustained rate, the read latency, a refresh-like duty loss), as arguments of
+  `sim/verilator/otpu_native_mem.sv` in core cycles; none for the DDR3 cards.
 - `target.rtl_params(t)`: the parameters of a board or ASIC top, including the identity the
   control block reports.
 - `target.build_config(t, MCOLS=, LANES=, ACT_ROWS=, DSTEP=)`: the Config of an FPGA build
@@ -84,7 +129,15 @@ Makefile, `create_project.tcl` and `rtlsim.RTL_SOURCES` hold the same lists, whi
 
 ## Limits
 
-DRAM addresses are 32 bits per slice, so a slice addresses 4 GiB. A platform with more memory
-(the BCU1525's 64 GB) uses it through more slices (each on its own channels); offsets 0xA0 + 4s
-are reserved for per-slice DRAM windows the host would set, and far-memory DMA for MoE expert
-pools held on the card is a later ISA decision.
+DRAM addresses are `[arch] AW` bits per slice (Config.AW: 32 to 40, default 32; docs/isa.md
+"Machine model"), and DRAM_BYTES a power of two of at most 2^AW. Every target but the BCU1525 at
+WG 8 leaves AW out: 32 bits, 4 GiB a slice, its hash and RTL parameters as before the field
+(arch_hash and rtl_params leave AW out at 32). bcu1525-wg states AW 36: its 32 GiB (64 GiB
+later) as 8 virtual channels of 4 GiB, two a DIMM (rtl_params' AW, DRAM_LOG2 35, CH_LOG2 32;
+[bcu1525_wg.md](bcu1525_wg.md) section 8).
+No register says AW; the host takes it from the card's CFG_HASH (opentpu.host.board device_aw:
+the first of its platform's target's AW, 32 and the current target's whose hash it is), so a
+bcu1525-wg build from before the field (AW 32, 4 GiB) still runs, a host of any target compiles
+a card's programs at its AW, and a card with more DRAM than its AW addresses (a platform this
+tree has not) is refused. The board model (SimTransport) builds otpu_board at the target's AW.
+Offsets 0xA0 + 4s stay reserved for per-slice DRAM windows the host would set.

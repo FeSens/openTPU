@@ -398,12 +398,12 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
 - `deltanet_step` emits STREAM on a `Config(STREAM=True)` machine, and the generic
   `ol.state_step`.
 - Tests: see 9.
-- Then the integration runs on omarchy (Verilator), the OOC area on omarchy, the full build on
-  opentpu, and the card.
+- Then the integration runs on the build host (Verilator), the OOC area on the build host, the full build on
+  the card host, and the card.
 
 ## 9. Test plan
 
-1. **ISA level (Mac).** `tests/test_stream.py`:
+1. **ISA level (a laptop).** `tests/test_stream.py`:
    - STREAM(gdn) against DSTEP against the VOP sequence, bit for bit (shapes 7..256 x
      64..256, specials, ZERO);
    - each family of 5.2 against its VOP fallback, plus float64 sanity;
@@ -411,7 +411,7 @@ module otpu_se_tail import otpu_pkg::*; import otpu_fp::*;
    - attention (5.3) against the VOP path;
    - descriptor float-safety (FILL writes it exactly) and `stream_hw_cfg` coverage;
    - tiny Qwen3.5 with STREAM against DSTEP against VOPs, bit-identical.
-2. **RTL op level** (omarchy, `tools/omarchy_test.sh`):
+2. **RTL op level** (the build host, `tools/remote_test.sh`):
    - `test_vops.py -k rtl` (every VOP, unchanged path) and `test_rtl.py -k fuzz`;
    - `test_fp.py -k rtl`;
    - `test_dstep_rtl_bit_exact` (now through SE);
@@ -632,7 +632,7 @@ Otherwise v1 (both 0) builds ~07:00.
   - The output side's control (destination, negate, the constant into v) and RR's flags are
     registered from a copy of (function, pass) delayed SL - 1. So the result's path (y, the
     destination mux, RR's range compare) starts at flip-flops.
-  - Vivado OOC of otpu_vpu v2 at 8576057 (before both changes; the lead's run, 120.755 MHz):
+  - Vivado OOC of otpu_vpu v2 at 8576057 (before both changes; 120.755 MHz):
     WNS +0.080 ns. Second worst: `g_sel[0].u_md` (the meta after S0) → `g_rr.q0`, 23
     levels.
   - yosys on otpu_vpu (tail, HAS_SE, WBUF) at 202856d (the ROM, without the registered
@@ -658,7 +658,7 @@ Otherwise v1 (both 0) builds ~07:00.
 
 ## 12. Results (2026-09-29; every number says measured or simulated)
 
-"Simulated" means Verilator or the ISA sim. "Measured" means Vivado 2026.1 on omarchy or the
+"Simulated" means Verilator or the ISA sim. "Measured" means Vivado 2026.1 on the build host or the
 card. Rows still marked "pending" were not in when this was written.
 
 **Outcome.** v2 is the build candidate se-cand3 (02569bc, branch `se-cand3`: se-int with main
@@ -679,9 +679,9 @@ merged in, both comp cuts, main's 5cd6c39 MXU queue, and three small timing cuts
 | se-int 8576057 | v2 | R-A's full suite: 37 + 31 passed; R-B's stream/DSTEP 10/10 (v1 and v2), tiny models 10/10 |
 | se-v2 | v2 | VOPs 15, fuzz + stream 16, tiny models 9 |
 | 96d4a24 (= se-int 202856d) | unit | test_se_comp + test_se_vpu + test_se_tail: 29 passed |
-| se-cand 44dfeb2 | v1, v2 | omarchy: 120 passed per config (stream + stream_rtl + se_comp/vpu/tail + vops/fp rtl 52; qwen35 board model / on_rtl / dstep 11; test_rtl fuzz / mlp / attention / mm_replay / scoreboard 57) |
-| se-cand2 0d1f3ed | v1, v2 | omarchy: 151 passed per config (the above plus test_rtl dma / axi / run_arguments: 88); Mac: 122 per config |
-| se-cand3 02569bc | v1, v2 | omarchy: 151 passed per config |
+| se-cand 44dfeb2 | v1, v2 | the build host: 120 passed per config (stream + stream_rtl + se_comp/vpu/tail + vops/fp rtl 52; qwen35 board model / on_rtl / dstep 11; test_rtl fuzz / mlp / attention / mm_replay / scoreboard 57) |
+| se-cand2 0d1f3ed | v1, v2 | the build host: 151 passed per config (the above plus test_rtl dma / axi / run_arguments: 88); a laptop: 122 per config |
+| se-cand3 02569bc | v1, v2 | the build host: 151 passed per config |
 | se-cand3 on the card | v2 | measured: 12/12 token-exact against the ISA simulator (Qwen3, LFM2, Qwen3.5; int8 and 4-bit; per-position and resident), 12.5 |
 
 - `test_stream_rtl_bit_exact` found one real RTL bug: with Q off (`q_en = 0`), rows still
@@ -803,7 +803,7 @@ yosys (logic only, flattened) for VPU + DMA: main 63.7K, v1 55.1K, ONE_TREE 50.2
 
 ### 12.5 Card (measured)
 
-Measured on opentpu, 2026-09-29:
+Measured on the card host, 2026-09-29:
 - **How it ran:** `deploy_secand3_02569bc` loaded over JTAG, then a warm reboot, then
   `LOAD=0 tools/qual/qual.sh ... fast` (42 min).
 - **Result: 0 FAIL, 44 PASS.**
@@ -816,7 +816,7 @@ Measured on opentpu, 2026-09-29:
 Decode (`tools/decode_profile.py`, greedy, 96 tokens; device cycles, independent of the host),
 against pn32's qualification (docs/board.md):
 
-| model, 4-bit, int8 head | se-cand3 device | pn32 device | change | se-cand3 wall (opentpu) |
+| model, 4-bit, int8 head | se-cand3 device | pn32 device | change | se-cand3 wall (the card host) |
 |---|---|---|---|---|
 | Qwen3-0.6B | 34.46 tok/s (3.504 Mcycles) | 34.26 (3.524) | +0.6% | 34.06 |
 | LFM2.5-230M | 90.52 tok/s (1.334) | 90.21 (1.339) | +0.3% | 87.17 |

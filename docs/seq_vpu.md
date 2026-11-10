@@ -36,7 +36,7 @@ co-simulation, Verilator) or estimated.
   cycle, not by DRAM: stepping a run's R rows with the state read and written once cuts its DRAM
   bytes by R (37.7 -> 9.4 MB a 0.8B row at R = 4) for -1.8% to -3.7% of the cycles (built,
   bit-exact); two chained engines take -19% of Qwen3.5-0.8B's run (bound; -18.6% as built).
-  The chain is parked (the lead, 2026-10-12): the ASIC's prefill step goes to the MXU (the
+  The chain is parked (2026-10-12): the ASIC's prefill step goes to the MXU (the
   chunkwise delta rule, docs/dstep_mr.md 9) in the release after r2.
 
 ## 1. Method
@@ -404,6 +404,12 @@ command. The same flow as section 2.1 (xc7k480t-2 at 7.5 ns, placed and routed; 
 
   - The same runs with the scoreboard (`SEQ_WC` 0) are -0.57% to +0.19% against WAITC.
   - WAITC stays for its area and for the hazard check it removed.
+- **FOLLOW (S > 1).** With wait entries across slices (`otpu_seq` FOLLOW, `otpu_slice`: at
+  S > 1), bit 28 of an entry's counts' word (docs/isa.md "Wait counts") ends a VOP's collective
+  wait at its GATHER's start: the count is met when the unit runs the producer (`c_run`, `wc_n`
+  one short of it). The VPU then starts with `ufol` and reads behind the GATHER's writes
+  (`otpu_vpu` FOLLOW). The sidecar entry is 60 bits there (240 a row of 4). Its use:
+  a norm's sum of squares after its all-gather, taken as the row arrives.
 
 ### 4.5 Where v2's remaining cycles go (simulated)
 
@@ -619,7 +625,7 @@ On the branch `waitc-mx` (the MX freeze merged under it, every target `SEQ_WC = 
   (`qwen3.worker_words`, `compiler.Words` carries them), the generate chain's buckets in
   parallel (`waits.entries_many`), and prebuild computes those a card session loads first.
 
-**The pass's cost** (measured on the Mac, one core; the compile itself is 10-40 ms a program):
+**The pass's cost** (measured on a laptop, one core; the compile itself is 10-40 ms a program):
 
 | program (buckets b1, b8) | instructions | cold (several runs) |
 |---|---|---|
@@ -631,7 +637,7 @@ On the branch `waitc-mx` (the MX freeze merged under it, every target `SEQ_WC = 
 Once computed, an entry comes back from memory in under 0.1 ms and from the disk in under 1 ms.
 
 With the final mask (31 VOPs of history, 38a6342b) the pass takes the same abstract steps and
-each costs more (hwe-bench, one core, both trees in one run, buckets 1 / 8):
+each costs more (the simulation host, one core, both trees in one run, buckets 1 / 8):
 
 | program | 15 VOPs (e274fc4a) | 31 VOPs (38a6342b) | |
 |---|---|---|---|
@@ -814,7 +820,7 @@ At MCOLS 8 and 16 (4 rows; "of the floor": what two and four engines take of `no
 - **Area** (docs/dstep_mr.md 6): an engine is the DSTEP datapath of section 2.2, ~20.6K LUT and
   86 DSP on the FPGA, ~0.7 mm² on nangate45 (estimated; the OOC of one engine against two was
   not run): compute, not a copy of SRAM.
-- **Decision** (the lead, 2026-10-12; docs/dstep_mr.md 8, 9): the chain (C) is parked, its
+- **Decision** (2026-10-12; docs/dstep_mr.md 8, 9): the chain (C) is parked, its
   bit-exact RTL a card-only option; the ASIC's prefill state step goes to the MXU, the chunkwise
   delta rule (D) with its products in three int8 MMs, in the release after r2 (a first
   co-simulation at C = 4 puts it at 1.8-2.4x today's run on the card, bound by the quantizer: it

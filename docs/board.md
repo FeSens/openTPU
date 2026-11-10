@@ -165,7 +165,7 @@ and LFM2 only, and the self-test's `vops` stage says so.
 | `build/deploy_prod120fp4_ea3bc560/otpu.bit` (production 2026-09-27 evening) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | ea3bc56 (4-bit MXU with PAIR, fmax fixes, VPU WBUF) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 (int8 and 4-bit) | met, WNS +0.149 ns, WHS +0.016 ns |
 | `build/deploy_prod120_b01b8acb/otpu.bit` (production 2026-09-27 afternoon, int8 only) | `make bit DDR=1066 CORE_MHZ=120.755` (MCOLS=2, LANES=8) | b01b8ac (fmax fixes; section 5, "Faster DDR3") | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.080 ns, WHS +0.016 ns |
 | `build/deploy_prod1066_b2c7ce43/otpu.bit` (previous production) | `make bit DDR=1066` at 100 MHz | b2c7ce4 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns |
-| `build/deploy_burst_a691ea98/otpu.bit` (older primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (omarchy build) |
+| `build/deploy_burst_a691ea98/otpu.bit` (older primary) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | a691ea98 (port-B AXI read bursts, MXU_STARVE counter; register map 3) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.085 ns, WHS +0.040 ns (the build host build) |
 | `build/deploy_r3route_74d4859/otpu.bit` (single-beat reads, 2.4x slower decode) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 74d4859 (chunk FIFO in block RAM, 6 TMEM copies) | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.104 ns, WHS +0.038 ns |
 | `build/deploy_default_3c270c9/otpu.bit` (first fallback) | `make bit` (MCOLS=2, VPU_CL=2, LANES=8) | 3c270c9 | D=128 MCOLS=2 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.065 ns, WHS +0.038 ns |
 | `build/deploy_m4cl4_550aa35/otpu.bit` (faster prefill) | `make bit MCOLS=4 VPU_CL=4` | 550aa35 (as the primary, 4 MXU columns, 4 composite VPU lanes) | D=128 MCOLS=4 LANES=8 | yes | Qwen3, LFM2, Qwen3.5 | met, WNS +0.086 ns, WHS +0.037 ns |
@@ -240,7 +240,7 @@ otpu-setup --check           # the whole host setup, the card and the link
 ```
 
 Expect the link at the card's own `LnkCap`: 5 GT/s x8 on a Gen2 bitstream (PCIE_GEN 2, the default
-since g2fix 0885d436, 2026-10-01: ~3.0 GB/s host to card on opentpu from placed buffers, 2.3 through
+since g2fix 0885d436, 2026-10-01: ~3.0 GB/s host to card on the card host from placed buffers, 2.3 through
 the staging copy; docs/host.md section 2), 2.5 GT/s x8 on a Gen1 one
 (PCIE_GEN=1, section 5), where 2.5 GT/s is not a downtrained link. `otpu-diag` and `otpu-setup
 --check` compare the link with the card's own speed. Device ID 7028 is set in the block
@@ -279,12 +279,12 @@ accelerator's logical DRAM is interleaved over the two channels in 64-byte beats
 opentpu/host/board.py applies the map (never write the channels directly except in the
 self-test).
 
-### The card's host: opentpu (since 2026-09-28)
+### The card's host (since 2026-09-28)
 
-Until 2026-09-28 the card was in omarchy, the development PC (Intel Core i5-12600KF), where every
-measurement before that date was taken. It is now in opentpu (Intel Core i7-4790, Haswell). The
-link trains at 2.5 GT/s x8 as before. On opentpu, `otpu-selftest` measures 1.26-1.34 GB/s host
-to card and 0.84-1.00 GB/s card to host; omarchy measured 1.42 and 1.16 GB/s.
+Until 2026-09-28 the card was in the build host, the development PC (Intel Core i5-12600KF), where every
+measurement before that date was taken. It is now in another PC (Intel Core i7-4790, Haswell). The
+link trains at 2.5 GT/s x8 as before. On the card host, `otpu-selftest` measures 1.26-1.34 GB/s host
+to card and 0.84-1.00 GB/s card to host; the build host measured 1.42 and 1.16 GB/s.
 
 - **Root access** is narrow. `/etc/sudoers.d/60-otpu-card` allows exactly three commands, with
   no password:
@@ -299,14 +299,14 @@ to card and 0.84-1.00 GB/s card to host; omarchy measured 1.42 and 1.16 GB/s.
   refreshes the copy from the repository. When the plain remove and rescan does not bring the
   card back, it retrains the upstream port's link (section 2, "After programming"). The retrain
   has not yet been tried on a real reload.
-- **A JTAG reload**: after one, a hot rescan once did not bring the link back on opentpu, and a
+- **A JTAG reload**: after one, a hot rescan once did not bring the link back on the card host, and a
   warm reboot did. So for now a reload there is planned with a warm reboot, and `qual.sh` runs
   with `LOAD=0` (it qualifies the bitstream the card already runs).
 - **Flash**: it still holds the factory image. A cold power cycle loses the design; a warm
   reboot keeps it.
 - **Commands**: the `otpu-*` commands are on `PATH` through symlinks in `~/.local/bin` to
   `~/otpu-venv/bin`.
-- **Card trees**: a tree copied to opentpu for a card session, or a deploy's `host/`, needs
+- **Card trees**: a tree copied to the card host for a card session, or a deploy's `host/`, needs
   `targets/` beside `opentpu/`. Since the multi-target work, `opentpu.target` reads the card's
   target from `targets/ypcb-00338.toml`. Without it the selftest's config stage fails with
   `TargetError: no target 'ypcb-00338'` (session pfB's first launch, 2026-10-12). A tree for
@@ -353,7 +353,7 @@ PCIe, the DMA rate and the real DRAM latency.
 A candidate bitstream becomes the resting image only after `tools/qual/qual.sh` passes on the
 card. It runs from the host tree it lives in, under the card lock, and leaves the candidate on
 the card (`REST=path/otpu.bit` leaves another; `LOAD=0` loads nothing and qualifies the
-bitstream the card already runs: on opentpu a hot rescan after a JTAG reload once did not bring
+bitstream the card already runs: on the card host a hot rescan after a JTAG reload once did not bring
 the link back, and a warm reboot did). Started without the lock, it first quantizes its 4-bit
 runs into the image cache (below), then takes the lock (`otpu-lock`, up to `LOCK_WAIT` seconds,
 default 3600) and runs under it; `PREBUILD=0` skips the prebuild, and under `otpu-lock -- ...`
@@ -448,11 +448,11 @@ computed ahead on any box and copied:
 
 ```sh
 python3 tools/qual/refs.py compute ~/otpu-build/refcache/configs/deploy_bl16mx120_be388a1f.pkl
-rsync -a ~/otpu-build/refcache/ omarchy:otpu-build/refcache/    # from another box
+rsync -a ~/otpu-build/refcache/ BUILD_HOST:otpu-build/refcache/    # from another box
 ```
 
 (`qual.sh` keeps each card's configuration as `$REFCACHE/configs/<deploy>.pkl`; a new build with
-the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On omarchy (2026-10-06,
+the same D, MCOLS, LANES, PAIR, DSTEP and ACT_ROWS has the same one.) On the build host (2026-10-06,
 load 1-14 from other test runs, two jobs at a time) the eight compute in 7.4 minutes; per
 reference, the engine and its tokens: LFM2 int8 39 s, 4-bit 51 s, Qwen3 int8 97 s, 4-bit 139 s,
 Qwen3.5 int8 106 s, 4-bit 161 s, the long prompt 97 s and in prompt runs 114 s, with peak RSS
@@ -474,14 +474,14 @@ The models' DRAM images are the other host cost of a card session. Each card too
 `refs.py card`, its resident run, `decode_profile.py`) builds its model's image before it runs,
 and in 4-bit that build quantizes every weight with numpy. On 2026-10-01 most of slot 3's 95
 minutes under the card lock went to six 4-bit builds (Qwen3.5-2B 9 minutes each, 4B 21 minutes
-each, on opentpu's i7-4790). `opentpu/qcache.py` caches the 4-bit quantizer's results by
+each, on the card host's i7-4790). `opentpu/qcache.py` caches the 4-bit quantizer's results by
 content. The key is a hash of each matrix's fp32 bytes, the format, D, the scale search,
 `opentpu/quant.py`'s source and the numpy version, so a new layout (lookup tables, prefill
 rows, KV capacity) or configuration reuses them and any change to the weights or the quantizer
 misses. `opentpu.host.prebuild` fills the cache before the session, outside the card lock, by
 building the image the tools build (through `Engine`, with a backend that drops it). qual.sh
 runs it when started without the lock, and `otpu-lock --prebuild MODEL:WF:HF` runs it before
-waiting for the lock for any other session. On omarchy the 4B's
+waiting for the lock for any other session. On the build host the 4B's
 prebuild takes 1196 s and then any of its images builds in 41 s; the 2B's take 717 s and 82 s
 (its fp32 embedding table is copied in). The 2B's image from the cache is the uncached one,
 byte for byte (sha256), and the cache holds 0.68 GiB for it, 1.76 GiB for the 4B:
@@ -504,8 +504,8 @@ The cache is `~/otpu-build/qcache/mxu` on a host with `~/otpu-build` (`OTPU_IMAG
 `0` turns it off). It keeps 30 GB (`OTPU_IMAGE_CACHE_GB`), drops the least recently used entries
 first, and writes nothing that would leave under 20 GB of free disk; a prebuild removes the
 temporary files of builds killed while writing (older than an hour). int8 is not cached: it
-quantizes about as fast as the matrix hashes. Its keys hold no host, so a cache filled on omarchy
-can be copied (`rsync -a ~/otpu-build/qcache/mxu/ opentpu:otpu-build/qcache/mxu/`). The tests
+quantizes about as fast as the matrix hashes. Its keys hold no host, so a cache filled on the build host
+can be copied (`rsync -a ~/otpu-build/qcache/mxu/ CARD_HOST:otpu-build/qcache/mxu/`). The tests
 run without it (`tests/conftest.py`). Gemma 4's build goes through it too ([gemma4.md](gemma4.md)).
 
 ### Image builds: in parallel, and cached whole
@@ -517,7 +517,7 @@ elements) in numpy on one core. Two changes since:
 
 - **The builds quantize in parallel.** The 4-bit quantizer's scale search runs on a few rows at
   a time (`qcache.quantize_rows`, PIECE = 32K elements): its float64 temporaries stay in a
-  core's caches, where whole matrices left every core waiting on the memory bus. On omarchy one
+  core's caches, where whole matrices left every core waiting on the memory bus. On the build host one
   core quantizes an element in 110 ns instead of 240, and 16 processes in 17 ns instead of 86.
   Rows are quantized on their own, so the result is the same, bit for bit. The Qwen3, LFM2 and
   Qwen3.5 builds hand their matrices to a `qcache.Batch`: the build's process converts each
@@ -526,7 +526,11 @@ elements) in numpy on one core. Two changes since:
   the host's CPUs; 1 quantizes in the build's process), in jobs of 4M elements, two queued per
   worker. Gemma 4's own quantization jobs use the same pool, with as many workers as the free
   memory holds at 1.5 GiB each (`qcache.build_jobs`). The images are the serial build's, byte
-  for byte.
+  for byte. A resident expert pool (Qwen3.5 above 4 GiB, AW 36) goes through a Batch too
+  (`ExpertFormat.submit`): packed one expert at a time in the build's process, an expert of
+  Qwen3.5-35B-A3B's shapes took 0.68 s on a laptop (116 minutes for its 10,240), in a Batch of 4
+  workers 0.16 s. Its matrices then fill the 4-bit cache by about the pool's size (17 GB for
+  the 35B-A3B against the cache's 30 GB).
 - **The finished image is cached** (`opentpu/imgcache.py`). An `Engine` builds its image
   through `imgcache.build`, keyed by the checkpoint (its files' names, sizes, modification times
   and safetensors headers), the layout (Spec, configuration, KV capacity, prefill rows, formats,
@@ -550,7 +554,7 @@ elements) in numpy on one core. Two changes since:
   2026-10-10). A new KV capacity, configuration, format or tree builds again, from the 4-bit
   cache.
 
-LFM2-2.6B fp4 with its int8 head (`--cap 2048`, the card's configuration), on omarchy (16
+LFM2-2.6B fp4 with its int8 head (`--cap 2048`, the card's configuration), on the build host (16
 threads, shared with other agents' jobs, 2026-10-08):
 
 | build | main (8eaa480) | parallel |
@@ -809,7 +813,7 @@ voltage, so the risk is only that calibration fails or that data goes bad, and a
 undoes a JTAG load. Only the card can show whether they calibrate, and whether the data stays
 correct as the die warms. Their deploy directories carry `_oos` (out of spec) in the name.
 
-**Builds** (measured, Vivado 2026.1 on omarchy, 2026-09-27; MCOLS=2, core 100 MHz). All timing
+**Builds** (measured, Vivado 2026.1 on the build host, 2026-09-27; MCOLS=2, core 100 MHz). All timing
 constraints are met:
 
 | DDR3 | commit | WNS / WHS | core_clk slack | MIG ui_clk (clk_pll_i) slack | deploy directory |
@@ -823,9 +827,9 @@ own 400 MHz IDELAY reference (`clk_ref_mmcm_400`). Each deploy directory holds o
 otpu.mcs, otpu.prm, reports/ and `mig_messages.txt`, which lists the MIG critical warnings and
 the patch messages of that build.
 
-**Production image (since 2026-09-29, evening): `build/deploy_champ_e698dcd7`** (opentpu
+**Production image (since 2026-09-29, evening): `build/deploy_champ_e698dcd7`** (the card host
 `~/otpu-build/deploy_champ_e698dcd7`, with `~/otpu-build/production` pointing to it; the bitstream
-also on omarchy in `~/otpu-build/champ-e698dcd7`). It is main e698dcd, the Vivado tournament's
+also on the build host in `~/otpu-build/champ-e698dcd7`). It is main e698dcd, the Vivado tournament's
 full-effort champion at 133.33 MHz, built as `BUILD_ID=0f3a0000 CORE_MHZ=133.33 make bit DDR=1066`
 with `make bit`'s defaults: LiteDRAM, MCOLS=4 (the systolic MXU) and 32-beat reads.
 - **BUILD_ID** reads 0x0f3a0000, the constant the tournament gives every full build, not the
@@ -842,7 +846,7 @@ with `make bit`'s defaults: LiteDRAM, MCOLS=4 (the systolic MXU) and 32-beat rea
   134.2 MHz, XDMA's 125 MHz clock 134.9 MHz.
 - **Area:** 176,357 LUT (59.1%), 146,863 FF, 713 DSP, 607.5 BRAM tiles, 60,694 slices (81.3%).
 
-Qualified on the card 2026-09-29, 20:48-21:30 (opentpu's clock). The run was `LOAD=0
+Qualified on the card 2026-09-29, 20:48-21:30 (the card host's clock). The run was `LOAD=0
 tools/qual/qual.sh champ-e698dcd7 fast` from a main e698dcd host tree, after a JTAG load and a
 warm reboot. It took 41 min: 0 FAIL, 34 PASS.
 - **Calibration at start-up:** by the core's CPU.
@@ -856,7 +860,7 @@ warm reboot. It took 41 min: 0 FAIL, 34 PASS.
   per-position and resident.
 
 Decode and prefill (`tools/qual/perf.py`: 64 greedy tokens after a 512-token prompt, argmax on the
-host; wall on opentpu). DRAM is the card's counters while it runs; the peak is 17.1 GB/s.
+host; wall on the card host). DRAM is the card's counters while it runs; the peak is 17.1 GB/s.
 
 | Model | Weights | Mcycles/token | decode device / wall tok/s | DRAM while decoding | prefill device tok/s | se-cand3 decode / prefill device tok/s |
 |---|---|---|---|---|---|---|
@@ -882,7 +886,7 @@ DRAM in both images: at 82-85% of the DDR3-1066 peak with LiteDRAM, as with the 
 for 13-15% less time per token. At 100 MHz the 128-byte port caps DRAM at 12.8 GB/s, and that
 image read at 70-74% of the peak ([litedram.md](litedram.md), section 8).
 
-**Previous production image (2026-09-29 until the evening): `build/deploy_secand3_02569bc`** (omarchy and opentpu
+**Previous production image (2026-09-29 until the evening): `build/deploy_secand3_02569bc`** (the build host and the card host
 `~/otpu-build/`; branch se-cand3 02569bc, built with `SE=v2` (now the only configuration), `AXI_BL=32`,
 `AXI_WBL=8`, BUILD_ID 002569bc). The stream engine (docs/stream.md) replaces the VPU's two
 composite chains and the DMA's DSTEP datapath. The composites run on the 8 lanes' three stages
@@ -900,7 +904,7 @@ Core clock 120.755 MHz, DDR3-1066.
   pn32 was 214,900 LUT, 353 DSP and 94.8% of slices. VPU + DMA: 52.9K LUT / 86 DSP against
   66.7K / 138 (docs/stream.md 12.3).
 
-Qualified on the card 2026-09-29 on opentpu with `LOAD=0 tools/qual/qual.sh
+Qualified on the card 2026-09-29 on the card host with `LOAD=0 tools/qual/qual.sh
 deploy_secand3_02569bc fast` (JTAG load, then a warm reboot; host tree se-cand3): 0 FAIL, 44 PASS.
 - The selftest passes, with its new `stream` stage: STREAM in every mode, and DSTEP.
 - The warm diag passes after the 180 s soak.
@@ -908,7 +912,7 @@ deploy_secand3_02569bc fast` (JTAG load, then a warm reboot; host tree se-cand3)
   resident.
 
 Decode (`tools/decode_profile.py`, greedy, 96 tokens; device cycles; the wall numbers are
-opentpu's):
+The card host's):
 
 | Model | Weights | Mcycles/token | device tok/s | wall tok/s | pn32 device tok/s |
 |---|---|---|---|---|---|
@@ -923,7 +927,7 @@ opentpu's):
 - The int8 decode profile (the full qual profile) has not been run on this image.
 
 **Previous production image (2026-09-28 afternoon until 2026-09-29):
-`build/deploy_pnbl32_e2521032`** (omarchy
+`build/deploy_pnbl32_e2521032`** (the build host
 `~/otpu-build/`; branch prod-next e252101, built with `AXI_BL=32`, `AXI_WBL=8`, the
 ExtraTimingOpt implementation strategy, BUILD_ID e2521032). On top of be388a32's RTL:
 - the DMA writes an ST's chunks in runs of 32 on consecutive cycles (they gather in the LD chunk
@@ -946,7 +950,7 @@ chunk buffer at +0.048 ns. No Synth 8-6430 memory; congestion level 5 at most. T
 
 Qualified on the card 2026-09-28 10:54-11:32 with `tools/qual/qual.sh deploy_pnbl32_e2521032
 full` (host tree prod-next e0315b4 = e252101 + main 27bdf62; the six ISA references computed
-ahead on the Mac in 6.5 min and copied; omarchy's load 1.2-1.5, nothing else running): 0 FAIL,
+ahead on a laptop in 6.5 min and copied; the build host's load 1.2-1.5, nothing else running): 0 FAIL,
 32 PASS, 4 ALL PASS.
 - selftest with the 12 op checks passes;
 - `otpu-diag --mem full --soak 20` passes cold (54 °C) and after the 300 s warm soak;
@@ -1007,7 +1011,7 @@ RTL at 16-beat reads):
 
 The card charges an 8-beat write burst about as the model does (one wgap per AW), not per beat.
 
-**Host path, measured 2026-09-28 12:14-12:23** on this image (host main 59a9f06, omarchy's load
+**Host path, measured 2026-09-28 12:14-12:23** on this image (host main 59a9f06, the build host's load
 1.8-3.8, a niced test run beside it; 96 greedy tokens per run; logs and JSON in the deploy
 directory's `readme-run/`). The host's changes since e0315b4:
 - the sampler is warmed when the Chat starts, so the first pick (2-10 ms in a new process) is off
@@ -1052,10 +1056,10 @@ HALTED to the next RUN is:
 - the run arguments, 21 us;
 - CTRL, 11 us.
 
-**On opentpu (measured 2026-09-28 16:56-19:20 UTC-3, like the times above; same image, host
+**On the card host (measured 2026-09-28 16:56-19:20 UTC-3, like the times above; same image, host
 main a739d08; load 0.6-2.7).**
 `qual.sh fast` with `LOAD=0` passed in 37 min, with 0 FAIL. The logs and JSON are in the deploy
-directory's `opentpu-run/` on opentpu. The device numbers are omarchy's within 0.3%; the host
+directory's `opentpu-run/` on the card host. The device numbers are the build host's within 0.3%; the host
 takes longer per token. LFM2.5-230M, 4-bit with an int8 head, 5 runs:
 
 | run | wall tok/s | device tok/s | host critical path, ms/token |
@@ -1065,13 +1069,13 @@ takes longer per token. LFM2.5-230M, 4-bit with an int8 head, 5 runs:
 | 3 | 86.55 | 90.34 | 0.489 |
 | 4 | 86.79 | 90.35 | 0.452 |
 | 5 | 87.12 | 90.40 | 0.418 |
-| median | **86.77** | 90.35 | 0.452 (omarchy: 0.177) |
+| median | **86.77** | 90.35 | 0.452 (the build host: 0.177) |
 
 The replies are identical token for token. They match the A/B runs below, qual's run, and
-omarchy's 5 runs above. The other configurations, one run each (their replies match
-omarchy's):
+the build host's 5 runs above. The other configurations, one run each (their replies match
+the build host's):
 
-| Model | Weights | device tok/s | wall tok/s | host critical path, ms/token (omarchy) |
+| Model | Weights | device tok/s | wall tok/s | host critical path, ms/token (the build host) |
 |---|---|---|---|---|
 | LFM2.5-230M | int8 | 60.69 | 58.13 | 0.686 (0.231) |
 | Qwen3-0.6B | int8 | 22.81 | 22.57 | 0.481 (0.193) |
@@ -1082,14 +1086,14 @@ omarchy's):
 A `watch otpu-smi` (it reads the card every 2 s) ran beside all of these except Qwen3.5 4-bit;
 it stopped during the Qwen3 4-bit run.
 Three LFM2 4-bit runs without it, in the A/B below, gave 86.96, 86.69 and 86.10: no visible
-effect. These numbers are recorded as measured; the opentpu host path was not tuned.
+effect. These numbers are recorded as measured; the card host's path was not tuned.
 
 **Shelved: a smaller last LM-head chunk (branch host-tail, 694237d, not merged).** The idea: split
 the decode LM head's last chunk so that the chunk stored last has 2048 rows (LFM2: 7 x 8192 +
 6144 + 2048 rows). The read after HALTED would then shrink from 32 KB to 8 KB. What we checked:
 - In the simulator, the logits and the tokens stayed identical in all six configurations.
 - The perf model charged 1,225 cycles (10 us) more per LFM2 token, for the extra MM.
-- On opentpu, alternating with main (LFM2 4-bit), it lost: 84.76, 84.24 and 80.96 tok/s wall,
+- On the card host, alternating with main (LFM2 4-bit), it lost: 84.76, 84.24 and 80.96 tok/s wall,
   against 86.96, 86.69 and 86.10.
   - The read after HALTED went from 89.5 to 196.5 us.
   - HALTED was seen later: the median overshoot went from 0.003-0.006 ms to 0.065-0.194 ms.
@@ -1101,11 +1105,11 @@ the split without reading the next-to-last piece earlier, or ending the stream l
 
 The same branch (b51ee4e) also kept a running greedy argmax, and read only STATUS and CYCLES
 after a streamed step. In those runs the sampler and the counter reads moved by only 1-2 us.
-They were never measured apart from the split, and were not tried on omarchy.
+They were never measured apart from the split, and were not tried on the build host.
 DSTEP alone, 22% slower on the card than simulated with 16-chunk runs, now matches the
 simulator: that gap was the read / write turn per 2 KB run.
 
-**Production image 2026-09-28 11:00 until the afternoon (BL32): `build/deploy_bl32mx120_be388a32`** (omarchy
+**Production image 2026-09-28 11:00 until the afternoon (BL32): `build/deploy_bl32mx120_be388a32`** (the build host
 `~/openTPU/build/`; be388a1 built with `AXI_BL=32`: port B reads in bursts of up to 32 beats,
 the adapter's request queue 32 deep). Core clock 120.755 MHz, DDR3-1066, WNS +0.066 ns, WHS
 +0.016 ns. The worst path is MXU q_h -> TMEM pw_d at +0.066 ns (11 levels). The adapter's
@@ -1113,7 +1117,7 @@ qc -> qb_n (the run / queue count) comes next at +0.097 ns (18 levels): QD 32 fi
 margin. `make bit` now builds it (`AXI_BL` defaults to 32).
 
 BL16 vs BL32 A/B, 2026-09-28 08:44-08:55: the same session, host main 1654f70 (the poll fix),
-omarchy's load 1.5-2.3 during BL16 and 1.6-4.1 during BL32. Decode is `tools/decode_profile.py`,
+the build host's load 1.5-2.3 during BL16 and 1.6-4.1 during BL32. Decode is `tools/decode_profile.py`,
 greedy, 96 tokens, streamed logits; "wall" is the whole run, the first window included.
 
 | Model | Weights | BL16 Mcycles | BL16 device / wall tok/s | BL32 Mcycles | BL32 device / wall tok/s | BL32 vs BL16 (device) |
@@ -1142,7 +1146,7 @@ The per-position program at pos 50 (1.309 M at BL 32) is not comparable to the c
 A refit with a larger per-beat share (tgap 0.90 + bgap 0.10, or 0.60 + 0.14) moves rw_bench
 away from the card at BL 16 / 32 (75,706 / 73,915 and 76,975 / 75,731 cycles), so the fit stays.
 
-Qualified on the card 2026-09-28 08:58-10:54 (host tree main 1654f70; omarchy's load 6-16:
+Qualified on the card 2026-09-28 08:58-10:54 (host tree main 1654f70; the build host's load 6-16:
 2 Vivado builds and a test suite):
 - selftest with the 12 op checks passes;
 - `otpu-diag --mem full --soak 20` passes cold (54 °C) and after a 315 s warm soak (61 -> 64
@@ -1167,7 +1171,7 @@ and DRAM (the card's counters over 64 decode tokens):
 
 rw_bench on it: mm 122.8 B/cycle, mm+st 211,763 cycles, mm+dstep 151,974, dstep 89,037.
 
-**Production image 2026-09-28 morning (BL16): `build/deploy_bl16mx120_be388a1f`** (omarchy; branch
+**Production image 2026-09-28 morning (BL16): `build/deploy_bl16mx120_be388a1f`** (the build host; branch
 tv-cand2 be388a1: main 6e2605b + lfm2-cycles 6fb2851 (port B read bursts up to 64 beats) +
 the tournament's MXU / adapter timing fixes (q_tz from its factors, dg1 registered, the port-A
 return registered, DSTEP fill and RMAX drain registered), built with `AXI_BL=16`. Core clock
@@ -1187,7 +1191,7 @@ Qualified on the card 2026-09-28 06:46-07:43 (host tree host-8efceb7):
 
 Device numbers from the same session: decode Mcycles/token from `tools/decode_profile.py`
 (greedy, 96 tokens, streamed logits); DRAM from the counters over 64 tokens; prefill from a
-512-token prompt. The wall columns are left out: omarchy's load was 11-14 during the session
+512-token prompt. The wall columns are left out: the build host's load was 11-14 during the session
 (2 Vivado builds and a test suite).
 
 | Model | Weights | Mcycles/token | device tok/s | prefill device tok/s | DRAM read per token | DRAM while decoding | vs aebb0bf0 (device) |

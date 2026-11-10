@@ -29,7 +29,7 @@ distribution (section 5.2).
 --mhz 133.33 --ldc --rows R --logits all` gives the cycles of one run of R rows with logits for
 every row. It uses the production configuration: `OTPU_MXU=systolic OTPU_MCOLS=4 OTPU_PAIR=1
 OTPU_DSTEP=1 OTPU_STREAM=1`. R = 1 is the decode step (`--rows 0`). This is the card's qual
-operating point. Measured on omarchy, main 16e578c:
+operating point. Measured on the build host, main 16e578c:
 
 | model | decode step (R = 1) | R = 2 | R = 3 | R = 4 | LM head share of a decode step |
 |---|---|---|---|---|---|
@@ -375,7 +375,7 @@ These are projections; section 7.1 measures a.
 
 ### 7.1 Measured acceptance (phase 0)
 
-`tools/mtp_accept.py` measures a offline, on the Hugging Face model on omarchy (float32;
+`tools/mtp_accept.py` measures a offline, on the Hugging Face model on the build host (float32;
 bfloat16 for Qwen3.5-4B and Gemma 4 E2B). It uses no card and no simulator.
 
 - **Prompts.** There are nine, each through the model's chat template with thinking off:
@@ -385,7 +385,7 @@ bfloat16 for Qwen3.5-4B and Gemma 4 E2B). It uses no card and no simulator.
     short texts in the tool.
 
   Each runs for up to 256 tokens, greedy and sampled. Sampling uses otpu-chat's defaults;
-  Gemma's and SmolLM3's come from their generation_config.json. omarchy's Gemma 4 E2B is the
+  Gemma's and SmolLM3's come from their generation_config.json. The build host's Gemma 4 E2B is the
   pre-trained checkpoint, which has no chat template, so its prompts are a plain
   "User: ... Assistant:" dialogue.
 - **Drafts.** Every generated token after the first gets drafts from the tokens before it:
@@ -636,14 +636,14 @@ Greedy MTP therefore gives plain greedy's tokens bit for bit only when two condi
   store.
 
 **Tests.** Greedy tokens must equal plain greedy decode's, bit for bit:
-- On tiny models (Mac) with three drafters:
+- On tiny models (a laptop) with three drafters:
   - the MTP head;
   - forced-right drafts (every draft accepted, so the parity flips every iteration);
   - forced-wrong drafts.
 - After the loop, the committed slot equals plain decode's state, word for word.
 - With int8 weights, and fp4 with PAIR at MCOLS 4. The prompt runs as plain prefill's
   runs.
-- On the real 0.8B and 2B on omarchy, a few prompts.
+- On the real 0.8B and 2B on the build host, a few prompts.
 
 **Measurements.**
 - perf_qwen gets `--mtp verify` and `--mtp draft` at position 544. The verify run's c_2 is
@@ -843,7 +843,7 @@ Programs at cap 4096 (instructions; every one fits its 8K slot):
 
 ### 10.2 Milestone 2: the loop on the card
 
-Card session 2026-10-01 19:50-19:59 (opentpu), build 72256074 (xfix: Gen1, 133.33 MHz,
+Card session 2026-10-01 19:50-19:59 (the card host), build 72256074 (xfix: Gen1, 133.33 MHz,
 DDR3-1066), tree dfac215. Setup as 10.1: phase 0's prompts 0, 3 and 7, 48 tokens each.
 - Plain greedy is the production loop on the card (`Engine.generate_card`).
 - MTP is `MTPDecoder.generate_card`: one device run per generation.
@@ -1162,12 +1162,12 @@ start where the loop stopped. Two changes make that work.
 - The phase 3 and 4 loop tests pass with the last D (test_mtp: 36 passed).
 
 **RTL.** With the last D, `test_mtp_loop_on_rtl` and `test_mtp_sampled_loop_on_rtl` pass
-(omarchy, Verilator).
+(the build host, Verilator).
 
 **Real models on the ISA simulator.** `tools/mtp_decode.py --loop device --sample ...`, seed 0,
 prompts 0, 3 and 7, 48 tokens: sampled MTP's tokens equal plain sampled decode's.
 - The 2B at chat's default (T 0.7, top-k 20, top-p 0.8): 3/3.
-- The 2B with penalty 1.1: 3/3 (prompt 7 in a second run, after omarchy's memory guard
+- The 2B with penalty 1.1: 3/3 (prompt 7 in a second run, after the build host's memory guard
   stopped the first).
 - The 0.8B at chat's default: 3/3. Its acceptance per prompt, 0.62 / 0.68 / 0.47, equals the
   card's below.
@@ -1178,7 +1178,7 @@ prompts 0, 3 and 7, 48 tokens: sampled MTP's tokens equal plain sampled decode's
 
 Production build e4db91c9 (Gen2 x8, pa), 133.33 MHz, fp4 with an int8 head, cap 1024, phase
 0's prompts 0, 3 and 7, 48 tokens, seed 0, one otpu-lock window (2026-10-02 02:58-03:17
-opentpu).
+The card host).
 
 **Sampled, chat's default (T 0.7, top-k 20, top-p 0.8): 9/9 prompts give plain sampled
 decode's tokens.** The 2B with penalty 1.1 gives them too, 3/3. Device tok/s over the 141

@@ -180,5 +180,5 @@ reserved now (0xA0 + 4s).
 5. BCU1525 platform (D8), as far as possible before the hardware arrives.
 
 1 first; then 2; 3, 4 and 5 in parallel once 2 is in. Each lands on `main` after its gates
-(Mac subset, omarchy full gate with RTL), the YPCB build checked by lint and, where the netlist
+(a laptop's subset, the build host full gate with RTL), the YPCB build checked by lint and, where the netlist
 can change, by a Vivado build compared against production.

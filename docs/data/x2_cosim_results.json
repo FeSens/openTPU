@@ -1,0 +1,298 @@
+{
+  "integration_base": "42c0b3b9",
+  "tested_core_checkpoint": "d788abade0610786064ce832ea4d3ed72b004e13",
+  "hardware_measurement": false,
+  "clock_hz": 150000000,
+  "link_latency_cycles": 40,
+  "mac": {
+    "passed": 172,
+    "skipped": 2,
+    "deselected": 7
+  },
+  "tiny": {
+    "layers": 2,
+    "prompt": [
+      11,
+      222,
+      333
+    ],
+    "next_tokens": [
+      838,
+      838,
+      838
+    ],
+    "generated": [
+      838,
+      838,
+      838,
+      838,
+      838,
+      838
+    ],
+    "decode_cycles": [
+      10721,
+      10774,
+      10764
+    ],
+    "generate_cycles": 67773,
+    "generate_cycles_per_token": 11295.5,
+    "passed": 2,
+    "log": "tree-cx-cosim/tiny.log",
+    "max_rss_kib": 594240,
+    "swaps": 0,
+    "pytest_summary": "2 passed, 29 deselected in 119.00s (0:01:58)"
+  },
+  "qwen3_0_6b": {
+    "layers": 28,
+    "prompt": [
+      151644,
+      872,
+      198
+    ],
+    "next_tokens": [
+      1479,
+      198,
+      12555
+    ],
+    "generated": [
+      374,
+      279,
+      897
+    ],
+    "decode_cycles": [
+      727970,
+      727621,
+      728537
+    ],
+    "generate_cycles": 2187799,
+    "generate_cycles_per_token": 729266.3333333334,
+    "passed": 1,
+    "log": "tree-cx-cosim/qwen3.log",
+    "max_rss_kib": 17049548,
+    "swaps": 0,
+    "pytest_summary": "1 passed, 30 deselected in 4698.35s (1:18:18)"
+  },
+  "cuts": [
+    {
+      "model": "q36",
+      "point": "cuts/q36-4:fp4:int8:r60",
+      "ok": true,
+      "link_lat": 40,
+      "cycles": 191491,
+      "instructions": [
+        1845,
+        1845,
+        1845,
+        1845
+      ],
+      "collectives_mod65536": 31,
+      "checked_low_bytes_per_slice": 14568448,
+      "logit_words_checked": 4096,
+      "argmax": 0,
+      "sequences": [
+        31,
+        31
+      ],
+      "collective_delta": [
+        31,
+        31
+      ],
+      "params": {
+        "SE_R": 2,
+        "DMA_DEPTH": 512,
+        "RLY": 2459622171489935906,
+        "DMAP": 228,
+        "TRACE_DEPTH": 32768,
+        "TRACE_QD": 256
+      },
+      "plusargs": [
+        "+cp=3333",
+        "+dimm_mc=1",
+        "+mc_ba=15",
+        "+mc_rw=62",
+        "+mc_strict=1",
+        "+mc_xbsw=16",
+        "+mc_xrtw=8",
+        "+mc_xwtr=8",
+        "+mc_xgq=12",
+        "+max_cycles=100000000",
+        "+x2_debug"
+      ],
+      "trace_count": 15899,
+      "board_projection_cycles": 191851,
+      "delta_projection_percent": -0.18764562082032032,
+      "one_card_cycles": 367844,
+      "one_card_speedup": 1.9209466763451024,
+      "phase_cycles": {
+        "prologue": 5838,
+        "DN": 76992,
+        "MoE": 80499,
+        "ATT": 19628,
+        "HEAD": 8527
+      },
+      "projection": {
+        "repeats": 10,
+        "body_cycles": 177126,
+        "prologue_cycles": 5838,
+        "cut_head_cycles": 8527,
+        "full_head_cycles": 564567.5,
+        "head_estimated": true,
+        "full_cycles": 2341665.5,
+        "full_tok_s_150mhz": 64.0569714162847,
+        "useful_bytes": 1957000000,
+        "useful_bandwidth_fraction": 0.8161425329535751
+      },
+      "max_rss_kib": 3865716,
+      "elapsed": "15:31.59",
+      "swaps": 0,
+      "useful_gb_s": 125.35949306166913
+    },
+    {
+      "model": "q38",
+      "point": "cuts/q38-4:fp4:int8:r60",
+      "ok": true,
+      "link_lat": 40,
+      "cycles": 955031,
+      "instructions": [
+        1768,
+        1768,
+        1768,
+        1768
+      ],
+      "collectives_mod65536": 89,
+      "checked_low_bytes_per_slice": 92685312,
+      "logit_words_checked": 4096,
+      "argmax": 0,
+      "sequences": [
+        89,
+        89
+      ],
+      "collective_delta": [
+        89,
+        89
+      ],
+      "params": {
+        "SE_R": 2,
+        "DMA_DEPTH": 512,
+        "RLY": 2459622171489935906,
+        "DMAP": 228,
+        "TRACE_DEPTH": 32768,
+        "TRACE_QD": 256
+      },
+      "plusargs": [
+        "+cp=3333",
+        "+dimm_mc=1",
+        "+mc_ba=15",
+        "+mc_rw=62",
+        "+mc_strict=1",
+        "+mc_xbsw=16",
+        "+mc_xrtw=8",
+        "+mc_xwtr=8",
+        "+mc_xgq=12",
+        "+max_cycles=100000000",
+        "+x2_debug"
+      ],
+      "trace_count": 28917,
+      "board_projection_cycles": 936484,
+      "delta_projection_percent": 1.980492992939542,
+      "one_card_cycles": 1839124,
+      "one_card_speedup": 1.9257217828531221,
+      "phase_cycles": {
+        "prologue": 2314,
+        "DN": 231956,
+        "MLP": 634809,
+        "ATT": 64179,
+        "HEAD": 21766
+      },
+      "projection": {
+        "repeats": 16,
+        "body_cycles": 930951,
+        "prologue_cycles": 2314,
+        "cut_head_cycles": 21766,
+        "full_head_cycles": 1360000.0,
+        "head_estimated": true,
+        "full_cycles": 16257530.0,
+        "full_tok_s_150mhz": 9.226493815481195,
+        "useful_bytes": 14596000000,
+        "useful_bandwidth_fraction": 0.8767571857471584
+      },
+      "max_rss_kib": 2177516,
+      "elapsed": "22:39.86",
+      "swaps": 0,
+      "useful_gb_s": 134.66990373076354
+    },
+    {
+      "model": "goss",
+      "point": "cuts/goss-2:fp4:int8:r60",
+      "ok": true,
+      "link_lat": 40,
+      "cycles": 809560,
+      "instructions": [
+        1010,
+        1010,
+        1010,
+        1010
+      ],
+      "collectives_mod65536": 12,
+      "checked_low_bytes_per_slice": 2372276224,
+      "logit_words_checked": 201088,
+      "argmax": 0,
+      "sequences": [
+        12,
+        12
+      ],
+      "collective_delta": [
+        12,
+        12
+      ],
+      "params": {
+        "SE_R": 2,
+        "DMA_DEPTH": 512,
+        "RLY": 2459622171489935906,
+        "DMAP": 228,
+        "TRACE_DEPTH": 32768,
+        "TRACE_QD": 256
+      },
+      "plusargs": [
+        "+cp=3333",
+        "+dimm_mc=1",
+        "+mc_ba=15",
+        "+mc_rw=62",
+        "+mc_strict=1",
+        "+mc_xbsw=16",
+        "+mc_xrtw=8",
+        "+mc_xwtr=8",
+        "+mc_xgq=12",
+        "+max_cycles=100000000",
+        "+x2_debug"
+      ],
+      "trace_count": 20706,
+      "board_projection_cycles": 807765,
+      "delta_projection_percent": 0.22221809560949435,
+      "one_card_cycles": 1580314,
+      "one_card_speedup": 1.9520653194327784,
+      "phase_cycles": {
+        "prologue": 1791,
+        "ATT": 59627,
+        "MoE": 127399,
+        "HEAD": 620736
+      },
+      "projection": {
+        "repeats": 12,
+        "body_cycles": 187033,
+        "prologue_cycles": 1791,
+        "cut_head_cycles": 620736,
+        "full_head_cycles": 620736,
+        "head_estimated": false,
+        "full_cycles": 2866923,
+        "full_tok_s_150mhz": 52.32090293321446,
+        "useful_bytes": 2510208000,
+        "useful_bandwidth_fraction": 0.8550543561860573
+      },
+      "max_rss_kib": 10133200,
+      "elapsed": "16:45.36",
+      "swaps": 0,
+      "useful_gb_s": 131.3363491101784
+    }
+  ]
+}

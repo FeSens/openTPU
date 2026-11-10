@@ -30,7 +30,7 @@ host fp4 kernel.
   - The best fits for the card are LFM2.5-8B-A1B (just over 4 GiB), gemma-4-26B-A4B and
     Qwen3.5-35B-A3B (3-4x the card, inside host RAM), and Qwen3-Next-80B-A3B (larger than host
     RAM: the SSD tier).
-- **The hierarchy (section 1, measured on opentpu).** Card DRAM runs at 14 GB/s, PCIe Gen1 at
+- **The hierarchy (section 1, measured on the card host).** Card DRAM runs at 14 GB/s, PCIe Gen1 at
   1.3 GB/s and the SSD at 0.51 GB/s. A missing expert costs about 10x its compute time to bring
   over Gen1.
 - **Router traces (section 3; 4 texts x 2048 tokens, CPU).** At the card's cache size, a
@@ -100,18 +100,18 @@ The tools:
 | Level | Size | Bandwidth | Source |
 |:--|--:|--:|:--|
 | Card DRAM (2 x DDR3-1066) | 4 GiB | 13.9-14.5 GB/s while decoding | card counters, README |
-| PCIe Gen1 x8 (XDMA), host -> card | | 1.26-1.34 GB/s (opentpu); 1.42 (omarchy); 1.7 in best-placed 8 MiB calls (omarchy) | `otpu-selftest`, docs/host.md |
-| card -> host | | 0.84-1.00 GB/s (opentpu) | `otpu-selftest` |
-| one small DMA call (64 B - 4 KiB) | | 11-15 us (omarchy, interrupt mode) | docs/host.md |
-| Host RAM (opentpu, DDR3, i7-4790) | 31 GB (23-28 free) | 22.6 GB/s (4-thread fp32 GEMV), 13.6 (1-thread sum) | measured 2026-09-29 |
+| PCIe Gen1 x8 (XDMA), host -> card | | 1.26-1.34 GB/s (the card host); 1.42 (the build host); 1.7 in best-placed 8 MiB calls (the build host) | `otpu-selftest`, docs/host.md |
+| card -> host | | 0.84-1.00 GB/s (the card host) | `otpu-selftest` |
+| one small DMA call (64 B - 4 KiB) | | 11-15 us (the build host, interrupt mode) | docs/host.md |
+| Host RAM (the card host, DDR3, i7-4790) | 31 GB (23-28 free) | 22.6 GB/s (4-thread fp32 GEMV), 13.6 (1-thread sum) | measured 2026-09-29 |
 | SSD (Crucial BX500 240 GB, SATA, LUKS + btrfs zstd) | 123-140 GB free | 512 MB/s (O_DIRECT, 4 MiB, 1 reader), 515-524 (2-4 readers), 227 MiB/s (128 KiB x 4) | measured 2026-09-29 |
 
-Everything is measured on opentpu, the card's host, unless marked otherwise.
+Everything is measured on the card host, the card's host, unless marked otherwise.
 
 - The SSD figures read a 4 GiB file of random bytes written for the test
   (`dd iflag=direct`). Reads of the models' own files go through btrfs compression, are not
   O_DIRECT, and come from the page cache.
-- opentpu's other disk is an HDD that is not ours.
+- the card host's other disk is an HDD that is not ours.
 - The card sits in the CPU's x16 slot (`max_link_speed` 8 GT/s x16 on the root port, 00:01.0),
   so a Gen2 card would train at 5 GT/s.
 
@@ -179,7 +179,7 @@ Notes:
 
 ## 3. Router traces and the expert cache
 
-`tools/offload/router_trace.py` runs the Hugging Face model in bf16 on CPU, on omarchy. The
+`tools/offload/router_trace.py` runs the Hugging Face model in bf16 on CPU, on the build host. The
 weights are memory-mapped from the checkpoint under a cgroup memory limit, or offloaded to disk.
 It runs over four texts of 2048 tokens each, teacher-forced:
 
@@ -717,7 +717,7 @@ timing-only FAST=1 CORE_MHZ=100 build with `pl_link_cap_max_link_speed {5.0_GT/s
 **Feasibility, 2026-10-01 (ld-memch, before any build).** The verdict's condition is met: the
 35B runs end to end on the card and its token is link-bound (107 of 258 ms in PCIe writes at
 1.455 GB/s).
-- **The host takes 5 GT/s.** opentpu's root port (00:01.0, Haswell's PEG x16) reads
+- **The host takes 5 GT/s.** the card host's root port (00:01.0, Haswell's PEG x16) reads
   `max_link_speed` 8.0 GT/s and runs the card at x8, 2.5 GT/s. The card (01:00.0) advertises 2.5
   GT/s because the XDMA is built for Gen1. Device ID 7028 is already Xilinx's Gen2 x8 default.
 - **What runs in xdma_aclk** (125 -> 250 MHz; XDMA's 7-series Gen2 x8 has a 128-bit AXI side at
@@ -896,7 +896,7 @@ host's bit for bit.
 ## 10. On the card
 
 The production bitstream (build B, 79c5707a, 133.33 MHz, DDR3-1066, WAITW and the generate
-loop) ran path (a) on 2026-09-30. The host side ran on opentpu, with no reload. The models were
+loop) ran path (a) on 2026-09-30. The host side ran on the card host, with no reload. The models were
 LFM2.5-8B-A1B and Qwen3.5-35B-A3B, fp4 with an int8 head, and every token was picked by the
 card's generate loop. The experts streamed from a packed pool file (each expert in the card's
 slot format, packed once) into the per-layer LRU slots. The host only read the file and wrote
@@ -970,7 +970,7 @@ three steps:
 - Each 8-byte directory entry and the `served` word is widened to 128 bytes, with a read of the
   card first.
 
-On omarchy's i5-12600KF, with the DMA dropped (`tools/offload/slot_bench.py --null`), that is
+On the build host's i5-12600KF, with the DMA dropped (`tools/offload/slot_bench.py --null`), that is
 1.3 ms of host CPU per 1.67 MB expert. On the card's slower host, plus the DMA, the 35B paid
 about 3 ms per miss. `BoardDram` (opentpu/host/offload.py, used on any transport that DMAs from
 a worker thread, `dram_of`) does three things instead:
@@ -1163,7 +1163,7 @@ run gave the ISA simulator's tokens and prefill logits bit for bit (`q35ref16`).
 
 - **The pool must be whole.** The card host's checkpoint has no experts, so a run that warms
   more slots, or hints, needs every expert in the pool. Session 4's pool held the 4333 its runs
-  had used; it was filled from the full checkpoint (52 min, four workers on omarchy).
+  had used; it was filled from the full checkpoint (52 min, four workers on the build host).
 - **The page cache.** The 17.1 GB pool does not stay whole in the host's page cache beside an
   11 GB `moe_card` process. A run right after the fill (12.3 GB resident) ran at 3.24 against
   4.11 tok/s warm. The card scripts now read the pool before each timed run and log its
@@ -1191,7 +1191,7 @@ test). The co-simulation gave LFM2.5-8B +35-40% and the link-bound 35B and 26B +
 session 9 (2026-10-01, the production build after B, 72256074: B with xdma_rnum_rids 8, Gen1;
 `tools/offload/sessions/session9.sh`, the first run of the repo's `card_moe.sh`) ran both trees
 in one session, A B A B: A main 7d879e6 against its references, B d29bfe9 against the ISA
-simulator's references remade at d29bfe9 (`reference.sh` on omarchy). All 12 runs gave their
+simulator's references remade at d29bfe9 (`reference.sh` on the build host). All 12 runs gave their
 tree's tokens and prefill logits bit for bit.
 
 | tok/s (two runs) | A, unpaired | B, paired | B / A |
@@ -1268,7 +1268,7 @@ replayed against a host cache over the pool; four 2048-token router traces, 128-
 - The page cache's own LRU beats keeping cold experts out of it and pinning a hot set at every
   size; other slot policies miss more (lru_layer 95 a token, a global LFU 175). The 26B's 13.2 GB
   pool needs about 8 GB (1.9 disk reads a token; 0.4 at 10).
-- opentpu's SSD (a SATA BX500, btrfs on dm-crypt) reads an expert dropped from the page cache in
+- the card host's SSD (a SATA BX500, btrfs on dm-crypt) reads an expert dropped from the page cache in
   4.2 ms one at a time (400 MB/s), 3.4-3.6 ms with a request's misses queued at once
   (POSIX_FADV_WILLNEED, threads, or O_DIRECT in threads): about 3.8 ms more than a cached read.
 - With no disk read a token takes the card's 101 ms outside the windows plus 144 ms of windows
@@ -1298,7 +1298,7 @@ every run:
 - The process is not what crowds the pool: 1.3 GB anonymous, its compile workers 0.1 GB (13.3 GB
   at its peak, the image build). The page cache held the checkpoints a session before had
   mmapped (Qwen3.5 0.8B / 2B / 4B, 13.6 GB) and the run's own (4.74 GB of RssFile): with MGLRU
-  (opentpu: on) once-mapped pages outlive the pool's read() pages. `fincore` shows them.
+  (the card host: on) once-mapped pages outlive the pool's read() pages. `fincore` shows them.
 - So the Engine releases the checkpoint itself once the image is written when its experts
   stream from a pool file (`Engine(release_weights=True)`, the default; a LazyWeights read
   after reopens its file), moe_card queues a request's disk reads by default (`--keep-weights`,
@@ -1328,12 +1328,12 @@ every run:
 
 Session 10's 35B lost its pool's page cache to checkpoints that had been mapped once: the run's
 own (LazyWeights' safe_open maps) and a session before's. With MGLRU (Linux's multi-generational
-LRU: opentpu's 7.2.5 and omarchy's 7.1.4 kernels, `/sys/kernel/mm/lru_gen/enabled` 0x0007) a file
+LRU: the card host's 7.2.5 and the build host's 7.1.4 kernels, `/sys/kernel/mm/lru_gen/enabled` 0x0007) a file
 page some process mapped and touched outlives one read only through read(). The Engine now
 releases its own checkpoint (10.6) and card sessions drop the others (DROPOTHER), but a user's
 host has files a session cannot evict: other models, other applications.
 
-The host test (omarchy: a 1.9 GB memory cgroup, `systemd-run --user --scope -p MemoryMax`; a
+The host test (the build host: a 1.9 GB memory cgroup, `systemd-run --user --scope -p MemoryMax`; a
 1.0 GB "checkpoint" a child process mapped, touched and left; a 1.5 GB pool warmed, then read 3000
 times in 1.67 MB records of zipf popularity), with PoolFile itself for the first and third rows:
 
@@ -1353,7 +1353,7 @@ the preadv (which keeps the reads' size and their GIL release). The pool's pages
 as mapped ones and the dead checkpoint goes first. Costs:
 - the page tables of the pool's touched pages, 8 bytes per 4 KiB: about 33 MB for the 35B's
   17.1 GB pool (2 MB per GB);
-- the touch, measured on omarchy for an expert of 1.67 MB already in the page cache: 44 us the
+- the touch, measured on the build host for an expert of 1.67 MB already in the page cache: 44 us the
   first time (fault-around maps 16 pages a fault: about 26 minor faults), 7.9 us after, against
   214 us for its cached preadv. The warm thread pays the first touches (0.45 s for the 35B's
   10,240 experts, off the critical path); a decode token's 102.7 misses pay about 0.8 ms;
@@ -1393,7 +1393,7 @@ The card can't tell where that goes, so `tools/offload/serve_emu.py` runs the ho
 card's host. It drives the real ExpertServer, BoardDram, PoolFile and XdmaTransport code,
 replacing the XDMA calls with waits of the card's costs: 20 us per call plus the bytes at 1.365
 GB/s for a write, and 22 us for a beat read. It replays a session's requests (layer, misses, the
-device's gap), reads the real pool file, and logs every DMA call. On opentpu it fits 0.30-0.33 ms
+device's gap), reads the real pool file, and logs every DMA call. On the card host it fits 0.30-0.33 ms
 + 1.65 ms per miss, close to the card's fit, so its breakdown is used below. The 35B, per
 request with misses (1296 of 1500):
 
@@ -1409,7 +1409,7 @@ Four host-side changes:
 - `preadv_iov`: BoardDram reads a split expert through libc's preadv on an iovec array
   (addresses, lengths) instead of os.preadv on a list of buffers. os.preadv holds the GIL while
   it gets each buffer (816 per 35B expert, 1684 per 26B expert; about 170 us per expert on
-  opentpu's i7-4790), and the DMA thread waits for that GIL between its calls. Records get
+  the card host's i7-4790), and the DMA thread waits for that GIL between its calls. Records get
   `readiov` from `PoolFile.get`, and a hint's part keeps it.
 - `BoardDram.lead` (0.2): a request's first miss is sent in a fifth plus the rest, not two
   halves. The link starts after 334 KB is read (35B), not 835 KB. Reading runs at about 4.5x the
@@ -1737,7 +1737,7 @@ The proof:
   - a negative control (the tag first) that must break.
 - Card: q35e128s / g26s on the new programs must match refs-d29bfe9's tokens and prefill sha.
   The math is unchanged, so new references are not needed for the result. The programs'
-  references are still recomputed on omarchy, for the record.
+  references are still recomputed on the build host, for the record.
 
 Program sha impact: every MoE model's programs change (moe_ffn, moe_ffn_rows; Qwen3.5-35B-A3B,
 Gemma 4 26B-A4B, LFM2-8B-A1B, the tiny test MoEs). So do their images: the slot pitch, the
@@ -1771,7 +1771,7 @@ The implementation (branch offload-onecall):
 - `checks.waitw_tag` (`tools/qual/waitw.py --tag-rounds N`) is the card's check of the order.
 - `serve_emu.py` times crit to the last tag landed.
 
-The proof on the ISA simulator (all on the Mac):
+The proof on the ISA simulator (all on a laptop):
 - `tests/beat_link.py` is the adversarial link. The server's writes land one 64-byte beat at a
   time, in order. The machine runs again as soon as a WAITW holds, so the card computes while
   later experts' beats are still queued.
@@ -1791,7 +1791,7 @@ The proof on the ISA simulator (all on the Mac):
   beat; the directory after them; served last. It also covers an armed victim's clear before
   its bytes, and a multi-row request's answer at each id's first place.
 
-On the card, session 15 (2026-10-02 04:36-04:54 opentpu):
+On the card, session 15 (2026-10-02 04:36-04:54 on the card host's clock):
 - Setup: production pa e4db91c9, no reload. `session15.sh` ran tree 4ae2aa9 against its
   parent, main cb3dce5 (OLD), A B A B, q35e128s and g26s.
 - `waitw.py --tag-rounds 2000` came first: PASS (2375 MB/s), with the 50 host-write rounds and
@@ -1998,7 +1998,7 @@ but the card's answer cost suggests up to +1-2% on the 35B (0.3-0.5 s per 128 to
 software reorder lands. That reorder is offload's next step: the answer after the first
 expert's lead DMA. Measure B's case again after it.
 
-**Port H out of context** (omarchy, otpu_native_dram alone, 7.5 ns, D = 128):
+**Port H out of context** (the build host, otpu_native_dram alone, 7.5 ns, D = 128):
 - **WNS +0.208 ns, against main's +0.530.** The worst paths in both are existing ones: the tag
   RAM's head pointer fanning out into the LUTRAMs' write addresses, at 0 logic levels and
   about 7 ns of route.
@@ -2044,7 +2044,7 @@ card waits on each answer word and each tag, 10.11):
   other, so each call inside skips the flock's two system calls (each one more wait for the GIL).
 
 serve_emu (Gen2, card-calibrated, posts from the critical end; 128 tokens) gives crit in s.
-Sweeps hs1-hs3 ran on opentpu with the card idle; A, the merged design, is in every sweep (one
+Sweeps hs1-hs3 ran on the card host with the card idle; A, the merged design, is in every sweep (one
 35B A run right after hs3's warm-up, 15.49, is left out):
 
 | tree | 35B | 26B |
@@ -2073,7 +2073,7 @@ B, q35e128s and g26s. Both must match their ISA references bit for bit (refs-s16
 - The 26B's programs did not change (4400270b, 6d7a8ec2), so refs-f725c2b's 90e6b6e06e19da99
   still holds for it.
 
-On the card, session 16 (2026-10-02 08:58-09:19 opentpu):
+On the card, session 16 (2026-10-02 08:58-09:19 on the card host's clock):
 - Setup: production pa e4db91c9, no reload, one lock. M = main a60df35 (A), H = offload-head
   40baa60 (A'), M H M H.
 - All ten runs matched bit for bit: the decode runs against refs-s16, the prefill pair against
@@ -2123,7 +2123,7 @@ Column meanings in the table below:
       A' to within 0.04 s:
       - 35B: -1.23 / -0.44 s, measured -1.19 / -0.42.
       - 26B: -0.22 / -0.34 s, measured -0.20 / -0.32.
-  - On serve_emu with it (sweep hw1, opentpu, the link as above), A -> A' saves:
+  - On serve_emu with it (sweep hw1, the card host, the link as above), A -> A' saves:
     - 26B: 0.34 s per 128 tokens, wall 36.52-36.56 -> 36.18-36.22 s. The card saved 0.20-0.32 s;
       the fixed model said 0.59.
     - 35B: 0.56 s, 27.40 -> 26.84. The card saved 0.4-1.2 s.
@@ -2154,7 +2154,7 @@ the lead's part and the rest: 43-58 us a request with misses.
   victims' tag clears and served must stay behind the data on one engine.
 - Three ways to take the answer off the path:
   1. A second H2C channel. The current bitstream has only `/dev/xdma0_h2c_0` (read-only check
-     on opentpu), so this means XDMA's IP with two H2C channels, sharing its AXI master. The
+     on the card host), so this means XDMA's IP with two H2C channels, sharing its AXI master. The
      answer then goes from its own thread on h2c_1 while h2c_0 carries the lead. An IP option,
      no RTL of ours: it could ride in a fused build.
   2. B's window (10.12, parked): a posted MMIO write, ~1-2 us. The same bound, with port H's
@@ -2169,7 +2169,7 @@ the lead's part and the rest: 43-58 us a request with misses.
 
 ld-memch's H2C sweep (docs/host.md 2) measures a placed write call alone: about 30 us of fixed
 cost plus 345 us a MiB (~3.0 GB/s), and a 64-byte call at 13.3 us. Run inside a card run, the
-same calls cost more (session 16's per-size fit). The serve_emu run on opentpu (emu/link1.jsonl,
+same calls cost more (session 16's per-size fit). The serve_emu run on the card host (emu/link1.jsonl,
 tree 2ce26c5) replays session 16's runs under three calibrations: session 16's own fit, the link
 alone with no --size-cost, and the link alone at 15 us less a data call. All use the card model of
 its own compute (--card-w, 10.13), the default v1 path, and a discarded warm run first.
@@ -2227,7 +2227,7 @@ From `config.json` and transformers' `modeling_gemma4.py`:
   - Experts: 128 per layer, top 8, width 704, GELU-tanh. The checkpoint stores them fused per
     layer: `experts.gate_up_proj` [128, 1408, 2816] (gate rows first) and `experts.down_proj`
     [128, 2816, 704].
-- The checkpoint is 51.6 GB in bf16. omarchy has it whole; opentpu has the stripped one (11.4).
+- The checkpoint is 51.6 GB in bf16. The build host has it whole; the card host has the stripped one (11.4).
   The download is the base model: no chat template, so the references use plain-text prompts.
 
 ### 11.2 How the layer maps
@@ -2327,16 +2327,16 @@ NLL against float, the fp4 head +0.002 of it. `moe_card --wformat int8 --formats
 
 ### 11.4 Host side and plan
 
-- **Host files.** opentpu gets a stripped checkpoint (the non-expert weights, about 7.4 GB in
-  bf16, 4.8 GB of it the text model's) and a split-format pool (3840 experts x 3.45 MB = 13.2 GB fp4), both made on omarchy
+- **Host files.** The card host gets a stripped checkpoint (the non-expert weights, about 7.4 GB in
+  bf16, 4.8 GB of it the text model's) and a split-format pool (3840 experts x 3.45 MB = 13.2 GB fp4), both made on the build host
   from the whole checkpoint. The RAM tier then reads 13.2 GB into a 31 GB host's page cache.
 - **Plan.**
-  1. Emulation on omarchy (float64 + fake quantization against HF bf16, a few prompts): the
+  1. Emulation on the build host (float64 + fake quantization against HF bf16, a few prompts): the
      folds and padding, fp4 against int8 head, greedy tokens.
   2. `moe.py`'s parts (offload) and gemma4's attention and from_hf (gemma4), meeting at a
      tiny random Gemma4-MoE model in tests. The layer composition is checked against HF and
      the ISA simulator bit for bit, the card's side with the live fake card and a split pool.
-  3. The full model's ISA-simulator reference on omarchy, then a card session: done (11.5).
+  3. The full model's ISA-simulator reference on the build host, then a card session: done (11.5).
 
 ### 11.5 On the card: session 8
 
@@ -2345,7 +2345,7 @@ dense layers, fp4 experts and head), 540 slots (18 a layer) by decayed use, the 
 warm, 128 tokens after wiki.txt's first paragraph (125 tokens, plain text), twice.
 
 - **Correct.** Both runs gave the ISA simulator's 16 tokens and prefill logits bit for bit
-  (`q26ref16`, sha 28a40421a62a0cd2; 77 min on omarchy), and the same 128 tokens. HF's bf16
+  (`q26ref16`, sha 28a40421a62a0cd2; 77 min on the build host), and the same 128 tokens. HF's bf16
   greedy differs from token 5, where its top two tie at 26.125.
 
 | 26B, 128 tokens | tok/s wall / device | misses a decode token (2nd half) | MB a decode token | link busy |
@@ -2358,7 +2358,7 @@ warm, 128 tokens after wiki.txt's first paragraph (125 tokens, plain text), twic
   cache; prefill 47 s (a token a step, 125 of them); 128 tokens 46 s.
 - **The DMA guard** (`XdmaTransport`'s lock, main 2a0b962: no host->card call overlaps a
   card->host one). The server's polls never wait on it: every poll reads with `BoardDram`'s
-  queue drained (`poll` flushes before it returns). The lock costs 1.8 us a DMA call on opentpu
+  queue drained (`poll` flushes before it returns). The lock costs 1.8 us a DMA call on the card host
   (flock on tmpfs 1.4, the thread lock 0.4). The polls' reads took 33 us against session 7's
   25; the lock is 2 us of that, the rest is unexplained (the host had rebooted; the XDMA
   options are the same). Two reads a request, at 12.6's 1.5% for each 100 us: about 0.25%.
@@ -2656,7 +2656,7 @@ One otpu-lock, 2026-10-02 13:22-13:43 opentpu.
 - Build and tree: production fmvf 542fc43a; tree offload-s17 2ce26c5 (b16071b with 12.8's fix).
 - Length: 128 tokens.
 - References: every run bit for bit against the ISA simulator's run of its own programs. The
-  hinted runs used q35ref16h, computed on omarchy for this tree with the caps.
+  hinted runs used q35ref16h, computed on the build host for this tree with the caps.
 - Order: a discarded warm-up run of each model's base, then the 35B in A B C C B A. A is
   q35e128s; B is q35e128hn (pre, top 4, n 1, whole-expert parts, --hint-drop); C is
   q35e128hn8 (top 8).
@@ -3070,7 +3070,7 @@ names its own experts. One not landed is a miss; one partly sent gets its rest a
 part goes out on an idle poll, `settle` first, and `end_prefill` dropping what has not landed.
 It is off by default and changes nothing without `--layer-ahead`.
 
-On the card (session pfahead, 2026-10-02 08:05-08:15 opentpu, pa e4db91c9, tree ce8c8a5 = main
+On the card (session pfahead, 2026-10-02 08:05-08:15 on the card host's clock, pa e4db91c9, tree ce8c8a5 = main
 a3da5ff + offload-ahead 665b8a0), pooled slots, R = 2. Every run is bit-exact (95426ebacc3b40a9
 and 90e6b6e06e19da99), and each is compared with a baseline on the same tree:
 
@@ -3217,9 +3217,9 @@ The card side (Engine(layer_ahead="hint"), moe_card --layer-ahead hint):
 
 Two sessions (gemma4, 2026-10-02, one otpu-lock each, production fmvf 542fc43a), R = 2, pooled,
 16 tokens. Every run was bit-exact: the 35B gave lmtime's 95426ebacc3b40a9, the 26B q26ref16's
-90e6b6e06e19da99. The ISA references of the hinted programs match the old ones (omarchy: 35B
+90e6b6e06e19da99. The ISA references of the hinted programs match the old ones (the build host: 35B
 q35ref16 88225ff781699291, 26B q26ref16).
-- pfhint (10:56-11:04 opentpu, tree 5051032): one pair a model, base first.
+- pfhint (10:56-11:04 on the card host's clock, tree 5051032): one pair a model, base first.
 - pfhint2 (11:29-11:48, tree ca913e4: the same programs, plus moe_card --ahead-part): base, hint
   with 1 MiB parts, hint with 4 MiB parts (one part an expert), twice a model, in that order.
 
@@ -3319,7 +3319,7 @@ norm(dense) + norm(acc) and _add_norm, in moe_ffn_rows' order. So a row's result
 bit for bit. The last layer combines only the head's row, in the head run. Token steps (rows
 before conv_k - 1), decode and its programs do not change.
 
-The kernels, measured by ld-memch (ISA against numpy, then RTL co-sim at 133.33 MHz; omarchy
+The kernels, measured by ld-memch (ISA against numpy, then RTL co-sim at 133.33 MHz; the build host
 ~/otpu-build/pf/kcost.py):
 - Bucketing: a loop over the N = rows x k entries (pointer register, ADDI). Per entry it RLDs
   the id, toggles the expert's parity, and either opens a pass (FILL e, A, open[e]) or closes
@@ -3386,7 +3386,7 @@ The server (agreed with offload, 2026-10-02; host only, with begin_prefill(exper
   stale tag.
 - Requests and hints keep their paths (decode, token steps, other prefill).
 
-The scratch (the lead's constraint: not one decode slot), per row (k + 2) x H fp32: the k outputs,
+The scratch (a constraint: not one decode slot), per row (k + 2) x H fp32: the k outputs,
 the expert input and the shared or dense output, plus the ids and weights and a sink row.
 - 35B: 80 KB a row, 41 MB at 512 rows; 26B: 113 KB a row, 58 MB.
 - The server owns it. begin_prefill(scratch=bytes) takes the last ceil(bytes / pitch) slots of
@@ -3396,7 +3396,8 @@ the expert input and the shared or dense output, plus the ids and weights and a 
   - end_prefill hands them back empty, with their tag beats zeroed (or armed, so _reuse zeroes
     them). Scratch data in a tag beat would otherwise read as a landed expert.
 - At 512 rows that is 25 of the 35B's 1680 slots and 17 of the 26B's 540. It is sized to the
-  chunk's rows: 7 and 5 at a 133- / 124-row prompt.
+  chunk's rows: 7 and 5 at a 133- / 124-row prompt (since the pipelined passes, the 512 rows'
+  at any prompt where the slots past them are the expert runs': `moe.em_scratch`).
 
 The changes:
 - moe.py: the prologue, the expert run (bucketing, passes) and the combine.
@@ -3410,7 +3411,7 @@ counts, R = 2); the bucketing against numpy; the server's need path (offload); t
 session, with a warm-up run first and ABBA order, against the predicted column.
 
 The order: offload's v2 parts and the v2 re-measure, which confirms an expert's part cost on the
-card. Then this code, once the lead approves this note.
+card. Then this code, once this note is approved.
 
 ### 13.12 Idle parts: read ahead, one call each (offload-parts)
 
@@ -3477,7 +3478,7 @@ hop, the lock); with none of it a 1 MiB part would take about 0.38 ms:
 
 The contention (13.8) is per byte, so neither change touches it.
 
-On the card: session pfv2 (gemma4; 2026-10-02 14:28-14:52 opentpu; build 542fc43a; 15 runs, all
+On the card: session pfv2 (gemma4; 2026-10-02 14:28-14:52 on the card host's clock; build 542fc43a; 15 runs, all
 bit for bit). Each pair ran after a warm-up, in A B B A order. The prefills are layer-major with
 the layer-ahead predictor (`--layer-ahead hint --ahead-part 4096`).
 
@@ -3518,7 +3519,7 @@ The lead's rulings on pfv2:
 - The 35B decode hints (top 4, n 1) get a confirm session against the then-default parts.
   They become the default only at >= 2% with both pairs positive.
 
-On the card: session 18 (2026-10-02 16:09-16:28 opentpu; build 542fc43a; tree offload-hold
+On the card: session 18 (2026-10-02 16:09-16:28 on the card host's clock; build 542fc43a; tree offload-hold
 651876c, with the fix; 12 runs, all bit for bit; one lock). Each part ran a warm-up first. The
 prefill is the 35B's layer-major prefill with the layer-ahead predictor (`--layer-major 2
 --layer-ahead hint --ahead-part 4096`), A = ra and B = v2 in A B B A order.
@@ -3627,8 +3628,12 @@ The runs of a MoE layer:
   before end_prefill, which takes the scratch's slots back.
 
 The server's side, as the Engine calls it:
-- begin_prefill(expert_major=True, scratch=bytes) (the first chunk's rows x record) carves
-  em_slots(layout, bytes) for the prefill.
+- begin_prefill(expert_major=True, scratch=bytes) (`moe.em_scratch`: the image's prefill rows
+  x record when the slots past those are the expert runs' (`moe.em_expert_slots`, the pipelined
+  passes' bound: their MMs then do not wait for the records' stores), else the first chunk's
+  rows x record) carves em_slots(layout, bytes) for the prefill. On the 35B that is 25 slots
+  of 1680 at any prompt, the largest chunk's, which the slot budget already leaves
+  (`streamed.expert_major_fits`).
 - A need line is ids from 2G (at most 16 at R = 2, k = 8: one line), no answer, served as a hint
   is.
 - The expert run reads entries only after its layer's last need line has been posted.
@@ -3655,7 +3660,7 @@ most 4096 entries and 2304 passes, take about 21K words.
 Status (2026-10-02): expert-major is merged and dormant. It is off by default
 (Engine(expert_major=False); moe_card runs it only with `--expert-major`). It is built and bit
 for bit on the ISA with offload's ExpertServer. It has not run on the card: the A/B session pfB
-was staged (opentpu ~/otpu-build/offload/card2/pfB/README.md, with its predicted column) and
+was staged (the card host ~/otpu-build/offload/card2/pfB/README.md, with its predicted column) and
 then not run, because the work wrapped up. When it runs, the plan is:
 - Models: the 35B (lmtime's 134-token prompt) and the 26B (q26-hf.json's 124 rows), 16 tokens
   each.
@@ -3749,12 +3754,12 @@ lists, the drain, the disarm, the tag zeroing.
 
 ### 13.15 Expert-major on the card (session pfB)
 
-Session pfB ran 13.13's plan on 2026-10-12, 00:49-00:58 by the opentpu clock: 14 runs under one
+Session pfB ran 13.13's plan on 2026-10-12, 00:49-00:58 by the card host's clock: 14 runs under one
 otpu-lock for 9.3 minutes, all bit for bit.
 - Card: production deploy_mt4_91a9c2d3 as loaded (build 91a9c2d3, register map 4). Its selftest
   passed before and after, and the device configuration equalled production's qual/cfg.pkl.
 - Tree: main ee8f118d, whose opentpu/ is production host 23b68089's.
-- Script: tools/offload/sessions/pfB.sh. Logs: opentpu ~/otpu-build/moe-ab/pfB.
+- Script: tools/offload/sessions/pfB.sh. Logs: the card host ~/otpu-build/moe-ab/pfB.
 - A first launch stopped at its selftest's config stage, before any run. The tree copy lacked
   targets/, which opentpu.target reads since the multi-target work, so a card tree needs
   targets/ beside opentpu/.
@@ -3866,7 +3871,7 @@ The default (since 2026-10-12, after the session):
 
 ### 13.16 Expert-major from a prompt length on (session emdef, EM_ROWS)
 
-Session emdef ran the default on the card on 2026-10-12, 10:17-10:33 by the opentpu clock (the
+Session emdef ran the default on the card on 2026-10-12, 10:17-10:33 by the card host's clock (the
 lead's run of tools/offload/sessions/emdefault.sh).
 - Card: production deploy_mt4_91a9c2d3 (build 91a9c2d3, register map 4).
 - Hosts: the candidate deploy_em_91a9c2d3 (N, 950ff0c5) against production's (P, 23b68089).
@@ -3953,7 +3958,7 @@ The threshold (streamed.EM_ROWS):
   `em_rows` only when given, so it also runs on a tree without it (production's).
 
 Session emdef2 (tools/offload/sessions/emdef2.sh) checked the threshold (then 48 / 24) and found
-the crossover. The lead ran it on 2026-10-12, 11:39-12:03 by the opentpu clock.
+the crossover. It ran on 2026-10-12, 11:39-12:03 by the card host's clock.
 - Same card, hosts and checks as emdef. N was 0c2b6f6a.
 - Five turns continuing one context: about 24, 31, 49, 80 and 163 new tokens on the 35B (TURNS'
   two, a question, a request, lmtime's passage with a question).
@@ -3997,11 +4002,11 @@ TTFT against P, s (pairs; L layer-major, E expert-major; each turn also has a 4-
 EM_ROWS then: Qwen3.5 44 (the crossover about 37; both pairs gain at 45), Gemma 4 24.
 
 Session emdef3 (tools/offload/sessions/emdef3.sh) checked EM_ROWS 44 / 24 and the host's share.
-The lead ran it on 2026-10-12, 12:50-13:15 by the opentpu clock, at ff4bb8e9.
+It ran on 2026-10-12, 12:50-13:15 by the card host's clock, at ff4bb8e9.
 - emdef2's arms, turns and checks. P ran this tree's chatmoe.py on production's opentpu
   (PYTHONPATH): the tool only records, so P's calls have the same counts as N's and X's and their
   requests' host time (`serve_s`). Every run but the warm-up wrote its trace, and the host's load
-  was logged before each (0.8-3.1; the lead's top showed no 1Password / Hyprland spin).
+  was logged before each (0.8-3.1; top showed no 1Password / Hyprland spin).
 - Everything passed and every run was token-exact. The 35B passed the rule (N - P, mean of the
   pairs: -0.03, +0.06, +0.06, -0.89, -2.33 s; the first three pairs straddle zero). The 26B did
   not, at its first turn.
@@ -4041,7 +4046,7 @@ The 26B's first turn:
   - A host microbenchmark, the server's time a request on the ISA backend, the tiny model with 2
     slots a layer, 40-token prompts, alternating production's tree and N's gated engine. Medians
     30.5 µs (N) and 30.6 µs (P), 10 prompts each. The outliers (+15-50 %) came in both arms, with
-    the Mac's gate running beside it.
+    a laptop's gate running beside it.
 - So no host-side difference in the code was found. The gaps are run-to-run host time, which
   ABBA pairs of one run each do not average out at these lengths.
 
@@ -4049,7 +4054,7 @@ EM_ROWS since: Qwen3.5 44, Gemma 4 20. The 26B's first turn (21 rows) is then ex
 X - P there over four pairs (emdef2, emdef3) is -0.170, -0.017, +0.112 and -0.267 s TTFT, mean
 -0.086. Its device time against P's is -0.41, -0.23, -0.18 and -0.56 s, a gain in every pair.
 
-Session emdef4 (tools/offload/sessions/emdef4.sh; the lead runs it) checks EM_ROWS 44 / 20 for the
+Session emdef4 (tools/offload/sessions/emdef4.sh) checks EM_ROWS 44 / 20 for the
 swap, short:
 - The same card, hosts and checks (selftest, configuration, the qual's chatmoe step, whose 26B
   turns are now both expert-major, and otpu-chat by name).
@@ -4073,7 +4078,7 @@ TTFT, s:
 - The layer-major calls' host ms a miss came out even across the arms.
 - With emdef3's long turns (35B -0.89 and -2.33 s, 26B -1.36 and -2.46 s), the rule holds: no
   turn is worse, and the long ones are much faster.
-- In production since 2026-10-12 16:26 local (15:26:30 by the opentpu clock): deploy_em_91a9c2d3,
+- In production since 2026-10-12 16:26 local (15:26:30 by the card host's clock): deploy_em_91a9c2d3,
   host 7f815b57, promoted host-only by its promote.sh (scrub and selftest passed on build
   91a9c2d3, link 5.0 GT/s x8). production-prev is deploy_mt4_91a9c2d3.
 
@@ -4107,7 +4112,7 @@ passes on the same ids.
 - `--isa` runs the ISA simulator: the check, no cycles.
 - `--set KEY=VALUE` overrides the configuration (MCOLS=16, or a branch's fields such as SEQ_WC).
 
-Measured on hwe-bench, 2026-10-12, at 7f815b57 with the harness of dc26103b; every check passed.
+Measured on the simulation host, 2026-10-12, at 7f815b57 with the harness of dc26103b; every check passed.
 The layer is the first; ms is a layer's expert run.
 
 | model | rows | experts | passes | cycles | ms | ms a row | ms a pass | MB a row (weights) | GB/s |
@@ -4139,7 +4144,7 @@ layer makes sum_e ceil(n_e / C) passes. C is 2 today: PAIR, and c(M) grows with 
 (13.11). The expert weight bytes a row are those passes x the expert's bytes / rows.
 
 Method:
-- The router traces: ~/otpu-build/offload/traces on omarchy, four texts x 2048 tokens, every MoE
+- The router traces: ~/otpu-build/offload/traces on the build host, four texts x 2048 tokens, every MoE
   layer's top-k.
 - Every non-overlapping window of W prompt rows, every layer, means over them.
 - Computed with tools/offload/em_capacity.py; no RTL.
@@ -4298,7 +4303,7 @@ The tests:
     tests' default MCOLS 8) and at C = 1, 2 and 3.
   - They cover the logits, the states, the KV cache and the decode steps after.
 
-The co-sims (moe_prefill_cosim.py em on hwe-bench, 2026-10-12, emc e7c65617). They use the MX RTL
+The co-sims (moe_prefill_cosim.py em on the simulation host, 2026-10-12, emc e7c65617). They use the MX RTL
 with the card's LiteDRAM, DDR3-1066 and 133.33 MHz, 13.17's synthetic routing, and the first
 layer; every check passed. C = 2 runs the same tree with --em-pass 2.
 
@@ -4336,7 +4341,7 @@ Where the time goes. The 35B's runs with --profile (cycles by source line):
   needs a second [C, H] row tile (16K words on the 35B; the 26B's TMEM is tight) and the
   sequencer letting VPU work run past an MM in flight.
 
-The card (session emc1, 2026-10-12, the lead's run of tools/offload/sessions/emc1.sh):
+The card (session emc1, 2026-10-12, tools/offload/sessions/emc1.sh):
 - On MX production (deploy_mx_8b33206e, build 8b33206e), the host tree emc e7c65617.
 - A: --em-pass 2. B: the configuration's C = 4. L: every call layer-major (--em-rows 100000).
 - A warm-up, then A1 B1 B2 A2 L1 B3 A3 A4 B4 L2.
@@ -4560,7 +4565,7 @@ Qwen3.5-35B-A3B's nvfp4 layers do not change its experts' bytes or its key. The 
 (LFM2.5-8B-A1B, nvfp4, 704 experts), 17.5 GB (Qwen3.5-35B-A3B, fp4, 10240) and 14.6 GB
 (gemma-4-26B-A4B-it, nvfp4, 3840; 13.5 GB in fp4); before MX, all fp4, 4.1, 17.1 and 13.2 GB. Every
 pool packed before MX has a key 1 and is refused: repack it. LFM2.5-8B-A1B's packed in 15 minutes
-with three workers on omarchy (2026-10-08).
+with three workers on the build host (2026-10-08).
 
 otpu-chat checks the pool before it builds the image, so a bad pool costs seconds rather than the
 build's minutes. It stops with the reason and the commands to fix it when the pool:
@@ -4648,7 +4653,7 @@ Measured with moe_card and these settings (the chat's own runs on the card: 14.5
   The pool's read into the page cache runs during the build.
 - **Host memory.** The process peaks at about 13 GB during the 35B's image build, then holds
   about 1.3 GB (10.7). The pool lives in the page cache. Nothing is pinned, so the kernel can
-  reclaim it, at the cost of disk reads for the experts it drops. On opentpu (31 GB) the 35B's
+  reclaim it, at the cost of disk reads for the experts it drops. On the card host (31 GB) the 35B's
   17.1 GB pool and the chat fit together once the build is done. Other large files in the page
   cache (other checkpoints) cost speed: 3.05 against 3.79 tok/s in 10.7.
 - **Speed.** Decode depends on the conversation: a new topic's first tokens miss more. The first
@@ -4673,7 +4678,7 @@ paths (tools/offload/sessions/env.sh). It runs a selftest and checks that the de
 configuration is the references'. Then, for each staged model, it drops the other large files
 from the page cache, reads the pool in, and runs the scripted chat against its reference.
 
-On the ISA simulator with the card's configuration (omarchy, 2026-10-08, tree 21402a25),
+On the ISA simulator with the card's configuration (the build host, 2026-10-08, tree 21402a25),
 LFM2.5-8B-A1B with the repacked pool:
 - Turn 1 (21 prompt tokens, 16 generated): the tokens equal moe_card's on the same ids and pool,
   and the card's reference from session 17 (its ref16, the same prompt).
@@ -4681,7 +4686,7 @@ LFM2.5-8B-A1B with the repacked pool:
   (6.6 MB a token) with 76 misses in its prompt. Turn 2 hit 99.8% (0.8 MB a token) with 22.
 - The process peaked at 10.7 GB, the simulator's 4 GiB DRAM included.
 
-On the card (opentpu, build 1025907f, 2026-10-08), LFM2.5-8B-A1B against that reference:
+On the card (the card host, build 1025907f, 2026-10-08), LFM2.5-8B-A1B against that reference:
 [PASS], both turns' tokens the same, on tree 936f8a5f and again on 171a1b50 (with chat-kv's
 rollback: turn 2 reused 36 positions). Turn 1: 21 prompt tokens in 2.16 s (device 13.8 tok/s),
 76 misses, TTFT 2.16 s, decode 13.2 tok/s (device 15.0), 98.7% hits, 6.6 MB a token. Turn 2:
@@ -4689,7 +4694,7 @@ TTFT 1.43 s, decode 15.2 tok/s (device 15.4), 99.85% hits, 0.78 MB a token. Load
 on 936f8a5f (the image's matrices quantized on one core) and 24 s on 171a1b50 (in workers).
 
 Qwen3.5-35B-A3B on the card (tree 171a1b50; its reference from the ISA simulator on 24a7e3f8,
-omarchy): [PASS], both turns' tokens the same. 1720 slots (17% of the 10240 experts), the prompt
+the build host): [PASS], both turns' tokens the same. 1720 slots (17% of the 10240 experts), the prompt
 layer by layer (R = 2), the pool 15.2 of 17.1 GB in the page cache after its read. Turn 1: 24
 prompt tokens in 6.53 s (device 4.38 tok/s), 3301 misses, TTFT 6.53 s, 7 tokens to the EOS at
 4.13 tok/s (device 4.39), 60.3% hits, 212 MB a token. Turn 2: 31 tokens fed (20 reused) in
@@ -4975,6 +4980,20 @@ capacity. The decode's MB a token over all five turns, base -> count:
   only (with the need lines' uses and without) follow the same requests, and the slots take the
   policy whose ghost missed less over the last turns. Too much machinery for ~1% on one model.
 
+**On a resident pool** (every expert in DRAM above 4 GiB, AW 36: bcu1525-wg) there is no request
+and no host to wait for: each expert streams from DRAM as its MMs ask. There `moe_ffn` and
+`moe_ffn_rows` issue the shared expert's gate and up MMs right after the router's MM, before the
+ARGMAX loop (they need only the normed input: `swiglu_down`'s `each(0)` runs the routing), so the
+DRAM streams them while the VPU routes; its activation and down MMs follow the routing, and its
+output is added last as before.
+- The tiny Qwen3.5-MoE's logits on the resident pool are the low image's (the server's slots, the
+  old order) bit for bit: per position, the resident decode loop, and the streamed engine's
+  layer-major prompt (test_qwen35_moe, test_chatmoe).
+- The 35B's decode program at bcu1525-wg: 4 MMs (its shared expert's 2 chunks of 256, gate and
+  up) between each router MM and its ARGMAX, 0 before. Every bucket of a 4K context still fits
+  IMEM (at most 2899 instructions, 2903 before).
+- The programs of the server's slots (the offload path) are unchanged, word for word.
+
 ### 15.5 What we did not take, and the bigger levers
 
 Not taken:
@@ -5016,7 +5035,7 @@ The misses a token barely move: a step of two tokens streams twice a token's. Wh
 the card's per-step time (the mixers' weights, the shared experts, the 29 ms head), read once
 for 1.77 tokens at a = 0.78.
 
-**The acceptance** (`tools/offload/mtp_transplant.py`, on hwe-bench: HF transformers 5.18 with
+**The acceptance** (`tools/offload/mtp_transplant.py`, on the simulation host: HF transformers 5.18 with
 minicpmv's LazyExperts, float32; greedy replies to tools/mtp_accept.py's nine prompts, up to
 256 tokens, thinking off; teacher-forced drafts; the 32K fp4 head with int8 activations, as
 docs/mtp.md's):
@@ -5054,7 +5073,7 @@ about 0.04 lower on the dense models) and the host's per-step costs are not in i
   `strip_experts.py BASE DIR --mtp --only mtp. --out mtp.safetensors` (0.1 GiB) beside links
   to that checkpoint's files makes the MTP image's, production's directory unchanged.
 
-**Bit for bit on the 35B** (ISA simulator, hwe-bench, r2's configuration, the 41-layer pool
+**Bit for bit on the 35B** (ISA simulator, the simulation host, r2's configuration, the 41-layer pool
 extended from the MX pool, the MTP layer's experts packed on their first use): les1's five chat
 turns through chatmoe --mtp (otpu-chat's Chat: the MTP prefill, layer-major and expert-major,
 the loop on the device, the turns' rollbacks) give plain decode's 135 tokens, every one. The

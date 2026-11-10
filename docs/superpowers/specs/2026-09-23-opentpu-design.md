@@ -115,8 +115,8 @@ TMEM inputs and unit outputs) added cycles per instruction and is the likely cau
 ## 1. Goals (unchanged)
 
 Golden ops: block-scaled matmul and attention. Thin hardware, everything visible to a
-Triton/Gluon-style compiler with explicit layouts. K7 (xc7k480t, YPCB-00338) first, FK33 (VU33P,
-HBM) later with the same programming model.
+Triton/Gluon-style compiler with explicit layouts. K7 (xc7k480t, YPCB-00338) first, a VU33P card
+with HBM later with the same programming model.
 
 ## 2. Decisions
 
@@ -172,7 +172,7 @@ HBM) later with the same programming model.
   memory-bound (as decode always is); at M = 8 it matches DDR3-1600 x2.
 
 General form for later targets: 128 x (C x M) with C streamed rows per cycle. K7: C = 1, M <= 8.
-FK33 decode: C ~ 10 (1.3 KB/cycle at 300 MHz ~ 400 GB/s), M <= 4 with DSP48E2 int8 packing.
+The VU33P card's decode: C ~ 10 (1.3 KB/cycle at 300 MHz ~ 400 GB/s), M <= 4 with DSP48E2 int8 packing.
 
 ### 3.2 Everything else
 

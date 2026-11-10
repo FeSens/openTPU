@@ -378,7 +378,7 @@ The oldest replay wins as soon as the DMA's asker leaves its RAMs. In the unpump
 on port A also takes its RAM. None of these waits on the replaying unit. The simulation stops when
 a replay loses 4M cycles in a row (`otpu_tmem`, the `RPLW` check).
 
-**Measured** (hwe-bench, the r2 target through `OTPU_UARCH=board`; omarchy, Vivado 2026.1):
+**Measured** (the simulation host, the r2 target through `OTPU_UARCH=board`; the build host, Vivado 2026.1):
 
 | | release-2 (5107b74f) | the guest fix alone | the fix (guests + age) |
 |---|---|---|---|
@@ -399,7 +399,7 @@ section 6.3's; it moves with placement. The age costs about 240 LUTs, the guest 
 
 Cycles are RTL co-simulations against the card's TMEM (`i0`, the same tree), in percent; every
 `perf_qwen` run is bit-exact against the ISA simulator (`--check`; the MoE layer run `l_q35m` has
-zero images and is not checked). Out-of-context runs are Vivado 2026.1 on omarchy, `tmem_nc_top`
+zero images and is not checked). Out-of-context runs are Vivado 2026.1 on the build host, `tmem_nc_top`
 (the TMEM and the slice's arbiter for it, registered around), xc7k480t-2.
 
 ### 6.1 The grant model and the first RTL
@@ -887,7 +887,7 @@ nangate45, 38% of the core): 16 macros, about 1.35 mm2, before the conflict logi
      MCOLS 8, if chosen, takes the same `clk_f` and adds its section there (agreed with the MX
      column's lead: one MMCM output, one constraint set). `tb_top` makes `clk_f` with
      `TMEM_PMP 1` (`OTPU_TMEM_PMP=1`), so a co-simulation runs the real pumped RAMs. Checked
-     (omarchy, Vivado 2026.1): the block design at 133.33 MHz with `CLK2X` makes M 16, O0 6, O1 3
+     (the build host, Vivado 2026.1): the block design at 133.33 MHz with `CLK2X` makes M 16, O0 6, O1 3
      (core_clk2x 266.67 MHz), at 100 MHz O1 4, validated, the wrapper with `core_clk2x`; without
      it the MMCM is production's (M 16, O 6, one output); 120.755 MHz stops; the BCU1525's at
      100 / 200 MHz (on xcku5p) validated. `k7-r2pgRs` with `otpu_clk2x.tcl` instead of the inline
@@ -931,7 +931,7 @@ nangate45, 38% of the core): 16 macros, about 1.35 mm2, before the conflict logi
 # scripts over tools/tmem_trace.py's segments/lanes, one RAM port a slot)
 OTPU_SIM_PLUSARGS=+tmtrace=/tmp/p_q3.tt PYTHONPATH=. python3 tools/perf_qwen.py --model qwen3 ...
 PYTHONPATH=. python3 tools/tmem_trace.py flow /tmp/p_q3.tt
-# co-simulations (hwe-bench; <outdir>/<workload>__<candidate>.log and .stat)
+# co-simulations (the simulation host; <outdir>/<workload>__<candidate>.log and .stat)
 rtl/exp/tmem_nocopy/run_cosim.sh out rtl/exp/tmem_nocopy/lists/screen.txt \
   rtl/exp/tmem_nocopy/cands.txt i0 r2pgRs r1pgRs
 python3 rtl/exp/tmem_nocopy/collect.py out --ref i0

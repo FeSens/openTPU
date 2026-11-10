@@ -89,7 +89,7 @@ micro-architecture) with LiteDRAM's controller co-simulated (`--ldc`): DDR3-1066
 core, and the bitstream's features (`OTPU_PAIR=1 OTPU_DSTEP=1 OTPU_STREAM=1`). Its decode tokens
 are within 0.8-1.4% of the card's (docs/litedram.md 11). Every run here uses fp4 weights and an
 int8 LM head at position 544 (or 4000 where marked), on tree `vpu-pump` (main 23b68089 plus this
-page's tools). Most ran on hwe-bench, the first three on the Mac.
+page's tools). Most ran on the simulation host, the first three on a laptop.
 - **Whole small models, real weights:** Qwen3-0.6B, LFM2.5-230M, Qwen3.5-0.8B.
   - decode: one token (`perf_qwen --layers 0`);
   - prefill: a 4-row run (the card's R_max), no logits (`--rows 4 --logits none`);

@@ -32,7 +32,7 @@ that openTPU is the architecture of, the bigger finding is data that moves more 
   - Every weight-streaming workload sits at that ceiling: decode, batched decode, MoE rows and
     layer runs, two-row prefill.
   - Every depth cut tried costs 0.25-1.0% of decode and lowers DRAM efficiency: the B FIFO to
-    64, the credits to 32, the A FIFO to 32. **None is taken** (the lead, 2026-10-12).
+    64, the credits to 32, the A FIFO to 32. **None is taken** (2026-10-12).
 - **The DMA's stream runs at 32 chunks** (-2.1K LUT) cost Qwen3.5 decode 0.27% (at 16: -2.7K
   LUT, 0.93%), and a DeltaNet layer 0.7-2% in MoE decode. Rejected.
 - **The credits doubled (ARD 128)** gain 0.03-0.24%: the B FIFO becomes the limit. Not taken.
@@ -48,7 +48,7 @@ that openTPU is the architecture of, the bigger finding is data that moves more 
     build takes 0 if it is short of block RAM.
   - **The collective unit at S = 1** (~2.0K LUT, ~0.9K FF): GATHER is never compiled at
     S = 1. `COLL_GATHER=0` builds a BAR-only unit, announced by CAPS2 bit0 (register map 5); the
-    host refuses a GATHER program on it (the lead's ISA decision, for the MCOLS 8 build). Since
+    host refuses a GATHER program on it (an ISA decision, for the MCOLS 8 build). Since
     release r2 the card builds it by default (section 5).
 - **The quantizer, the ACT RAM and IMEM are not over-provisioned.**
   - The ACT RAM is width-bound, and ACT_ROWS 16 fills it for free.
@@ -61,7 +61,7 @@ that openTPU is the architecture of, the bigger finding is data that moves more 
   - the DeltaNet state goes to DRAM and back every token (6.6% of Qwen3.5-0.8B's DRAM beats);
   - the host copies every upload once to interleave the channels;
   - the S > 1 collective is a serial, blocking all-gather through one hub. PUT / PUTADD link
-    engines replace it (10.4, the lead's approved direction): Qwen3-0.6B's collectives would
+    engines replace it (10.4, the approved direction): Qwen3-0.6B's collectives would
     take ~8K cycles a token at S = 2 instead of ~175K (estimated).
 
 **Recommendation:**
@@ -279,7 +279,7 @@ Cost (**simulated**, cycles):
 | MoE layer run, Qwen3.5-35B-A3B, 2 rows: its DeltaNet layer / attention layer | +0.71% / 0.00% | +2.04% / 0.00% |
 
 The cost follows DSTEP's share: nothing where no stream runs, 0.7-2% of a DeltaNet layer.
-**Rejected** (the lead, with the other depth cuts): the 2.1-2.7K LUT do not pay for slower
+**Rejected** (with the other depth cuts): the 2.1-2.7K LUT do not pay for slower
 Qwen3.5 and MoE decode.
 
 ## 4. The trace buffer
@@ -438,7 +438,7 @@ variant (**measured**, `run_xdma.sh` on xc7k480t-2):
 (Out-of-context synthesis keeps logic that the routed image trims: the image's XDMA is 16,832
 LUT.)
 
-**The card's XDMA configuration is already minimal** (the lead, 2026-10-12: no change).
+**The card's XDMA configuration is already minimal** (2026-10-12: no change).
 - The one documented saving is 73 LUT and a RAMB36 (C2H write IDs). It is not worth a card
   qualification.
 - The hidden option's 0.5K LUT would buy an undocumented change in a vendor DMA engine whose
@@ -574,7 +574,7 @@ lever.
   caches);
 - a deeper block RAM column on the sequencer's fetch path. That is seq-vpu's timing to check.
 
-Parked (the lead, 2026-10-12) until the looped attention is costed. It is the cheapest
+Parked (2026-10-12) until the looped attention is costed. It is the cheapest
 stopgap if long prompts on Phi / LFM2 matter first.
 
 ## 9. Report
@@ -585,25 +585,25 @@ uses.
 
 | opportunity | resources freed | cycle cost (decode / prefill / batched / MoE) | what it enables | ISA / numerics / compiler | risk | decisions | next production build |
 |---|---|---|---|---|---|---|---|
-| **Trace buffer out** (`TRACE_DEPTH=0`, this branch) | 32 RAMB36, ~2.3K LUT, ~3.9K FF (measured) | 0 / 0 / 0 / 0 | the block RAM of an 8K IMEM (28.5 RAMB36); slack in a full build | none: CAPS bit0 = 0; the hardware lens and `batch_bench --trace` refuse such a bitstream | low: a generic, default unchanged, lint at 0 | **taken as a knob** (the lead): production keeps 16,384, the card's debugging tool | the MCOLS 8 build, if it is short of block RAM |
+| **Trace buffer out** (`TRACE_DEPTH=0`, this branch) | 32 RAMB36, ~2.3K LUT, ~3.9K FF (measured) | 0 / 0 / 0 / 0 | the block RAM of an 8K IMEM (28.5 RAMB36); slack in a full build | none: CAPS bit0 = 0; the hardware lens and `batch_bench --trace` refuse such a bitstream | low: a generic, default unchanged, lint at 0 | **taken as a knob**: production keeps 16,384, the card's debugging tool | the MCOLS 8 build, if it is short of block RAM |
 | **Trace at 4K records** | 25 RAMB36 (measured) | 0 | as above, less | none (CAPS reports the depth) | low | the lens sees 2% of a token, not 8% | no: the BRAM is not short |
-| **Collective unit BAR-only at S = 1** (`COLL_GATHER=0`, this branch) | ~2.0K LUT, ~0.9K FF (measured: the unit's ~1.4K, the TMEM write port's 601) | 0 / 0 / 0 / 0 | slack | **ISA**: GATHER only at S > 1; CAPS2 bit0 (register map 5); the host refuses GATHER programs on such a bitstream | low: a parameter (the card's build default 0 since release r2, section 5); lint at 0 and 1; board-model test | **approved** (the lead, an ISA call under the user's grant); the card's default in r2 | the MCOLS 8 build; r2's m4 card (timing) |
-| Memory path depths (RD 64, ARD 32, AD 32) | up to ~3.3K LUT (measured) | +0.25 to +1.0% decode, +0.7% batched (simulated) | | none | | **rejected** (the lead) | no: each lowers DRAM efficiency |
-| DMA stream runs (RUN 32 / 16) | 2.1K / 2.7K LUT (measured) | Qwen3.5 decode +0.27% / +0.93%; prefill +0.10% / +0.11%; batched 0; MoE +0.14% / +0.35% (simulated) | | none (timing only) | low | **rejected** (the lead) | no: lowers Qwen3.5's DRAM efficiency |
-| XDMA options (C2H IDs 8; the hidden resource reduction) | 73 LUT + 1 RAMB36; 0.6K LUT with the hidden option (measured) | 0 | | none | the hidden option is undocumented | **no change** (the lead) | no |
+| **Collective unit BAR-only at S = 1** (`COLL_GATHER=0`, this branch) | ~2.0K LUT, ~0.9K FF (measured: the unit's ~1.4K, the TMEM write port's 601) | 0 / 0 / 0 / 0 | slack | **ISA**: GATHER only at S > 1; CAPS2 bit0 (register map 5); the host refuses GATHER programs on such a bitstream | low: a parameter (the card's build default 0 since release r2, section 5); lint at 0 and 1; board-model test | **approved** (the maintainer, an ISA call under the user's grant); the card's default in r2 | the MCOLS 8 build; r2's m4 card (timing) |
+| Memory path depths (RD 64, ARD 32, AD 32) | up to ~3.3K LUT (measured) | +0.25 to +1.0% decode, +0.7% batched (simulated) | | none | | **rejected** | no: each lowers DRAM efficiency |
+| DMA stream runs (RUN 32 / 16) | 2.1K / 2.7K LUT (measured) | Qwen3.5 decode +0.27% / +0.93%; prefill +0.10% / +0.11%; batched 0; MoE +0.14% / +0.35% (simulated) | | none (timing only) | low | **rejected** | no: lowers Qwen3.5's DRAM efficiency |
+| XDMA options (C2H IDs 8; the hidden resource reduction) | 73 LUT + 1 RAMB36; 0.6K LUT with the hidden option (measured) | 0 | | none | the hidden option is undocumented | **no change** | no |
 | One XDMA side for both channels | ~3.5K LUT, ~1.8K FF (estimate) | 0 (estimate: H2C ~3 GB/s against one channel's 8.5) | moves the worst path (u_ch1's XDMA side, +0.013 ns) | none | medium: H2C ordering, WAITW's write counts | card qualification: H2C / C2H rates, selftest, the H2C sweep, WAITW | not now: a design item |
-| LiteDRAM: one calibration engine for both channels | ~2.4K LUT, ~2K FF (estimate); ~7K LUT of calibration hardware in all | 0 | slack | none | medium-high: core regeneration, the DFI injector's tight paths, calibration | **not now; a future lever** (the lead). Card: calibration warm soak, qualification | not now |
+| LiteDRAM: one calibration engine for both channels | ~2.4K LUT, ~2K FF (estimate); ~7K LUT of calibration hardware in all | 0 | slack | none | medium-high: core regeneration, the DFI injector's tight paths, calibration | **not now; a future lever**. Card: calibration warm soak, qualification | not now |
 | LiteDRAM: no calibration CPU | 1.0K LUT, 1.0K FF, 4 RAMB36 + 3 RAMB18 (measured) | 0 | | none | low | the host calibrates, 25 s a channel at every load | no |
 | LiteDRAM: no ECC | ~4.2K LUT, 4.5K FF | 0 | | reliability: no error detection; the qualification reads the ECC counters | | the user's | no |
 | Core on LiteDRAM's clock (no crossing) | ~0.5-1K LUT, a few cycles of read latency (estimate) | ~0 (decode is DRAM-bound) | | none | | **one-way**: the core clock is the DRAM's (no 100 MHz builds at DDR3-1066, no core above 133.33) | no |
 | Quantizer at half rate | ~3.5K LUT, ~32 DSP (estimate) | prefill: QUANT 20-27% busy -> 40-54% | | none | | | no: the MX column sizes it |
-| **IMEM 8K** (a cost: reinvestment) | -28.5 RAMB36 | long-context prefill: 2-3 rows a run instead of 1 in bucket 16 (Phi-4-mini, LFM2-2.6B) | fewer weight passes at long context | **arch**: `IMEM_WORDS` 65536 (the arch hash, fit checks, program caches) | the sequencer's fetch path (seq-vpu to check) | **parked** (the lead) until the looped attention is costed | no |
+| **IMEM 8K** (a cost: reinvestment) | -28.5 RAMB36 | long-context prefill: 2-3 rows a run instead of 1 in bucket 16 (Phi-4-mini, LFM2-2.6B) | fewer weight passes at long context | **arch**: `IMEM_WORDS` 65536 (the arch hash, fit checks, program caches) | the sequencer's fetch path (seq-vpu to check) | **parked** until the looped attention is costed | no |
 | ACT_ROWS 16 (with the MX column) | 0 block RAM: fills the ACT RAM's unused 75% | (the MX column's) | MM replay over 16 rows | (the MX column's) | | | yes, with the MX column |
 | Bridge credits doubled (ARD 128: the other direction) | costs ~0.7K LUT a channel (estimate) | -0.03 to -0.24% decode / MoE (simulated) | | none | | | **no**: the DRAM is the limit |
 | *ASIC:* V^T append from an on-chip tail (section 10.2) | 28.7K beats read and 28.7K written a Qwen3-0.6B token (73% of its writes; estimated) | decode: QST busy 4.9% | | compiler: the KV append; numerics none | SRAM: tb x d bytes a KV head | the ASIC's | no |
 | *ASIC:* DeltaNet state resident in the slice | 6.6% of Qwen3.5-0.8B decode's DRAM beats, 88% of its writes (simulated) | decode: DSTEP busy 14.8% | | numerics: fp32 kept, or bf16 (half the SRAM) | SRAM: 18 MiB / S a sequence for this model | the ASIC's | no |
 | *ASIC:* one landing buffer per channel | two of three reservation stages per read (section 10.2) | 0 | | none | | the ASIC's | no |
-| *ASIC:* PUT / PUTADD link engines (sections 10.3, 10.4) | S > 1: 1.75x fewer bytes into each slice, no hub, no barrier | S > 1 decode: Qwen3-0.6B's collectives ~175K cycles a token today, ~8K (S = 2) / ~14K (S = 4) proposed (estimated) | slices added without a central unit | **ISA**: PUT / PUTADD and WAITC; the compiler's sharding | | **approved as the direction** (the lead); no RTL until a multi-slice target is next | no: S > 1 only |
+| *ASIC:* PUT / PUTADD link engines (sections 10.3, 10.4) | S > 1: 1.75x fewer bytes into each slice, no hub, no barrier | S > 1 decode: Qwen3-0.6B's collectives ~175K cycles a token today, ~8K (S = 2) / ~14K (S = 4) proposed (estimated) | slices added without a central unit | **ISA**: PUT / PUTADD and WAITC; the compiler's sharding | | **approved as the direction**; no RTL until a multi-slice target is next | no: S > 1 only |
 
 **For the card's qualification list** (none is proposed for the next build):
 - a shared XDMA side: H2C / C2H rates, `selftest`, the H2C sweep, the WAITW tests;

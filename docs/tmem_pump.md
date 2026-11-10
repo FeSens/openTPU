@@ -53,7 +53,7 @@ which sets RPB 1 for it; default 0, the card's build unchanged.)
 ### As the ASIC has it: does not close
 
 The full YPCB build at production settings (`BUILD_ID=0924a7e1 CORE_MHZ=133.33 JOBS=2
-TMEM_IMPL=1 make -C boards/ypcb-00338 bit DDR=1066`, omarchy, 2026-10-11, 2 h 53 min) against
+TMEM_IMPL=1 make -C boards/ypcb-00338 bit DDR=1066`, the build host, 2026-10-11, 2 h 53 min) against
 production (91a9c2d3, the same settings, 49 min), *measured*:
 
 | | production (6 copies) | `TMEM_IMPL 1` (3 copies) |
@@ -89,7 +89,7 @@ run, `--check`); the testbench of section 2 checks `RQ` against `otpu_tmem` with
 grants.
 
 In the full build (`BUILD_ID=b383c919 CORE_MHZ=133.33 JOBS=2 TMEM_IMPL=1 TMEM_RQ=1 make -C
-boards/ypcb-00338 bit DDR=1066`, omarchy, 2026-10-12, 1 h 30 min) *measured*:
+boards/ypcb-00338 bit DDR=1066`, the build host, 2026-10-12, 1 h 30 min) *measured*:
 
 | | production (6 copies) | `TMEM_IMPL 1`, grants | `TMEM_IMPL 1`, `TMEM_RQ` |
 |---|---|---|---|
@@ -218,7 +218,7 @@ section 1). The testbench catches broken pumping: with the write data taken from
 wrong register it fails at cycle 8, with the phase inverted (writes at the core edge, reads in
 the middle) at cycle 13; with the bypass multiplexer removed it passes (20,000 cycles, 255,800
 lane reads, 92,484 lane writes), which is the check that the bypass is redundant here. On
-2026-10-12 (44ed40d2, hwe-bench) the same eleven configurations pass with the fast-domain write
+2026-10-12 (44ed40d2, the simulation host) the same eleven configurations pass with the fast-domain write
 stage (`FW`) and the one-copy 3x and 4x variants (`K`, compared with `otpu_tmem` a cycle
 earlier, grant and `RQ` addresses, 4K and 64K words): 200,000 cycles each, 1.9-2.6 million lane
 reads, no mismatch.
@@ -229,7 +229,7 @@ reads, no mismatch.
 MXU's lanes generic, QUANT 3 and COLL as guests) and both clocks from one MMCME2; `ooc.tcl` runs
 synthesis, placement, phys_opt and routing out of context on xc7k480tffg1156-2 (the YPCB's part),
 core 133.33 MHz, pumped copies 266.67 MHz, with the contract's multicycle paths. *Measured*
-(Vivado 2026.1, opentpu, 2026-10-11 for the first build, FW 0; 2026-10-12 for the fast-domain
+(Vivado 2026.1, the card host, 2026-10-11 for the first build, FW 0; 2026-10-12 for the fast-domain
 write stage and phase, FW, c34116bc):
 
 | run | RAMB36 | TMEM LUT | TMEM FF | slices | WNS, FW 0 | its path | WNS, FW |
@@ -273,12 +273,12 @@ and a BUFG.
 
 ### UltraScale+: out of context
 
-omarchy's license has no Virtex UltraScale+ part, so these runs use the free xcku5p-ffvb676-2-e
+the build host's license has no Virtex UltraScale+ part, so these runs use the free xcku5p-ffvb676-2-e
 (MMCME4, BUFGCE). It has the BCU1525's and F2's block RAM and UltraRAM primitives (RAMB36E2,
 URAM288), and it is a -2 speed grade at VCCINT 0.85 V. The BCU1525's VU9P is -2L: from the data
 sheet (DS923), -2L at 0.85 V has -2 timing and is slower at 0.72 V; which voltage the card runs
 is to be checked. F2's VU47P is -2. Not modelled: the larger dies, the SLR crossings, and the
-slices around the TMEM. *Measured* (Vivado 2026.1, omarchy, 2026-10-12):
+slices around the TMEM. *Measured* (Vivado 2026.1, the build host, 2026-10-12):
 
 | run | clocks (core / copies) | RAM | WNS | what limits it |
 |---|---|---|---|---|
@@ -368,7 +368,7 @@ than four in at most 0.23%.
 
 **Cycles.** RTL co-simulation, bit-exact (`--check`, the perf_qwen runs; the MoE runs as in
 section 1), the banked arbiter with request-priority addresses (`OTPU_TARGET=nangate45
-OTPU_TMEM_RQ=1`, hwe-bench, 2026-10-12). P1 at 2x is `OTPU_TMEM_NCP=2`. QUANT 3 sits on a third
+OTPU_TMEM_RQ=1`, the simulation host, 2026-10-12). P1 at 2x is `OTPU_TMEM_NCP=2`. QUANT 3 sits on a third
 slot of its own there, as if the quantizer kept the row factor in a register, which is the change
 P1 needs. That change's own cost is one more cycle per row the quantizer scales. The 2-cycle
 read's column is an *estimate*, one cycle per instruction (the run's instruction count over its
@@ -413,7 +413,7 @@ fast edge ahead (a 2:1 multiplexer before the RAM), each read's word taken at th
 edge, and all words presented at the core edge. The testbench checks it against `otpu_tmem` a
 cycle later (`run_tb.sh` `k3n5`, `k4n7` and their `RQ` cases). It fails with the bypass removed,
 with a word taken at the wrong edge, or with the slots read in the wrong order. Out of context,
-*measured* (Vivado 2026.1; Kintex-7 on opentpu, xcku5p on omarchy, 2026-10-12):
+*measured* (Vivado 2026.1; Kintex-7 on the card host, xcku5p on the build host, 2026-10-12):
 
 | part | core / copy clock | RAM | WNS | what limits it |
 |---|---|---|---|---|
@@ -766,7 +766,7 @@ What P3 still needs to be production-worthy:
    Not done.
 3. Tests: `run_tb.sh` in the RTL gate (P3 against `otpu_tmem`; its eleven configurations pass,
    200,000 cycles each); a `tb_top` with the second clock for a bit-exact co-simulation smoke
-   (its cycles must equal `TMEM_IMPL 0`'s); the RTL gate on omarchy.
+   (its cycles must equal `TMEM_IMPL 0`'s); the RTL gate on the build host.
 4. A full YPCB build at production settings that closes 133.33 MHz (not run: out of context
    only).
 5. A card qualification: BIST, token-exact against production, and decode and prefill speed
@@ -827,13 +827,13 @@ From the tree's root, `PYTHONPATH=.`:
 ```sh
 # the pumped TMEM against otpu_tmem (Verilator; seconds to minutes each)
 rtl/exp/tmem_pump/run_tb.sh /tmp/tmem_tb [cycles]
-# out-of-context Vivado runs (omarchy or opentpu, through ~/otpu-build/slot.sh; one at a time)
+# out-of-context Vivado runs (the build host or the card host, through ~/otpu-build/slot.sh; one at a time)
 rtl/exp/tmem_pump/run_ooc.sh <outdir> k7-v0 k7-v2 k7-v3 k7-v4 k7-v1 k7-v2x2 ku-v2b ku-v2u ku-v1b \
   ku-v2u300 ku-v2b-200 ku-v2u-200
 # one copy at 3x / 4x (VAR 5): Kintex-7 at 133.33, xcku5p at 200 and 133.33, block RAM / UltraRAM
 rtl/exp/tmem_pump/run_ooc.sh <outdir> k7-p1x3 k7-p1x4 ku-p1x3b-200 ku-p1x3u-200 ku-p1x4b-200 \
   ku-p1x4u-200 ku-p1x3b-133 ku-p1x3u-133 ku-p1x4b-133 ku-p1x4u-133 ku-p1x3c-200 ku-p1x3c-133
-# the YPCB build with the banked TMEM (omarchy)
+# the YPCB build with the banked TMEM (the build host)
 make -C boards/ypcb-00338 bit DDR=1066 CORE_MHZ=133.33 TMEM_IMPL=1 TMEM_RQ=1
 # cycles: the banked TMEM in the co-sim (OTPU_TARGET=nangate45 is the card's arch with
 # TMEM_IMPL 1); OTPU_TMEM_RQ=1 the request-priority addresses, OTPU_TMEM_NCP=4 four slots (P2)
