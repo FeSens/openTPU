@@ -15,7 +15,7 @@
 # and decode tok/s (wall and device) and the slots' hits.
 # Card: production deploy_r2m4_b10245f5 as loaded (EXPECT b10245f5, register map 5); its qual/cfg.pkl.
 # O (/data/otpu/minicpmv) holds MiniCPM-V-4.7-35B-A3B/ (the slim checkpoint), pool-mcpv35-mx.split.bin (+ .packed,
-# .format, .key), img/ (cats.jpg, doc.png), refs/minicpmv-<run>.json and pylib/ (PYLIB: hwe-bench's ~/mcpv/tf518,
+# .format, .key), img/ (cats.jpg, doc.png), refs/minicpmv-<run>.json and pylib/ (PYLIB: the simulation host's ~/mcpv/tf518,
 # torchvision 0.29.1+cpu, pillow 12.3.0 and transformers 5.18.0 over the venv's torch 2.14.0: the image's decode and
 # resize as HF's processor, the packages the references ran with; without torchvision the resize differs).
 # One otpu-lock:
@@ -27,14 +27,14 @@
 # A build other than EXPECT, a failed selftest, another configuration or a missing file stops it; a failed run or a
 # token mismatch is reported and the next run goes on. The last line: MCPV1 PASS or MCPV1 FAIL. About 35 min (the
 # image's first build on the card host ~5 min, otpu-serve's ~5 min more, the pool's read ~40 s a run).
-# References (REF=1: the same runs on the ISA simulator with REFCFG, no card, no selftest), on hwe-bench from this
+# References (REF=1: the same runs on the ISA simulator with REFCFG, no card, no selftest), on the simulation host from this
 # tree, one run a call (each in a slot of its own), into RF (serve has none: thumb's):
 #   REF=1 O=~/mcpv PYLIB=~/mcpv/tf518 REFCFG=~/mcpv/cfg-b10245f5.pkl RUNS=thumb bash tools/offload/sessions/mcpv1.sh
 #   (O there: MiniCPM-V-4.7-35B-A3B -> slim/MiniCPM-V-4.7-35B-A3B, the pool, img/; RF default O/refs)
-# Stage (from the Mac, before the session; no host work while a session runs):
-#   git archive <sha> | ssh opentpu 'D=~/otpu-build/minicpmv/mcpv1/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <sha> > ~/otpu-build/minicpmv/mcpv1/host/COMMIT'
-#   ssh hwe-bench 'tar -C ~/mcpv -cf - tf518 img refs' | ssh opentpu 'cd /data/otpu/minicpmv && tar -xf - && \
+# Stage (from a laptop, before the session; no host work while a session runs):
+#   git archive <sha> | ssh CARD_HOST 'D=~/otpu-build/minicpmv/mcpv1/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <sha> > ~/otpu-build/minicpmv/mcpv1/host/COMMIT'
+#   ssh SIM_HOST 'tar -C ~/mcpv -cf - tf518 img refs' | ssh CARD_HOST 'cd /data/otpu/minicpmv && tar -xf - && \
 #     rm -rf pylib && mv tf518 pylib'
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash \
 #   ~/otpu-build/minicpmv/mcpv1/host/tools/offload/sessions/mcpv1.sh > ~/otpu-build/minicpmv/mcpv1.launch.log 2>&1 \

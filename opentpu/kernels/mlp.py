@@ -30,9 +30,19 @@ def down_chunk(f_loc: int, D: int, fmt: str) -> int:
     return _chunk(f_loc, D, D if fmt == "int8" else 2 * D)
 
 
-def swiglu_down(xs, w_gate, w_up, w_down, chunk=None, act=silu, loop=False, each=None):
+def f_chunk(w_gate, w_down, chunk=None) -> int:
+    """swiglu_down's F-chunk (its each(i) calls: w_gate's rows / it)."""
+    D = ol.block_size()
+    return chunk or (w_down.pw // w_down.gs if w_down.parts is not None else
+                     _chunk(w_gate.shape[0], D, D if w_down.wf == 0 else 2 * D))
+
+
+def swiglu_down(xs, w_gate, w_up, w_down, chunk=None, act=silu, loop=False, each=None,
+                glu=None, out=None, rscale=None):
     """This slice's output columns of W_down( act(W_gate x) * (W_up x) ), x quantized in `xs`
-    (act: SiLU, or e.g. lib.gelu_tanh for Gemma's GeGLU).
+    (act: SiLU, or e.g. lib.gelu_tanh for Gemma's GeGLU); glu(g, u, c0): a chunk's
+    activations from its gate and up outputs (its columns c0 .. of the slice's F) instead of
+    act(g) * u (GPT-OSS's experts: moe.oai_glu).
 
     Weights are sharded by rows: slice s owns F range s of gate/up and rows (output columns)
     s of the down projection. See `mlp` for the pipelining. `loop`: the chunks run as a
@@ -40,21 +50,39 @@ def swiglu_down(xs, w_gate, w_up, w_down, chunk=None, act=silu, loop=False, each
     instructions (a model whose program would not fit IMEM with every chunk unrolled).
     `each(i)`: called as chunk i's work begins, once the next chunk's gate and up MMs are
     issued (instructions of the caller's that wait while the MXU works: moe_prologue_rows'
-    need lines), not with `loop`.
+    need lines), not with `loop`. `out`: a [M, N] tile the first down MM overwrites (ol.dot's
+    out=) and the result, instead of a new one (not with `loop`). `rscale` [M]: each row's
+    activations times its factor in their QACTs (QACT RSCALE: moe.EM_GSCALE's router weights;
+    not with `loop`).
+
+    A W_down whose columns are in the all-gather's order (w_down.gs = S, quant.gather_order:
+    chunk c of every slice's F part, stored in parts of S C) takes chunk c in one MM over the
+    gathered [M, S C], its activations one QACT; else S MMs of C columns, a QACT each.
+
+    W_gate's rows need not be whole chunks (one slice: moe.ExpertFormat tight, GPT-OSS's 2880
+    in chunks of 256): the last chunk's gate and up MMs take the rows left, and its activations
+    are zero-filled to the width of W_down's last part (its whole D-blocks: 128 columns), which
+    changes no QACT range's amax.
     """
     S = ol.num_programs()
     f_loc = w_gate.shape[0]
-    D = ol.block_size()
-    C = chunk or (w_down.pw if w_down.parts is not None else
-                  _chunk(f_loc, D, D if w_down.wf == 0 else 2 * D))
+    if w_down.gs not in (1, S):
+        raise ol.CompileError(f"W_down in the gather's order of {w_down.gs} slices, on {S}")
+    C = f_chunk(w_gate, w_down, chunk)
+    short = f_loc % C
+    if short and (S > 1 or w_down.gs > 1 or loop):
+        raise ol.CompileError(f"swiglu_down: {f_loc} rows in chunks of {C} on one slice only, "
+                              f"unrolled")
     if loop and f_loc // C >= 6:                # two iterations at least
-        if each is not None:
-            raise ol.CompileError("swiglu_down: each= with the chunks as a hardware loop")
+        if each is not None or glu is not None or out is not None or rscale is not None:
+            raise ol.CompileError("swiglu_down: each=, glu=, out= or rscale= with the chunks "
+                                  "as a hardware loop")
         return _swiglu_down_loop(xs, w_gate, w_up, w_down, C, act)
     starts = list(range(0, f_loc, C))
 
     def gate_up(c0):
-        return ol.dot(xs, w_gate[c0:c0 + C, :]), ol.dot(xs, w_up[c0:c0 + C, :])
+        n = min(C, f_loc - c0)
+        return ol.dot(xs, w_gate[c0:c0 + n, :]), ol.dot(xs, w_up[c0:c0 + n, :])
 
     y = None
     nxt = gate_up(starts[0])
@@ -64,12 +92,29 @@ def swiglu_down(xs, w_gate, w_up, w_down, chunk=None, act=silu, loop=False, each
             nxt = gate_up(starts[i + 1])                # MXU streams ahead while the VPU works
         if each is not None:
             each(i)
-        a = ol.all_gather(act(g) * u)                   # [M, S*C]: chunk c of every slice
-        for t in ol.static_range(S):
-            cols = w_down[:, t * f_loc + c0:t * f_loc + c0 + C]
-            at = a[:, t * C:(t + 1) * C]
+        if c0 + C > f_loc:                              # the short chunk, to its part's
+            a = ol.zeros((g.rows, w_down.shape[1] - c0))  # width
+            a[:, 0:g.cols].set(act(g) * u if glu is None else glu(g, u, c0))
+        else:
+            a = ol.all_gather(act(g) * u if glu is None else glu(g, u, c0))   # [M, S*C]: chunk
+                                                                              # c of every slice
+        if w_down.gs > 1:                               # y += a . W_down's part i
+            cols = w_down[:, S * c0:S * (c0 + C)]
+            if rscale is not None:
+                a = ol.quantize(a, rscale=rscale)
             if y is None:
-                y = ol.dot(at, cols)
+                y = ol.dot(a, cols, out=out)
+            else:
+                ol.dot(a, cols, acc=y)
+            continue
+        cw = a.cols // S
+        for t in ol.static_range(S):
+            cols = w_down[:, t * f_loc + c0:t * f_loc + c0 + cw]
+            at = a[:, t * cw:(t + 1) * cw]
+            if rscale is not None:
+                at = ol.quantize(at, rscale=rscale)
+            if y is None:
+                y = ol.dot(at, cols, out=out)
             else:
                 ol.dot(at, cols, acc=y)                 # y += a_t . W_down[:, chunk of slice t]
     return y
@@ -107,6 +152,11 @@ def _swiglu_down_loop(xs, w_gate, w_up, w_down, C: int, act=silu):
 
     def down(k, buf, y):
         a = ol.all_gather(act(buf[0]) * buf[1])         # [M, S*C]: chunk k of every slice
+        if w_down.gs > 1:                               # W_down in the gather's order
+            if y is None:
+                return ol.dot(a, _down_cols(w_down, k, S * C))
+            ol.dot(a, _down_cols(w_down, k, S * C), acc=y)
+            return y
         for t in ol.static_range(S):
             at = a[:, t * C:(t + 1) * C]
             if y is None:

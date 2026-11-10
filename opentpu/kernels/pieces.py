@@ -14,6 +14,11 @@ only where its MMs read their weights changes.
     lay = plan(n, k, fmt, D, pw, max_bytes, parts=True)   # column parts of pw, whole parts
     pack(lay, q, s)                                 # each piece's bytes (quantize_mxu's rows)
     PQ(lay, bases=[...])  /  PQ(lay, table=Table(dram, n, bound), first=i)
+
+In groups (wg > 1: GALL's machine, compiler.gall_wg) each block is a grouped matrix (docs/isa.md
+"Weight groups": quant.grouped's data, then its scale areas), rows in whole groups, every block
+P = wg x D aligned; on a machine with the channel hash a piece's data lanes are permuted by its
+address (hash_piece, where it is placed: the resident pieces at build, staged ones by the host).
 """
 from __future__ import annotations
 
@@ -36,13 +41,15 @@ def _up(n: int, a: int = ALIGN) -> int:
 @dataclass(frozen=True)
 class Layout:
     """A matrix [n, k] in format fmt, stored in pieces: groups[i] = (u0, u1), rows u0 .. u1 - 1
-    (pw 0) or column parts u0 .. u1 - 1 of pw columns each."""
+    (pw 0) or column parts u0 .. u1 - 1 of pw columns each; wg > 1: every block in groups for
+    a machine of wg lanes."""
     n: int
     k: int
     fmt: str
     D: int
     pw: int
     groups: tuple
+    wg: int = 1
 
     @property
     def rb(self) -> int:
@@ -52,9 +59,18 @@ class Layout:
     def sb(self) -> int:
         return Q.scale_bytes(self.pw or self.k, self.fmt, self.D)
 
+    @property
+    def unit(self) -> int:
+        """A block's alignment: D bytes (ALIGN), in groups a group chunk's P = wg x D."""
+        return ALIGN if self.wg == 1 else max(ALIGN, self.wg * self.D)
+
     def block(self, rows: int) -> tuple:
-        """(data bytes, scale bytes) of a block of `rows` rows, each aligned."""
-        return _up(rows * self.rb), _up(rows * self.sb)
+        """(data bytes, scale bytes) of a block of `rows` rows, each aligned (in groups: its
+        grouped data and scale areas, quant.grp_bytes)."""
+        if self.wg == 1:
+            return _up(rows * self.rb), _up(rows * self.sb)
+        d, s = Q.grp_bytes(rows, self.pw or self.k, self.fmt, self.D, self.wg)
+        return _up(d, self.unit), _up(s, self.unit)
 
     def piece_bytes(self, i: int) -> int:
         u0, u1 = self.groups[i]
@@ -80,21 +96,33 @@ class Layout:
     def nbytes(self) -> int:
         return sum(self.piece_bytes(i) for i in range(len(self.groups)))
 
+    def data_regions(self, i: int) -> list:
+        """Piece i's element bytes: [(offset, bytes)], a block each (the scales after them)."""
+        if self.pw:
+            u0, u1 = self.groups[i]
+            return [(self.offsets(i, j)[0], self.block(self.n)[0]) for j in range(u1 - u0)]
+        u0, u1 = self.groups[i]
+        return [(0, self.block(u1 - u0)[0])]
+
 
 def plan(n: int, k: int, fmt: str, D: int, unit: int, max_bytes: int,
-         parts: bool = False) -> Layout:
+         parts: bool = False, wg: int = 1) -> Layout:
     """Pieces of at most max_bytes: rows in whole `unit`s (the kernel's slices: a head, an MLP
-    chunk), or (parts) column parts of `unit` columns, whole parts a piece."""
+    chunk), or (parts) column parts of `unit` columns, whole parts a piece; wg > 1: in groups
+    (a row unit then whole groups of quant.grp_r rows)."""
     if parts:
         if k % unit:
             raise ValueError(f"{k} columns in parts of {unit}")
-        lay = Layout(n, k, fmt, D, unit, ())
+        lay = Layout(n, k, fmt, D, unit, (), wg)
         per = max_bytes // sum(lay.block(n))
         m = k // unit
     else:
         if n % unit:
             raise ValueError(f"{n} rows in units of {unit}")
-        lay = Layout(n, k, fmt, D, 0, ())
+        if unit % Q.grp_r(fmt, wg):
+            raise ValueError(f"rows in units of {unit}: whole groups of {Q.grp_r(fmt, wg)} rows "
+                             f"({fmt} at WG {wg})")
+        lay = Layout(n, k, fmt, D, 0, (), wg)
         per = 0
         while per * unit < n and sum(lay.block((per + 1) * unit)) <= max_bytes:
             per += 1
@@ -104,13 +132,14 @@ def plan(n: int, k: int, fmt: str, D: int, unit: int, max_bytes: int,
     groups = tuple((a, min(a + per, m)) for a in range(0, m, per))
     if not parts:
         groups = tuple((a * unit, b * unit) for a, b in groups)
-    return Layout(n, k, fmt, D, lay.pw, groups)
+    return Layout(n, k, fmt, D, lay.pw, groups, wg)
 
 
 def pack(lay: Layout, q: np.ndarray, s: np.ndarray) -> list:
     """Each piece's bytes (uint8) from the whole matrix's quantized element and scale rows
     (quant.quantize_mxu of [n, k]): a column part's scale rows are the rows' Sw and its blocks'
-    (quant.column_parts), so the values are the whole matrix's."""
+    (quant.column_parts), so the values are the whole matrix's. In groups each block grouped
+    (quant.grouped), unhashed (hash_piece)."""
     q, s = np.asarray(q, np.uint8), np.asarray(s, np.uint8)
     out = []
     if lay.pw:
@@ -120,10 +149,24 @@ def pack(lay: Layout, q: np.ndarray, s: np.ndarray) -> list:
         blocks = [cols[j] for j in range(u0, u1)] if lay.pw else [(q[u0:u1], s[u0:u1])]
         for j, (qq, ss) in enumerate(blocks):
             d, c = lay.offsets(i, j)
+            if lay.wg > 1:
+                qq, ss = Q.grouped(qq, ss, lay.fmt, lay.pw or lay.k, lay.wg, lay.D)
             qq, ss = qq.reshape(-1), ss.reshape(-1)
             p[d:d + qq.size] = qq
             p[c:c + ss.size] = ss
         out.append(p)
+    return out
+
+
+def hash_piece(lay: Layout, i: int, p: np.ndarray, at: int) -> np.ndarray:
+    """Piece i's bytes (pack's) as a machine with the channel hash stores them at DRAM address
+    `at`: each block's data lanes by their addresses (quant.hash_rows), its scales as they are;
+    at wg = 1 as given."""
+    if lay.wg == 1:
+        return p
+    out = np.array(p, np.uint8)
+    for o, n in lay.data_regions(i):
+        out[o:o + n] = Q.hash_rows(out[o:o + n], at + o, lay.wg, lay.D)
     return out
 
 
@@ -196,7 +239,7 @@ class PQ:
             raise CompileError("a pieced matrix's table is not loaded in this run (bind)")
         b = current()
         r = _regs(b).get(b, self.table, self.first + i)
-        return Affine(0) + DevVar(f"piece {self.first + i}", r, align=ALIGN)
+        return Affine(0) + DevVar(f"piece {self.first + i}", r, align=self.lay.unit)
 
     def row_split(self, r0: int, r1: int) -> list:
         """[r0, r1) cut at the pieces: [(a, b)], each within one piece."""
@@ -223,7 +266,7 @@ class PQ:
             i = lay.piece_of(part)
             d, s = lay.offsets(i, part - lay.groups[i][0])
             base = self._base(i)
-            q = QTensor.weight(base + d, base + s, lay.n, lay.pw, lay.fmt, lay.D)
+            q = QTensor.weight(base + d, base + s, lay.n, lay.pw, lay.fmt, lay.D, grp=lay.wg)
             return q[r0:r1, :]
         if not (isinstance(r0, int) and isinstance(r1, int)):
             raise CompileError("a pieced matrix's rows are sliced at static rows")
@@ -233,7 +276,7 @@ class PQ:
             raise CompileError(f"rows {r0} .. {r1} cross a piece ({u0} .. {u1}): row_split")
         d, s = lay.offsets(i)
         base = self._base(i)
-        q = QTensor.weight(base + d, base + s, u1 - u0, lay.k, lay.fmt, lay.D)
+        q = QTensor.weight(base + d, base + s, u1 - u0, lay.k, lay.fmt, lay.D, grp=lay.wg)
         return q[r0 - u0:r1 - u0, ck]
 
 

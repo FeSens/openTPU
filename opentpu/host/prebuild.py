@@ -110,7 +110,7 @@ def waits_ahead(eng) -> dict | None:
         progs += [pp] if hasattr(pp, "dtype") else list(pp)
     for p in progs:
         w = p if hasattr(p, "dtype") else I.assemble(p)
-        WT.entries(w, cfg.D, cfg.S, prog=None if hasattr(p, "dtype") else p)
+        WT.entries(w, cfg.D, cfg.S, prog=None if hasattr(p, "dtype") else p, win=cfg.WC_WIN)
     return {"programs": len(progs), "computed": WT.stats["computed"] - c0,
             "seconds": round(WT.stats["seconds"] - t0, 1)}
 

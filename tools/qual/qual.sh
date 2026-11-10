@@ -10,7 +10,7 @@
 # DEPLOY_DIR holds otpu.bit (a path, or a name under ~/otpu-build). Runs from the host tree the
 # script is in. Environment: REST (the bitstream to leave on the card; default the candidate),
 # OUT (results; default /tmp/qual-<deploy>), REFCACHE (tools/qual/refs.py), LOAD=0 (no JTAG load:
-# qualify the bitstream the card runs, e.g. on opentpu, whose root port once did not bring the
+# qualify the bitstream the card runs, e.g. on the card host, whose root port once did not bring the
 # link back on a hot rescan after a reload), RUNS (the model runs MODEL:WF:HF, default the six
 # of Qwen3, LFM2.5 and Qwen3.5 in int8 and 4-bit; e.g. RUNS="lfm2-2.6b:int8:- lfm2-2.6b:fp4:int8"
 # for the other models of opentpu.llm.MODELS), LONG (the long prompt's run, MODEL:WF:HF, default
@@ -100,7 +100,7 @@ phase() {
   PH=$1; PT=$now
   [ -n "$PH" ] && echo "=== $PH $(date +%T)  load $(cut -d' ' -f1 /proc/loadavg 2>/dev/null), MemAvailable $(memgb) GiB"
 }
-# root helpers: opentpu has narrow sudo rules (/etc/sudoers.d/60-otpu-card) for these exact commands
+# root helpers: the card host has narrow sudo rules (/etc/sudoers.d/60-otpu-card) for these exact commands
 rescan() { if [ -x /usr/local/sbin/otpu-rescan ]; then sudo -n /usr/local/sbin/otpu-rescan; else sudo ~/otpu-venv/bin/otpu-setup --rescan; fi; }
 others() { sudo -n lsof -t /dev/xdma0_* 2>/dev/null | head -1; }
 quiet() { for _ in $(seq 120); do [ -z "$(others)" ] && return 0; sleep 5; done

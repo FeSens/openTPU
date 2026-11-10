@@ -100,5 +100,6 @@ def warm(image, layout, block: int, conv_lo: int, blocks: int, chain: bool = Tru
         if v is not None:
             for part in v[0] if isinstance(v[0], tuple) else (v[0],):
                 for p in part:
-                    WC.entries(I.assemble(p), image.cfg.D, image.cfg.S, prog=p)
+                    WC.entries(I.assemble(p), image.cfg.D, image.cfg.S, prog=p,
+                               aw=image.cfg.AW, win=image.cfg.WC_WIN)
     return compiled

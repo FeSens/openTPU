@@ -162,7 +162,7 @@ def _prepared(eng, what, blocks: int, progs, ra):
                            f"IMEM {img.cfg.IMEM_WORDS // 8}")
     # the words the run reads: its arguments', and those its addresses add with a loop's
     # step (Program.run_seen: a register loaded from the word before the loop, no argument)
-    names = {v.name for v, _ in ra or ()} | \
+    names = {getattr(v, "var", v).name for v, _ in ra or ()} | \
         {v.name for p in progs for v, _ in getattr(p, "run_seen", ())}
     prep = getattr(eng.backend, "prepare", None)
     if getattr(eng.backend, "runs_words", False) and len(progs) == 1:   # (Words: run_args;

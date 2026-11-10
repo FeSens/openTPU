@@ -172,6 +172,18 @@ def q8(x):
     return np.clip(r, -127, 127).astype(np.int8)
 
 
+def q8lo(x):
+    """The split's lo byte of x (QACT / QST flag LO, docs/isa.md "Quantization"): the rounding
+    residual of q8(x) at 2^-8, sat127(rint(256 x) - 256 q8(x)) (half to even), as int8; NaN -> 0.
+    Where q8 does not saturate x ~ q8(x) + q8lo(x) / 256 within 2^-9 (2^-8 where lo saturates:
+    x within 2^-9 of a half, rint(256 x) - 256 q8(x) = +-128)."""
+    x = ftz(x)
+    nan = np.isnan(x)
+    with np.errstate(invalid="ignore"):
+        r = np.rint(np.where(nan, F32(0), x).astype(np.float64) * 256.0) - 256.0 * q8(x)
+    return np.clip(np.where(nan, 0.0, r), -127, 127).astype(np.int8)
+
+
 def exp2(x):
     # the range flags look at x after the chains' first op (x*1 + -0, or x - y for EXP2SUB),
     # which makes any NaN the canonical one: exp2(NaN) = +inf
@@ -268,6 +280,18 @@ def rsqrt(x):
     return np.where(bad, F32(0), _exp_add(y, k // 2)).astype(np.float32)
 
 
+def sigmoid(a, b):
+    """VOP SIGMOID (Config.VSIG): recip(exp2(a*b) + 1), the VOPs MUL, EXP2, ADD 1.0 and RECIP's
+    rounded steps (b = -log2(e): the logistic function of a)."""
+    return recip(add(exp2(mul(a, b)), F32(1)))
+
+
+def silu(a, b):
+    """VOP SILU (Config.VSIG): a * sigmoid(a, b), SIGMOID's steps then a MUL (b = -log2(e): SiLU;
+    b = 1: lib.silu_l2 of an input already -log2(e) times)."""
+    return mul(a, sigmoid(a, b))
+
+
 def quantize(x, axis=-1):
     """Quantize groups along `axis` (the whole axis is one group). Returns (int8 q, fp32 scale).
 
@@ -294,11 +318,12 @@ def mx_offset(a, amax):
     return np.where(ab == 0, 0, np.clip(d, 0, MX_DMAX)).astype(np.uint8)
 
 
-def quantize_mx(x, g: int, row_mode: bool = False):
+def quantize_mx(x, g: int, row_mode: bool = False, lo: bool = False):
     """docs/isa.md "Quantization" of the rows of x [rows, n] with groups of g elements (QACT:
     D/4, QST: D): the row's S = amax * inv127, inv = 127 * recip(amax), each group's offset d
     (0 in row mode) and q = q8(x * (inv * 2^d)). Returns (int8 q [rows, n], fp32 S [rows],
-    uint8 d [rows, n / g])."""
+    uint8 d [rows, n / g]). lo (flag LO, Config.SPLITQ): the split's lo part instead,
+    q8lo(x * (inv * 2^d)) with the scale S * 2^-8 (the same offsets): x ~ (q + lo / 256) S 2^-d."""
     x = ftz(x)
     rows, n = x.shape
     ax = bits(fabs(x))
@@ -312,5 +337,7 @@ def quantize_mx(x, g: int, row_mode: bool = False):
         a = from_bits(np.max(ax.reshape(rows, n // g, g), axis=2))     # [rows, n/g]
         d = mx_offset(a, amax[:, None])
     invg = mul(inv[:, None], np.ldexp(F32(1), d.astype(np.int32)).astype(np.float32))
-    q = q8(mul(x.reshape(rows, n // g, g), invg[:, :, None])).reshape(rows, n)
-    return q, s, d
+    p = mul(x.reshape(rows, n // g, g), invg[:, :, None])
+    if lo:
+        return q8lo(p).reshape(rows, n), mul(s, F32(2.0 ** -8)), d
+    return q8(p).reshape(rows, n), s, d

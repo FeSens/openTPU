@@ -8,12 +8,12 @@ with every matrix in opentpu/qcache.py, 16 minutes with none).
 decides the images' bytes: the checkpoint (W.model_dir: the names, sizes, modification times
 and safetensors headers of its config.json and weight files; and W.mtp_from's, the checkpoint
 an MTP image's drafter comes from when not the model's), the Image's class, the layout
-(the Engine's: Spec, Config, KV capacity, batch, prefill rows, attention block, the image
-keywords: formats, lookup tables, expert slots and the image's own choices), the OTPU_*
-environment (progcache.keyed_env: some layouts read it, e.g. OTPU_FORMATS), the source of every
-module of opentpu but opentpu/host, opentpu/serve and progcache.UNKEYED's tools
-(progcache.source: the models, kernels and quantizers), and the numpy and torch versions. A W
-that is not a checkpoint's (the tests' dicts) is not cached.
+(the Engine's: Spec, Config but for PROGRAM_ONLY's fields, KV capacity, batch, prefill rows,
+attention block, the image keywords: formats, lookup tables, expert slots and the image's own
+choices), the OTPU_* environment (progcache.keyed_env: some layouts read it, e.g.
+OTPU_FORMATS), the source of every module of opentpu but opentpu/host, opentpu/serve and
+progcache.UNKEYED's tools (progcache.source: the models, kernels and quantizers), and the numpy
+and torch versions. A W that is not a checkpoint's (the tests' dicts) is not cached.
 
 What the build leaves on the Image is its attributes (and the entries of its dict attributes)
 that the build added or replaced: arrays are stored with the images, the weights themselves
@@ -39,6 +39,7 @@ it is not written and none is dropped.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -111,11 +112,23 @@ def _libs() -> str:
     return _LIBS
 
 
+# Config fields that order the programs alone (the images' bytes do not depend on them): the key
+# holds the layout's Config with them at their defaults, so layouts that differ in them share an
+# entry (the program cache's key keeps them: opentpu/progcache.py); a layout one of them picks
+# (Image.grouped: Qwen3.5's DeltaNet blocks, array-major on one slice with SE_OWN) is in the key
+PROGRAM_ONLY = ("SE_OWN",)
+
+
 def key(image, layout, ck) -> str:
     """The cache key of image.build(W) for this layout and checkpoint identity."""
+    from .isasim import Config
     cls = f"{type(image).__module__}.{type(image).__qualname__}"
-    return hashlib.blake2b(repr((cls, layout, ck, PC.keyed_env(), PC.source(), _libs())).encode(),
-                           digest_size=20).hexdigest()
+    dflt = {f.name: f.default for f in dataclasses.fields(Config) if f.name in PROGRAM_ONLY}
+    layout = tuple(dataclasses.replace(x, **dflt) if isinstance(x, Config) else x for x in layout)
+    # the layout a program-only field picks (Qwen3.5's DeltaNet blocks: qwen35.pair_loop)
+    picks = getattr(image, "grouped", None)
+    return hashlib.blake2b(repr((cls, layout, picks, ck, PC.keyed_env(), PC.source(),
+                                 _libs())).encode(), digest_size=20).hexdigest()
 
 
 def build(image, W, layout) -> list[np.ndarray]:

@@ -28,9 +28,10 @@ otpu-setup = "opentpu.host.pcie_setup:main"
 otpu-i2c = "opentpu.host.i2c:main"
 otpu-memcal = "opentpu.host.memcal:main"
 otpu-ddr4 = "opentpu.host.ddr4:main"
+otpu-bmc = "opentpu.host.bmc:main"
 
 [tool.setuptools.packages.find]
 include = ["opentpu*"]
 
 [tool.setuptools.package-data]
-opentpu = ["lens_app.html", "host/setup_pcie.sh", "host/pcie/*", "host/litedram/*", "host/litedram4/*"]
+opentpu = ["lens_app.html", "serve/dashboard.html", "host/setup_pcie.sh", "host/pcie/*", "host/litedram/*", "host/litedram4/*", "host/litedram4u/*"]

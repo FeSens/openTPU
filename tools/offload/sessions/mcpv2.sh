@@ -23,9 +23,9 @@
 # One otpu-lock: selftest (the configuration must be production's), the runs, selftest. A build other than EXPECT, a
 # failed selftest, another configuration or a missing file stops it; a failed run or a token mismatch is reported and
 # the next run goes on. The last line: MCPV2 PASS or MCPV2 FAIL. About 30 min (the staged image's first build ~4 min).
-# Stage (from the Mac, before the session; no host work while a session runs):
-#   git archive <sha> | ssh opentpu 'D=~/otpu-build/minicpmv/mcpv2/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <sha> > ~/otpu-build/minicpmv/mcpv2/host/COMMIT'
+# Stage (from a laptop, before the session; no host work while a session runs):
+#   git archive <sha> | ssh CARD_HOST 'D=~/otpu-build/minicpmv/mcpv2/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <sha> > ~/otpu-build/minicpmv/mcpv2/host/COMMIT'
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash \
 #   ~/otpu-build/minicpmv/mcpv2/host/tools/offload/sessions/mcpv2.sh > ~/otpu-build/minicpmv/mcpv2.launch.log 2>&1 \
 #   < /dev/null &

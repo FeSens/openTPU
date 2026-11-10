@@ -46,6 +46,8 @@ from . import generate as G
 
 GREEDY = None
 LIVE = 64                       # live programs kept (row sets that may run again)
+AHEAD = 16                      # programs compiling ahead at once (past it the oldest key's
+                                # result is dropped: keys that never came)
 PAD_AHEAD = 4                   # a padded group's own program: compiled for this many steps on
 FEED = "feed"                   # a row that only feeds its token (a prompt's): no LM head, no pick
 
@@ -54,8 +56,9 @@ def alloc(image, cfg, B: int, base: int) -> dict:
     """The batch area's addresses for B slots from `base` (bytes; page-aligned end)."""
     V = G._vpad(image.spec)
     R = max(B, cfg.MCOLS)                   # rows a run takes (a prompt's feed: MCOLS of a slot)
-    a = {"B": B, "R": R, "base": base, "V": V, "cap": image.cap,
-         "zmask": (image.lookup or {}).get("zmask", 0)}
+    lk = image.lookup or {}
+    a = {"B": B, "R": R, "base": base, "V": V, "cap": image.cap, "zmask": lk.get("zmask", 0),
+         "mask_blocks": lk.get("mask_blocks", 1)}
     o = base
 
     def take(n):
@@ -63,8 +66,9 @@ def alloc(image, cfg, B: int, base: int) -> dict:
         x = o
         o = -(-(o + n) // 128) * 128
         return x
-    io = take(4 * (2 * R + 2))              # the host's words: one write per run
+    io = take(4 * (2 * R + 2 + SLOT_WORDS * B))     # the host's words: one write per run
     a["io"], a["tin"], a["uni"], a["step"] = io, io, io + 4 * R, io + 8 * R
+    a["rw"] = io + 4 * (2 * R + 2)          # a step over slots: each row's words (slot_rows)
     a["tout"] = take(4 * R)
     a["st"] = [take(4 * G.STATE_WORDS) for _ in range(B)]
     a["lg"] = [take(4 * V) for _ in range(B)]
@@ -142,6 +146,18 @@ def step_rows(rows, span, block: int, zmask: int, cap: int, kinds=None) -> list:
     return out
 
 
+SLOT_WORDS = 5          # qwen3.SlotPos.WORDS: a row's words in the io block's rw
+
+
+def slot_rows(rows, rw: int, block: int, zmask: int, cap: int, d: int, wg: int = 1) -> list:
+    """rows [(slot, _)] -> [(slot, qwen3.SlotPos)]: row r at a run-time position, its words at
+    TMEM rw + SLOT_WORDS r (from the io block's rw: SlotPos.values, wg the KV caches' groups),
+    so one program serves every position of the rows' slots."""
+    from .qwen3 import SlotPos
+    return [(s, SlotPos(r, rw + SLOT_WORDS * r, block, zmask, cap, d, wg=wg))
+            for r, (s, _) in enumerate(rows)]
+
+
 @ol.jit
 def batch_step(m, rows, kinds, block: int, area: dict, span: int = 0):
     from .qwen3 import _attention_rows, _embed_word, _layers, _mlp
@@ -182,16 +198,18 @@ def batch_step(m, rows, kinds, block: int, area: dict, span: int = 0):
     if span:                                    # the arguments from the step word, at the start
         body = b.stack[-1]
         i = next(j for j, x_ in enumerate(body) if x_ is at) + 1
-        body[i:i] = [I.rld(15 - k, b.run_words[v.name], mul=int(c_),
-                           comment=f"argument {c_}*{v.name}")
-                     for k, (v, c_) in enumerate(b.run_args)]
+        body[i:i] = [x_ for k, (v, c_) in enumerate(b.run_args)
+                     for x_ in I.rld_mul(15 - k, b.run_words[v.name], int(c_),
+                                         comment=f"argument {c_}*{v.name}", aw=b.aw)]
         b.run_words = None
         del stw
 
 
 def _sinks(b, m, spec, x, rows, kinds, pick, area) -> None:
     """The LM head for the rows `pick` of x, each chunk to every such row's sink (Greedy, or
-    the slot's Sampler with the row's uniform); row r's token to tout[r]."""
+    the slot's Sampler with the row's uniform); row r's token to tout[r]. At S > 1 each slice's
+    sinks see its vocabulary rows: Greedy gathers the slices' maxima, the Sampler their top k
+    (selected again: the k largest of all), so every slice picks the same id."""
     from .qwen3 import head_rows_chunk
     if len(pick) < len(rows):
         xs = ol.empty([len(pick), x.cols], dense=True)
@@ -208,8 +226,6 @@ def _sinks(b, m, spec, x, rows, kinds, pick, area) -> None:
             sinks.append(G.Greedy(b, m.v_loc, chunk))
             sts.append(None)
             continue
-        if b.S != 1:
-            raise CompileError("sampled rows run on one slice")
         samp = _Key(*kind)
         if kind not in consts:
             consts[kind] = G.Sampler.constants(b, g0, samp)
@@ -251,22 +267,38 @@ class _Key:
         self.key = (kmax, pen)
 
 
-def compile_step(image, area: dict, rows, kinds, block: int, span: int = 0) -> list:
+def compile_step(image, area: dict, rows, kinds, block: int, span: int = 0,
+                 slices=None) -> list:
     """One program per slice: the batched step for rows [(slot, position)] of kinds; with a
-    span, for the steps t < span at positions + t (the step word: t)."""
+    span, for the steps t < span at positions + t (the step word: t). slices: those slices'
+    programs only (default every one)."""
     rows, kinds = [(int(s), int(p)) for s, p in rows], list(kinds)
     return [batch_step.trace(image.cfg, s, {"m": image.descriptors(s), "rows": rows,
                                             "kinds": kinds, "block": block, "area": area,
                                             "span": span})
-            .finish() for s in range(image.cfg.S)]
+            .finish() for s in (range(image.cfg.S) if slices is None else slices)]
 
 
-def _worker_step(rows, kinds, area, span=0):
-    """The engine's compile worker process: compile_step, assembled (one slice; with its wait
+def _worker_step(rows, kinds, area, span=0, s=0):
+    """The engine's compile worker process: compile_step of slice s, assembled (with its wait
     entries on a WAITC configuration: qwen3.worker_words)."""
     from .qwen3 import _WORKER, worker_words
     image, block = _WORKER
-    return worker_words(image, compile_step(image, area, rows, kinds, block, span)[0])
+    return worker_words(image, compile_step(image, area, rows, kinds, block, span, [s])[0])
+
+
+class _Slices:
+    """A program's slices compiling in Steps' slice workers: done() when all are, result()
+    the slices' words in order (a Future's two calls that Steps makes)."""
+
+    def __init__(self, futs):
+        self.futs = futs
+
+    def done(self) -> bool:
+        return all(f.done() for f in self.futs)
+
+    def result(self):
+        return [f.result() for f in self.futs]
 
 
 class Steps:
@@ -278,14 +310,26 @@ class Steps:
     span (default): a program serves its rows for `span(rows)` steps (the run's step in the io
     block), so the same program runs again, loaded in IMEM already, until a row reaches the
     end of its attention block; the next one (each row there) is compiled ahead as soon as a
-    program starts serving, on the engine's compile worker or a thread. span=False: one
-    program per step (positions at compile time), the next step's compiled while a step runs."""
+    program starts serving, on the engine's compile worker or a thread, and with depth d the
+    d - 1 after it too (rows at different places in their blocks: a short span's successor
+    gets its predecessor's time as well). span=False: one program per step (positions at
+    compile time), the next step's compiled while a step runs.
+
+    On a backend that runs assembled words (the card's) every program comes assembled, with
+    its wait entries on a WAITC configuration, so a run loads it as it is. At S > 1 (no engine
+    compile workers there) the slices compile at once in Steps' own S worker processes (slice
+    s's trace, words and entries in worker s): the 35B's step at B = 2 on x2 in about a
+    slice's time, ~0.6 s, against 1.8 s for the four in turn."""
+
+    worker = staticmethod(_worker_step)   # (the compile worker's function: a model's own steps,
+    #                                       batch35.Steps)
 
     def __init__(self, eng, span: bool = True):
         if getattr(eng, "bat", None) is None:
             raise ValueError("batched steps need Engine(batch=B > 1, batch_area=True)")
         self.eng, self.a = eng, eng.bat
         self.span_steps = bool(span)
+        self.depth = 1                    # span programs compiled ahead of the one serving
         self.kinds: dict = {}             # slot -> its kind
         self.limit = eng.cfg.IMEM_WORDS // 8
         self._fit: dict = {}              # signature (kinds, buckets) -> the program fits IMEM
@@ -293,8 +337,12 @@ class Steps:
         self._next: dict = {}             # key -> Future of its programs
         # (slots, kinds, positions at step 0) -> (span, programs), the least recently used first
         self._live: OrderedDict = OrderedDict()
+        self.live = LIVE                  # (a warm's programs all stay: warm_steps raises it)
         self._pool = None
-        self._words = bool(getattr(eng.backend, "runs_words", False)) and eng.cfg.S == 1
+        self._words = bool(getattr(eng.backend, "runs_words", False))
+        self._spool = self._sready = None   # S > 1: the slices' compile worker processes
+        if self._words and eng.cfg.S > 1 and eng.pipeline and not eng._procs:
+            self._start_slices()
         self.runs = 0
         # where a step's time goes: device cycles, the host's waits for programs (compiles
         # not ready), the whole runs; programs compiled, runs of a program already loaded
@@ -348,16 +396,48 @@ class Steps:
         return (tuple(sorted(zip(map(repr, kinds), (p // blk for _, p in rows)))),
                 2 if isinstance(n, tuple) else bool(n))
 
-    def _compile(self, key):
+    def _start_slices(self) -> None:
+        """S compile worker processes (spawned, as the engine's: qwen3._worker_init's image
+        of the engine's layout), one slice's program each; ended with this Steps."""
+        import multiprocessing as mp
+        import weakref
+        from concurrent.futures import ProcessPoolExecutor
+
+        from .qwen3 import _worker_init, _worker_ready
+        eng = self.eng
+        self._spool = ProcessPoolExecutor(
+            eng.cfg.S, mp_context=mp.get_context("spawn"), initializer=_worker_init,
+            initargs=(eng.spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng.block,
+                      eng._image_kw, eng.image.stream_fill))
+        self._sready = [self._spool.submit(_worker_ready) for _ in range(eng.cfg.S)]
+        weakref.finalize(self, self._spool.shutdown, wait=False, cancel_futures=True)
+
+    def _slices(self, key):
+        """key's programs compiling in the slice workers (_Slices), or None (none, or not
+        started yet)."""
+        if self._spool is None or not all(f.done() for f in self._sready):
+            return None
         rows, kinds, n = key
-        progs = compile_step(self.eng.image, self.a, rows, kinds, self.eng.block, n)
+        return _Slices([self._spool.submit(self.worker, rows, kinds, self.a, n, s)
+                        for s in range(self.eng.cfg.S)])
+
+    def _trace(self, key) -> list:
+        """key's programs, one per slice (traced here)."""
+        rows, kinds, n = key
+        return compile_step(self.eng.image, self.a, rows, kinds, self.eng.block, n)
+
+    def _compile(self, key):
+        progs = self._trace(key)
         if self._words:                 # assembled once: the backend loads the words as they are
             from .qwen3 import worker_words                 # (WAITC: with their entries)
-            return worker_words(self.eng.image, progs[0])
+            ws = [worker_words(self.eng.image, p) for p in progs]
+            return ws[0] if len(ws) == 1 else ws
         return progs
 
     def _size(self, progs) -> int:
-        return len(progs) // 8 if isinstance(progs, np.ndarray) else len(progs[0])
+        if isinstance(progs, np.ndarray):
+            return len(progs) // 8
+        return len(progs[0]) // 8 if isinstance(progs[0], np.ndarray) else len(progs[0])
 
     def _get(self, key):
         """key's programs: compiled ahead, or now."""
@@ -369,7 +449,8 @@ class Steps:
             if fut is not None:
                 return fut.result()
             self.timing["compiled_inline"] += 1
-            return self._compile(key)
+            fut = self._slices(key)
+            return self._compile(key) if fut is None else fut.result()
         finally:
             self.timing["compile_wait_s"] += time.perf_counter() - t0
 
@@ -470,13 +551,17 @@ class Steps:
             return
         if self._fit_of(self._sig(key)) is False:
             return
-        while len(self._next) > 16:              # (keys that never came)
+        while len(self._next) > AHEAD:           # (keys that never came)
             self._next.pop(next(iter(self._next))).result()
         rows, kinds, n = key
         if eng._procs and eng._ready is not None and eng._ready.done():
-            self._next[key] = eng._pool.submit(_worker_step, rows, kinds, self.a, n)
+            self._next[key] = eng._pool.submit(self.worker, rows, kinds, self.a, n)
             return
         if not eng.pipeline:
+            return
+        fut = self._slices(key)
+        if fut is not None:
+            self._next[key] = fut
             return
         if self._pool is None:
             from concurrent.futures import ThreadPoolExecutor
@@ -528,15 +613,19 @@ class Steps:
         k = (slots, kinds, tuple(p for _, p in rows))
         self._live[k] = (n, progs)
         self._live.move_to_end(k)
-        while len(self._live) > LIVE:
+        while len(self._live) > self.live:
             self._live.popitem(last=False)
         if isinstance(n, tuple):                # (a mixed run's: no successor)
             return progs, _offsets(tuple(grp), tuple(p for _, p in rows), kinds, n)
         if n and (len(grp) == self.feed_rows() or any(k != FEED for k in kinds)):
-            d = -(-n // adv) * adv              # (not after a prompt's partial feed run)
-            nxt = [(s, p + d) for s, p in rows]
-            if all(p < self.eng.cap for _, p in nxt):
-                self._prefetch(self._key(nxt, kinds))
+            nxt = rows                          # (not after a prompt's partial feed run)
+            for _ in range(self.depth):         # its successors: each row where a span ends
+                nxt = [(s, p + -(-n // adv) * adv) for s, p in nxt]
+                if any(p >= self.eng.cap for _, p in nxt):
+                    break
+                key = self._key(nxt, kinds)
+                self._prefetch(key)
+                n = key[2]
         return progs, grp[0][1] - rows[0][1]
 
     def _canon(self, grp, kinds) -> list:
@@ -592,19 +681,24 @@ class Steps:
             if self._serving(grp, kinds) is None:
                 self._prefetch(self._key(self._canon(grp, kinds), kinds))
 
-    def _go(self, grp, kinds, toks, uni, adv, ahead_key=None):
-        """One run of grp (its live program or a new one) with tokens toks, uniforms uni (or
-        None); while it runs, ahead_key's programs compile. Returns tout's words."""
-        eng, a, tm = self.eng, self.a, self.timing
-        progs, t = self._take(grp, kinds, adv)
-        Rm = a["R"]
-        c0 = time.perf_counter()
+    def _io(self, grp, toks, uni, t) -> np.ndarray:
+        """A run's io words: the rows' tokens, their uniforms (or none), the step word(s) t."""
+        Rm = self.a["R"]
         io = np.zeros(2 * Rm + 2, np.float32)
         io[:len(grp)] = toks
         if uni is not None:
             io[Rm:Rm + len(grp)] = np.minimum(np.asarray(uni, np.float32),
                                               np.float32(1 - 2.0 ** -24))
         io[2 * Rm], io[2 * Rm + 1] = t if isinstance(t, tuple) else (t, 0)
+        return io
+
+    def _go(self, grp, kinds, toks, uni, adv, ahead_key=None):
+        """One run of grp (its live program or a new one) with tokens toks, uniforms uni (or
+        None); while it runs, ahead_key's programs compile. Returns tout's words."""
+        eng, a, tm = self.eng, self.a, self.timing
+        progs, t = self._take(grp, kinds, adv)
+        c0 = time.perf_counter()
+        io = self._io(grp, toks, uni, t)
         for s in range(eng.cfg.S):
             eng.backend.write(s, a["io"], io)
         t0 = time.perf_counter()

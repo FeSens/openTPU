@@ -18,7 +18,8 @@
     python3 tools/qual/refs.py one CFG.pkl MODEL WF HF NTOK [--long | --xl] [--prompt-runs]
                                          (worker: one reference)
 
-Run from a host tree (the repo root; PYTHONPATH set). A run is MODEL:WF[:HF[:FLAGS]], HF '-' =
+Run from a host tree (the repo root; PYTHONPATH set); cfg and card open the card by
+opentpu.host.board.open_transport (OTPU_DEV, else /dev/xdma0). A run is MODEL:WF[:HF[:FLAGS]], HF '-' =
 the LM head in WF; FLAGS, comma-separated: long (the long prompt) or xl (the xl prompt), pr
 (prompt runs).
 
@@ -48,7 +49,7 @@ environment those sources read (env_key: OTPU_FORMATS, OTPU_PLE_FORMAT, ...; not
 ones), the prompt, its token ids (the chat template's output, with the date pinned), the token
 count, prompt runs and the reference's format (VERSION). A host-only change (a poll fix) reuses
 the references; any compiler, kernel or simulator change recomputes them. The key has no
-machine or path in it, so references computed on another box (omarchy, or the Mac under its
+machine or path in it, so references computed on another box (the build host, or a laptop under its
 load rules) can be copied into the cache directory: `rsync -a ~/otpu-build/refcache/ ...`.
 
 Hang-proofing: a reference being computed has a `.pending` file (host, pid, a heartbeat every
@@ -119,10 +120,11 @@ EXCLUDE = ("host/", "serve/", "lens.py", "lens_app.html", "rtlsim.py", "hwtrace.
 # LINE, Layout, RowLayout, ExpertServer: the mailbox, PLE rows, MoE serving)
 HOST_IN_REF = ("host/offload.py",)
 # OTPU_* variables the hashed sources read that do not change a reference: the caches' and the
-# card tools' (opentpu.progcache.RUNTIME_ENV), the simulators' scratch space and build jobs, and
-# board_config's defaults (the card's configuration is in the key by value)
+# card tools' (opentpu.progcache.RUNTIME_ENV), the simulators' scratch space and build jobs,
+# board_config's defaults (the card's configuration is in the key by value) and OTPU_TARGET (the
+# target a host opens, a WG variant's card by name; the reference runs the key's configuration)
 RUNTIME_ENV = ("OTPU_SIM_TMP", "OTPU_BUILD_JOBS", "OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR",
-               "OTPU_DSTEP", "OTPU_STREAM", "OTPU_ACT_ROWS")
+               "OTPU_DSTEP", "OTPU_STREAM", "OTPU_ACT_ROWS", "OTPU_TARGET")
 HEARTBEAT = 15                                # s between .pending updates
 STALE = 120                                   # s without a heartbeat: the job is dead
 RESERVE = 4 << 30                             # bytes of MemAvailable kept free
@@ -274,13 +276,23 @@ def digest(lg) -> tuple[str, list]:
             [(int(i), float(lg[i])) for i in top])
 
 
+def token_by_token(eng) -> bool:
+    """The engine's prompt goes through the decode step token by token: a Qwen3.5 MoE without
+    MTP (qwen35 compile_rows: its MoE block routes one token, its rows programs refuse R > 1;
+    Qwen3.6-35B-A3B's reference) and GPT-OSS (gptoss compile_rows: one row per program)."""
+    from opentpu.llm import gptoss, qwen35
+    s = getattr(eng, "spec", None)
+    return isinstance(s, gptoss.Spec) or (isinstance(s, qwen35.Spec) and s.moe is not None
+                                          and not s.mtp)
+
+
 def greedy(eng, ids, n: int, loop: bool = False) -> tuple[list, list]:
     """n greedy tokens after the prompt, past EOS (no stop ids), and the digests of the logits
     each was picked from: the prefill's last row's, then each step's; with loop (the decode
     loop on the card, Engine.generate_card) only the prefill's (the loop's stay on the
     device)."""
     import numpy as np
-    lg = eng.prefill(ids)
+    lg = eng.prefill(ids, **({"chunk": 1} if token_by_token(eng) else {}))
     toks, digs = [int(np.argmax(lg))], [digest(lg)]
     if loop:
         return toks + [int(t) for t in eng.generate_card(toks[0], n - 1, stop_ids=[])], digs
@@ -541,7 +553,7 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False,
          prompt_runs: bool = False, long: bool = False, xl: bool = False) -> int:
     import numpy as np
 
-    from opentpu.host.board import BoardBackend, XdmaTransport
+    from opentpu.host.board import BoardBackend, open_transport
     from opentpu.llm.qwen3 import Engine
     resident = resident or loop or prompt_runs
     cfg = pickle.loads(cfgf.read_bytes())
@@ -555,7 +567,7 @@ def card(cfgf: Path, model, wf, hf, n, resident: bool, loop: bool = False,
         return 1
     path, spec, W, tok = load(model)
     ids = prompt_ids(tok, long, xl)
-    tr = XdmaTransport("/dev/xdma0")
+    tr = open_transport()                   # (the card's: OTPU_DEV, else /dev/xdma0)
     hf_ = None if hf == "-" else hf
     dev = Engine(spec, W, cap=cap(xl), cfg=cfg, wformat=wf, head_format=hf_, resident=resident,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=path.name),
@@ -620,8 +632,8 @@ def main():
     a = ap.parse_args()
     cfgf = Path(a.cfg)
     if a.mode == "cfg":
-        from opentpu.host.board import Board, XdmaTransport, device_config
-        t = XdmaTransport("/dev/xdma0", dma=False)
+        from opentpu.host.board import Board, device_config, open_transport
+        t = open_transport(dma=False)
         cfg = device_config(Board(t, check=False, lock=False).info())
         blob = pickle.dumps(cfg)
         cfgf.write_bytes(blob)

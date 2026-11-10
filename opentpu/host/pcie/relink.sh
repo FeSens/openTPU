@@ -4,13 +4,13 @@
 # (the file that keeps the cards' upstream ports between runs) and provides cards, note and ok.
 #
 # A JTAG load or an IPROG reconfiguration takes the card off the link; it comes back with the new
-# bitstream. Most root ports retrain by themselves and a plain rescan finds the card. On opentpu
+# bitstream. Most root ports retrain by themselves and a plain rescan finds the card. On the card host
 # (the Haswell PEG root port 00:01.0, 2026-09-28, seen once) rescans found nothing for 5 minutes
 # and a warm reboot brought the card back. So rescan_cards first does the plain remove + rescan,
 # and only when no card is back does it work on the cards' upstream ports, rescanning after each
 # step: Retrain Link (Link Control bit 5), then Link Disable (bit 4) set and cleared, then a
 # secondary bus reset (Bridge Control bit 6). A port that retrains by itself is never touched.
-# The ports are held in D0 meanwhile: with runtime PM on (power/control "auto", as on opentpu) a
+# The ports are held in D0 meanwhile: with runtime PM on (power/control "auto", as on the card host) a
 # port suspends 100 ms after its last device is removed, and a suspended port trains no link.
 
 relink_tries=8 relink_step=0.25   # after each step: up to 8 rescans, 0.25 s apart

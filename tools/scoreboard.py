@@ -53,7 +53,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MODELS_FILE = HERE / "scoreboard_models.json"
 RMAX_FILE = HERE / "scoreboard_rmax.json"
-COSIM_RUNS_FILE = HERE / "scoreboard_cosim_runs.jsonl"   # build/sbcosim.sh's runs (hwe-bench)
+COSIM_RUNS_FILE = HERE / "scoreboard_cosim_runs.jsonl"   # build/sbcosim.sh's runs (the simulation host)
 D = 128                         # the MXU's depth, one weight block; the port's chunk is D bytes
 BLOCK = 256                     # the attention block: decode and prompt runs read whole blocks
 GB = 1e9

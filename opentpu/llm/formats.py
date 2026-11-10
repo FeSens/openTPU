@@ -11,8 +11,9 @@ fp4 fp4x6 (E2M1 with 6-bit multipliers of power-of-two group scales), nvfp4 NVID
 
 A rule with a range wins over one without, and among equals the first one in the string. Each
 model names the kinds it has (Gemma 4: attn, mlp, gateup, down, ple, head, experts; Qwen3 and
-the Llama-likes: attn, mlp, gateup, down, head; LFM2 also conv, Qwen3.5 also delta); "mlp" is
-the default of "gateup" and "down", and "head" takes no range. The string comes from the
+the Llama-likes: attn, mlp, gateup, down, head; LFM2 also conv, Qwen3.5 also delta; GPT-OSS
+attn, wq, wk, wv, wo); "mlp" is the default of "gateup" and "down", "attn" of GPT-OSS's
+projections "wq" ... "wo", and "head" takes no range. The string comes from the
 caller, else the OTPU_FORMATS environment variable, else the model's own default
 (Spec.formats).
 
@@ -35,6 +36,10 @@ AUTO = "auto"               # "mix" where the model has one, else int8 (otpu-cha
 MIXES: dict = {
     ("phi3", 32, 3072, 200064): "gateup@4-29=nvfp4,down@4-29=fp4",  # Phi-4-mini
     ("qwen3_5_text", 32, 2560, 248320): "delta=fp4,mlp=nvfp4",       # Qwen3.5-4B
+    # Qwen3.5-27B (S 4, a slice's 4 GiB: tools/image_fit.py): every layer fp4, the head int8 (dKL
+    # +3.19%, SE 0.12, 1000 tokens at S 4); NVFP4 MLPs (-0.16 for +5.0% bytes) and int8
+    # attention (-0.38 for +5.4%) do not buy their bytes; the 4B's mix does not fit a slice
+    ("qwen3_5_text", 64, 5120, 248320): "attn=fp4,delta=fp4,mlp=fp4",
     ("smollm3", 36, 2048, 128256): "gateup@9-35=nvfp4",              # SmolLM3-3B
     ("lfm2", 30, 2048, 65536): "conv=nvfp4,gateup=nvfp4,down=fp4",   # LFM2-2.6B
     # Gemma 4 E2B: none. Its base checkpoint's mix (attn@15-24=fp4,mlp@15-34=fp4) fails on
@@ -104,7 +109,8 @@ def plain(rules_: list) -> dict:
     return {r[0]: r[4] for r in reversed(rules_) if not r[3]}
 
 
-SUB = {"gateup": "mlp", "down": "mlp"}      # a kind whose default is another kind's format
+# a kind whose default is another kind's format (GPT-OSS's projections: attn)
+SUB = {"gateup": "mlp", "down": "mlp", "wq": "attn", "wk": "attn", "wv": "attn", "wo": "attn"}
 
 
 def resolver(formats: str | None, kinds, default: str, wformat: str,

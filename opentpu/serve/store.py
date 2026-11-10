@@ -6,15 +6,22 @@ BlobStore holds byte blobs by key: the most recently used in RAM up to `ram_byte
 the least recently used go to files under `dir` (a writer thread writes them; a blob being
 written is still read from memory) up to `disk_bytes`, past which the least recently used are
 dropped. A blob read from disk comes back into RAM (its file stays). Pinned blobs (an active
-request's context) are never evicted. The files outlive the process: a server started on the
-same directory finds the contexts saved before (their entries are blobs too).
+request's context) are never evicted; boosted ones (a context restored BOOST_HITS times or more:
+a system prompt that conversations share) go after every other in their tier. The files outlive
+the process: a server started on the same directory finds the contexts saved before (their
+entries are blobs too).
 
 PrefixCache keeps contexts as entries: the tokens [0, n), the keys of their whole pages (page i
 keyed by the model and the tokens [0, (i + 1) P): contexts with a common prefix share them) and
-of the tail (the last partial page and, for a model with state, the state at n). match(tokens)
+of the tail (the last partial page and, for a model with state, the state at n). A state's
+format (kvio.Layout.sf, llm.snapshot.state_format: a folded DeltaNet's log2(e) S) is in the keys
+and in the entry, and a state saved in another is never restored (PrefixCache.restore refuses
+it). match(tokens)
 finds where the device can continue a prompt from: for a model whose KV caches hold the whole
 context, any common prefix k of a saved context (its pages up to k; what lies past k is
-overwritten); for a model with state, the end of a saved context that the prompt continues.
+overwritten); for a model with state, the end of a saved context that the prompt continues (so
+the scheduler keeps prefixes too, Entry.prefix: the contexts at a prompt's block positions and
+at its last message boundary as it is fed, for other conversations that share them).
 With an MTP drafter (mtp=True, opentpu/llm/mtp.py) the MTP layer's KV row at q took the token at
 q + 1 (h_q, x_(q + 1)): page i is keyed by the tokens [0, (i + 1) P] (one more), the context's
 last row's by the token after it (Entry.follow, the context's next token when it was saved), and
@@ -30,11 +37,14 @@ import os
 import queue
 import threading
 import time
+import traceback
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+BOOST_HITS = 2          # an entry restored this often is evicted after the others (boosted)
 
 
 class BlobStore:
@@ -47,20 +57,28 @@ class BlobStore:
         self.spilling: dict = {}                    # key -> bytes being written to disk
         self.disk: OrderedDict = OrderedDict()      # key -> size of its file
         self.pins: dict = {}                        # key -> pin count
+        self.boosted: set = set()                   # keys evicted after the others
         self.ram_used = self.disk_used = self.spill_used = 0
         self.stats = {"put": 0, "ram_hits": 0, "disk_hits": 0, "misses": 0, "spilled": 0,
-                      "dropped": 0, "disk_read_s": 0.0}
+                      "dropped": 0, "disk_read_s": 0.0, "writer_errors": 0}
         self._q: queue.Queue | None = None
+        self._thread: threading.Thread | None = None
         if self.dir is not None:
             self.dir.mkdir(parents=True, exist_ok=True)
+            for p in self.dir.glob(".*.tmp"):       # (a writer stopped within a file)
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
             files = sorted(self.dir.glob("*.bin"), key=lambda p: p.stat().st_mtime)
             for p in files:                         # the files of an earlier server
                 n = p.stat().st_size
                 self.disk[p.stem] = n
                 self.disk_used += n
             self._q = queue.Queue()
-            threading.Thread(target=self._writer, daemon=True, name="otpu-kv-writer").start()
-            self._evict_disk()
+            self._thread = threading.Thread(target=self._writer, daemon=True,
+                                            name="otpu-kv-writer")
+            self._thread.start()
 
     # ---- the interface
     def __contains__(self, key: str) -> bool:
@@ -73,12 +91,23 @@ class BlobStore:
         with self.lock:
             if key in self.ram:
                 self.ram_used -= len(self.ram.pop(key))
+            if durable and key in self.disk:        # (a record rewritten: its file again)
+                self.disk_used -= self.disk.pop(key)
             self.ram[key] = data
             self.ram_used += len(data)
             self.stats["put"] += 1
             if durable and self._q is not None and key not in self.disk:
                 self._q.put(("copy", key))
             self._evict_ram()
+
+    def to_disk(self, keys) -> None:
+        """These blobs onto disk too as the writer gets to them (kept in RAM)."""
+        if self._q is None:
+            return
+        with self.lock:
+            for k in keys:
+                if k in self.ram and k not in self.disk:
+                    self._q.put(("copy", k))
 
     def persist(self) -> None:
         """Every blob onto disk (a server's shutdown: a later one finds them), as the disk's
@@ -134,9 +163,15 @@ class BlobStore:
             self._evict_ram()
             self._evict_disk()
 
+    def boost(self, keys) -> None:
+        """These blobs go after every other in their tier (until discarded)."""
+        with self.lock:
+            self.boosted.update(keys)
+
     def discard(self, key: str) -> None:
         """Remove a blob from every tier (no on_drop call)."""
         with self.lock:
+            self.boosted.discard(key)
             if key in self.ram:
                 self.ram_used -= len(self.ram.pop(key))
             if key in self.spilling:
@@ -146,16 +181,35 @@ class BlobStore:
                 self._unlink(key)
 
     def flush(self) -> None:
-        """Wait until the blobs being spilled are on disk."""
-        if self._q is not None:
-            self._q.join()
+        """Wait until the blobs being spilled are on disk (or the writer is gone: never for
+        ever)."""
+        if self._q is None:
+            return
+        with self._q.all_tasks_done:
+            while self._q.unfinished_tasks and self._thread.is_alive():
+                self._q.all_tasks_done.wait(1.0)
+
+    def size(self, key: str) -> int | None:
+        """A blob's bytes in whichever tier holds it, or None."""
+        with self.lock:
+            d = self.ram.get(key)
+            d = self.spilling.get(key) if d is None else d
+            return self.disk.get(key) if d is None else len(d)
+
+    def trim(self) -> None:
+        """Back within the disk's limit (a directory found over it: after the entries are known,
+        so that boosted blobs go last and a dropped blob takes its entries with it)."""
+        with self.lock:
+            self._evict_disk()
 
     def usage(self) -> dict:
         with self.lock:
             return {"ram_bytes": self.ram_used, "ram_blobs": len(self.ram),
                     "spilling_bytes": self.spill_used,
                     "disk_bytes": self.disk_used, "disk_blobs": len(self.disk),
-                    "ram_limit": self.ram_bytes, "disk_limit": self.disk_bytes, **self.stats}
+                    "ram_limit": self.ram_bytes, "disk_limit": self.disk_bytes,
+                    "writer_alive": None if self._thread is None else self._thread.is_alive(),
+                    **self.stats}
 
     def keys(self) -> list[str]:
         with self.lock:
@@ -168,10 +222,11 @@ class BlobStore:
     def _evict_ram(self) -> None:
         if self.ram_used <= self.ram_bytes:
             return
-        for key in list(self.ram):
+        for key in [k for k in self.ram if k not in self.boosted] + \
+                [k for k in self.ram if k in self.boosted]:     # (boosted ones last)
             if self.ram_used <= self.ram_bytes:
                 break
-            if key in self.pins:
+            if key in self.pins or key not in self.ram:     # (a drop took it with its entry)
                 continue
             data = self.ram.pop(key)
             self.ram_used -= len(data)
@@ -189,51 +244,70 @@ class BlobStore:
         while True:
             how, key = self._q.get()
             try:
-                if how == "copy":                   # a RAM blob's file (it stays in RAM)
-                    with self.lock:
-                        data = self.ram.get(key)
-                    if data is not None and key not in self.disk:
-                        tmp = self.dir / f".{key}.tmp"
-                        data.tofile(tmp)
-                        os.replace(tmp, self._path(key))
-                        with self.lock:
-                            if key in self.ram and key not in self.disk:
-                                self.disk[key] = len(data)
-                                self.disk_used += len(data)
-                                self._evict_disk()
-                            elif key not in self.disk:
-                                self._unlink(key)
-                    continue
+                self._write(how, key)
+            except BaseException:                   # (a dead writer would keep every later spill
+                self._writer_failed()               # in RAM and leave flush waiting for ever)
+            finally:
+                self._q.task_done()
+
+    def _writer_failed(self) -> None:
+        self.stats["writer_errors"] += 1
+        try:
+            traceback.print_exc()
+        except BaseException:                       # (no stderr left to tell)
+            pass
+
+    def _write(self, how: str, key: str) -> None:
+        try:
+            if how == "copy":                       # a RAM blob's file (it stays in RAM)
                 with self.lock:
-                    data = self.spilling.get(key)
-                if data is not None:
+                    data = self.ram.get(key)
+                if data is not None and key not in self.disk:
                     tmp = self.dir / f".{key}.tmp"
                     data.tofile(tmp)
                     os.replace(tmp, self._path(key))
                     with self.lock:
-                        if self.spilling.pop(key, None) is not None:
-                            self.spill_used -= len(data)
+                        if key in self.ram and key not in self.disk:
                             self.disk[key] = len(data)
                             self.disk_used += len(data)
                             self._evict_disk()
-                        else:                       # discarded meanwhile
+                        elif key not in self.disk:
                             self._unlink(key)
-            except OSError:
+                return
+            with self.lock:
+                data = self.spilling.get(key)
+            if data is not None:
+                tmp = self.dir / f".{key}.tmp"
+                data.tofile(tmp)
+                os.replace(tmp, self._path(key))
                 with self.lock:
-                    d = self.spilling.pop(key, None)
-                    if d is not None:
-                        self.spill_used -= len(d)
-                        self._dropped(key)
-            finally:
-                self._q.task_done()
+                    if self.spilling.pop(key, None) is not None:
+                        self.spill_used -= len(data)
+                        self.disk[key] = len(data)
+                        self.disk_used += len(data)
+                        self._evict_disk()
+                    else:                           # discarded meanwhile
+                        self._unlink(key)
+        except OSError:
+            self._writer_failed()
+            try:
+                (self.dir / f".{key}.tmp").unlink(missing_ok=True)
+            except OSError:
+                pass
+            with self.lock:
+                d = self.spilling.pop(key, None)
+                if d is not None:
+                    self.spill_used -= len(d)
+                    self._dropped(key)
 
     def _evict_disk(self) -> None:
         if self.disk_used <= self.disk_bytes:
             return
-        for key in list(self.disk):
+        for key in [k for k in self.disk if k not in self.boosted] + \
+                [k for k in self.disk if k in self.boosted]:
             if self.disk_used <= self.disk_bytes:
                 break
-            if key in self.pins or key in self.ram:
+            if key in self.pins or key in self.ram or key not in self.disk:   # (a drop took it)
                 continue
             self._drop_disk(key)
 
@@ -269,7 +343,9 @@ def _tok_bytes(tokens) -> bytes:
 class Entry:
     """A saved context: tokens [0, n), its whole pages' keys, its tail's key (the last partial
     page's m positions, then the state) or None; an MTP context's follow (the token its MTP
-    layer's last row took, or None) and held (the key of that row's residual, or None)."""
+    layer's last row took, or None) and held (the key of that row's residual, or None); sf, its
+    state's format (kvio.Layout.sf); prefix, a prompt's prefix kept as it was fed (no reply:
+    for other conversations sharing it); hits, its restores (BOOST_HITS: boosted)."""
     key: str
     tokens: np.ndarray
     pages: list[str]
@@ -278,6 +354,9 @@ class Entry:
     used: float = field(default_factory=time.monotonic)
     follow: int | None = None
     held: str | None = None
+    sf: str = ""
+    prefix: bool = False
+    hits: int = 0
 
     @property
     def n(self) -> int:
@@ -296,17 +375,21 @@ class Match:
 
 
 class PrefixCache:
-    """Contexts saved in a BlobStore for one model's layout (kvio.Layout), by their tokens."""
+    """Contexts saved in a BlobStore for one model's layout (kvio.Layout), by their tokens; the
+    keys are mkey's and, with a state of a format of its own (Layout.sf), that format's."""
 
     def __init__(self, store: BlobStore, layout, mkey: str, max_entries: int = 4096,
                  mtp: bool = False):
-        self.store, self.L, self.mk = store, layout, mkey
+        self.store, self.L = store, layout
+        self.mk = f"{mkey}.{layout.sf}" if layout.sf else mkey
         self.max_entries, self.mtp = max_entries, mtp
         self.entries: OrderedDict = OrderedDict()   # entry key -> Entry (oldest use first)
         self.refs: dict = {}                        # blob key -> entries using it
-        self.lock = threading.RLock()
+        self.lock = store.lock                      # (its writer drops entries holding the
+        #                                             store's lock, save puts holding this one)
         self.stats = {"saved_pages": 0, "shared_pages": 0, "saved_tails": 0, "restored_pages": 0,
-                      "restores": 0, "hit_tokens": 0, "lookups": 0}
+                      "restores": 0, "hit_tokens": 0, "lookups": 0, "prefix_saves": 0,
+                      "prefix_hits": 0, "prefix_hit_tokens": 0, "boosted": 0}
         prev = store.on_drop
         store.on_drop = lambda k: (self._blob_dropped(k), prev and prev(k))
         self._load()
@@ -346,12 +429,15 @@ class PrefixCache:
 
     # ---- save and restore
     def save(self, io, tokens, pin: bool = False, follow: int | None = None,
-             held: np.ndarray | None = None) -> Entry:
+             held: np.ndarray | None = None, state_at: int | None = None,
+             prefix: bool = False) -> Entry:
         """The device's context (its first len(tokens) positions hold `tokens`) into the store:
         the whole pages it does not have yet and the tail (last partial page, state); returns
         the entry (pinned: its blobs kept until unpin). MTP: follow, the token the MTP layer's
         last row took (None: not known, -1 in its pages' keys), and held, that row's residual
-        (or None)."""
+        (or None). state_at: where a snapshot of the context's state lies on the device
+        (kvio.snapshot_at), read from there. prefix: a prompt's prefix as it is fed (Entry.
+        prefix), its blobs on disk at once (durable: the next server finds it)."""
         P, L = self.L.P, self.L
         toks = np.asarray(tokens, np.int64)
         n = len(toks)
@@ -375,6 +461,10 @@ class PrefixCache:
                     old.held = hkey                         # tokens' alone)
                     self.refs.setdefault(hkey, set()).add(key)
                     self._persist(old)
+                if prefix and not old.prefix:               # (kept before as a reply's start)
+                    old.prefix = True
+                    self.store.to_disk(old.blobs())
+                    self._persist(old)
                 if pin:
                     self.store.pin(old.blobs())
                 return old
@@ -385,19 +475,23 @@ class PrefixCache:
         if tail is not None:
             parts = io.read_pages([(full, m)]) if m else []
             if L.stateful:
-                parts.append(io.read_state())
+                parts.append(io.read_state() if state_at is None else io.read_state(at=state_at))
             tail_data = np.concatenate(parts) if len(parts) > 1 else parts[0]
-        e = Entry(key, toks.copy(), pages, tail, m, follow=follow, held=hkey)
+        e = Entry(key, toks.copy(), pages, tail, m, follow=follow, held=hkey, sf=L.sf,
+                  prefix=prefix)
         with self.lock:
             for i, d in zip(missing, got):
-                self.store.put(pages[i], d)
+                self.store.put(pages[i], d, durable=prefix)
             if hkey is not None:
                 self.store.put(hkey, np.asarray(held, np.float32).view(np.uint8).copy())
             self.stats["saved_pages"] += len(missing)
             self.stats["shared_pages"] += len(pages) - len(missing)
             if tail is not None:
-                self.store.put(tail, tail_data)
+                self.store.put(tail, tail_data, durable=prefix)
                 self.stats["saved_tails"] += 1
+            if prefix:
+                self.stats["prefix_saves"] += 1
+                self.store.to_disk(pages)           # (the pages it shares: on disk too)
             if pin:
                 self.store.pin(e.blobs())
             self._add(e)
@@ -407,8 +501,9 @@ class PrefixCache:
                     if o is not e and o.n <= n and not self._is_pinned(o) and \
                             np.array_equal(o.tokens, toks[:o.n]):
                         self._remove(o)
-            while len(self.entries) > self.max_entries:
-                self._remove(next(iter(self.entries.values())))
+            while len(self.entries) > self.max_entries:   # (the oldest, boosted ones last)
+                self._remove(min(self.entries.values(),
+                                 key=lambda o: (o.hits >= BOOST_HITS, o.used)))
         return e
 
     def restore(self, io, match: Match, have: int = 0) -> int:
@@ -418,26 +513,29 @@ class PrefixCache:
         e, k = match.entry, match.k
         if e is None or k == 0:
             return 0
+        if self.L.stateful and e.sf != self.L.sf:
+            raise ValueError(f"a state saved as {e.sf or 'unfolded'!r}, this image's "
+                             f"{self.L.sf or 'unfolded'!r}: not restored")
         P = self.L.P
         need = -(-k // P)
         writes = []
-        with self.lock:
+        with self.lock:                             # (every blob in hand before the first write)
             for i in range(min(have, k) // P, need):
                 if i < len(e.pages):
-                    d = self.store.get(e.pages[i])
+                    d = self._get(e.pages[i], self.L.page_bytes())
                     if d is None:
                         self._remove(e)
                         return 0
                     writes.append((i, P, d))
                 else:                               # the tail's partial page
-                    d = self.store.get(e.tail)
+                    d = self._get(e.tail, self._tail_bytes(e))
                     if d is None:
                         self._remove(e)
                         return 0
                     writes.append((i, e.m, d[:self.L.page_bytes(e.m)]))
             state = None
             if self.L.stateful:
-                d = self.store.get(e.tail)
+                d = self._get(e.tail, self._tail_bytes(e))
                 if d is None:
                     self._remove(e)
                     return 0
@@ -451,6 +549,13 @@ class PrefixCache:
             self.stats["restores"] += 1
             self.stats["restored_pages"] += len(writes)
             self.stats["hit_tokens"] += k
+            if e.prefix:
+                self.stats["prefix_hits"] += 1
+                self.stats["prefix_hit_tokens"] += k
+            e.hits += 1
+            if e.hits == BOOST_HITS and e.key in self.entries:
+                self._boost(e)
+                self._persist(e)
         return k
 
     def held_row(self, e: Entry) -> np.ndarray | None:
@@ -472,6 +577,20 @@ class PrefixCache:
                     "tokens": int(sum(e.n for e in self.entries.values())), **self.stats}
 
     # ---- bookkeeping
+    def _tail_bytes(self, e: Entry) -> int:
+        return (self.L.page_bytes(e.m) if e.m else 0) + (self.L.state_bytes if self.L.stateful else 0)
+
+    def _get(self, key: str, size: int) -> np.ndarray | None:
+        """A blob at its size, or None (a file cut short is as good as gone)."""
+        d = self.store.get(key)
+        return d if d is not None and len(d) == size else None
+
+    def _whole(self, e: Entry) -> bool:
+        """Every blob of e there, at its size."""
+        return all(self.store.size(b) == self.L.page_bytes() for b in e.pages) and \
+            (e.tail is None or self.store.size(e.tail) == self._tail_bytes(e)) and \
+            (e.held is None or e.held in self.store)
+
     def _is_pinned(self, e: Entry) -> bool:
         return any(b in self.store.pins for b in e.blobs())
 
@@ -480,6 +599,11 @@ class PrefixCache:
         self.entries.move_to_end(e.key)
         for b in e.blobs():
             self.refs.setdefault(b, set()).add(e.key)
+
+    def _boost(self, e: Entry) -> None:
+        """e's blobs evicted after the others' (its shared pages with them)."""
+        self.store.boost(e.blobs() + [e.key])
+        self.stats["boosted"] += 1
 
     def _remove(self, e: Entry) -> None:
         if self.entries.pop(e.key, None) is None:
@@ -507,15 +631,19 @@ class PrefixCache:
         if self.store.dir is None:
             return
         meta = json.dumps({"pages": e.pages, "tail": e.tail, "m": e.m, "follow": e.follow,
-                           "held": e.held}).encode()
+                           "held": e.held, "sf": e.sf, "prefix": e.prefix,
+                           "hits": e.hits}).encode()
         rec = np.frombuffer(len(meta).to_bytes(8, "little") + meta + _tok_bytes(e.tokens),
                             np.uint8)
         self.store.put(e.key, rec, durable=True)
 
     def _load(self) -> None:
-        """Entries an earlier server saved on disk (whose blobs are all still there)."""
+        """Entries an earlier server saved on disk whose blobs are all still there, whole; what
+        it left beside them (an entry missing a blob, blobs no entry uses: a server killed or a
+        writer stopped part way) goes, then the disk back within its limit."""
         if self.store.dir is None:
             return
+        keep = set()
         for k in self.store.keys():
             if not k.startswith(f"{self.mk}-e-"):
                 continue
@@ -524,12 +652,24 @@ class PrefixCache:
                 n = int.from_bytes(rec[:8].tobytes(), "little")
                 meta = json.loads(rec[8:8 + n].tobytes())
                 toks = np.frombuffer(rec[8 + n:].tobytes(), "<i4").astype(np.int64)
-            except (ValueError, TypeError):
+                e = Entry(k, toks, list(meta["pages"]), meta["tail"], int(meta["m"]),
+                          follow=meta.get("follow"), held=meta.get("held"), sf=meta.get("sf", ""),
+                          prefix=bool(meta.get("prefix")), hits=int(meta.get("hits", 0)))
+            except (ValueError, TypeError, KeyError, AttributeError):
                 self.store.discard(k)
                 continue
-            e = Entry(k, toks, list(meta["pages"]), meta["tail"], int(meta["m"]),
-                      follow=meta.get("follow"), held=meta.get("held"))
-            if all(b in self.store for b in e.blobs()) and self.entry_key(toks) == k:
+            if self.L.stateful and e.sf != self.L.sf:
+                keep.add(k)                 # (another format's: restore refuses it)
+                keep.update(e.blobs())
+                continue
+            if self._whole(e) and self.entry_key(toks) == k:
                 self._add(e)
+                if e.hits >= BOOST_HITS:
+                    self._boost(e)
             else:
                 self.store.discard(k)
+        for k in self.store.keys():
+            if k.startswith(f"{self.mk}-") and k not in self.entries and k not in self.refs \
+                    and k not in keep:
+                self.store.discard(k)
+        self.store.trim()

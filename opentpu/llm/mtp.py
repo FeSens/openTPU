@@ -655,8 +655,9 @@ def _args(b, at, words: dict) -> None:
     all."""
     body = b.stack[-1]
     i = next(j for j, x in enumerate(body) if x is at) + 1
-    body[i:i] = [I.rld(15 - k, words[v.name], mul=int(c), comment=f"argument {c}*{v.name}")
-                 for k, (v, c) in enumerate(b.run_args)]
+    body[i:i] = [x for k, (v, c) in enumerate(b.run_args)
+                 for x in I.rld_mul(15 - k, words[v.name], int(c),
+                                    comment=f"argument {c}*{v.name}", aw=b.aw)]
     b.run_words = None
 
 

@@ -10,8 +10,8 @@
 # greedy. The arms' tok/s, misses and reads by where they came from (page cache or disk): a miss's service time per
 # disk. One otpu-lock: selftest (production's build and configuration), the pools, selftest. A failed run, an INVALID
 # arm or a changed q35 file is a FAIL; the last line: POOLDISK PASS or POOLDISK FAIL. About 20 min.
-# Stage (from the Mac): git archive <sha> | ssh opentpu 'D=~/otpu-build/minicpmv/pooldisk/host; mkdir -p $D &&
-#   tar -x -C $D'; ssh opentpu 'echo <sha> > ~/otpu-build/minicpmv/pooldisk/host/COMMIT'
+# Stage (from a laptop): git archive <sha> | ssh CARD_HOST 'D=~/otpu-build/minicpmv/pooldisk/host; mkdir -p $D &&
+#   tar -x -C $D'; ssh CARD_HOST 'echo <sha> > ~/otpu-build/minicpmv/pooldisk/host/COMMIT'
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash \
 #   ~/otpu-build/minicpmv/pooldisk/host/tools/offload/sessions/pooldisk.sh > ~/otpu-build/minicpmv/pooldisk.launch.log \
 #   2>&1 < /dev/null &

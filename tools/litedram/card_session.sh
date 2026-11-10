@@ -1,5 +1,5 @@
 #!/bin/bash
-# The LiteDRAM test image on the card (docs/litedram.md, section 7). On the card host (opentpu)
+# The LiteDRAM test image on the card (docs/litedram.md, section 7). On the card host
 # a JTAG load comes back on the bus only after a warm reboot (otpu-rescan's retrain did not
 # bring it back after any of the three loads so far), so a session is four steps around
 # two reboots, each under the device lock:

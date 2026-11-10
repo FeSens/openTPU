@@ -18,10 +18,10 @@
 # A build other than EXPECT, a failed selftest, another configuration, a failed or timed-out run or a token mismatch
 # stops it (then the final selftest). About 50 min: 12 runs of 70-120 s, W's builds, the pools' reads (~130 s from
 # the SSD at each switch of arm: the two pools do not fit the card host's page cache together).
-# Stage (from the Mac, with the lead's go; no host work while a session runs; mtp1's pool, checkpoint and refs as
+# Stage (from a laptop; no host work while a session runs; mtp1's pool, checkpoint and refs as
 # they are in ~/otpu-build/les/mtp1, only read):
-#   git archive <mcpv-mtp sha> | ssh opentpu 'D=~/otpu-build/les/mtp2/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <mcpv-mtp sha, full> > ~/otpu-build/les/mtp2/host/COMMIT; mkdir -p ~/otpu-build/les/mtp2/runs'
+#   git archive <mcpv-mtp sha> | ssh CARD_HOST 'D=~/otpu-build/les/mtp2/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <mcpv-mtp sha, full> > ~/otpu-build/les/mtp2/host/COMMIT; mkdir -p ~/otpu-build/les/mtp2/runs'
 # Run (no pipe): QM=$HOME/otpu-build/les/mtp1/pool-q35-mx-mtp.split.bin setsid nohup ~/.local/bin/otpu-lock --wait 600 --
 #   bash ~/otpu-build/les/mtp2/host/tools/offload/sessions/mtp2.sh > ~/otpu-build/les/mtp2.launch.log 2>&1 < /dev/null &
 set -u
@@ -48,7 +48,7 @@ S_MS=${S_MS:-0}                                 # (A has S: B - A is MTP alone)
 MD=Qwen3.5-35B-A3B
 MDB=${MDB:-$M1/$MD-mtp}                         # (B's checkpoint: card2's files linked, and mtp.safetensors)
 QA=${QA:-pool-q35-mx.split.bin}                 # (in O)
-QM=${QM:?the MTP pool (the lead chooses its disk: beside QA on /home, or on /data and kept warm)}
+QM=${QM:?the MTP pool (choose its disk: beside QA on /home, or on /data and kept warm)}
 DROPOTHER=${DROPOTHER:-$HOME/openTPU:$HOME/otpu-build:/data/otpu}   # (all of ours: mtp1b, 2026-10-14, stopped
                                 # before its first run, MiniCPM-V's pool on /data/otpu cached since session hostr21)
 T1="What is the capital of France? Answer in one sentence."

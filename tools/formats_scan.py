@@ -36,6 +36,12 @@ ckpt).
         the perplexity and dKL of formats strings (as OTPU_FORMATS; "" for none), each with the
         standard error of its difference from int8's (paired over the tokens); --ids: another
         text's token ids (tools/chat_text.py: a chat of an instruct model's own replies)
+    --S N (scan and ppl): the device's QACT ranges on N slices (the down projections' F chunks
+    of F / N; Qwen3.5's out_proj per slice's head groups), as emulated_logits(S=N): Qwen3.5-27B
+    on bcu1525-x2's 4 slices. --target T (scan and ppl): T's slices and its S-exact choice, as
+    emulated_logits(S=T's S, cfg=T's Config): an S-exact image (Config.SEXACT, bcu1525-s2's;
+    OTPU_SEXACT overrides it, as for the device) takes S = 1's ranges for Qwen3.5's out_proj
+    and dense down projections (qwen35.s_exact, mlp_s_exact)
     python tools/formats_scan.py check
         tiny random models of each family (Qwen3 with K outliers, SmolLM3, Phi-3, Qwen3.5
         with 4 key heads, LFM2, LFM2-MoE, Qwen3.5-MoE):
@@ -64,7 +70,7 @@ import numpy as np
 from opentpu import isa as I
 from opentpu import qcache as QC
 from opentpu import quant as Q
-from opentpu.kernels.mlp import down_chunk
+from opentpu.kernels.mlp import _chunk, down_chunk
 from opentpu.llm import formats as FM
 from opentpu.llm import gemma4 as G
 from opentpu.llm import lfm2 as L2
@@ -75,6 +81,8 @@ from opentpu.llm.qwen3 import ATTN_BLOCK, _fake_k, _fake_q, _qk, _v_parts, rope_
 
 ROOT = Path(__file__).resolve().parent.parent
 HEAD_ROWS = 16384       # LM head rows per pass (quantize_mxu's pieces: the same quantization)
+SLICES = [1]            # the slices whose QACT ranges the emulation takes (--S)
+CFG = [None]            # the Config whose S-exact choice it follows (--target; qwen35.s_exact_on)
 
 
 def family(spec):
@@ -140,11 +148,35 @@ def dequant(a, fmt, D):
     return Q.fake_w(a, fmt, D, QC.quantize_mxu(a, fmt, D) if fmt in QC.FORMATS else None)
 
 
+def _down_slices(spec, f, D) -> int:
+    """The slices whose F chunks a down projection in format f takes (qwen35.emulated_logits'):
+    S = 1's for a Qwen3.5-MoE's shared expert (moe._moe_ffn_tp) and an S-exact image's dense
+    MLP (qwen35.mlp_s_exact, CFG), else SLICES[0]."""
+    S = SLICES[0]
+    if isinstance(spec, Q35.Spec) and (spec.moe is not None
+                                       or Q35.mlp_s_exact(spec, S, D, f, CFG[0])):
+        return 1
+    return S
+
+
 def _down(spec, wf, name, D):
-    """The QACT ranges of a down projection's input (its F chunks: kernels.mlp.down_chunk, one
-    slice), None unquantized."""
+    """The F chunk of a down projection's input (kernels.mlp.down_chunk, a slice's F), None
+    unquantized."""
     f = wf(name)
-    return None if f is None else down_chunk(spec.ffn, D, f)
+    if f is None:
+        return None
+    F = spec.ffn // _down_slices(spec, f, D)
+    if isinstance(spec, L2.Spec):               # (lfm2.emulated_logits': LFM2-2.6B at S 4)
+        return _chunk(F, D, L2._down_q(f, F, _down_slices(spec, f, D), D))
+    return down_chunk(F, D, f)
+
+
+def _fq_down(fq, a, spec, wf, name, D):
+    """A down projection's input `a` quantized as its QACTs on _down_slices' slices (chunk c of
+    every slice's F one range: quant.fake_act_gathered), or fq's (_ident: unquantized)."""
+    C = _down(spec, wf, name, D)
+    return fq(a, D, C) if fq is _ident or C is None else \
+        Q.fake_act_gathered(a, D, C, _down_slices(spec, wf(name), D))
 
 
 # The KV cache's format under test (docs/dataflow.md 4.8, a proposal): "" the device's (int8 K
@@ -346,7 +378,7 @@ def _qwen3(spec, W, i, x, w, fq, c, s, D, wf):
     h = fq(norm(x, W[p + "post_attention_layernorm.weight"]), D)
     g, u = h @ w(p + "mlp.gate_proj.weight").T, h @ w(p + "mlp.up_proj.weight").T
     dn = p + "mlp.down_proj.weight"
-    return x + fq((g / (1 + np.exp(-g))) * u, D, _down(spec, wf, dn, D)) @ w(dn).T
+    return x + _fq_down(fq, (g / (1 + np.exp(-g))) * u, spec, wf, dn, D) @ w(dn).T
 
 
 def _lfm2(spec, W, i, x, w, fq, c, s, D, wf):
@@ -386,7 +418,7 @@ def _lfm2(spec, W, i, x, w, fq, c, s, D, wf):
     g = h @ w(p + "feed_forward.w1.weight").T
     u = h @ w(p + "feed_forward.w3.weight").T
     dn = p + "feed_forward.w2.weight"
-    return x + fq((g / (1 + np.exp(-g))) * u, D, _down(spec, wf, dn, D)) @ w(dn).T
+    return x + _fq_down(fq, (g / (1 + np.exp(-g))) * u, spec, wf, dn, D) @ w(dn).T
 
 
 def _qwen35(spec, W, i, x, w, fq, c, s, D, wf):
@@ -394,10 +426,13 @@ def _qwen35(spec, W, i, x, w, fq, c, s, D, wf):
     runs over the rows in order."""
     T, d, eps, K = len(x), spec.head_dim, spec.eps, spec.conv_k
     nh, nk, dk, dv = spec.lin_heads, spec.lin_nk, spec.lin_dk, spec.lin_dv
-    og = 4 if nh % 4 == 0 else 2                # out_proj's QACT ranges (Image.og, one slice)
-    outr = [og * dv] * (nh // og)
-    if og == 4 and nh > 2:
+    S = SLICES[0]                               # a slice's heads (S-exact: S = 1's groups)
+    nl = nh // (1 if Q35.s_exact(spec, S, CFG[0]) else S)
+    og = 4 if nl % 4 == 0 else 2                # out_proj's QACT ranges (Image.og, a slice's)
+    outr = [og * dv] * (nl // og)
+    if og == 4 and nl > 2:
         outr[-1:] = [2 * dv, 2 * dv]
+    outr = outr * (nh // nl)
     p = f"model.layers.{i}."
 
     def g1(n):
@@ -418,12 +453,7 @@ def _qwen35(spec, W, i, x, w, fq, c, s, D, wf):
         beta = 1 / (1 + np.exp(-(h @ w(a + "in_proj_b.weight").T)))
         g = -np.exp(np.asarray(W[a + "A_log"], np.float64)) * Q35._softplus(
             h @ w(a + "in_proj_a.weight").T + W[a + "dt_bias"])
-        S, o = np.zeros((nh, dk, dv)), np.zeros((T, nh, dv))
-        for t in range(T):
-            S = S * np.exp(g[t])[:, None, None]
-            delta = (v[t] - np.einsum("hij,hi->hj", S, k[t])) * beta[t][:, None]
-            S = S + k[t][:, :, None] * delta[:, None, :]
-            o[t] = np.einsum("hij,hi->hj", S, q[t])
+        o = RECUR[0](q, k, v, g, beta)
         o = Q35._norm(o, np.asarray(W[a + "norm.weight"], np.float64), eps) * Q35._silu(z)
         x = x + fq(o.reshape(T, -1), D, outr) @ w(a + "out_proj.weight").T
     else:
@@ -440,10 +470,27 @@ def _qwen35(spec, W, i, x, w, fq, c, s, D, wf):
     mp = spec.mlp_prefix(p)
     gg, u = h @ w(mp + "gate_proj.weight").T, h @ w(mp + "up_proj.weight").T
     dn = mp + "down_proj.weight"
-    y = fq(Q35._silu(gg) * u, D, _down(spec, wf, dn, D)) @ w(dn).T
+    y = _fq_down(fq, Q35._silu(gg) * u, spec, wf, dn, D) @ w(dn).T
     if spec.moe is not None:                    # y: the shared expert's (_moe_ffn gates it)
         return MoEIn(x, h, y)
     return x + y
+
+
+def _recur(q, k, v, g, beta):
+    """The DeltaNet recurrence over the rows in order (DSTEP's; its fp32 state float64 here):
+    o [T, heads, dv] of q, k [T, heads, dk], v [T, heads, dv], the log decays g and the gates
+    beta [T, heads]."""
+    T, nh, dk = q.shape
+    S, o = np.zeros((nh, dk, v.shape[2])), np.zeros((T, nh, v.shape[2]))
+    for t in range(T):
+        S = S * np.exp(g[t])[:, None, None]
+        delta = (v[t] - np.einsum("hij,hi->hj", S, k[t])) * beta[t][:, None]
+        S = S + k[t][:, :, None] * delta[:, None, :]
+        o[t] = np.einsum("hij,hi->hj", S, q[t])
+    return o
+
+
+RECUR = [_recur]        # (tools/dn_state.py: the state stored in fewer bits between the rows)
 
 
 class MoEIn(tuple):
@@ -1109,6 +1156,20 @@ def check() -> None:
                 print(f"{name:8s} {fs or '(int8)':34s} logits rel {err:.2e}  nll {errn:.2e}  "
                       f"KL rel {errk:.2e}  argmax {agree:.3f}")
                 assert err < 1e-6 and errn < 1e-6 and errk < 1e-5 and agree > 0.99, (name, fs)
+            if name == "qwen35":            # (--S 2: the slices' out_proj and down ranges;
+                SLICES[0] = 2               # --target bcu1525-s2: S-exact, S = 1's)
+                from opentpu.target import config as target_config
+                for tg in (None, "bcu1525-s2"):
+                    CFG[0] = tg and target_config(tg)
+                    assert Q35.s_exact(spec, 2, CFG[0]) == (tg is not None)
+                    for fs in ("", "delta=fp4,down=fp4"):
+                        ref = M.emulated_logits(spec, W, toks, formats=fs, S=2, cfg=CFG[0])
+                        e = emulate(spec, W, toks, {"v": _resolver(M, fs)}, logits=True)["v"]
+                        err = np.abs(e - ref).max() / np.abs(ref).max()
+                        print(f"{name:8s} S 2 {tg or '':10s} {fs or '(int8)':19s} "
+                              f"logits rel {err:.2e}")
+                        assert err < 1e-6, (name, fs, 2, tg)
+                SLICES[0], CFG[0] = 1, None
             fl = emulate(spec, W, toks[:40], {"f": None}, logits=True)["f"]
             r = M.reference_logits(spec, W, toks[:40])
             print(f"{name:8s} float vs reference_logits rel "
@@ -1131,6 +1192,15 @@ def check() -> None:
             worst = max(worst, err)
             print(f"{name:10s} {wf:5s} {fs or '-':22s} logits rel {err:.2e}  nll {errn:.2e}")
             assert err < 1e-6 and errn < 1e-6, (name, wf, fs)
+        if name == "qwen35-moe":            # (--S 2: the shared expert's down in S = 1's chunks,
+            SLICES[0] = 2                   # an fp4 one's F 256 not two slices' chunks)
+            fs = "delta=fp4,down=fp4"
+            ref = M.emulated_logits(spec, W, toks, formats=fs, S=2)
+            e = emulate(spec, W, toks, {"v": _resolver(M, fs)}, logits=True)["v"]
+            err = np.abs(e - ref).max() / np.abs(ref).max()
+            SLICES[0] = 1
+            print(f"{name:10s} S 2   {fs:22s} logits rel {err:.2e}")
+            assert err < 1e-6, (name, 2)
     print(f"OK (worst logits rel {worst:.2e})")
 
 
@@ -1148,6 +1218,8 @@ def main():
                    "row's), e.g. experts=fp4,head=fp4 (the 26B's card)")
     a.add_argument("--ids", help="the text: token ids from this JSON file (tools/chat_text.py's "
                    "chat) instead of docs/isa.md")
+    a.add_argument("--S", type=int, help="the device's slices (QACT ranges; default 1)")
+    a.add_argument("--target", help="a target: its slices and S-exact choice (bcu1525-s2)")
     a = sub.add_parser("ppl")
     a.add_argument("model")
     a.add_argument("formats", nargs="+")
@@ -1158,8 +1230,20 @@ def main():
     a.add_argument("--base", default="", help="formats every row starts from, as scan's")
     a.add_argument("--ids", help="the text: token ids from this JSON file (tools/chat_text.py's "
                    "chat) instead of docs/isa.md")
+    a.add_argument("--S", type=int, help="the device's slices (QACT ranges; default 1)")
+    a.add_argument("--target", help="a target: its slices and S-exact choice (bcu1525-s2)")
     sub.add_parser("check")
     a = ap.parse_args()
+    if getattr(a, "target", None):
+        from opentpu.target import config as target_config
+        CFG[0] = target_config(a.target)
+        if a.S not in (None, CFG[0].S):
+            ap.error(f"--S {a.S}: {a.target} has {CFG[0].S} slices")
+    SLICES[0] = getattr(a, "S", None) or (CFG[0].S if CFG[0] else 1)
+    if SLICES[0] > 1:                       # (no silent layout: --target or OTPU_SEXACT)
+        print(f"formats_scan: S {SLICES[0]}, S-exact {'on' if Q35.s_exact_on(CFG[0]) else 'off'} "
+              f"({getattr(a, 'target', None) or 'no --target'}, OTPU_SEXACT "
+              f"{os.environ.get('OTPU_SEXACT', '-')})", file=sys.stderr)
     if a.cmd == "scan":
         scan(a.model, a.out, a.tokens, a.fmt, cache=a.cache, base=a.base, ids_file=a.ids)
     elif a.cmd == "ppl":

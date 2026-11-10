@@ -3,13 +3,20 @@ where a token's cycles go, layer kind by layer kind, to set against tools/perf_q
 simulated cycles for the same --layers.
 
     python3 tools/q35_split.py [--model qwen35] [--layers 1,3,4,0] [--pos 60] [--reps 3]
-                               [--wformat fp4] [--head-format int8] [--json out.json]
+                               [--wformat fp4] [--head-format int8] [--peak-gbs G]
+                               [--json out.json]
 
 For each N (0: every layer) the model is cut to its first N layers (the LM head stays whole),
 its image written to the card, and --reps decode steps run at position --pos (per-position
 programs, the KV cache before --pos empty: the timing does not depend on it). Prints per N the
 step's cycles (the min over the reps) and the counters over one step: DRAM read / write bytes,
-MXU busy / MAC / starved, VPU, DMA, TMEM_DENY and DRAM_WAIT cycles.
+MXU busy / MAC / starved, VPU, DMA, TMEM_DENY and DRAM_WAIT cycles. DRAM bytes are the
+counters' counts in the target's units (board.counter_units: a channel beat, 64 bytes on the
+DDR3 cards and 128 on bcu1525-wg, half of one where the build moves read or write data
+in half beats: bcu1525-wg's reads, 64). The counters see ports A and B only, not port
+W's posted weight beats. GB/s is the read bytes over the step's time at the core clock, and
+--peak-gbs (the DRAM's peak, e.g. 76.8 for bcu1525-wg's four DDR4-2400 DIMMs) adds its share of
+it.
 """
 from __future__ import annotations
 
@@ -23,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from opentpu.host import chat as C  # noqa: E402
-from opentpu.host import regs as R  # noqa: E402
+from opentpu.host.board import counter_units  # noqa: E402
 from opentpu.llm import load_spec, model_dir  # noqa: E402
 from opentpu.llm import qwen3 as Q  # noqa: E402
 
@@ -41,6 +48,7 @@ def main(argv=None) -> int:
     ap.add_argument("--head-format", default="int8")
     ap.add_argument("--backend", default="board", choices=["board", "board-sim"])
     ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--peak-gbs", type=float, help="the DRAM's peak GB/s: GB/s as its share")
     ap.add_argument("--json")
     a = ap.parse_args(argv)
     path = model_dir(a.model)
@@ -55,6 +63,7 @@ def main(argv=None) -> int:
         eng = Q.Engine(spec, W, cap=cap, cfg=cfg, backend=backend, wformat=a.wformat,
                        head_format=a.head_format, pipeline=False)
         board = eng.backend.board
+        (rb, wb), khz = counter_units(), board.info()["core_khz"]
         steps = []
         try:
             for _ in range(a.reps):
@@ -71,11 +80,17 @@ def main(argv=None) -> int:
         best["layers"] = spec.layers if hasattr(spec, "layers") else n
         best["kinds"] = list(getattr(spec, "kinds", []))
         best["all_cycles"] = [d["cycles"] for d in steps]
+        best["rd_unit"], best["wr_unit"], best["core_khz"] = rb, wb, khz
+        rd = best["DRAM_RD"] * rb
+        best["rd_gbs"] = rd * khz * 1e3 / best["cycles"] / 1e9 if khz else None
         out.append(best)
         run = max(1, best.get("RUNNING", best["cycles"]))
+        bw = "" if not khz else f" ({best['rd_gbs']:.2f} GB/s" + (
+            f", {100 * best['rd_gbs'] / a.peak_gbs:.1f}% of {a.peak_gbs:g})" if a.peak_gbs
+            else ")")
         print(f"N={n or 'all'} ({best['layers']} layers): {best['cycles']} cycles "
-              f"(reps {best['all_cycles']}); DRAM read {best['DRAM_RD'] * R.DRAM_BEAT / 1e6:.2f} MB,"
-              f" write {best['DRAM_WR'] * R.DRAM_BEAT / 1e6:.2f} MB; " + ", ".join(
+              f"(reps {best['all_cycles']}); DRAM read {rd / 1e6:.2f} MB{bw},"
+              f" write {best['DRAM_WR'] * wb / 1e6:.2f} MB; " + ", ".join(
                   f"{k} {100 * best[k] / run:.1f}%" for k in
                   ("MXU_BUSY", "MXU_MAC", "MXU_STARVE", "VPU_BUSY", "DMA_BUSY", "TMEM_DENY",
                    "DRAM_WAIT") if k in best), flush=True)

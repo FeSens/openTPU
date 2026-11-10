@@ -1,7 +1,7 @@
 #!/bin/bash
 # The ISA simulator's reference for card runs (docs/offload.md 10): moe_card on the simulator with
 # the card's generate loop, slots and configuration (REFCFG: tools/qual/refs.py cfg on the card's
-# host), on a host with the whole pool (the 26B's: 77 min on omarchy; its prefill steps a token at
+# host), on a host with the whole pool (the 26B's: 77 min on the build host; its prefill steps a token at
 # a time). Its prefill logits' sha256 and its tokens are what card_moe.sh checks a run against.
 #   reference.sh MODEL POOL HF.json N OUT.json [moe_card options]
 # e.g. session 8's: reference.sh gemma-4-26B-A4B ../g26/pool-g26-fp4.split.bin q26-hf.json 16 \

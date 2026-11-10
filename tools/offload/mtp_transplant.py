@@ -5,7 +5,7 @@ drafter, on the base model's own hidden states and on MiniCPM-V-4.7-35B-A3B's (t
 fine-tuned, no mtp.* of its own). Host reference (a test measurement, not serving): HF
 transformers 5.18 with LazyExperts (tools/minicpmv_hf.py, branch minicpmv: every expert read
 from the safetensors when a token routes to it), float32. minicpmv_hf.py comes from this tree's
-tools/ or from MCPV_TREE's; on hwe-bench PYTHONPATH=~/mcpv/tf518:. (transformers 5.18).
+tools/ or from MCPV_TREE's; on the simulation host PYTHONPATH=~/mcpv/tf518:. (transformers 5.18).
 
     gen MODEL OUT.npz [-n 256] [--only 0,3]
         greedy replies (thinking off, the chat template) to tools/mtp_accept.py's nine prompts,

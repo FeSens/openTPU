@@ -20,7 +20,7 @@
 #    turns the ISA references'. N1 and X1 write each call's runs and the server's timeline (--trace);
 # 5. selftest; then the summary: per model and turn the arms' TTFT, the pairs N - P and X - P, and N's and X's calls
 #    (rows, expert-major or not, wall and device s, needs, parts, holds, misses).
-# The swap's rule (the lead's): N no worse than P at every turn and faster on the long ones; X - P per call length is
+# The swap's rule : N no worse than P at every turn and faster on the long ones; X - P per call length is
 # where EM_ROWS belongs.
 # A build other than EXPECT, a failed selftest, another configuration, a FAIL, a failed or timed-out run or a mismatch
 # stops it (then the final selftest). About 40 min.

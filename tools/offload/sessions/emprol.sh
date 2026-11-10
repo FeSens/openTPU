@@ -13,11 +13,11 @@
 # (WA, WB: each tree's images and programs built and cached, discarded; WA's tokens the reference), then ORDER (default
 # A1 B1 B2 A2; ORDER="A1 B1 B2 A2 B3 A3 A4 B4" for more pairs). Every run's tokens must equal WA's (the same bits).
 # Summary per model: each run's TTFT, prefill and device seconds, B - A per pair and of the means, the expert-major
-# call's runs and its host time. The rule (the lead's): B no worse than A on either model, token-exact.
+# call's runs and its host time. The rule : B no worse than A on either model, token-exact.
 # A build other than EXPECT, a failed selftest, another configuration, a missing file, a failed run or a token
 # mismatch stops it (then the final selftest). About 45 min (the warm-ups ~10 min each model with first builds).
-# Stage (from the Mac): B's tree (git archive of em-prologue's commit) to ~/otpu-build/emprol/host with COMMIT;
-#   A defaults to the r2.1 deploy's host (its COMMIT is printed). Run (no pipe; the lead's GO), e.g.:
+# Stage (from a laptop): B's tree (git archive of em-prologue's commit) to ~/otpu-build/emprol/host with COMMIT;
+#   A defaults to the r2.1 deploy's host (its COMMIT is printed). Run (no pipe), e.g.:
 #   EXPECT=039b34d5 A=$HOME/otpu-build/production/host \
 #   REFCFG=$HOME/otpu-build/production/refcache/configs/cfg_E3.pkl setsid -f ~/.local/bin/otpu-lock --wait 3600 -- \
 #     bash ~/otpu-build/emprol/host/tools/offload/sessions/emprol.sh > ~/otpu-build/emprol/session.log 2>&1 < /dev/null

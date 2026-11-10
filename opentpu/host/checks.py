@@ -26,9 +26,20 @@ def demo_image(seed: int = 7) -> np.ndarray:
     return img
 
 
-def demo_program() -> list:
+def demo_mm(cfg=None) -> tuple[int, int, dict]:
+    """(rs, srs, MM's keywords) of the demo's 16-row, 2-block int8 matrix at W8 and its scale
+    rows at SC: rows of one (rs 256, srs 8), or on a GALL machine at WG > 1 (every MM in groups)
+    groups of WG rows from the same bytes (docs/isa.md "Weight groups": rs the group stride
+    2 WG D, srs 8 WG: a group's WG Sw words, then its rows' block bytes)."""
+    if cfg is None or not (cfg.GALL and cfg.WG > 1):
+        return 256, 8, {}
+    return 2 * cfg.WG * cfg.D, 8 * cfg.WG, {"grp": cfg.WG}
+
+
+def demo_program(cfg=None) -> list:
     """Every unit: DMA (aligned and unaligned), VPU simple and composite lanes, quantizer,
-    MXU, QST byte writes."""
+    MXU (its weights in groups on a GALL machine: demo_mm), QST byte writes."""
+    rs, srs, kw = demo_mm(cfg)
     return [
         I.ld(DATA, 0, 1024),
         I.ld(DATA + 4 * 1024 + 4, 1024, 777),                         # unaligned DRAM source
@@ -36,7 +47,7 @@ def demo_program() -> list:
         I.vop(I.V_EXP2, 3072, 0, 0, 2, 200, 200, 256, 0, I.B_SCALAR, 0.0),   # composite lanes
         I.vop(I.V_ADD, 3600, 1024, 0, 1, 300, 300, 300, 256, I.B_FULL),
         I.qact(0, 2, 0, 2, 256),
-        I.mm(W8, SC, 4096, 16, 2, 256, 16, 2, 0, 8),
+        I.mm(W8, SC, 4096, 16, 2, rs, 16, 2, 0, srs, **kw),
         I.qst(2048, OUT + 0x8000, OUT + 0xC000, 2, 2, 256, 256, 1),
         I.st(OUT, 2048, 1024),
         I.st(OUT + 4 * 1024 + 8, 3072, 400),                           # unaligned DRAM target
@@ -60,17 +71,18 @@ def masked_program() -> list:
     return prog
 
 
-def vops_program() -> list:
+def vops_program(outer: bool = True) -> list:
     """The VPU functions added for linear-recurrence models (RDOT, OUTER, LOG2; Qwen3.5's
     DeltaNet layers). A bitstream built before them runs this program without an error but
-    computes other values: the model check of Qwen3.5 would fail late and obscurely."""
+    computes other values: the model check of Qwen3.5 would fail late and obscurely. `outer`
+    off: without OUTER (Config.OUTER: a VPU built without it)."""
     return [
         I.ld(DATA, 0, 4096),
         I.vop(I.V_ABS, 4096, 0, 0, 2, 256, 256, 256, 0, I.B_SCALAR, 0.0),
         I.vop(I.V_LOG2, 4608, 4096, 0, 2, 256, 256, 256, 0, I.B_SCALAR, 0.0),
         I.vop(I.V_RDOT, 5120, 0, 1024, 4, 256, 1, 256, 256),
         I.vop(I.V_COPY, 6144, 0, 0, 4, 64, 64, 64, 0, I.B_SCALAR, 0.0),
-        I.outer(6144, 5120, 2048, 3072, 4, 64, 64, 1, "scalar"),
+        *([I.outer(6144, 5120, 2048, 3072, 4, 64, 64, 1, "scalar")] if outer else []),
         I.st(OUT + 0x20000, 4096, 1028),
         I.st(OUT + 0x22000, 6144, 256),
         I.halt(),
@@ -138,7 +150,7 @@ def vops_check(board, cfg, need: bool = False) -> tuple[bool, str]:
     on a bitstream that has the functions (register map >= VOPS_SINCE), and on an older one
     only when `need` (a Qwen3.5 model check follows); an older one passes with a note."""
     from .regs import VOPS_SINCE
-    ok, msg, _ = run_demo(board, cfg, vops_program())
+    ok, msg, _ = run_demo(board, cfg, vops_program(cfg.OUTER))
     if ok:
         # then otpu-diag's reduction and RDOT / OUTER / LOG2 programs back to back: a build
         # passed the vops program but wrote RDOT's last row sum stale (a block RAM the
@@ -167,32 +179,39 @@ def run_demo(board, cfg, prog: list | None = None,
              img: np.ndarray | None = None) -> tuple[bool, str, dict]:
     """Run a program (default: the demo) on the board and on the ISA simulator, from the same
     DRAM image (default: demo_image()); compare DRAM below PROG_AT. A mismatch reports the
-    number of bytes, the first addresses and got / want of the first differing words."""
+    number of bytes, the first addresses and got / want of the first differing words. At
+    cfg.S > 1 every slice runs the program at once from its own copy of the image, each against
+    its slice of the ISA simulator (a mismatch names the slice)."""
     img = demo_image() if img is None else img
     # TMEM keeps its contents from one program to the next on the card, and the ISA simulator
     # starts from zeros: clear it first, so a program that stores a word it never wrote
     # (the demo's 32 + 2) compares the same after any earlier program
-    prog = [I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + (prog or demo_program())
+    prog = [I.ld(ZERO_AT, 0, cfg.TMEM_WORDS)] + (prog or demo_program(cfg))
+    S = cfg.S
     ref = np.zeros(min(cfg.DRAM_BYTES, 1 << 23), np.uint8)
     ref[:len(img)] = img
-    sl = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog], [ref]).run().slices[0]
-    board.write(ZERO_AT, np.zeros(4 * cfg.TMEM_WORDS, np.uint8))
-    board.write(0, img)
-    board.load(PROG_AT, prog)
+    sls = Machine(dataclasses.replace(cfg, DRAM_BYTES=len(ref)), [prog] * S, [ref] * S).run().slices
+    on = [{}] if S == 1 else [{"s": s} for s in range(S)]      # (board.write / read's slice)
+    for kw in on:
+        board.write(ZERO_AT, np.zeros(4 * cfg.TMEM_WORDS, np.uint8), **kw)
+        board.write(0, img, **kw)
+    board.load(PROG_AT, prog if S == 1 else [prog] * S)
     st = board.run(timeout=10.0)
-    got = board.read(0, PROG_AT)
-    want = sl.dram[:PROG_AT]
-    if st["instructions"][0] != sl.icount:
-        return False, f"retired {st['instructions'][0]} of {sl.icount} instructions", st
-    bad = np.nonzero(got != want)[0]
-    if len(bad):
-        words = sorted({int(b) // 4 * 4 for b in bad[:64]})[:3]
-        gw, ww = got.view("<u4"), want.view("<u4")
-        diff = "; ".join(f"{a:#x}: got {int(gw[a // 4]):#010x} want {int(ww[a // 4]):#010x}"
-                         for a in words)
-        return False, f"{len(bad)} DRAM bytes differ from the ISA simulator, first at " \
-                      f"{[hex(int(b)) for b in bad[:6]]} ({diff})", st
-    return True, f"{st['cycles']} cycles", st
+    for s, (kw, sl) in enumerate(zip(on, sls)):
+        at = f"slice {s}: " if S > 1 else ""
+        got = board.read(0, PROG_AT, **kw)
+        want = sl.dram[:PROG_AT]
+        if st["instructions"][s] != sl.icount:
+            return False, f"{at}retired {st['instructions'][s]} of {sl.icount} instructions", st
+        bad = np.nonzero(got != want)[0]
+        if len(bad):
+            words = sorted({int(b) // 4 * 4 for b in bad[:64]})[:3]
+            gw, ww = got.view("<u4"), want.view("<u4")
+            diff = "; ".join(f"{a:#x}: got {int(gw[a // 4]):#010x} want {int(ww[a // 4]):#010x}"
+                             for a in words)
+            return False, f"{at}{len(bad)} DRAM bytes differ from the ISA simulator, first at " \
+                          f"{[hex(int(b)) for b in bad[:6]]} ({diff})", st
+    return True, f"{st['cycles']} cycles" + (f", {S} slices at once" if S > 1 else ""), st
 
 
 # ---- WAITW on the host's writes (CAPS bit31, docs/isa.md "WAITW"): the host writes data, then a
@@ -302,17 +321,21 @@ WT_SIZES = (1 << 20, 2 << 20, 3 << 20, 4 << 20)     # bytes: an expert's 1.67-3.
 WT_SAMPLES = 64                 # beats the card copies on each channel's end, and at random
 
 
-def waitw_tag_round(r: int, seed: int = 5, sizes=WT_SIZES, base: int = WT_DATA) -> dict:
-    """Round r of waitw_tag: the record's address (a 128-byte chunk anywhere in 32 KiB: the tag
-    on either channel and in either 8 KiB bank parity), size, and the logical beats the card
-    copies after its WAITW (the last WT_SAMPLES beats of each channel before the tag, then random
-    ones)."""
+def waitw_tag_round(r: int, seed: int = 5, sizes=WT_SIZES, base: int = WT_DATA, nch: int = 2,
+                    beat: int = 64) -> dict:
+    """Round r of waitw_tag on nch channels of `beat` bytes: the record's address (a wide chunk,
+    nch x beat bytes, among 256: the tag on any channel and in either 8 KiB bank parity on the
+    cards), size, and the 64-byte pieces ("beats" below: 16 words, an LD's) the card copies
+    after its WAITW: the last of each channel beat in the 2 x WT_SAMPLES / nch wide chunks before
+    the tag (the cards' last WT_SAMPLES beats of each channel), then random ones."""
     rng = np.random.default_rng([seed, r, 7])
-    n = int(sizes[r % len(sizes)])
-    addr = base + 128 * int(rng.integers(0, 256))
-    tail = list(range(n // 64 - 2 * WT_SAMPLES, n // 64))
-    rand = rng.choice(n // 64 - 2 * WT_SAMPLES, WT_SAMPLES, replace=False)
-    beats = tail[::-1] + [int(b) for b in rand]       # the tag's neighbours first
+    n, P = int(sizes[r % len(sizes)]), nch * beat
+    addr = base + P * int(rng.integers(0, 256))
+    k = 2 * WT_SAMPLES // nch                         # the wide chunks before the tag
+    tail = [(n - j * P + c * beat + beat - 64) // 64 for j in range(1, k + 1)
+            for c in range(nch)]
+    rand = rng.choice(n // 64 - k * P // 64, WT_SAMPLES, replace=False)
+    beats = sorted(tail)[::-1] + [int(b) for b in rand]     # the tag's neighbours first
     return dict(addr=addr, n=n, tag=addr + n, beats=beats, word=(r + 1) | 1 << 31)
 
 
@@ -333,34 +356,38 @@ def waitw_tag(board, rounds: int = 2000, seed: int = 5, sizes=WT_SIZES,
     expert with its tag: the other channel's run in one call, then the tag's channel's run in a
     call that ends with the tag beat. The card's copy of the beats just before the tag on both
     channels, and of random ones, must be the new data. Needs xdma_rnum_rids 8 (ld-memch: a
-    32-RID bitstream can lap XDMA's completion ring under this backpressure)."""
-    from .board import BEAT, swapped
+    32-RID bitstream can lap XDMA's completion ring under this backpressure). On nch channels of
+    `beat` bytes (Board.nch / beat): the tag's channel's run last, after the others'."""
+    from .board import chunk_hash
     board.scrub()
+    nch, beat = board.nch, board.beat
+    P = nch * beat                          # a wide chunk: a beat on every channel
     cyc, mb = [], 0.0
     for r in range(rounds):
-        p = waitw_tag_round(r, seed, sizes, base)
+        p = waitw_tag_round(r, seed, sizes, base, nch, beat)
         a, n, S = p["addr"], p["n"], len(p["beats"])
         what = f"round {r} ({n >> 20} MiB at {a:#x}, the tag at {p['tag']:#x})"
         rng = np.random.default_rng([seed, r, 8])
         old, new = (rng.integers(0, 1 << 32, n // 4, dtype=np.uint32) for _ in range(2))
         board.write(a, old)
-        board.write(p["tag"], np.zeros(32, "<u4"))
+        board.write(p["tag"], np.zeros(P // 4, "<u4"))
         board.write(W_RES, np.full(16 * S, 0xDEADBEEF, "<u4"))
-        tb = np.zeros(32, "<u4")
+        tb = np.zeros(P // 4, "<u4")
         tb[0] = p["word"]
-        rec = np.concatenate([new, tb]).view(np.uint8).reshape(-1, 2, BEAT)
+        rec = np.concatenate([new, tb]).view(np.uint8).reshape(-1, nch, beat)
         m = len(rec)
-        sw = swapped(a, m) if board.chash else np.zeros(m, bool)
-        runs = [np.where(sw[:, None], rec[:, 1 - c], rec[:, c]).reshape(-1) for c in (0, 1)]
-        ct = int(sw[-1])                    # the tag: beat 0 of the last chunk
+        h = chunk_hash(a, m, nch, beat) if board.chash else np.zeros(m, np.int64)
+        # channel c's run: beat c ^ h(m) of each chunk m (CHASH's permutation)
+        runs = [rec[np.arange(m), c ^ h].reshape(-1) for c in range(nch)]
+        ct = int(h[-1])                     # the tag: beat 0 of the last chunk
         board.load(PROG_AT, waitw_tag_program(p))
         board.start()
         if board.t.reg_read(R_STATUS) & ST_HALTED:
             return False, f"{what}: the card halted before the host wrote the tag"
         t0 = time.perf_counter()
-        board.t.mem_write(1 - ct, a // 2, runs[1 - ct])
-        board.t.mem_write(ct, a // 2, runs[ct])
-        mb += (n + 128) / 1e6 / max(time.perf_counter() - t0, 1e-9)
+        for c in [c for c in range(nch) if c != ct] + [ct]:
+            board.t.mem_write(c, a // nch, runs[c])
+        mb += (n + P) / 1e6 / max(time.perf_counter() - t0, 1e-9)
         try:
             st = board.wait(timeout=30.0)
         except RuntimeError as e:
@@ -410,10 +437,10 @@ def pattern_test(board, regions: list[tuple[int, int]], seed: int = 1) -> tuple[
         got = board.read(a, n)
         bad = np.nonzero(got != d)[0]
         if len(bad):
-            b = (a + int(bad[0])) // 64
-            ch = b % 2 ^ (board.chash and bin(b // 2).count("1") & 1)
+            x = a + int(bad[0])
+            ch, _ = board.beat_at(x)            # (the bitstream's map: nch, beat, CHASH)
             return False, (f"region {a:#x}+{n:#x}: {len(bad)} bytes wrong, first at "
-                           f"{a + int(bad[0]):#x} (logical beat {b}, channel {ch})")
+                           f"{x:#x} (logical beat {x // board.beat}, channel {ch})")
     return True, f"{len(regions)} regions, {sum(n for _, n in regions)} bytes"
 
 
@@ -430,17 +457,18 @@ def channel_patterns(transport, ch: int, ch_bytes: int, seed: int = 2) -> tuple[
     return True, "4 regions"
 
 
-def partial_writes(transport, ch: int, base: int = 1 << 20, seed: int = 3) -> tuple[bool, str]:
-    """Sub-beat host updates (1..63 bytes at odd offsets) into a filled region of one channel.
-    The card transport merges each into whole 64-byte beats on the host (XdmaTransport.mem_write):
-    sub-beat DMA writes, which the ECC controller would turn into read-modify-writes, can wedge
-    the card's write path. The controller's byte-strobe path is exercised by the accelerator's
-    masked writes (the kernel stage)."""
+def partial_writes(transport, ch: int, base: int = 1 << 20, seed: int = 3,
+                   beat: int = 64) -> tuple[bool, str]:
+    """Sub-beat host updates (1..beat - 1 bytes at odd offsets) into a filled region of one
+    channel. The card transport merges each into whole beats on the host (XdmaTransport.mem_write:
+    the cards' 64 bytes): sub-beat DMA writes, which the ECC controller would turn into
+    read-modify-writes, can wedge the card's write path. The controller's byte-strobe path is
+    exercised by the accelerator's masked writes (the kernel stage)."""
     rng = np.random.default_rng(seed + ch)
     ref = rng.integers(0, 256, 4096).astype(np.uint8)
     transport.mem_write(ch, base, ref)
     for _ in range(200):
-        n = int(rng.integers(1, 64))
+        n = int(rng.integers(1, beat))
         o = int(rng.integers(0, 4096 - n))
         d = rng.integers(0, 256, n).astype(np.uint8)
         transport.mem_write(ch, base + o, d)
@@ -453,17 +481,17 @@ def partial_writes(transport, ch: int, base: int = 1 << 20, seed: int = 3) -> tu
     return True, "200 partial writes"
 
 
-def address_lines(transport, ch: int, ch_bytes: int) -> tuple[bool, str]:
-    """Walking address bits on one channel (raw channel addresses): a unique 64-byte tag at
-    offset 0 and at every power of two; an aliased or stuck address line shows up as a tag
-    overwritten by another."""
-    offs = [0] + [1 << k for k in range(6, (ch_bytes - 1).bit_length())]
-    tags = {o: np.frombuffer(np.uint64(0xA5A5_0000_0000_0000 | (ch << 40) | o).tobytes() * 8,
-                             np.uint8) for o in offs}
+def address_lines(transport, ch: int, ch_bytes: int, beat: int = 64) -> tuple[bool, str]:
+    """Walking address bits on one channel (raw channel addresses): a unique beat-long tag at
+    offset 0 and at every power of two from a beat up; an aliased or stuck address line shows up
+    as a tag overwritten by another."""
+    offs = [0] + [1 << k for k in range(beat.bit_length() - 1, (ch_bytes - 1).bit_length())]
+    tags = {o: np.frombuffer(np.uint64(0xA5A5_0000_0000_0000 | (ch << 40) | o).tobytes()
+                             * (beat // 8), np.uint8) for o in offs}
     for o in offs:
         transport.mem_write(ch, o, tags[o])
     for o in offs:
-        got = transport.mem_read(ch, o, 64)
+        got = transport.mem_read(ch, o, beat)
         if not np.array_equal(got, tags[o]):
             v = int(np.frombuffer(got[:8].tobytes(), np.uint64)[0])
             return False, (f"channel {ch} offset {o:#x}: read tag {v:#x} -- address bit "
@@ -471,30 +499,31 @@ def address_lines(transport, ch: int, ch_bytes: int) -> tuple[bool, str]:
     return True, f"{len(offs)} address bits"
 
 
-def bandwidth(transport, nbytes: int) -> tuple[float, float, float]:
-    """H2C and C2H GB/s over both channels from host buffers placed for full DMA speed
+def bandwidth(transport, nbytes: int, nch: int = 2) -> tuple[float, float, float]:
+    """H2C and C2H GB/s over a slice's nch channels from host buffers placed for full DMA speed
     (board.DMA_PLACE: the link's rate), and H2C again from a buffer that is not placed: the rate an
     unplaced caller gets, through XdmaTransport.mem_write's staging copy (docs/host.md section 2,
     "H2C rate at PCIe Gen2 x8"). Returns (h2c, c2h, h2c through the copy)."""
     from .board import BASE, placed
-    n = nbytes // 2
+    n = nbytes // nch
     data = np.random.default_rng(0).integers(0, 256, n).astype(np.uint8)
-    bufs = [placed(n, BASE[c]) for c in (0, 1)]
+    bases = getattr(transport, "bases", BASE)
+    bufs = [placed(n, bases[c] if c < len(bases) else 0) for c in range(nch)]
     for b in bufs:
         b[:] = data
     t = time.time()
-    for c in (0, 1):
+    for c in range(nch):
         transport.mem_write(c, 0, bufs[c])
     w = nbytes / (time.time() - t) / 1e9
     t = time.time()
-    for c in (0, 1):
+    for c in range(nch):
         transport.mem_read(c, 0, n, bufs[c])
     r = nbytes / (time.time() - t) / 1e9
     raw = np.empty(n + 128, np.uint8)                   # 16 bytes past a beat: not placed
     src = raw[(16 - raw.ctypes.data) % 64:][:n]
     src[:] = data
     t = time.time()
-    for c in (0, 1):
+    for c in range(nch):
         transport.mem_write(c, 0, src)
     wb = nbytes / (time.time() - t) / 1e9
     return w, r, wb
@@ -523,7 +552,8 @@ def model_check(t, cfg, model: str, tokens: int, sim: bool, wformat: str = "int8
     cap = 256
     fmt = {"wformat": wformat, "head_format": head_format}
     rcfg = sim_config(spec, cap, cfg, **fmt)              # same layout, DRAM sized to the model
-    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // 2) if sim else t
+    tq = SimTransport(ch_bytes=rcfg.DRAM_BYTES // getattr(t, "nch", 2),   # (its channels)
+                      target=getattr(t, "target", None)) if sim else t
     dev = Engine(spec, W, cap=cap, cfg=rcfg if sim else cfg,
                  backend=lambda c, imgs: BoardBackend(c, imgs, transport=tq, model=path.name),
                  **fmt)

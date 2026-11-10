@@ -11,7 +11,7 @@
 # the MTP image against 41): see docs/offload.md 15.6; acceptance ~0.78 (greedy, base 35B's head, fp4 32K ids).
 # Card: production deploy_r2m4_b10245f5 as loaded (EXPECT b10245f5, register map 5); its qual/cfg.pkl; the ISA
 # references: PD/chatmoe (TURNS' two, production's tree: RF) and les's five-turn ones (RL: chatmoe5-qwen35-35b.json,
-# hwe-bench, r2's configuration; les-mtp's --mtp run on the ISA simulator gave the same tokens). One otpu-lock:
+# the simulation host, r2's configuration; les-mtp's --mtp run on the ISA simulator gave the same tokens). One otpu-lock:
 # 1. selftest; the device configuration must be production's qual/cfg.pkl;
 # 2. a discarded warm-up of each arm (WA, WB: each tree builds its own image; B's the MTP image), then ORDER
 #    (default ABBA x 2), each run after its pool's read (A and B read different pool files: each one wholly in the
@@ -26,16 +26,16 @@
 # the next arm's from the SSD again (~130 s; 7 of the 10 runs), the others' read is from the page cache. Before each
 # read every other file of 100 MB or more under ~/openTPU, ~/otpu-build and /data/otpu leaves the page cache (the
 # image cache's entries too: each run reads its image from the SSD).
-# Stage (from the Mac, before the session, with the lead's go; no host work while a session runs):
-#   git archive <les-mtp sha> | ssh opentpu 'D=~/otpu-build/les/mtp1/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <les-mtp sha, full> > ~/otpu-build/les/mtp1/host/COMMIT'
-#   scp chatmoe5-qwen35-35b.json opentpu:otpu-build/les/mtp1/refs/
-#   the MTP pool (QM: its disk the lead's choice; opentpu's /data is a 7200 rpm disk): on opentpu at nice / ionice idle, pack_pool.py $O/Qwen3.5-35B-A3B $QM extend
+# Stage (from a laptop, before the session; no host work while a session runs):
+#   git archive <les-mtp sha> | ssh CARD_HOST 'D=~/otpu-build/les/mtp1/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <les-mtp sha, full> > ~/otpu-build/les/mtp1/host/COMMIT'
+#   scp chatmoe5-qwen35-35b.json CARD_HOST:otpu-build/les/mtp1/refs/
+#   the MTP pool (QM: its disk a choice; the card host's /data is a 7200 rpm disk): on the card host at nice / ionice idle, pack_pool.py $O/Qwen3.5-35B-A3B $QM extend
 #   $O/pool-q35-mx.split.bin (card2's verified pool, only read; sha256 before and after), then recv the MTP layer's 256
-#   experts (pack_pool.py ... send --mtp on hwe-bench, ~438 MB relayed through the Mac, sha256 on both sides);
+#   experts (pack_pool.py ... send --mtp on the simulation host, ~438 MB relayed through a laptop, sha256 on both sides);
 #   info --mtp: 10496 of 10496 packed, the same key; B's checkpoint (MDB): card2's Qwen3.5-35B-A3B files linked, beside
 #   them mtp.safetensors (the MTP head but its experts, 0.1 GiB: strip_experts.py BASE DIR --mtp --only mtp. --out
-#   mtp.safetensors on hwe-bench, relayed; card2's checkpoint has no mtp.* and is not changed)
+#   mtp.safetensors on the simulation host, relayed; card2's checkpoint has no mtp.* and is not changed)
 # Run (no pipe; QM the MTP pool's path): QM=... setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash
 #   ~/otpu-build/les/mtp1/host/tools/offload/sessions/mtp1.sh > ~/otpu-build/les/mtp1.launch.log 2>&1 < /dev/null &
 set -u
@@ -59,7 +59,7 @@ S_MS=${S_MS:--4.09}                             # (les1: S, the 35B's decode B -
 MD=Qwen3.5-35B-A3B
 MDB=${MDB:-$LS/$MD-mtp}                         # (B's checkpoint: card2's files linked, and mtp.safetensors)
 QA=${QA:-pool-q35-mx.split.bin}                 # (in O)
-QM=${QM:?the MTP pool (the lead chooses its disk: beside QA on /home, or on /data and kept warm)}
+QM=${QM:?the MTP pool (choose its disk: beside QA on /home, or on /data and kept warm)}
 DROPOTHER=${DROPOTHER:-$HOME/openTPU:$HOME/otpu-build:/data/otpu}   # (all of ours: mtp1b, 2026-10-14, stopped
                                 # before its first run, MiniCPM-V's pool on /data/otpu cached since session hostr21)
 T1="What is the capital of France? Answer in one sentence."

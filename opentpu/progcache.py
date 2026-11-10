@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 
 from . import isa as I
-from .compiler import Program, RunVar
+from .compiler import Program, run_var
 
 CAP_BYTES = 2 << 30             # the disk cache's size (OTPU_PROG_CACHE_GB overrides)
 FREE_FLOOR = 20 << 30           # free disk a write must leave
@@ -54,7 +54,10 @@ RUNTIME_ENV = ("OTPU_PROG_CACHE", "OTPU_PROG_CACHE_GB", "OTPU_IMAGE_CACHE", "OTP
                "OTPU_QUIET", "OTPU_PREBUILD_CFG", "OTPU_PREBUILD_MIN_GB",
                "OTPU_PREBUILD_QUIET_WAIT", "OTPU_LOCK_HELD", "OTPU_LOCK_PID", "OTPU_LOCK_WAIT",
                "OTPU_RUN_DIR", "OTPU_STOP_RUN", "OTPU_SIM_TMP", "OTPU_PARENT",
-               "OTPU_VISION_WARM")
+               "OTPU_VISION_WARM",
+               # which device node a run opens (board.default_dev): a card's programs and images
+               # are its bitstream's, whichever node it is
+               "OTPU_DEV")
 # the host modules the compiler, kernels and models import: opentpu/host/offload.py's LINE, TAG,
 # RUN, Layout and RowLayout place the mailboxes, slots and tags the programs address
 HOST_KEYED = ("host/offload.py",)
@@ -224,9 +227,9 @@ def _load(f: Path):
                 ws = [z[f"p{j}_{s}"] for s in range(S)]
                 parts.append([[I.Instr.decode(w[i:i + 8]) for i in range(0, len(w), 8)]
                               for w in ws])
-            ra = None if meta["ra"] is None else [(RunVar(r[0], *r[2:]), r[1])
+            ra = None if meta["ra"] is None else [(run_var(r[0], *r[2:]), r[1])
                                                   for r in meta["ra"]]
-            seen = [(RunVar(r[0], *r[2:]), r[1]) for r in meta.get("seen", ())]
+            seen = [(run_var(r[0], *r[2:]), r[1]) for r in meta.get("seen", ())]
         os.utime(f)                     # recently used (the eviction order)
     except FileNotFoundError:
         return None

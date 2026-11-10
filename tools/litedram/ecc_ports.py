@@ -18,7 +18,7 @@ from migen import Module, If, Signal
 from litex.soc.interconnect.csr import AutoCSR, CSR, CSRStatus, CSRStorage
 from litex.soc.interconnect.stream import Buffer, BufferizeEndpoints, DIR_SOURCE
 
-from litedram.common import rdata_description
+from litedram.common import rdata_description, wdata_description
 from litedram.frontend.ecc import LiteDRAMNativePortECCR, LiteDRAMNativePortECCW
 
 
@@ -74,3 +74,26 @@ class NativePortsECC(Module, AutoCSR):
                     ded_errors.eq(ded_errors + 1)),
             )
         ]
+
+
+class NativePortsPlain(Module, AutoCSR):
+    """NativePortsECC without the code, for a DIMM without ECC (the BCU1525's UDIMM core,
+    gen_core_ddr4.py --dimm udimm): the same register on each path (a port's write data, the
+    crossbar's read data into each port), so the ports' latencies are the ECC core's, and the same
+    CSRs, so the host's ECC reads work: enable 0, the counters 0, clear a no-op."""
+    def __init__(self, users, raws):
+        self.enable     = CSRStorage(reset=0)
+        self.clear      = CSR()
+        self.sec_errors = CSRStatus(32)
+        self.ded_errors = CSRStatus(32)
+        for user, raw in zip(users, raws):
+            dw = user.data_width
+            assert raw.data_width == dw, (raw.data_width, dw)
+            self.comb += user.cmd.connect(raw.cmd)
+            wbuf = Buffer(wdata_description(dw))
+            rbuf = Buffer(rdata_description(dw))
+            self.submodules += wbuf, rbuf
+            self.comb += [
+                user.wdata.connect(wbuf.sink), wbuf.source.connect(raw.wdata),
+                raw.rdata.connect(rbuf.sink), rbuf.source.connect(user.rdata),
+            ]

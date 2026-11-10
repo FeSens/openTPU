@@ -47,7 +47,7 @@ from opentpu.host.runstate import busy_exits
 from opentpu.host import regs as R
 from opentpu.host.board import (CH_BYTES, ID_OTPU, R_ID, R_SCRATCH, R_STATUS, ST_CALIB0,
                                 ST_CALIB1, Board, SimTransport, XdmaTransport, config_summary,
-                                device_config)
+                                default_dev, device_config, open_transport)
 from opentpu.host.checks import (address_lines, bandwidth, channel_patterns, masked_program,
                                  model_check, partial_writes, pattern_test, run_demo,
                                  stream_check, vops_check)
@@ -138,10 +138,14 @@ class Runner:
 
 
 @busy_exits
-def main(argv=None) -> int:
+def main(argv=None, transport=None) -> int:
+    """transport: the card through it instead of /dev/xdma0 (a JtagTransport: the BCU1525's image
+    loaded over JTAG, its governor already GO; boards/bcu1525/scripts/fullimage_jtag.py), the
+    bandwidth stage skipped."""
     ap = argparse.ArgumentParser(prog="otpu-selftest", description=__doc__.split("\n")[0])
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="the card: /dev/xdmaN (board.open_transport; default "
+                    "OTPU_DEV, else the one present)")
     ap.add_argument("--model",
                     help="qwen3, lfm2, qwen35 or a checkpoint directory: the model stage")
     ap.add_argument("--tokens", type=int, default=8, help="tokens to generate in the model stage")
@@ -152,26 +156,35 @@ def main(argv=None) -> int:
     ap.add_argument("--bw-mib", type=int, default=512, help="bandwidth test size (MiB)")
     a = ap.parse_args(argv)
 
-    if a.sim:
+    if transport is not None:
+        ch_bytes = CH_BYTES
+        t = transport
+    elif a.sim:
         ch_bytes = 1 << 22
         t = SimTransport(ch_bytes=ch_bytes)
     else:
         ch_bytes = CH_BYTES
-        t = XdmaTransport(a.dev)
+        a.dev = a.dev or default_dev()
+        t = XdmaTransport(a.dev) if a.dev.startswith("/dev/") else open_transport(a.dev)
     cfg = None                                            # from the bitstream (stage config)
-    print(f"openTPU self-test on {'the board model' if a.sim else a.dev}")
+    where = (type(t).__name__ if transport is not None else 'the board model' if a.sim
+             else a.dev)
+    print(f"openTPU self-test on {where}")
     r = Runner()
     board = Board(t, check=False)
-    top = 2 * ch_bytes                                    # logical DRAM size
+    top = 2 * ch_bytes                                    # logical DRAM size (a slice's)
 
     def link():
         v = t.reg_read(R_ID)
         return v == ID_OTPU, f"ID {v:#010x}" + ("" if v == ID_OTPU else f", want {ID_OTPU:#x}")
 
     def config():
-        nonlocal cfg
+        nonlocal cfg, ch_bytes, top
         i = board.info()
-        cfg = device_config(i, DRAM_BYTES=2 * ch_bytes)
+        c = i.get("cfg")
+        if c and not a.sim:         # the bitstream's channels (CFG_DRAM: e.g. 8 a slice)
+            ch_bytes, top = c["channel_bytes"], c["channels"] * c["channel_bytes"]
+        cfg = device_config(i, DRAM_BYTES=top)
         msg = config_summary(i)
         return True, msg
 
@@ -202,7 +215,9 @@ def main(argv=None) -> int:
         t0 = time.time()
         if board.scrub():
             return True, f"4 GiB written in {time.time() - t0:.1f}s (ECC check bits initialized)"
-        return True, "already done since configuration" if not a.sim else "no ECC on the model"
+        if not getattr(t, "ecc", False):
+            return True, "no ECC on the model" if a.sim else "no ECC"
+        return True, "already done since configuration"
 
     def regs():
         vals = [0x0, 0xFFFFFFFF, 0xA5A5_5A5A, 0x1234_5678]
@@ -236,14 +251,14 @@ def main(argv=None) -> int:
         ok, msg = pattern_test(board, regions)
         for c in channels():
             if ok:
-                ok, m2 = partial_writes(t, c)
+                ok, m2 = partial_writes(t, c, beat=board.beat)
                 msg += "; " + m2
         return ok, msg
 
     def bw():
-        if a.sim:
-            return True, "skipped on the model"
-        w, rd, wb = bandwidth(t, a.bw_mib << 20)
+        if a.sim or transport is not None:
+            return True, "skipped on " + ("the model" if a.sim else type(t).__name__)
+        w, rd, wb = bandwidth(t, a.bw_mib << 20, nch=board.nch)
         ok = w > 0.5 and rd > 0.5
         return ok, (f"host->card {w:.2f} GB/s, card->host {rd:.2f} GB/s (placed buffers; "
                     f"host->card through the staging copy {wb:.2f})")

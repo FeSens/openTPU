@@ -15,7 +15,22 @@ in turns:
   own generator) or, for sampling the device does not take, step by step on the host;
 - before the device's context is overwritten it is saved to the store (its new pages and its
   tail; an active request's pinned until it ends), so that the request it belongs to, or a
-  later one sharing its prefix, continues it instead of feeding it again.
+  later one sharing its prefix, continues it instead of feeding it again. A finished request's
+  is saved as soon as the queue is empty (the worker idle), so a request that comes later has
+  nothing to save before its prompt;
+- a model with state (Request.at, a chat's reply start) keeps the context there for the next
+  turn: a snapshot on the device (Engine(snapshots=), as otpu-chat's), which a next turn
+  continuing it rolls back to (no store traffic) and which goes to the store (the device rolled
+  back to it, then saved) once the worker is idle or before another context takes the device;
+  without snapshots the context there is saved as the prompt is fed. The turn past the reply
+  start is not saved: the next turn's rendering parts there;
+- a request that continues the context an idle save is writing (a chat's next turn, sent at
+  once) pre-empts it: the save gives up between two device reads (nothing stored, the device
+  as it was) and the request goes on from the device; the next idle saves what the device then
+  holds. Any other request waits for the save, which its switch would make anyway;
+- a turn whose run fails on x2's link (cards.LinkError) resets the link and resumes its request
+  from its prompt and its output so far (Worker._link_recovered, as otpu-chat35x2's turn), once
+  a request; any other failure ends the request in error.
 
 New requests come first (their prefill), then the running ones in turn. While one request runs
 alone, it runs to its end; the card's loop is halted after the token in flight as soon as
@@ -46,9 +61,12 @@ from ..host.chat import Detok, sampler as host_sampler
 from ..llm import generate as G
 from ..llm.mtp import MTPStats
 from . import kvio as KV
+from . import telemetry as TM
 from . import store as ST
 
 STATS_KEEP = 1024       # the engine's per-run stats kept
+PREFIX_BLOCK = 2048     # a model with state: a prompt's prefix kept every this many positions
+PREFIX_SKIP = 256       # ... but none this close to where its feed starts
 QUANTUM = 32            # tokens a running request decodes per turn while others wait
 CHUNK = 64              # tokens per decode run on a backend that does not poll stop() mid-run
 
@@ -70,14 +88,22 @@ class Sampling:
 class Request:
     """One generation. prompt: the token ids fed; at: where a model with state keeps a saved
     context in the prompt (a chat's reply start: the next turn's rendering parts there), or
-    None; stop_ids end it (not part of the output); stop_strs end it at the text's first match
-    (cut there)."""
+    None; marks: where it keeps the prompt's prefix in the store as it is fed, for other
+    conversations (the last message boundary before the final user turn: a system prompt's
+    end; Worker.prefix_block's block positions too); keep_reply: a reply whose text holds it
+    stays on the device past the idle save or a switch (a tool call: the agent's next request
+    continues it; "": every reply, the API's with the thinking kept), its reply start saved
+    from the snapshot (at may then be the prompt's last fed position); None: none; stop_ids
+    end it (not part of the output);
+    stop_strs end it at the text's first match (cut there)."""
     prompt: list
     max_new: int = 256
     sampling: Sampling = field(default_factory=Sampling)
     stop_ids: frozenset = frozenset()
     stop_strs: tuple = ()
     at: int | None = None
+    marks: tuple = ()
+    keep_reply: str | None = None
     rid: str = ""
     skip_special: bool = True         # the text without the tokenizer's special tokens
     images: list = field(default_factory=list)  # its images (minicpmv.ImageInput, in order):
@@ -90,8 +116,20 @@ class Request:
     cached: int = 0                   # prompt tokens the device did not have to feed
     prefill_tokens: int = 0
     t_submit: float = 0.0
+    t_start: float | None = None      # the worker's first turn of it (its wait in the queue ends)
     t_first: float | None = None
     t_done: float | None = None
+    prefill_s: float = 0.0            # seconds its prompt was fed (its turns' prefill)
+    # seconds of its turns in the worker's phases: "switch" (the device made its context: within
+    # it "save" (another context into the store), "restore" (its own written back), "rollback"
+    # (the device back to a snapshot)), "snapshot" (its reply start kept on the device) and
+    # "save" too where its reply start went to the store instead; "idle_save": of its queue time,
+    # what it waited for an idle save. A save's and a restore's parts: "save.<part>" and
+    # "restore.<part>" (_io_parts: store, host, prog, link, load, run, adopt; gc within them)
+    phases: dict = field(default_factory=dict)
+    # the bytes its saves and restores moved: {"save" | "restore": {link_bytes, link_calls,
+    # copies, copied_bytes}} (kvio.ContextIO.moved)
+    io: dict = field(default_factory=dict)
     turns: int = 0
     swaps: int = 0
     events: queue.Queue = field(default_factory=queue.Queue)
@@ -134,10 +172,16 @@ class Worker:
 
     def __init__(self, eng, tok, store=None, model_key: str = "model",
                  max_running: int = 8, quantum: int = QUANTUM, ram_bytes: int = 4 << 30,
-                 area=False, mtp: bool = False):
+                 area=False, mtp: bool = False, prefix_block: int = PREFIX_BLOCK,
+                 prefix_skip: int = PREFIX_SKIP):
         self.eng, self.tok = eng, tok
+        # a model with state: a prompt's prefix kept in the store as it is fed, at its marks
+        # and every prefix_block positions (0: neither), none within prefix_skip of where the
+        # feed starts (_prefill, _keep_prefix)
+        self.prefix_block, self.prefix_skip = prefix_block, prefix_skip
         self.tok_lock = threading.Lock()
         self.io = KV.ContextIO(eng, area=area)      # (False: kvio.staging_area's)
+        self.last_io: dict = {}         # the last save's and restore's parts (_io_parts)
         self.store = store if store is not None else ST.BlobStore(ram_bytes)
         self.dec = None                   # the MTP decoder (mtp=True)
         if mtp:
@@ -157,16 +201,34 @@ class Worker:
         self.cv = threading.Condition()
         self.dev: list = []               # the tokens the device's context holds
         self.dirty = False                # ... not saved in the store yet
+        self.snap_at: int | None = None   # a snapshot on the device of dev[:snap_at]'s state (a
+        #                                   request's reply start), not in the store yet
+        self.reply_kept = False           # the device's context ends in a reply its next request
+        #                                   continues (Request.keep_reply): the idle save keeps it
+        self._flush_gen = 0               # flush()es so far; _drop_dev: one asked the worker to
+        self._drop_dev = False            # forget the device's context
+        self._idling = None               # the context an idle save writes, while it does; _pre:
+        self._pre = (None, False)         # (the next request, whether it pre-empts that save)
         self.owner: Request | None = None
         self._rr = 0
         self._ids = itertools.count(1)
         self._stop = False
         self.thread = None
+        # monitors (opentpu/serve/metrics.py): observers(r) on the worker's thread as each
+        # request ends (cheap: they queue a record); on_idle() there once the queue is empty
+        # (chat35's layer runs ahead); feeding (r, the device's position, tokens to feed,
+        # perf_counter, stats' prefill_tokens) while a prompt is fed: its progress is the
+        # device's position past it
+        self.observers: list = []
+        self.on_idle = None
+        self.feeding: tuple | None = None
         self.stats = {"requests": 0, "finished": 0, "aborted": 0, "errors": 0,
                       "prompt_tokens": 0, "cached_tokens": 0, "prefill_tokens": 0,
                       "generated": 0, "decode_s": 0.0, "prefill_s": 0.0, "switch_s": 0.0,
                       "saves": 0, "restores": 0, "device_reuses": 0, "turns": 0,
-                      "restore_s": 0.0, "save_s": 0.0}
+                      "restore_s": 0.0, "save_s": 0.0, "snapshots": 0, "rollbacks": 0,
+                      "idle_saves": 0, "idle_preempts": 0, "prefix_saves": 0,
+                      "prefix_save_s": 0.0}
         if mtp:
             self.stats.update(mtp_iters=0, mtp_accepted=0, refills=0)
 
@@ -187,6 +249,7 @@ class Worker:
             self.thread = None
         if persist and self.store.dir is not None:
             try:
+                self._save_at()
                 self._save_device()
             except BaseException:
                 traceback.print_exc()
@@ -220,12 +283,15 @@ class Worker:
 
     def flush(self) -> None:
         """Forget the saved contexts and the device's (the next request starts from what the
-        store and the device do not hold)."""
-        self.cache.clear()
+        store and the device do not hold). The device's context is the worker's to drop (its
+        idle save may be running): it does before its next request; a save that ran across
+        the flush is cleared again (_idle)."""
         with self.cv:
-            idle = not self.running
-        if idle:
-            self.dev, self.dirty = [], False
+            self._flush_gen += 1
+            if not self.running:
+                self._drop_dev = True
+            self.cv.notify_all()
+        self.cache.clear()
 
     def busy(self) -> int:
         with self.cv:
@@ -244,27 +310,106 @@ class Worker:
             self._trim()
             with self.cv:
                 while not self._stop and not self.waiting and not self.running:
+                    self._dropped()
                     self.cv.wait()
                 if self._stop:
                     for r in self.waiting + self.running:
                         self._end(r, "abort")
                     return
+                self._dropped()
                 r = self._pick()
             if r is None:
                 continue
             try:
                 self._turn(r)
             except BaseException as e:      # the request fails, the server goes on
+                if self._link_recovered(e, r):     # (the link reset: r resumes)
+                    continue
                 r.error = f"{type(e).__name__}: {e}"
                 traceback.print_exc()
                 self.stats["errors"] += 1
-                self.owner, self.dev, self.dirty = None, [], False
+                self.owner, self.dev, self.dirty, self.snap_at = None, [], False, None
                 try:
                     self.eng.reset()
                     self._mtp_reset()
                 except BaseException:
                     pass
                 self._end(r, "error")
+            if not self.busy():
+                self._idle()
+
+    def _dropped(self) -> None:
+        """flush()'s: the device's context forgotten (under cv, no request running)."""
+        if self._drop_dev and not self.running:
+            self.dev, self.dirty, self.snap_at, self._drop_dev = [], False, None, False
+
+    def _idle(self) -> None:
+        """The queue empty after a turn: the device's context into the store while nothing
+        waits (a snapshot's: the reply start, the device back to it, or with a reply kept
+        (reply_kept) the reply start and then the whole context, the device where it is; else
+        the context itself; MTP's left to the next switch), so the next request's switch has
+        nothing to save; then
+        on_idle (chat35's layer runs ahead). A request that comes meanwhile and continues that
+        context pre-empts the save (_preempts); any other waits for it (its phases'
+        "idle_save")."""
+        if self.dec is None and self.owner is None and (self.snap_at is not None or self.dirty):
+            g = self._flush_gen
+            t0 = time.perf_counter()
+            try:
+                with self.cv:
+                    self._dropped()
+                    self._idling = list(self.dev[:self.snap_at] if self.snap_at is not None
+                                        and not self.reply_kept else self.dev)
+                    self._pre = (None, False)
+                saved = self.stats["saves"]
+                self.io.abort = self._preempts
+                if not self._preempts():
+                    if self.reply_kept:
+                        self._save_reply()
+                    else:
+                        self._save_at()
+                    self._save_device()
+                else:
+                    self.stats["idle_preempts"] += 1
+                self.stats["idle_saves"] += self.stats["saves"] - saved
+            except KV.Aborted:                  # (rolled back, unsaved: dirty, as it was)
+                self.stats["idle_preempts"] += 1
+            except BaseException:
+                traceback.print_exc()
+                self.dev, self.dirty, self.snap_at = [], False, None
+                try:
+                    self.eng.reset()
+                except BaseException:
+                    pass
+            finally:
+                self.io.abort = None
+                t1 = time.perf_counter()
+                with self.cv:
+                    self._idling = None
+                    for r in self.waiting:      # (the requests it held up)
+                        r.phases["idle_save"] = r.phases.get("idle_save", 0.0) + \
+                            t1 - max(t0, r.t_submit)
+            if self._flush_gen != g:            # (a flush meanwhile: what this saved too)
+                self.cache.clear()
+        if self.on_idle is not None and not self.busy():
+            try:
+                self.on_idle()
+            except BaseException:
+                traceback.print_exc()
+
+    def _preempts(self) -> bool:
+        """Whether the next request continues the context the idle save writes (its prompt
+        goes on from all of it: a chat's next turn), so it needs no save first: the save gives
+        up (between its device reads: kvio's abort) and the request goes first. Asked once a
+        request (the next one, as _pick takes them)."""
+        with self.cv:
+            r = self.waiting[0] if self.waiting else None
+        if r is None or self._idling is None:
+            return False
+        if self._pre[0] is not r:
+            n = len(self._idling)
+            self._pre = (r, len(r.prompt) > n and self._common(self._idling, r.prompt) == n)
+        return self._pre[1]
 
     def _pick(self) -> Request | None:
         """New requests first (up to max_running running), then the running ones in turn."""
@@ -287,14 +432,55 @@ class Worker:
         """Another request waits for the device (no lock: polled while the card runs)."""
         return bool(self.waiting) or len(self.running) > 1
 
+    def _link_recovered(self, e, r: Request | None = None) -> bool:
+        """After r's turn failed on the link (cards.LinkError: x2's two cards), as chat35x2's
+        turn: the link reset (CardsTransport.recover: the cores stopped, LRST) and the device's
+        context dropped (the run may have written past it); r, and a request whose context only
+        the device held (a save the failure cut short), resume with the prompt and the output
+        so far as the context to make (_want: the store's longest match, the rest fed again),
+        the others from the store as they left. Once a request; none with the MTP decoder
+        (chat35x2's). False: not a link's failure, or no recovery (the error path's)."""
+        from ..host.cards import LinkError
+        t = getattr(getattr(self.eng.backend, "board", None), "t", None)
+        if r is None or not isinstance(e, LinkError) or not hasattr(t, "recover") or \
+                self.dec is not None or getattr(r, "_relinked", False):
+            return False
+        traceback.print_exc()
+        try:
+            t.recover()
+        except BaseException:
+            traceback.print_exc()
+            return False
+        self.stats["link_recoveries"] = self.stats.get("link_recoveries", 0) + 1
+        self.owner, self.dev, self.dirty, self.snap_at = None, [], False, None
+        self.reply_kept = False
+        self.eng.reset()
+        for x in [r] + [x for x in self.running if x is not r and x.finish is None and x.fed
+                        and x.entry is None]:
+            if x.entry is not None:
+                self.cache.unpin(x.entry)
+                x.entry = None
+            x._relinked, x.fed, x.next = True, [], None
+        if r.finish is not None:
+            self._end(r, r.finish)
+        return True
+
+    @staticmethod
+    def _want(r: Request) -> list:
+        """The context a request's feed makes, its last token fed by its first step: its prompt,
+        or after a link recovery its prompt and its output so far."""
+        return list(r.prompt) + list(r.out) if getattr(r, "_relinked", False) else r.prompt
+
     def _turn(self, r: Request) -> None:
         r.turns += 1
         self.stats["turns"] += 1
         t0 = time.perf_counter()
+        if r.t_start is None:
+            r.t_start = t0
         self._switch_to(r)
         self.stats["switch_s"] += time.perf_counter() - t0
         if r.next is None and r.finish is None:
-            self._prefill(r)
+            self._feed(r)
         if r.finish is None and r.next is not None:
             self._decode(r)
         if r.finish is not None:
@@ -309,32 +495,138 @@ class Worker:
         eq = np.asarray(a[:n], np.int64) == np.asarray(b[:n], np.int64)
         return n if eq.all() else int(np.argmin(eq))
 
-    def _save_device(self, pin_for: Request | None = None) -> None:
+    @staticmethod
+    def _phase(r: Request | None, k: str, t0: float) -> float:
+        dt = time.perf_counter() - t0
+        if r is not None:
+            r.phases[k] = r.phases.get(k, 0.0) + dt
+        return dt
+
+    def _io_mark(self, io=None) -> tuple:
+        """kvio's counters now, for a phase's parts (_io_parts). io: a slot's (default self.io)."""
+        io = self.io if io is None else io
+        return dict(io.t), dict(io.moved), KV.gc_seconds()
+
+    def _io_parts(self, r: Request | None, kind: str, total: float, mark: tuple, io=None,
+                  **more: float) -> None:
+        """A save's or restore's `total` seconds by part since `mark` into r.phases as
+        kind.part: kvio's prog, link, load and run (kvio.ContextIO.t), "host" kvio's own host
+        work, more's (adopt), "store" the rest (the store's lookup or insert: its hashes and
+        copies on the host; a save's settle); within them (not added) "gc" the GC's seconds and
+        "telemetry" a card sample's (telemetry.overlap: its thread holds the interpreter).
+        The bytes and runs into r.io[kind]. The last of each kind, a request's or not (an idle
+        save), in last_io[kind] too (/api/stats' kv). io: _io_mark's."""
+        t0, m0, g0 = mark
+        io = self.io if io is None else io
+        t, m = io.t, io.moved
+        parts = {k: t[k] - t0[k] for k in KV.PARTS}
+        io_s = t["io"] - t0["io"]
+        parts["host"] = max(0.0, io_s - sum(parts.values()))
+        parts.update(more)
+        parts["store"] = max(0.0, total - io_s - sum(more.values()))
+        parts["gc"] = KV.gc_seconds() - g0
+        now = time.perf_counter()
+        parts["telemetry"] = TM.overlap(now - total, now)
+        moved = {k: m[k] - m0[k] for k in m}
+        self.last_io[kind] = {"s": round(total, 4), **{k: round(v, 4) for k, v in parts.items()},
+                              **moved}
+        if r is None:
+            return
+        for k, v in parts.items():
+            r.phases[f"{kind}.{k}"] = r.phases.get(f"{kind}.{k}", 0.0) + v
+        mv = r.io.setdefault(kind, dict.fromkeys(m, 0))
+        for k, v in moved.items():
+            mv[k] += v
+
+    def _save_device(self, pin_for: Request | None = None, r: Request | None = None,
+                     state_at: int | None = None) -> None:
         """The device's context into the store (what the store lacks of it). MTP: a pending
-        draft settled first (the MTP layer's last row), the request's draft kept with it."""
+        draft settled first (the MTP layer's last row), the request's draft kept with it. r:
+        the request whose turn it delays (its phases' "save"). state_at: a snapshot holding the
+        context's state (kvio.snapshot_at), read from there."""
         if not self.dev or (not self.dirty and pin_for is None):
             return
-        t0 = time.perf_counter()
+        t0, mark = time.perf_counter(), self._io_mark()
         self._settle()
-        e = self.cache.save(self.io, list(self.dev), pin=pin_for is not None, follow=self.follow)
+        e = self.cache.save(self.io, list(self.dev), pin=pin_for is not None, follow=self.follow,
+                            state_at=state_at)
         self.stats["saves"] += 1
-        self.stats["save_s"] += time.perf_counter() - t0
+        dt = self._phase(r, "save", t0)
+        self.stats["save_s"] += dt
+        self._io_parts(r, "save", dt, mark)
         self.dirty = False
         if pin_for is not None:
             pin_for.entry = e
             if self.dec is not None:
                 pin_for.draft = self.dec.draft
 
+    def _rollback(self, r: Request | None) -> int:
+        """The device back to its snapshot (Engine.rollback): dev[:snap_at], unsaved."""
+        k, self.snap_at = self.snap_at, None
+        t0 = time.perf_counter()
+        t = self.eng.rollback(k)
+        self._phase(r, "rollback", t0)
+        self.stats["rollbacks"] += 1
+        self.dev, self.dirty = list(self.dev[:t]), t > 0  # (a new list: dev is a request's fed)
+        return t
+
+    def _save_at(self, r: Request | None = None) -> None:
+        """The snapshot's context (a request's reply start) into the store: the device rolled
+        back to it and saved (it holds that context then, saved), the state read from the
+        snapshot (one range, no copy); what lay past it is dropped (a chat's reply, which its
+        next turn's rendering does not repeat)."""
+        if self.snap_at is not None:
+            t = self._rollback(r)
+            at = KV.snapshot_at(self.eng, t) if self.io.slot == 0 else None
+            self._save_device(r=r, state_at=at)
+
+    def _save_reply(self, r: Request | None = None) -> None:
+        """The snapshot's context (the reply start) into the store, its state read from the
+        snapshot, the device left past it, unsaved (a reply kept: the next request continues
+        it, or parts at the reply start and restores this); a snapshot it cannot read:
+        _save_at. r: the request whose turn it delays (its phases' "save")."""
+        k = self.snap_at
+        at = KV.snapshot_at(self.eng, k) if k is not None and self.io.slot == 0 else None
+        if at is None:
+            return self._save_at(r)
+        t0, mark = time.perf_counter(), self._io_mark()
+        self.cache.save(self.io, list(self.dev[:k]), state_at=at)
+        self.snap_at = None
+        self.stats["saves"] += 1
+        dt = self._phase(r, "save", t0)
+        self.stats["save_s"] += dt
+        self._io_parts(r, "save", dt, mark)
+
     def _switch_to(self, r: Request) -> None:
         """Make the device's context r's: a running request's own (as it left it), or for a new
         one the longest prefix of its prompt the device or the store has."""
         if self.owner is r:
             return
-        old = self.owner
+        t0 = time.perf_counter()
+        try:
+            self._switch(r)
+        finally:
+            self._phase(r, "switch", t0)
+
+    def _switch(self, r: Request) -> None:
+        old, kept = self.owner, self.reply_kept
+        self.reply_kept = False
         if old is not None and old.finish is None and old.fed:
             old.swaps += 1
-            self._save_device(pin_for=old)      # it comes back to this
+            self._save_device(pin_for=old, r=r)     # it comes back to this
         self.owner = None
+        if self.snap_at is not None:
+            # a snapshot's context: r continues it past the snapshot (a chat's next turn): the
+            # device back to it; r continues the device's whole context: kept (the snapshot
+            # dropped); else into the store before r's context takes the device (a reply kept:
+            # the reply start, then the whole context below)
+            c = self._common(self.dev, r.fed or r.prompt)
+            if not r.fed and self.snap_at <= c < len(self.dev):
+                self._rollback(r)
+            elif (r.fed or c < len(self.dev)) and kept:
+                self._save_reply(r)
+            elif r.fed or c < len(self.dev):
+                self._save_at(r)
         c = self._common(self.dev, r.fed or r.prompt)
         if r.fed:                               # r ran before: exactly its context
             want, m = r.fed, ST.Match(len(r.fed), r.entry)
@@ -342,7 +634,7 @@ class Worker:
             dev_k = exact if c == exact and (not self.stateful or len(self.dev) == exact) \
                 else 0
         else:
-            want = r.prompt
+            want = self._want(r)
             limit = len(want) - 1               # (a token to feed: its logits)
             m = self.cache.match(want, limit=limit)
             if self.stateful:                   # the device's context, continued
@@ -351,22 +643,28 @@ class Worker:
                 dev_k = min(c, limit)
         if dev_k > 0 and dev_k >= m.k:          # the device holds it
             if dev_k < len(self.dev):
-                self._save_device()             # (what lies past it is overwritten)
+                self._save_device(r=r)          # (what lies past it is overwritten)
+            self.snap_at = None                 # (adopt drops the snapshots)
             self.eng.adopt(dev_k)
             k = dev_k
             self.stats["device_reuses"] += 1
             if self.dec is not None and r.fed and r.draft is not None:
                 self.dec.draft = r.draft
         else:
-            self._save_device()
-            t0 = time.perf_counter()
+            self._save_device(r=r)
+            self.snap_at = None
+            t0, mark = time.perf_counter(), self._io_mark()
             if self.dec is not None:            # (the state into slot 0)
                 self.io.slot = 0
             k = self.cache.restore(self.io, m, have=c) if m.k else 0
             if k:
-                self.eng.adopt(k)
+                ta = time.perf_counter()
+                self.eng.adopt(k)               # (precompiles in flight waited for)
+                ta = time.perf_counter() - ta
                 self.stats["restores"] += 1
-                self.stats["restore_s"] += time.perf_counter() - t0
+                dt = self._phase(r, "restore", t0)
+                self.stats["restore_s"] += dt
+                self._io_parts(r, "restore", dt, mark, adopt=ta)
                 self._mtp_restored(r, m.entry, want, k)
             else:
                 self.eng.reset()
@@ -382,8 +680,9 @@ class Worker:
                 k = 0
         else:
             r.fed = list(want[:k])
-            r.cached = k
-            self.stats["cached_tokens"] += k
+            if want is r.prompt:                # (a link's resume: its first match counted)
+                r.cached = k
+                self.stats["cached_tokens"] += k
         self.dev = r.fed                        # (the same list: it grows as r runs)
         self.dirty = True
         self.owner = r
@@ -467,6 +766,31 @@ class Worker:
             return False
         return r.sampling.greedy or G.Sampling.fits(**self._sampler(r).params)
 
+    def _feed(self, r: Request) -> None:
+        """_prefill, timed (r.prefill_s) and watched (feeding: a monitor reads the device's
+        position for the prompt's progress, a layer-major prompt's too, which yields once)."""
+        t0 = time.perf_counter()
+        self.feeding = (r, self.eng.pos, len(self._want(r)) - len(r.fed), t0,
+                        self.stats["prefill_tokens"])
+        try:
+            self._prefill(r)
+        finally:
+            self.feeding = None
+            r.prefill_s += time.perf_counter() - t0
+
+    def _count_runs(self, k: int | None) -> int | None:
+        """The engine's device runs from its stats entry k on into stats' prefill_runs (a
+        layer-major prompt's entry: its "runs", a layer loop's runs in a bucket one; another
+        entry a run); its entry count now (None: an engine without stats). The key from the
+        first count on: a worker that feeds its prompts otherwise (BatchWorker) shows none."""
+        est = getattr(self.eng, "stats", None)
+        if not isinstance(est, list):
+            return None
+        if k is not None:
+            self.stats["prefill_runs"] = self.stats.get("prefill_runs", 0) + sum(
+                (e or {}).get("runs", 1) for e in est[k:])
+        return len(est)
+
     def _prefill(self, r: Request) -> None:
         """Feed r's prompt from r.fed on. When the device's loop picks r's tokens, all but its
         last token, which becomes r.next: the decode loop feeds it and picks the first token
@@ -474,34 +798,39 @@ class Worker:
         if self.dec is not None:
             return self._prefill_mtp(r)
         t0 = time.perf_counter()
-        ids = r.prompt                          # (its key: with images, their keys)
+        ids = self._want(r)                     # (its key: with images, their keys)
         real = self._real(r, ids)
         n = len(r.fed)
         vis = self.vision.prompt(real, r.images, n) if r.images else None
         last = len(ids) - 1 if self._card_picks(r) else len(ids)
-        at = r.at if self.stateful and r.at is not None and n < r.at < last else None
-        cut = [at] if at is not None else []
+        end = last + (r.keep_reply is not None)     # (a reply kept: its start may be the last)
+        at = r.at if self.stateful and r.at is not None and n < r.at < end else None
+        keep = self._prefix_cuts(r, n, last) if self.dec is None else set()
+        cut = sorted(keep | ({at} if at is not None else set()))
         logits = None
-        self.stats["prompt_tokens"] += len(ids)
+        if ids is r.prompt:                     # (a link's resume: counted at its first feed)
+            self.stats["prompt_tokens"] += len(ids)
         for a, b in zip([n] + cut, cut + [last]):
             if a >= b:
                 continue
             kw = {} if b == len(ids) else {"logits": False}
             if vis is not None:
                 kw["vis"] = vis[a - n:b - n]
-            i = a
+            i, k = a, self._count_runs(None)
             for part, logits in self.eng.prefill_chunks(real[a:b], **kw):
                 r.fed += ids[i:i + len(part)]
                 i += len(part)
                 r.prefill_tokens += len(part)
                 self.stats["prefill_tokens"] += len(part)
+                k = self._count_runs(k)
                 if r.cancelled.is_set():
                     r.finish = "abort"
                     self.stats["prefill_s"] += time.perf_counter() - t0
                     return
-            if b != len(ids):                   # a saved context where the next turn parts
-                self.cache.save(self.io, list(r.fed))
-                self.stats["saves"] += 1
+            if b == at:                         # kept where the next turn parts (only there:
+                self._keep_at(r)                # the last part ends a token short too)
+            elif b in keep:                     # a prefix for other conversations
+                self._keep_prefix(r)
         self.stats["prefill_s"] += time.perf_counter() - t0
         if last < len(ids):                     # (the prompt's last token: the decode feeds it)
             r.next = ids[-1]
@@ -511,6 +840,43 @@ class Worker:
         t = int(np.argmax(logits)) if r.sampling.greedy else \
             int(self._sampler(r)(logits, self._real(r, r.fed)))
         self._emit(r, t)
+
+    def _prefix_cuts(self, r: Request, n: int, last: int) -> set:
+        """Where r's prompt fed from n is kept as a prefix (a model with state, prefix_block):
+        its marks and the multiples of prefix_block in (n + prefix_skip, last)."""
+        B, skip = self.prefix_block, self.prefix_skip
+        if not self.stateful or not B:
+            return set()
+        blocks = range((n + skip) // B * B + B, last, B)
+        return {b for b in (*r.marks, *blocks) if n + skip < b < last}
+
+    def _keep_prefix(self, r: Request, io=None) -> None:
+        """r's prompt so far (the device there, mid-prompt) into the store as a prefix entry
+        (store.Entry.prefix, on disk at once), for another conversation that shares it: the
+        pages the store lacks and the state at this position. io: r's slot's (default self.io)."""
+        io = self.io if io is None else io
+        t0, mark = time.perf_counter(), self._io_mark(io)
+        self.cache.save(io, list(r.fed), prefix=True)
+        self.stats["prefix_saves"] += 1
+        dt = self._phase(r, "prefix_save", t0)
+        self.stats["prefix_save_s"] += dt
+        self._io_parts(None, "prefix_save", dt, mark, io=io)
+
+    def _keep_at(self, r: Request) -> None:
+        """r's context at its reply start (the device there): a snapshot on the device, for its
+        next turn's rollback (and the store at the worker's idle, _save_at); without snapshots
+        (Engine(snapshots=0)) into the store now."""
+        t0, mark = time.perf_counter(), self._io_mark()
+        if self.eng.snapshot():
+            self.snap_at = len(r.fed)
+            self.stats["snapshots"] += 1
+            self._phase(r, "snapshot", t0)
+            return
+        self.cache.save(self.io, list(r.fed))
+        self.stats["saves"] += 1
+        dt = self._phase(r, "save", t0)
+        self.stats["save_s"] += dt
+        self._io_parts(r, "save", dt, mark)
 
     def _prefill_mtp(self, r: Request) -> None:
         """_prefill with the MTP decoder: the whole prompt through MTPDecoder.prefill (lazy:
@@ -531,13 +897,14 @@ class Worker:
             at = None
         self.stats["prompt_tokens"] += len(ids)
         st = MTPStats()
-        k = [n]
+        k = [n, self._count_runs(None)]
 
         def on_run(part) -> bool:
             r.fed += ids[k[0]:k[0] + len(part)]
             k[0] += len(part)
             r.prefill_tokens += len(part)
             self.stats["prefill_tokens"] += len(part)
+            k[1] = self._count_runs(k[1])
             return r.cancelled.is_set()
 
         def rows(a: int, b: int) -> dict:
@@ -746,13 +1113,20 @@ class Worker:
         r.events.put(("done", r.finish))
         if self.owner is r:                     # the device keeps its context (unsaved)
             self.owner = None
+            self.reply_kept = r.keep_reply is not None and r.keep_reply in r.text
+        for f in self.observers:
+            try:
+                f(r)
+            except BaseException:
+                traceback.print_exc()
 
     def usage(self) -> dict:
         with self.cv:
             q = {"waiting": len(self.waiting), "running": len(self.running)}
         return {**q, **self.stats, "device_context": len(self.dev),
                 "kv_store": self.store.usage(), "prefix_cache": self.cache.usage(),
-                "kvio": dict(self.io.stats)}
+                "kvio": dict(self.io.stats),
+                "last_io": {k: dict(v) for k, v in self.last_io.items()}}
 
 
 class _Detok(Detok):

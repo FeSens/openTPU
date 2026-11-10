@@ -8,7 +8,9 @@ strings and token ids, the model's sampling defaults, usage with the prompt toke
 cache already held), SGLang's POST /generate (text or input_ids, sampling_params, meta_info),
 GET /v1/models, /health (503 "warming" while a streamed MoE's expert pool is read into the page
 cache), /v1/stats (the queue, throughput, the slots, the KV store), POST
-/flush_cache (forget the saved contexts). Many clients at once: a model whose image holds
+/flush_cache (forget the saved contexts), vLLM's POST /tokenize and /detokenize. The monitor (opentpu/serve/metrics.py, docs/dashboard.md):
+GET /metrics (Prometheus, vLLM's names), the dashboard at / (live from GET /api/events, server-sent
+events; GET /api/stats the snapshot), the card's telemetry with --telemetry SEC. Many clients at once: a model whose image holds
 several sequences decodes their requests together in KV slots (opentpu/serve/batching.py),
 the others run them in turns (opentpu/serve/scheduler.py); contexts move in and out of the
 device through the KV store (opentpu/serve/store.py: host RAM, then disk), and a prompt that
@@ -16,25 +18,35 @@ continues a saved context (a chat's next turn, a shared system prompt) feeds onl
 
 The chat template renders the messages as otpu-chat does (thinking off unless --think or the
 request's chat_template_kwargs {"enable_thinking": true}); with --reasoning-parser qwen3 a
-reply's <think> ... </think> goes to reasoning_content. A model with a vision side (MiniCPM-V,
-docs/minicpmv.md) takes image_url content parts (data: URLs; http(s) with --image-fetch) and a
-request's max_slices; a context's key holds its images' content keys (minicpmv.keyed), so a
-saved context is reused past an image only for the same image. The standard library's HTTP
-server: no dependency beyond the chat's.
+reply's <think> ... </think> goes to reasoning_content. With --preserve-thinking (or a request's
+chat_template_kwargs {"preserve_thinking": true}) a template that has the switch (Qwen3.6's)
+renders every assistant turn with its think block, as the model wrote it: a chat's context only
+grows (an assistant message's reasoning_content goes to the template). Tool calls (`tools`,
+tool_choice "none" or auto) on the chat template's format (opentpu/serve/tools.py). A model with a
+vision side (MiniCPM-V, docs/minicpmv.md) takes image_url content parts (data: URLs; http(s)
+with --image-fetch) and a request's max_slices; a context's key holds its images' content keys
+(minicpmv.keyed), so a saved context is reused past an image only for the same image. The
+standard library's HTTP server: no dependency beyond the chat's.
 """
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import os
+import queue
+import re
+import socket
 import sys
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import progstate as PS
 from . import scheduler as SC
 from . import store as ST
+from . import tools as TL
 
 IMAGE_BYTES = 32 << 20      # an image_url's file at most
 FETCH_S = 20.0              # an http(s) image's fetch timeout (--image-fetch)
@@ -163,9 +175,10 @@ class Server:
                  think: bool = False, reasoning: str | None = None, aliases=(),
                  api_key: str | None = None, max_queue: int = 256, info: dict | None = None,
                  max_slices: int | None = None, fetch: bool = False,
-                 warm_cap: float = WARM_CAP):
+                 warm_cap: float = WARM_CAP, monitor=None, preserve_thinking: bool = False):
         self.w, self.tok, self.spec, self.name = worker, tok, spec, name
         self.defaults, self.think, self.reasoning = dict(defaults), think, reasoning
+        self.preserve = preserve_thinking       # (the default: a request's chat_template_kwargs)
         self.names = {name, *aliases}
         self.api_key, self.max_queue = api_key, max_queue
         self.created = int(time.time())
@@ -177,6 +190,8 @@ class Server:
         # a streamed MoE's expert pool file: its read into the page cache gates /health
         self.pool = getattr(getattr(worker.eng, "server", None), "pool_file", None)
         self.warm_cap = warm_cap
+        self.monitor = monitor          # (metrics.Monitor: /metrics, /api/*, the dashboard)
+        self.tool_dialect = TL.dialect(getattr(tok, "chat_template", None))
 
     # ---- rendering
     def encode(self, text: str) -> list[int]:
@@ -184,19 +199,24 @@ class Server:
             return list(self.tok(text)["input_ids"])
 
     def render(self, messages, think: bool, add_prompt: bool = True,
-               images=()) -> list[int]:
+               images=(), tools=None, keep: bool = False) -> list[int]:
         """images: the messages' images (minicpmv.ImageInput, in order): each one's
-        placeholder in place of its <|image_pad|> (as otpu-chat's)."""
+        placeholder in place of its <|image_pad|> (as otpu-chat's). tools: the request's
+        (tools.request_tools), to the template. keep: the template's preserve_thinking
+        (_keeps)."""
+        kw = {"tools": tools} if tools else {}
+        if keep:
+            kw["preserve_thinking"] = True
         with self.lock:
             if getattr(self.tok, "chat_template", None) is None:
                 return list(self.tok("".join(m["content"] for m in messages))["input_ids"])
             if images:
                 from ..llm import minicpmv as MV
                 text = self.tok.apply_chat_template(messages, add_generation_prompt=add_prompt,
-                                                    enable_thinking=think, tokenize=False)
+                                                    enable_thinking=think, tokenize=False, **kw)
                 return list(self.tok(MV.expand(text, images))["input_ids"])
             ids = self.tok.apply_chat_template(messages, add_generation_prompt=add_prompt,
-                                               enable_thinking=think, tokenize=True)
+                                               enable_thinking=think, tokenize=True, **kw)
         return list(ids["input_ids"] if hasattr(ids, "keys") else ids)
 
     def image_bytes(self, url: str) -> bytes:
@@ -253,17 +273,61 @@ class Server:
                                 f"(fewer images or a lower max_slices)", param="messages")
         return out
 
-    def reply_start(self, messages, ids, think: bool, images=()) -> int | None:
+    def reply_start(self, messages, ids, think: bool, images=(), tools=None,
+                    keep: bool = False) -> int | None:
         """Where the next turn's rendering parts from this one (chat.Chat.reply_start): a
-        model with state keeps a saved context there."""
+        model with state keeps a saved context there. keep (the earlier turns' thinking kept):
+        nowhere, the next turn continues the reply; the prompt's last position then, where a
+        next turn whose reply text tokenizes otherwise (or is trimmed) parts from the reply."""
         if not self.w.stateful:
             return None
+        if keep:
+            return len(ids) - 1
         stand_in = [{"role": "assistant", "content": "x"}, {"role": "user", "content": "y"}]
         try:
-            nxt = self.render(messages + stand_in, think, add_prompt=False, images=images)
+            nxt = self.render(messages + stand_in, think, add_prompt=False, images=images,
+                              tools=tools, keep=keep)
         except Exception:
             return None
         return SC.Worker._common(ids, nxt)
+
+    def prefix_marks(self, messages, ids, think: bool, images=(), tools=None,
+                     keep: bool = False) -> tuple:
+        """Where this prompt's prefix that other conversations share ends, for a model with
+        state to keep it there as the prompt is fed (store.PrefixCache.match takes a saved
+        context's end only): the last message boundary before the final user turn, at the
+        <|im_start|> (the tokenizer's special token) that opens it; an agent's first request:
+        its tools and system prompt. () without one."""
+        j = max((i for i, m in enumerate(messages) if m["role"] == "user"), default=0)
+        special = self._specials()
+        if not self.w.stateful or j == 0 or not special:
+            return ()
+        try:
+            alt = self.render(messages[:j] + [{"role": "user", "content": "\x00"}], think,
+                              add_prompt=False, images=images, tools=tools, keep=keep)
+        except Exception:
+            return ()
+        c = SC.Worker._common(ids, alt)          # (inside the final user turn's header)
+        b = next((i for i in range(c - 1, 0, -1) if ids[i] in special), 0)
+        return (b,) if b else ()
+
+    def _keeps(self, kw: dict) -> bool:
+        """Whether the template keeps every assistant turn's thinking (Qwen3.6's
+        preserve_thinking: the tokens the model saw as it replied, so a chat's context only
+        grows): --preserve-thinking, a request's chat_template_kwargs over it; only for a
+        template that has the switch."""
+        t = getattr(self.tok, "chat_template", None)
+        return isinstance(t, str) and "preserve_thinking" in t and \
+            bool(kw.get("preserve_thinking", self.preserve))
+
+    def _specials(self) -> set:
+        """The tokenizer's special tokens' ids (its added tokens marked special: Qwen's
+        <|im_start|> is not in all_special_ids)."""
+        if getattr(self, "_special", None) is None:
+            dec = getattr(self.tok, "added_tokens_decoder", None) or {}
+            self._special = {int(i) for i, t in dec.items() if getattr(t, "special", False)} | \
+                {int(i) for i in getattr(self.tok, "all_special_ids", None) or ()}
+        return self._special
 
     # ---- requests
     def _sampling(self, body: dict, i: int) -> SC.Sampling:
@@ -320,8 +384,10 @@ class Server:
         if self.w.busy() >= self.max_queue:
             raise APIError(503, "the server's queue is full; retry later", kind="server_error")
 
-    def submit(self, body: dict, ids, at=None, images=()) -> list[SC.Request]:
-        """ids: the prompt's key (with images: minicpmv.keyed)."""
+    def submit(self, body: dict, ids, at=None, images=(), marks=(),
+               keep_reply: str | None = None) -> list[SC.Request]:
+        """ids: the prompt's key (with images: minicpmv.keyed); at, marks, keep_reply:
+        Request's."""
         self._check(body, ids)
         stop_ids, stop_strs = self._stops(body)
         n = int(body.get("n", 1) or 1)
@@ -329,7 +395,8 @@ class Server:
         for i in range(n):
             r = SC.Request(list(ids), max_new=self._max_new(body, len(ids)),
                            sampling=self._sampling(body, i), stop_ids=stop_ids,
-                           stop_strs=stop_strs, at=at,
+                           stop_strs=stop_strs, at=at, marks=tuple(marks),
+                           keep_reply=keep_reply,
                            skip_special=bool(body.get("skip_special_tokens", True)),
                            images=list(images))
             try:
@@ -340,28 +407,42 @@ class Server:
                 raise APIError(400, str(e)) from None
         return out
 
-    def chat(self, body: dict):
+    def _rendered(self, body: dict, add_prompt: bool = True):
+        """The request's messages, their images and thinking switch, their rendering, the
+        tools rendered with them (tools.request_tools: None for none) and whether the earlier
+        turns' thinking is kept (_keeps)."""
         msgs = body.get("messages")
         if not isinstance(msgs, list) or not msgs:
             raise APIError(400, "messages: a non-empty list", param="messages")
         messages, urls = [], []
-        for m in msgs:
-            if not isinstance(m, dict) or "role" not in m:
-                raise APIError(400, "each message has a role and content", param="messages")
-            role = m["role"]
-            if role == "developer":
-                role = "system"
-            c = m.get("content")
-            messages.append({"role": role, "content": _content(c) if self.vs is None else
-                             _parts(c, urls)})
+        try:
+            tools = TL.request_tools(body)
+            for m in msgs:
+                if not isinstance(m, dict) or "role" not in m:
+                    raise APIError(400, "each message has a role and content", param="messages")
+                c = m.get("content")
+                m = dict(m, role="system") if m["role"] == "developer" else m
+                messages.append(TL.message(m, _content(c) if self.vs is None else
+                                           _parts(c, urls)))
+        except TL.ToolError as e:
+            raise APIError(400, str(e), param="messages") from None
         kw = body.get("chat_template_kwargs") or {}
         think = bool(kw.get("enable_thinking", self.think))
+        keep = self._keeps(kw)
         images = self.images(urls, body) if urls else []
         try:
-            ids = self.render(messages, think, images=images)
+            ids = self.render(messages, think, add_prompt, images=images, tools=tools,
+                              keep=keep)
         except Exception as e:
             raise APIError(400, f"the chat template refused the messages: {e}") from None
-        at = self.reply_start(messages, ids, think, images)
+        return messages, images, think, ids, tools, keep
+
+    def chat(self, body: dict):
+        """(requests, prompt tokens, reasoning split, its block opened by the prompt, the
+        tools to parse the replies with or None)."""
+        messages, images, think, ids, tools, keep = self._rendered(body)
+        at = self.reply_start(messages, ids, think, images, tools, keep)
+        marks = self.prefix_marks(messages, ids, think, images, tools, keep)
         key = ids
         if images:
             from ..llm import minicpmv as MV
@@ -369,10 +450,34 @@ class Server:
                 key = MV.keyed(ids, images, self.vs.image_token)
             except ValueError as e:
                 raise APIError(400, f"the images: {e}", param="messages") from None
-        reqs = self.submit(body, key, at, images)
+        # the replies the next request continues: every one with the thinking kept, else a
+        # tool call (the agent's next request)
+        reply = "" if keep else self.tool_dialect.start if tools else None
+        reqs = self.submit(body, key, at, images, marks, keep_reply=reply)
         split = self.reasoning and body.get("separate_reasoning", True)
         opened = split and self._opens_think(ids)
-        return reqs, len(ids), split, opened
+        return reqs, len(ids), split, opened, tools
+
+    def tokenize(self, body: dict) -> dict:
+        """vLLM's /tokenize: `prompt` (encoded as /v1/completions does) or `messages` (rendered
+        as /v1/chat/completions does; add_generation_prompt, default true, and
+        chat_template_kwargs). Nothing runs on the device."""
+        if "messages" in body:
+            ids = self._rendered(body, bool(body.get("add_generation_prompt", True)))[3]
+        elif isinstance(body.get("prompt"), str):
+            ids = self.encode(body["prompt"])
+        else:
+            raise APIError(400, "one of prompt (a string) and messages", param="prompt")
+        return {"count": len(ids), "max_model_len": self.w.eng.cap, "tokens": ids,
+                "token_strs": None}
+
+    def detokenize(self, body: dict) -> dict:
+        """vLLM's /detokenize: `tokens` (token ids) to their text."""
+        t = body.get("tokens")
+        if not isinstance(t, list) or not all(isinstance(x, int) for x in t):
+            raise APIError(400, "tokens: a list of token ids", param="tokens")
+        with self.lock:
+            return {"prompt": self.tok.decode(t)}
 
     def _opens_think(self, ids) -> bool:
         """The generation prompt ends inside a thinking block (the template opened it)."""
@@ -460,10 +565,12 @@ class Server:
                 "prompt_tokens_details": {"cached_tokens": max((r.cached for r in reqs),
                                                                default=0)}}
 
-    def finish(self, r: SC.Request) -> str:
+    def finish(self, r: SC.Request, calls=()) -> str:
+        """The choice's finish_reason ("tool_calls" with calls in it, as vLLM's)."""
         if r.finish == "error":
             raise APIError(500, f"generation failed: {r.error}", kind="server_error")
-        return {"stop": "stop", "length": "length"}.get(r.finish, "stop")
+        return "tool_calls" if calls else {"stop": "stop", "length": "length"}.get(r.finish,
+                                                                                   "stop")
 
     def models(self) -> dict:
         return {"object": "list", "data": [
@@ -481,7 +588,7 @@ class Server:
         return {"model": self.name, "uptime_s": round(up, 1), **self.info,
                 "throughput": {"generated_tok_s": round(u["generated"] / up, 2) if up else 0,
                                "decode_tok_s": round(u["generated"] / dec, 2) if dec else None},
-                **warm, **u}
+                "prog_cache": PS.saves(), **warm, **u}
 
     def health(self) -> tuple[int, dict]:
         """/health's status and body. While the expert pool's read into the page cache runs
@@ -510,15 +617,32 @@ def _sse(obj) -> bytes:
     return b"data: " + json.dumps(obj, separators=(",", ":")).encode() + b"\n\n"
 
 
+DASHBOARD = Path(__file__).with_name("dashboard.html")
+CLIENT_POLL_S = 0.25            # how often a handler with nothing to write looks at its client
+KEEPALIVE = {"TCP_KEEPIDLE": 30, "TCP_KEEPINTVL": 10, "TCP_KEEPCNT": 3}     # (Linux's: _keepalive)
+_KEY_RE = re.compile(r"([?&]key=)[^&\s]*")
+
+
+def _keepalive(sock) -> None:
+    """A client's machine gone without a FIN fails its socket in about a minute (the kernel's
+    default: two hours). Through ssh -L the socket is sshd's on this host: its ClientAlive
+    settings are the ones that see the far machine."""
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    for name, v in KEEPALIVE.items():
+        if hasattr(socket, name):
+            sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), v)
+
+
 def make_handler(srv: Server):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "otpu-serve"
 
-        def log_message(self, fmt, *args):     # one line per request on stderr
+        def log_message(self, fmt, *args):     # one line per request on stderr (no ?key=)
             if os.environ.get("OTPU_SERVE_QUIET"):
                 return
-            sys.stderr.write(f"{self.address_string()} - {fmt % args}\n")
+            line = _KEY_RE.sub(r"\1-", fmt % args)
+            sys.stderr.write(f"{self.address_string()} - {line}\n")
 
         # ---- plumbing
         def _json(self, status: int, obj) -> None:
@@ -532,8 +656,17 @@ def make_handler(srv: Server):
         def _error(self, e: APIError) -> None:
             self._json(e.status, e.body())
 
-        def _auth(self) -> None:
-            if srv.api_key and self.headers.get("Authorization", "") != f"Bearer {srv.api_key}":
+        def _auth(self, query: bool = False) -> None:
+            """The API key: 'Authorization: Bearer <key>'; query: or ?key=<key> (the
+            dashboard's requests: a browser's EventSource sets no headers)."""
+            if not srv.api_key:
+                return
+            got = self.headers.get("Authorization", "")
+            if query and not got.startswith("Bearer "):
+                q = self.path.partition("?")[2]
+                got = "Bearer " + next((v for k, _, v in (x.partition("=") for x in q.split("&"))
+                                        if k == "key"), "")
+            if not hmac.compare_digest(got.encode(), f"Bearer {srv.api_key}".encode()):
                 raise APIError(401, "invalid API key", kind="authentication_error")
 
         def _body(self) -> dict:
@@ -545,6 +678,42 @@ def make_handler(srv: Server):
             if not isinstance(b, dict):
                 raise APIError(400, "the body is a JSON object")
             return b
+
+        def setup(self) -> None:
+            super().setup()
+            _keepalive(self.connection)
+
+        def _client_gone(self, stream: bool) -> bool:
+            """The client has closed. A FIN alone does not say so: a client that half-closed after
+            sending reads on, and through ssh -L a client's close arrives as sshd's half-close.
+            So each look from the FIN on writes something a client ignores (an SSE comment; before
+            a plain reply's headers an interim 100): a closed client answers with a reset and a
+            later write fails (the second, through ssh the fourth: docs/serve.md), a half-closed
+            one takes them and its reply. A client that has sent no FIN sees none of this."""
+            try:
+                if self.connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT):
+                    return False                # (a next request's bytes)
+                if stream:
+                    self._chunk(b": keepalive\n\n")
+                else:
+                    self.wfile.write(b"HTTP/1.1 100 Continue\r\n\r\n")
+            except BlockingIOError:
+                return False                    # (nothing to read: no FIN)
+            except OSError:
+                return True
+            return False
+
+        def _deltas(self, r: SC.Request, stream: bool = True):
+            """r.stream(), with the client looked at while none comes: a prompt writes nothing
+            until its first token (a long one for minutes). A client gone: BrokenPipeError, as a
+            failed write, and every caller cancels its requests on that."""
+            while True:
+                try:
+                    yield from r.stream(timeout=CLIENT_POLL_S)
+                    return
+                except queue.Empty:
+                    if self._client_gone(stream):
+                        raise BrokenPipeError("the client closed") from None
 
         def _stream_start(self) -> None:
             self.send_response(200)
@@ -562,11 +731,92 @@ def make_handler(srv: Server):
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
 
+        def _send(self, status: int, body: bytes, ctype: str) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        # ---- the monitor's routes
+        def _monitor(self):
+            if srv.monitor is None:
+                raise APIError(404, "no monitor on this server")
+            return srv.monitor
+
+        def _fan_gains(self, body: dict) -> None:
+            """POST /api/fan_gains {"fan": 1, "kp": .., "ki": .., "kd": ..}: for fan_pid's next
+            step (fans.py). JSON's content type only: another site's page cannot send that
+            unasked."""
+            from . import fans as FN
+            if self._monitor().fans is None:
+                raise APIError(404, "no fans on this server")
+            if self.headers.get_content_type() != "application/json":
+                raise APIError(415, "the body's Content-Type is application/json")
+            try:
+                gains = FN.set_gains(body.get("fan"), body)
+            except ValueError as e:
+                raise APIError(400, str(e)) from None
+            except OSError as e:
+                raise APIError(500, f"the gains were not written: {e}") from None
+            self._json(200, {"fan": body["fan"], "gains": gains})
+
+        def _dashboard(self) -> None:
+            try:
+                page = DASHBOARD.read_bytes()
+            except OSError:
+                raise APIError(404, f"the dashboard's page is not installed ({DASHBOARD})") \
+                    from None
+            self._send(200, page, "text/html; charset=utf-8")
+
+        def _events(self) -> None:
+            """GET /api/events: server-sent events, `hello` (the snapshot with its series and
+            the recent requests) then a `tick` per monitor tick (`recent` in it when a request
+            ended since the last), a comment every 15 s without one."""
+            from .metrics import sse
+            mon = self._monitor()
+            snap = mon.snapshot(recent=True, history=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            seq, rv = snap["seq"], snap["rec_version"]
+            try:
+                self._chunk(b"retry: 3000\n" + sse("hello", snap))
+                while not mon.stopped():
+                    s = mon.wait(seq, timeout=15.0)
+                    if s is None:
+                        self._chunk(b": keepalive\n\n")
+                        continue
+                    seq = s["seq"]
+                    if s["rec_version"] != rv:
+                        s = dict(s, recent=mon.recent())
+                        rv = s["rec_version"]
+                    self._chunk(sse("tick", s))
+                self.wfile.write(b"0\r\n\r\n")
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
         # ---- routes
         def do_GET(self):
             try:
-                self._auth()
                 path = self.path.split("?")[0].rstrip("/")
+                if path in ("", "/dashboard", "/dashboard.html"):
+                    return self._dashboard()        # (the page holds no data: its API calls
+                #                                     carry the key)
+                self._auth(query=path.startswith("/api/") or path == "/metrics")
+                if path == "/metrics":
+                    return self._send(200, self._monitor().prometheus().encode(),
+                                      "text/plain; version=0.0.4; charset=utf-8")
+                if path == "/api/stats":
+                    return self._json(200, self._monitor().snapshot(recent=True,
+                                                                    history="history" in
+                                                                    self.path))
+                if path == "/api/events":
+                    return self._events()
                 if path in ("/health", "/v1/health", "/health_generate"):
                     return self._json(*srv.health())
                 if path == "/v1/models":
@@ -594,12 +844,18 @@ def make_handler(srv: Server):
                     srv.w.flush()
                     return self._json(200, {"flushed": True})
                 body = self._body()
+                if path == "/api/fan_gains":
+                    return self._fan_gains(body)
                 if path == "/v1/chat/completions":
                     return self._chat(body)
                 if path == "/v1/completions":
                     return self._completion(body)
                 if path == "/generate":
                     return self._generate(body)
+                if path == "/tokenize":
+                    return self._json(200, srv.tokenize(body))
+                if path == "/detokenize":
+                    return self._json(200, srv.detokenize(body))
                 raise APIError(404, f"no route {self.path}")
             except APIError as e:
                 self._error(e)
@@ -608,17 +864,17 @@ def make_handler(srv: Server):
 
         def _wait(self, reqs) -> None:
             for r in reqs:
-                for _ in r.stream():
+                for _ in self._deltas(r, stream=False):
                     pass
 
         def _chat(self, body: dict) -> None:
-            reqs, plen, split, opened = srv.chat(body)
+            reqs, plen, split, opened, tools = srv.chat(body)
             cid = "chatcmpl-" + uuid.uuid4().hex[:24]
             created = int(time.time())
             base = {"id": cid, "object": "chat.completion.chunk", "created": created,
                     "model": srv.name}
             if body.get("stream"):
-                return self._chat_stream(body, reqs, plen, split, opened, base)
+                return self._chat_stream(body, reqs, plen, split, opened, base, tools)
             try:
                 self._wait(reqs)
             except BaseException:
@@ -633,13 +889,18 @@ def make_handler(srv: Server):
                     rs, cs = sp.feed(r.text, final=True)
                     msg = {"role": "assistant", "content": cs,
                            "reasoning_content": rs.strip() or None}
+                calls = ()
+                if tools:
+                    msg["content"], calls = TL.parse(msg["content"], tools, srv.tool_dialect)
+                    if calls:
+                        msg["tool_calls"] = [TL.openai(c) for c in calls]
                 choices.append({"index": i, "message": msg, "logprobs": None,
-                                "finish_reason": srv.finish(r)})
+                                "finish_reason": srv.finish(r, calls)})
             self._json(200, {"id": cid, "object": "chat.completion", "created": created,
                              "model": srv.name, "choices": choices,
                              "usage": srv.usage(reqs, plen)})
 
-        def _chat_stream(self, body, reqs, plen, split, opened, base) -> None:
+        def _chat_stream(self, body, reqs, plen, split, opened, base, tools=None) -> None:
             self._stream_start()
             try:
                 for i, r in enumerate(reqs):
@@ -647,11 +908,13 @@ def make_handler(srv: Server):
                         "role": "assistant", "content": ""}, "logprobs": None,
                         "finish_reason": None}]}))
                     sp = ThinkSplit(inside=opened) if split else None
-                    for delta in r.stream():
-                        self._chat_delta(base, i, delta, sp)
-                    if sp is not None:
-                        self._chat_delta(base, i, "", sp, final=True)
-                    fin = srv.finish(r) if r.finish != "error" else "error"
+                    ts = TL.ToolStream(tools, srv.tool_dialect) if tools else None
+                    for delta in self._deltas(r):
+                        self._chat_delta(base, i, delta, sp, ts)
+                    if sp is not None or ts is not None:
+                        self._chat_delta(base, i, "", sp, ts, final=True)
+                    calls = ts.calls if ts is not None else ()
+                    fin = srv.finish(r, calls) if r.finish != "error" else "error"
                     self._chunk(_sse({**base, "choices": [{"index": i, "delta": {},
                                                            "logprobs": None,
                                                            "finish_reason": fin}]}))
@@ -662,13 +925,21 @@ def make_handler(srv: Server):
                 for r in reqs:
                     r.cancel()
 
-        def _chat_delta(self, base, i, delta, sp, final=False) -> None:
-            if sp is None:
+        def _chat_delta(self, base, i, delta, sp, ts=None, final=False) -> None:
+            """A delta of choice i: its reasoning (sp: a ThinkSplit), its content and, with
+            ts (a tools.ToolStream), a tool_calls delta for each call it closes (the call
+            whole: index, id, type, name, arguments)."""
+            if sp is None and ts is None:
                 if delta:
                     self._chunk(_sse({**base, "choices": [{"index": i, "delta": {
                         "content": delta}, "logprobs": None, "finish_reason": None}]}))
                 return
-            rs, cs = sp.feed(delta, final=final)
+            rs, cs = sp.feed(delta, final=final) if sp is not None else ("", delta)
+            calls = []
+            if ts is not None:
+                k = len(ts.calls)
+                cs, new = ts.feed(cs, final=final)
+                calls = [TL.openai(c, k + j) for j, c in enumerate(new)]
             d = {}
             if rs:
                 d["reasoning_content"] = rs
@@ -676,6 +947,10 @@ def make_handler(srv: Server):
                 d["content"] = cs
             if d:
                 self._chunk(_sse({**base, "choices": [{"index": i, "delta": d, "logprobs": None,
+                                                       "finish_reason": None}]}))
+            for c in calls:
+                self._chunk(_sse({**base, "choices": [{"index": i, "delta": {"tool_calls": [c]},
+                                                       "logprobs": None,
                                                        "finish_reason": None}]}))
 
         def _generate(self, body: dict) -> None:
@@ -687,7 +962,7 @@ def make_handler(srv: Server):
                 try:
                     for r, plen in items:
                         text = ""
-                        for delta in r.stream():
+                        for delta in self._deltas(r):
                             text += delta
                             self._chunk(_sse(srv.gen_item(r, plen, text, t0, False)))
                         self._chunk(_sse(srv.gen_item(r, plen, text, t0, True)))
@@ -721,7 +996,7 @@ def make_handler(srv: Server):
                             self._chunk(_sse({**base, "choices": [{"index": i, "text": pre,
                                                                    "logprobs": None,
                                                                    "finish_reason": None}]}))
-                        for delta in r.stream():
+                        for delta in self._deltas(r):
                             self._chunk(_sse({**base, "choices": [{"index": i, "text": delta,
                                                                    "logprobs": None,
                                                                    "finish_reason": None}]}))
@@ -866,15 +1141,16 @@ def batchable(spec) -> bool:
     return type(spec) is qwen3.Spec
 
 
-def main(argv=None):
-    from ..host.runstate import busy_exits
+def parser() -> argparse.ArgumentParser:
+    """otpu-serve's arguments (otpu-serve35's server takes its defaults: serve35.py)."""
     from ..llm import MODELS
     from ..llm import formats as FM
     ap = argparse.ArgumentParser(prog="otpu-serve", description=__doc__.split("\n")[0])
     ap.add_argument("--model", default="qwen3",
                     help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--backend", default="isa", choices=["isa", "bend", "board", "board-sim"])
-    ap.add_argument("--dev", default="/dev/xdma0")
+    ap.add_argument("--dev", help="XDMA device prefix (--backend board; default OTPU_DEV, else "
+                    "the one openTPU card present, else /dev/xdma0)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--cap", type=int, default=2048, help="the context's tokens at most")
@@ -906,11 +1182,19 @@ def main(argv=None):
                     help="disk for saved contexts past the RAM (0: none)")
     ap.add_argument("--kv-dir", default=str(Path.home() / "otpu-build" / "kvcache"),
                     help="the disk tier's directory (kept across restarts)")
+    ap.add_argument("--prefix-block", type=int, default=SC.PREFIX_BLOCK, metavar="N",
+                    help="a model with state: a prompt's prefix kept in the KV store every N "
+                         "positions and at its last message boundary as it is fed, for other "
+                         "conversations that share it (0: none)")
     ap.add_argument("--think", action="store_true",
                     help="thinking mode by default (a request's chat_template_kwargs "
                          "enable_thinking overrides it)")
     ap.add_argument("--reasoning-parser", choices=["qwen3"],
                     help="a reply's <think> ... </think> to reasoning_content")
+    ap.add_argument("--preserve-thinking", action=argparse.BooleanOptionalAction, default=False,
+                    help="every assistant turn rendered with its thinking, as the model wrote "
+                         "it (a template with the switch: Qwen3.6's): a chat's context only "
+                         "grows (a request's chat_template_kwargs preserve_thinking overrides)")
     ap.add_argument("--api-key", default=os.environ.get("OTPU_API_KEY"),
                     help="require 'Authorization: Bearer <key>' (default $OTPU_API_KEY)")
     ap.add_argument("--no-prog-cache", action="store_true")
@@ -935,7 +1219,27 @@ def main(argv=None):
     ap.add_argument("--warm-cap", type=float, default=WARM_CAP,
                     help="a streamed MoE: /health says 503 'warming' while its expert pool is "
                          "read into the page cache, at most this many seconds (0: never)")
-    a = ap.parse_args(argv)
+    ap.add_argument("--telemetry", type=float, default=0.0, metavar="SEC",
+                    help="--backend board: the card's telemetry for /metrics and the dashboard "
+                         "(otpu-smi's reads: utilization, the governor's die, the BMC's power) "
+                         "every SEC seconds on a thread of its own (0: off, the default)")
+    ap.add_argument("--telemetry-i2c", action="store_true",
+                    help="with --telemetry: read the card's I2C buses too (otpu-smi --i2c)")
+    ap.add_argument("--demo", action="store_true",
+                    help="no model, no card: the dashboard and /metrics over simulated "
+                         "requests and a simulated card, each marked demo (docs/dashboard.md)")
+    return ap
+
+
+def main(argv=None):
+    from ..host.runstate import busy_exits
+    a = parser().parse_args(argv)
+    if a.backend == "board" and not a.dev:
+        from ..host.board import default_dev
+        a.dev = default_dev()
+    if a.demo:
+        from .demo import main as demo
+        return demo(a)
     return busy_exits(_main)(a)
 
 
@@ -944,40 +1248,98 @@ def _main(a):
     from ..host import gen_warm as GW       # the decode loop's bucket programs ahead, in the
     eng.gen_warm = None if a.mtp else GW.start(eng, defaults)   # background (gen_warm.py; the
     #                                         MTP loop's: compiled at their first use)
-    mk = ST.model_key(str(Path(path).resolve()), type(eng.image).__module__, eng.image.wformat,
-                      eng.image.head_format, getattr(eng.image, "formats", None), eng.cap,
-                      eng.block, eng.cfg.S, eng.cfg.D, eng.cfg.MCOLS, eng.cfg.PAIR,
-                      *(("mtp", str(a.mtp_from)) if a.mtp else ()))
+    return run(a, eng, tok, spec, path, defaults, weights)
+
+
+def card_monitor(a, worker, name: str, info: dict):
+    """The worker's metrics.Monitor, with the card's telemetry (telemetry.CardSampler) when
+    --telemetry SEC > 0 on the card, the cards' (telemetry.CardsSampler) for cards in tensor
+    parallel (--dev "/dev/xdmaA+/dev/xdmaB"; a.card_names, comma-separated, their names); else
+    why there is none (the dashboard's n/a)."""
+    from . import metrics as M
+    from . import telemetry as TM
+    card, note = None, None
+    if a.backend == "board" and a.telemetry > 0 and a.dev and "+" in a.dev:
+        names = getattr(a, "card_names", None)
+        card = TM.CardsSampler(a.dev.split("+"), a.telemetry, i2c=a.telemetry_i2c,
+                               names=names.split(",") if names else None)
+    elif a.backend == "board" and a.telemetry > 0:
+        card = TM.CardSampler(a.dev, a.telemetry, i2c=a.telemetry_i2c)
+    elif a.backend != "board":
+        note = f"no card: the {a.backend} backend"
+    else:
+        note = "the card's telemetry is off (--telemetry 2 reads it)"
+    mon = M.Monitor(worker, name, card=card, card_note=note, info=info)
+    return mon
+
+
+def store_key(a, eng, path) -> str:
+    """The KV store's model key (its directory under --kv-dir): what decides a context's bytes;
+    with slots under the channel hash, pages in the first sequence's lanes (kvio.Layout.relane:
+    a store written before them is not read)."""
+    return ST.model_key(str(Path(path).resolve()), type(eng.image).__module__, eng.image.wformat,
+                        eng.image.head_format, getattr(eng.image, "formats", None), eng.cap,
+                        eng.block, eng.cfg.S, eng.cfg.D, eng.cfg.MCOLS, eng.cfg.PAIR,
+                        *(("mtp", str(a.mtp_from)) if a.mtp else ()),
+                        *(("lanes",) if eng.batch > 1 and eng.cfg.CHASH else ()))
+
+
+def run(a, eng, tok, spec, path, defaults, weights, on_idle=None, label: str = "otpu-serve"):
+    """Serve an open engine until interrupted: the KV store, the worker (on_idle: called on
+    its thread once its queue empties), the monitor, the HTTP server (otpu-serve35's too)."""
+    mk = store_key(a, eng, path)
     store = ST.BlobStore(int(a.kv_ram_gb * 2**30), int(a.kv_disk_gb * 2**30),
                          a.kv_dir + f"/{mk}" if a.kv_disk_gb > 0 else None)
     from .batching import BatchWorker, batches
-    if batches(eng):
+    from . import batching35 as BW35
+    if BW35.batches(eng):               # (a Qwen3.5 image's sequence slots: their state too)
+        w = BW35.BatchWorker35(eng, tok, store=store, model_key=mk, quantum=a.quantum,
+                               prefix_block=a.prefix_block)
+        t0 = time.perf_counter()        # (its steps' programs for greedy and the defaults')
+        n = w.warm_steps([SC.Sampling(defaults["temperature"], defaults["top_k"],
+                                      defaults["top_p"], defaults["repetition_penalty"])])
+        if n:
+            print(f"{label}: {n} step programs live in {time.perf_counter() - t0:.1f} s",
+                  flush=True)
+        w.start()
+    elif batches(eng):
         w = BatchWorker(eng, tok, store=store, model_key=mk, quantum=a.quantum,
                         prefill_budget=a.chunked_prefill_size, mixed=a.mixed).start()
     else:
         w = SC.Worker(eng, tok, store=store, model_key=mk, max_running=a.max_running,
-                      quantum=a.quantum, mtp=a.mtp).start()
+                      quantum=a.quantum, mtp=a.mtp, prefix_block=a.prefix_block)
+        w.on_idle = on_idle
+        w.start()
     name = a.served_model_name or Path(path).name
+    info = {"path": str(path), "backend": a.backend, "weights": weights,
+            "cap": a.cap, "kv_page_bytes": w.io.layout.page_bytes(),
+            "staged": w.io.area is not None, "slots": eng.batch,
+            "images": getattr(getattr(eng, "image", None), "vision", None) is not None,
+            "warm": PS.startup(eng, label)}
+    mon = card_monitor(a, w, name, dict(info, kv_ram_bytes=store.ram_bytes,
+                                        kv_disk_bytes=store.disk_bytes, label=label,
+                                        dram_bytes=getattr(eng.cfg, "DRAM_BYTES", None),
+                                        image_bytes=getattr(eng.image, "nbytes", None)))
     srv = Server(w, tok, spec, name, defaults, think=a.think, reasoning=a.reasoning_parser,
-                 aliases=(a.model,), api_key=a.api_key, max_queue=a.max_queue,
-                 info={"path": str(path), "backend": a.backend, "weights": weights,
-                       "cap": a.cap, "kv_page_bytes": w.io.layout.page_bytes(),
-                       "staged": w.io.area is not None, "slots": eng.batch,
-                       "images": getattr(getattr(eng, "image", None), "vision", None)
-                       is not None},
-                 max_slices=a.max_slices, fetch=a.image_fetch, warm_cap=a.warm_cap)
+                 aliases=(a.model,), api_key=a.api_key, max_queue=a.max_queue, info=info,
+                 max_slices=a.max_slices, fetch=a.image_fetch, warm_cap=a.warm_cap,
+                 monitor=mon, preserve_thinking=a.preserve_thinking)
     if srv.pool is not None:
         log_warm(srv.pool.warm_t)
     httpd = serve(srv, a.host, a.port)
-    print(f"otpu-serve: {name} on http://{a.host}:{a.port}/v1 (context {a.cap}, KV store "
-          f"{a.kv_ram_gb:g} GB RAM + {a.kv_disk_gb:g} GB disk, sampling {defaults})",
-          flush=True)
+    mon.start()
+    if mon.card is not None:
+        mon.card.start()
+    print(f"{label}: {name} on http://{a.host}:{a.port}/v1 (context {a.cap}, KV store "
+          f"{a.kv_ram_gb:g} GB RAM + {a.kv_disk_gb:g} GB disk, sampling {defaults}); the "
+          f"dashboard on http://{a.host}:{a.port}/", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         httpd.server_close()
+        mon.stop()
         w.stop()
 
 

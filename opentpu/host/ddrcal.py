@@ -526,7 +526,10 @@ def bist_wait(csr, beats, mode, sys_hz, timeout=60.0):
          "gbs": beats * 64 / (ticks / sys_hz) / 1e9 if ticks else 0.0}
     if mode & 1:
         r["errors"] = csr.r("bist_errors")
-        r["lanes"] = [csr.r(f"bist_lane{m}_errors") for m in range(9)]
+        # a lane per byte of the DRAM word: 9 with ECC, 8 without (a map that has no lane 8)
+        names = getattr(csr, "regs", None)
+        r["lanes"] = [csr.r(f"bist_lane{m}_errors") for m in range(9)
+                      if names is None or f"bist_lane{m}_errors" in names]
         r["bits"] = csr.r("bist_lane_bits")
     return r
 
@@ -567,6 +570,39 @@ def bist_read_scan(csr, dram, sys_hz, mib=256, seed=0x0123456789ABCDEF, mode=0):
               + (f" (DFI window centre {dram.rd[m]}, traffic centre {start + n // 2})" if n else ""))
         dram.set_rdelay(m, start + n // 2 if n else dram.rd[m])
     return table
+
+
+def bist_lane_grid(csr, dram, lane, sys_hz, step=32, mib=16, bitslips=None,
+                   seed=0x0123456789ABCDEF, mode=0):
+    """One lane's reads under traffic over its read bitslips and every step-th tap: the region
+    written once (BIST, every lane at its write settings now), then read back with the BIST at
+    each point; the other lanes stay where they are. Returns {"beats", "rows": {bitslip: [wrong
+    beats per point]}, "bits": {bitslip: [the lane's wrong bits, OR'ed]}}; the lane is left at
+    the last bitslip, its taps past the last point (set it after)."""
+    beats = mib * (1 << 20) // 64
+    bist(csr, beats, mode, seed, sys_hz)
+    rows, bits = {}, {}
+    for b in range(dram.phy["bitslips"]) if bitslips is None else bitslips:
+        dram.set_rbitslip(lane, b)
+        dram.strobe("ddrphy_rdly_dq_rst", 1 << lane)
+        rows[b], bits[b] = [], []
+        for _ in range(0, dram.phy["delays"], step):
+            r = bist(csr, beats, mode | 1, seed, sys_hz)
+            rows[b].append(r["lanes"][lane])
+            bits[b].append(r["bits"] >> (8 * lane) & 0xFF)
+            dram.strobe("ddrphy_rdly_dq_inc", 1 << lane, step)
+    return {"beats": beats, "rows": rows, "bits": bits}
+
+
+def grid_best(rows):
+    """The longest run of clean points at one bitslip in bist_lane_grid's rows: (points, bitslip,
+    first point); (0, None, 0) when none is clean."""
+    best = (0, None, 0)
+    for b, row in rows.items():
+        start, n = Dram.windows(row)
+        if n > best[0]:
+            best = (n, b, start)
+    return best
 
 
 def pass_map(table, nm, period, min_window=MIN_WINDOW):

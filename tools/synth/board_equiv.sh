@@ -18,7 +18,7 @@ LIB="$R/top/otpu_pkg.sv $R/vpu/otpu_fp.sv $R/vpu/otpu_fpipe.sv $R/mem/otpu_tmem.
      $R/seq/otpu_seq.sv $R/vpu/otpu_vtree.sv $R/dma/otpu_dma.sv $R/mxu/otpu_mxu.sv
      $R/tech/generic/otpu_tech_dsp.sv $R/tech/generic/otpu_tech_ram.sv $R/vpu/otpu_quant.sv $R/vpu/otpu_se_comp.sv
      $R/vpu/otpu_se_tail.sv $R/vpu/otpu_vpu.sv $R/top/otpu_coll.sv $R/top/otpu_slice.sv
-     $R/shell/otpu_trace.sv $R/mem/otpu_native_dram.sv"
+     $R/shell/otpu_trace.sv $R/mem/otpu_native_dram.sv $R/mem/otpu_xstg.sv"
 BB="--blackboxed-module otpu_slice --blackboxed-module otpu_native_dram --blackboxed-module otpu_coll
     --blackboxed-module otpu_trace"
 G="-G MCOLS=4 -G ACT_ROWS=4 -G MXU_IMPL=2 -G VPU_CL=2 -G ULANES=8 -G PLATFORM=1 $*"

@@ -98,7 +98,7 @@ def boot_program(prog: list, cfg) -> tuple[np.ndarray, int]:
     words = np.asarray(I.assemble(prog), "<u4")
     n = len(words) // 8
     if rtlsim.BOARD_UARCH.get("SEQ_WC"):
-        ww = wait_counts(prog, cfg.D, cfg.S)
+        ww = wait_counts(prog, cfg.D, cfg.S, win=cfg.WC_WIN)
         words = np.concatenate([words, np.zeros(-len(words) % (cfg.D // 4), "<u4"),
                                 ww.astype("<u8").view("<u4")])
     return words, n

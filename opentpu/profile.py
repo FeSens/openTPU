@@ -37,13 +37,14 @@ from . import isa as I
 from . import rtlsim
 
 UNITS = ["DMA", "MXU", "QUANT", "VPU", "COLL"]
-OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.STREAM: "STREAM", I.MM: "MM",
+OPNAMES = {I.LD: "LD", I.ST: "ST", I.DSTEP: "DSTEP", I.STREAM: "STREAM", I.LDA: "LDA", I.MM: "MM",
            I.QACT: "QACT", I.QST: "QST", I.VOP: "VOP", I.GATHER: "GATHER", I.BAR: "BAR",
            I.RLD: "RLD", I.WAITW: "WAITW"}
 VFUNCS = {I.V_ADD: "add", I.V_SUB: "sub", I.V_RSUB: "rsub", I.V_MUL: "mul", I.V_MAX: "max",
           I.V_MIN: "min", I.V_COPY: "copy", I.V_EXP2: "exp2", I.V_RECIP: "recip",
           I.V_RSQRT: "rsqrt", I.V_ABS: "abs", I.V_FILL: "fill", I.V_EXP2SUB: "exp2sub",
-          I.V_RSUM: "rsum", I.V_RMAX: "rmax", I.V_RSSQ: "rssq", I.V_ARGMAX: "argmax"}
+          I.V_RSUM: "rsum", I.V_RMAX: "rmax", I.V_RSSQ: "rssq", I.V_ARGMAX: "argmax",
+          I.V_SIGMOID: "sigmoid", I.V_SILU: "silu", I.V_MAC: "mac"}
 
 
 # ------------------------------------------------------------------------------ DDR3 peak
@@ -139,7 +140,16 @@ def _describe(ins: I.Instr, cfg) -> tuple[str, str, int, int, int]:
     if op == I.QACT:
         rows, KB = w[1] & 0xFF, w[1] >> 16
         n = rows * KB * D
+        if ins.flags & I.F_QST:                 # (ST: its rows' bytes and records to DRAM too)
+            nb = rows * I.qrow_bytes(KB, D)
+            return "QACT", f"{rows}x{KB * D} -> ACT + DRAM", 2 * -(-n // L), 0, -(-nb // D)
         return "QACT", f"{rows}x{KB * D} -> ACT", 2 * -(-n // L), 0, 0
+    if op == I.LDA:
+        # ACT RAM takes LANES bytes a cycle (a row's KB x D bytes, then a record a block)
+        rows, KB = w[1] & 0xFF, w[1] >> 16
+        nb = rows * I.qrow_bytes(KB, D)
+        return "LDA", f"{rows}x{KB * D} DRAM -> ACT", rows * KB * (D // (2 * L) + 1), \
+            -(-nb // D), 0
     if op == I.QST:
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         n = rows * KB * D
@@ -288,6 +298,77 @@ class Profile:
                 a[UNITS[u]] = tot + (0 if cur_e is None else cur_e - cur_s)
         return out
 
+    def loop_waits(self, s: int = 0) -> dict:
+        """The cycles a hardware loop's TMEM writers wait on its previous iteration (slice s).
+        Next-fit placement wraps within a loop's body, so a body tile can take the words an
+        instruction before it in the body writes; that instruction, an iteration later, waits
+        for the tile's last reader or writer (the scoreboard's WAR / WAW, which the data does
+        not need). For each record of iteration k >= 1 that writes TMEM: the cycles from its
+        dispatch to the last release (else end) of the records of iteration k - 1 whose TMEM
+        reads or writes overlap its writes, at most to its ready. Returns {"loops": per LOOP
+        {"loop", "body", "iterations", "wait_ld", "wait_all", "by_pc": {pc: {"name", "detail",
+        "wait", "n", "blocker": {pc: cycles}}}}, "wait_ld", "wait_all", "unresolved": records
+        with a TMEM field a register moves, not resolved}."""
+        from . import waits as W
+        prog, R0 = self.programs[s], [(0, 0)] * 16
+        regs = {I.LD: ("rb",), I.ST: ("rb",), I.VOP: ("ra", "rb", "rc", "rd"), I.MM: ("rc",),
+                I.QACT: ("ra",), I.GATHER: ("ra", "rb"), I.DSTEP: ("rb", "rc", "rd")}
+        fps: dict = {}
+
+        def tm(pc):            # (reads, writes) as TMEM [lo, hi) lists; None: a register moves one
+            if pc not in fps:
+                ins = prog[pc]
+                if any(getattr(ins, r, 0) for r in regs.get(ins.op, ())):
+                    fps[pc] = None
+                else:
+                    f = W.footprint(ins, R0, self.cfg.D, self.cfg.S)
+                    fps[pc] = tuple([(lo, hi) for sp, lo, hi in x if sp == W.SP_TMEM]
+                                    for x in (f.rd, f.wr))
+            return fps[pc]
+
+        recs = sorted(self.slice_recs(s), key=lambda r: r.idx)
+        out: dict = {"loops": [], "unresolved": 0}
+        for lp in (pc for pc, ins in enumerate(prog) if ins.op == I.LOOP):
+            b0, b1 = lp + 1, lp + 1 + (prog[lp].w[0] & 0xFFFF)
+            body = [r for r in recs if b0 <= r.pc < b1]
+            if not body:
+                continue
+            first = min(r.pc for r in body)
+            at = [i for i, r in enumerate(body) if r.pc == first]
+            its = [body[a:b] for a, b in zip(at, at[1:] + [len(body)])]
+            per: dict = {}
+            for prev, cur in zip(its, its[1:]):
+                for r in cur:
+                    f = tm(r.pc)
+                    if f is None:
+                        out["unresolved"] += 1
+                        continue
+                    if not f[1]:
+                        continue
+                    t, who = -1, None
+                    for e in prev:
+                        g = tm(e.pc)
+                        if g and any(a < d and c < b for a, b in f[1] for c, d in g[0] + g[1]):
+                            u = e.release if e.release >= 0 else e.end
+                            if u > t:
+                                t, who = u, e.pc
+                    w = max(0, min(r.ready, t) - r.dispatch) if who is not None else 0
+                    if w:
+                        x = per.setdefault(r.pc, {"name": r.name, "detail": r.detail, "wait": 0,
+                                                  "n": 0, "blocker": {}})
+                        x["wait"] += w
+                        x["n"] += 1
+                        x["blocker"][who] = x["blocker"].get(who, 0) + w
+            out["loops"].append({
+                "loop": lp, "body": [b0, b1], "iterations": len(its),
+                "wait_ld": sum(x["wait"] for x in per.values() if x["name"] == "LD"),
+                "wait_all": sum(x["wait"] for x in per.values()),
+                "by_pc": dict(sorted(per.items(), key=lambda kv: (kv[1]["name"] != "LD",
+                                                                  -kv[1]["wait"])))})
+        out["wait_ld"] = sum(x["wait_ld"] for x in out["loops"])
+        out["wait_all"] = sum(x["wait_all"] for x in out["loops"])
+        return out
+
     def summary(self) -> str:
         rl = self.roofline()
         lines = [f"{self.name}: {self.cycles} cycles, roofline {rl['bound']} "
@@ -324,8 +405,8 @@ def parse(trace: str, cfg, programs, name: str = "") -> Profile:
             slot, pc, op = int(kv["s"]), int(kv["pc"]), int(kv["op"], 16)
             ins = programs[s][pc]
             nm, det, work, pb, pa = _describe(ins, cfg)
-            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.STREAM: 0, I.WAITW: 0, I.MM: 1, I.QACT: 2,
-                    I.QST: 2, I.VOP: 3}.get(op, 4)
+            unit = {I.LD: 0, I.ST: 0, I.DSTEP: 0, I.STREAM: 0, I.WAITW: 0, I.LDA: 0, I.MM: 1,
+                    I.QACT: 2, I.QST: 2, I.VOP: 3}.get(op, 4)
             r = Rec(s, counts[s], pc, op, unit, c, name=nm, detail=det, comment=ins.comment,
                     work=work, portb=pb, porta=pa)
             counts[s] += 1

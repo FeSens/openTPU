@@ -3,7 +3,7 @@
 #                [MODEL_HYP=..] [MODEL_IMPL=..] [MODEL_SCRIBE=..]   (default claude-opus-5-5)
 #                [EFFORT_HYP=high] [EFFORT_IMPL=high,xhigh] [EFFORT_SCRIBE=low] [ARGS=--keep]
 #   make tourney-report [COMP=otpu_coll]
-#   (any target: EXEC=remote (default) runs lint and the test gates on omarchy, EXEC=local here)
+#   (any target: EXEC=remote (default) runs lint and the test gates on the build host, EXEC=local here)
 #   make tourney-fmax N=1 K=2 [TARGET_MHZ=133.33] [FMAX_COMPS="otpu_native_dram otpu_tmem ..."]
 #        the whole-design fmax tournament: N passes over FMAX_COMPS, one round each, all on the
 #        shared champion tourney/fmax, Vivado on the build host (EVAL=vivado-remote)
@@ -20,7 +20,7 @@ BASE   ?= main
 ARGS   ?=
 # 133.33 MHz (800 / 6, an MMCM step): 128 B x f = 17.07 GB/s, both DDR3-1066 channels' peak
 TARGET_MHZ ?= 133.33
-# where lint and the test gates run: remote (omarchy, tools/omarchy_test.sh) or local
+# where lint and the test gates run: remote (the build host, tools/remote_test.sh) or local
 EXEC   ?= remote
 export EXEC
 # the units on the measured worst path families first (docs/tourney.md)

@@ -6,7 +6,7 @@ CPU with openTPU's quantization, and (--against) next to a second device.
                               [--wformat int8|int4|fp4|nvfp4|mix]
                               [--head-format int8|int4|fp4|nvfp4] [--formats SPEC]
                               [--backend isa|bend|rtl|board] [--against isa|rtl|board|RUN.npz]
-                              [--cfg board|design|CFG.pkl] [--resident] [--tokens 16] [--chat]
+                              [--cfg target|board|design|CFG.pkl] [--resident] [--tokens 16] [--chat]
                               [--weights-only] [--no-fp32] [--no-golden] [--min-top1 F]
                               [--kl-ratio R] [--max-kl NATS] [--save RUN.npz] [--json OUT.json]
                               [prompt ...]
@@ -56,10 +56,11 @@ ulps and the first step that differs. A card session can be the card's run alone
 board --no-golden --save CARD.npz, seconds of the card); --against CARD.npz on a build host
 then runs the ISA simulator in the configuration the card ran in, and the golden.
 
-Devices: isa, the ISA simulator in --cfg's configuration (default isasim.board_config, with
-OTPU_MCOLS etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
+Devices: isa, the ISA simulator in --cfg's configuration (default the target's hardware,
+opentpu.target.config of OTPU_TARGET's target; "board": isasim.board_config, with OTPU_MCOLS
+etc. as there; a pickled Config; or "design"); rtl, the Verilator RTL
 (opentpu.llm.rtl_backend: slow, so a prompt and a few tokens of LFM2.5-230M; 3 tokens of
-"The capital of France is" took 4 minutes on omarchy with the build, bit for bit); board, the
+"The capital of France is" took 4 minutes on the build host with the build, bit for bit); board, the
 card through the host driver as otpu-chat --backend board (run it under otpu-lock on the card
 host; a simulator then takes the card's configuration from its registers). The device runs
 first and is freed before Hugging Face loads (Qwen3.5-0.8B's ISA run peaks near 9 GB). The MoE
@@ -124,14 +125,20 @@ def mx_quant(x, D: int = 128, n=None, g: int | None = None, row: bool = False,
              offsets: bool = False):
     """x (a torch tensor) quantized along its last axis as QACT / QST quantize it
     (fp32.quantize_mx) and dequantized: in ranges of n columns (one QACT each; default the
-    whole axis; a sequence: the ranges' widths; the axis zero-padded to their sum) a scale S,
-    a power-of-two offset d per g (QACT: D/4, the default; QST: D; none in ROW mode) and the
-    int8 values q: q * S * 2^-d in fp32, the values the MXU multiplies. offsets: also each
-    element's d (a torch int tensor of x's shape), for the MM's window (attention_drops)."""
+    whole axis; a sequence: the ranges' widths; the axis zero-padded to their sum; a pair
+    (order, widths): the ranges over the columns in that order, act_ranges' all-gathered down
+    projection input) a scale S, a power-of-two offset d per g (QACT: D/4, the default; QST:
+    D; none in ROW mode) and the int8 values q: q * S * 2^-d in fp32, the values the MXU
+    multiplies. offsets: also each element's d (a torch int tensor of x's shape), for the MM's
+    window (attention_drops)."""
     import torch
 
     from opentpu import fp32 as F
     a = x.detach().to(torch.float32).cpu().numpy()
+    order = None
+    if isinstance(n, tuple):
+        order, n = n
+        a = a[..., order]
     K = a.shape[-1]
     g = D // 4 if g is None else g
     widths = [K] if n is None else [n] * -(-K // n) if isinstance(n, int) else list(n)
@@ -145,11 +152,13 @@ def mx_quant(x, D: int = 128, n=None, g: int | None = None, row: bool = False,
         u = s[:, None] * np.ldexp(np.float32(1), -off[:, c:c + w])
         out[:, c:c + w] = q.astype(np.float32) * u.astype(np.float32)
         c += w
+    back = slice(None) if order is None else np.argsort(order)
     out = torch.from_numpy(np.ascontiguousarray(
-        out.reshape(*x.shape[:-1], W_)[..., :K])).to(x.dtype)
+        out.reshape(*x.shape[:-1], W_)[..., :K][..., back])).to(x.dtype)
     if not offsets:
         return out
-    return out, torch.from_numpy(np.ascontiguousarray(off.reshape(*x.shape[:-1], W_)[..., :K]))
+    return out, torch.from_numpy(np.ascontiguousarray(
+        off.reshape(*x.shape[:-1], W_)[..., :K][..., back]))
 
 
 def attention_drops(q, dq, k, dk, D: int = 128, W: int = 16):
@@ -180,7 +189,8 @@ def attention_drops(q, dq, k, dk, D: int = 128, W: int = 16):
 
 def act_ranges(spec, name: str, fmt: str, K: int, D: int = 128, S: int = 1):
     """The QACT ranges of the input of checkpoint weight `name` (K columns, in format fmt) on
-    S slices: a down projection's F chunks (kernels.mlp.down_chunk of a slice's F; Gemma 4's
+    S slices: a down projection's F chunks (kernels.mlp.down_chunk of a slice's F; on S > 1
+    slices chunk c of every slice's F one range, (quant.gather_order, widths); Gemma 4's
     gemma4.Image.dchunk of its padded width), a Qwen3.5 DeltaNet out_proj's head groups
     (qwen35.emulated_logits'); None: the whole row."""
     from opentpu.kernels.mlp import down_chunk
@@ -193,6 +203,9 @@ def act_ranges(spec, name: str, fmt: str, K: int, D: int = 128, S: int = 1):
         return [C] * (fp_ // C)
     if name.endswith(("mlp.down_proj.weight", "feed_forward.w2.weight")):
         C = down_chunk(K // S, D, fmt)
+        if S > 1:
+            from opentpu import quant as Q
+            return Q.gather_order(K, C, S), [S * C] * (K // (S * C))
         return [C] * (K // C)
     if name.endswith("linear_attn.out_proj.weight"):
         nl, dv = spec.lin_heads // S, spec.lin_dv
@@ -591,14 +604,18 @@ def device_runs(eng, prompts, n: int, eos) -> list:
 
 def sim_cfg(spec, cap: int, a, card=None):
     """The simulators' configuration: the card's (`card`: from its registers, or the one a saved
-    card run ran in), else --cfg's ("board" or none: isasim.board_config; a pickled Config;
+    card run ran in), else --cfg's ("target" or none: the target's hardware, opentpu.target
+    .config, every feature it has on; "board": isasim.board_config, the optional features off
+    unless OTPU_PAIR / OTPU_DSTEP / OTPU_STREAM / OTPU_SEQ_WC turn them on; a pickled Config;
     "design": None, the Engine's default), with the DRAM cut to what the model needs
     (host.board.sim_config, as tools/qual/refs.py)."""
+    from opentpu import target as T
     from opentpu.host.board import sim_config
     from opentpu.isasim import board_config
     if card is None and a.cfg == "design":
         return None
-    base = card or (board_config() if a.cfg in (None, "board") else
+    base = card or (T.config(T.current()) if a.cfg in (None, "target") else
+                    board_config() if a.cfg == "board" else
                     pickle.loads(Path(a.cfg).read_bytes()))
     return sim_config(spec, cap, base, lookup=a.resident, wformat=a.wformat,
                       head_format=a.head_format)
@@ -912,9 +929,11 @@ def _main(argv=None) -> int:
     ap.add_argument("--backend", default="isa", choices=["isa", "bend", "rtl", "board"])
     ap.add_argument("--against", help="a second device (isa, rtl, board) or a run saved with "
                     "--save: tokens and logits must be identical")
-    ap.add_argument("--cfg", help="the simulators' configuration: board (the default, "
-                    "isasim.board_config), design, or a pickled Config (tools/qual/refs.py cfg);"
-                    " with the card, or --against a saved card run, the card's")
+    ap.add_argument("--cfg", help="the simulators' configuration: target (the default, "
+                    "the target's hardware: opentpu.target.config), board (isasim.board_config:"
+                    " the optional features from OTPU_*), design, or a pickled Config "
+                    "(tools/qual/refs.py cfg); with the card, or --against a saved card run, "
+                    "the card's")
     ap.add_argument("--dev", default="/dev/xdma0", help="the card's XDMA device")
     ap.add_argument("--resident", action="store_true", help="the resident decode program")
     ap.add_argument("--tokens", type=int, default=16, help="greedy tokens per prompt")

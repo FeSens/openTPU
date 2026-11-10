@@ -15,7 +15,7 @@
 # change beyond S's per-token change in turns 1-2.
 # Card: production deploy_r2m4_b10245f5 as loaded (EXPECT b10245f5, register map 5); its qual/cfg.pkl; the MX pools;
 # the ISA references: PD/chatmoe (TURNS' two, production's tree: RF) and les's five-turn ones (RL: chatmoe5-*.json,
-# computed on hwe-bench from TB on deploy_r2m4_d352e53d.pkl = r2's configuration). One otpu-lock:
+# computed on the simulation host from TB on deploy_r2m4_d352e53d.pkl = r2's configuration). One otpu-lock:
 # 1. selftest; the device configuration must be production's qual/cfg.pkl;
 # 2. per model (the 35B, then the 26B): a discarded warm-up of each arm (WA, WB: each tree builds its own images),
 #    then ORDER (default ABBA x 2: "A1 B1 B2 A2 A3 B3 B4 A4"), each run after the pool's read; every run's tokens
@@ -26,10 +26,10 @@
 #    ms a token beyond S's (the 26B: no S, all of B - A is O's).
 # A build other than EXPECT, a failed selftest, another configuration, a failed or timed-out run or a token mismatch
 # stops it (then the final selftest). About 40 min (20 runs of 60-90 s, each after a pool read of ~40 s; W builds).
-# Stage (from the Mac, before the session; no host work while a session runs):
-#   git archive <les sha> | ssh opentpu 'D=~/otpu-build/les/les1/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <les sha, full> > ~/otpu-build/les/les1/host/COMMIT'
-#   scp chatmoe5-qwen35-35b.json chatmoe5-gemma4-26b.json opentpu:otpu-build/les/les1/refs/
+# Stage (from a laptop, before the session; no host work while a session runs):
+#   git archive <les sha> | ssh CARD_HOST 'D=~/otpu-build/les/les1/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <les sha, full> > ~/otpu-build/les/les1/host/COMMIT'
+#   scp chatmoe5-qwen35-35b.json chatmoe5-gemma4-26b.json CARD_HOST:otpu-build/les/les1/refs/
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash ~/otpu-build/les/les1/host/tools/offload/sessions/les1.sh
 #   > ~/otpu-build/les/les1.launch.log 2>&1 < /dev/null &
 set -u

@@ -84,10 +84,11 @@ class Snapshots:
         if not n or not stateful(image):
             return None
         need = n * sum(b for _, b in merged(image.state_regions(0)))
-        base = -(-image.nbytes // 4096) * 4096
-        from .. import waits as W
+        from .qwen3 import area_limit, image_end
+        base = -(-image_end(image) // 4096) * 4096          # (an image split at 4 GiB: its low
+        from .. import waits as W                           # area's end, below 4 GiB)
         if -(-(base + need) // 4096) * 4096 + W.area(cfg.IMEM_WORDS, getattr(cfg, "SEQ_WC", False)) \
-                > cfg.DRAM_BYTES:
+                > area_limit(image, cfg):
             return None
         return base
 
@@ -161,6 +162,18 @@ class Snapshots:
 def stateful(image) -> bool:
     """The image holds state a rollback cannot rebuild from the KV cache (state_regions)."""
     return hasattr(image, "state_regions") and bool(image.state_regions(0))
+
+
+def state_format(image) -> str:
+    """What the state regions' bytes mean beyond their places, so that a state saved off the
+    device goes back only where it means the same (opentpu/serve/store.py): "dn_fold" where
+    Qwen3.5's DeltaNet states hold log2(e) S (Spec.dn_fold), the 16-bit format's name ("e6m9",
+    "bf16") where they are in 16 bits (Image.st16: Config.ST16's), both joined by "-", ""
+    otherwise. A snapshot (Snapshots) stays with its Engine's image."""
+    parts = ["dn_fold"] if getattr(image, "dn_fold", False) else []
+    if getattr(image, "st16", False):
+        parts.append(image.cfg.ST16)
+    return "-".join(parts)
 
 
 def grow(images: list, end: int) -> list:

@@ -20,9 +20,9 @@
 #    rate, MB/token, TTFT).
 # A build other than EXPECT, a failed selftest, another configuration, a failed or timed-out run or a mismatch stops
 # it (then the final selftest). About 25 min (35B runs ~55 s, 26B ~65 s, 11 each; W builds T's images).
-# Stage T (from the Mac, before the session; no host work while a session runs):
-#   git archive TC | ssh opentpu 'D=~/otpu-build/moe-ab/emc1/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <TC, full sha> > ~/otpu-build/moe-ab/emc1/host/COMMIT'
+# Stage T (from a laptop, before the session; no host work while a session runs):
+#   git archive TC | ssh CARD_HOST 'D=~/otpu-build/moe-ab/emc1/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <TC, full sha> > ~/otpu-build/moe-ab/emc1/host/COMMIT'
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash $T/tools/offload/sessions/emc1.sh
 #   > ~/otpu-build/moe-ab/emc1.launch.log 2>&1 < /dev/null &
 set -u

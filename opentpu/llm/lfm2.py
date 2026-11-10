@@ -44,11 +44,11 @@ from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
 from .. import isa as I
-from ..compiler import Affine, KVDesc, QTensor, Tensor, current, k_scale_bytes, trace_fit
+from ..compiler import Affine, KVDesc, QTensor, Tensor, current, gall_wg, k_scale_bytes, trace_fit
 from ..isasim import Config
 from ..kernels.layouts import head_parallel_attention_weights
 from ..kernels.lib import rmsnorm
-from ..kernels.mlp import _chunk, down_chunk
+from ..kernels.mlp import _chunk
 from ..host.offload import ExpertServer, Layout
 from . import formats as FM
 from . import generate as G
@@ -56,9 +56,9 @@ from . import moe as MO
 from . import rope_parameters
 from .qwen3 import (OutTokens, RunPos, RunRows, RunWords, _formats, _inputs, _inputs_rows,
                     _amask, _lookup_alloc, _lookup_build, _lookup_desc, _tok_arg, _tokens_arg,
-                    compile_decode, put_head)
-from .qwen3 import (ATTN_BLOCK, _attention, _attention_rows, _Bump, _fake_k, _fake_q, _fake_w,
-                    _qk, gathered_rows, _lm_head,
+                    compile_decode, loop_ahead, put_head)
+from .qwen3 import (ATTN_BLOCK, _align, _attention, _attention_rows, _Bump, _fake_k, _fake_q,
+                    _fake_w, _qk, gathered_rows, low_check, _lm_head,
                     _lm_head_rows, _mlp, _pv, _qdesc, _tdesc, _v_parts, rope_tables, EmbedHost,
                     fill_logits, step_descriptors)
 
@@ -226,6 +226,30 @@ def subs(runs, size) -> dict:
             for first, unit, _ in runs}
 
 
+def _down_q(fd: str, f_loc: int, S: int, D: int) -> int:
+    """What W_down's F chunk is a multiple of (kernels.mlp._chunk): int8 D, 4-bit 2 D (a stored
+    part's whole D-byte chunks). At an even S a part is S chunks in the all-gather's order, whole
+    D-byte chunks at a chunk of D, so a slice's F that is not a multiple of 2 D takes that
+    (LFM2-2.6B at S 4: 2688 in chunks of 384, a part 1536: _gathered_parts)."""
+    return D if fd == "int8" or (S % 2 == 0 and f_loc % (2 * D)) else 2 * D
+
+
+def _gathered_parts(q, sc, fmt: str, k: int, C: int, S: int, D: int) -> list:
+    """quant.gathered_parts for a slice's chunk C of whole D blocks (_down_q): the elements and
+    each block's offsets moved by blocks, 4-bit chunks that do not start on a D-byte chunk; each
+    part S C, whole D-byte chunks again."""
+    if fmt == "int8" or C % (2 * D) == 0:
+        return Q.gathered_parts(q, sc, fmt, k, C, S, D)
+    f, kb = k // S, C // D
+    starts = [t * f + c * C for c in range(f // C) for t in range(S)]
+    er = np.concatenate([q[:, a // 2:(a + C) // 2] for a in starts], 1)
+    hdr, per = (8, 4) if fmt in ("int4", "fp4") else (16, 8)
+    sr = np.array(sc, np.uint8)
+    sr[:, hdr:hdr + per * (k // D)] = np.concatenate(
+        [sc[:, hdr + per * (a // D):hdr + per * (a // D + kb)] for a in starts], 1)
+    return Q.column_parts(er, sr, fmt, k, S * C, D)
+
+
 # =============================================================================== reference
 def _norm(v, g, eps):
     return (v / np.sqrt(np.mean(v * v, axis=-1, keepdims=True) + eps)) * g
@@ -336,7 +360,7 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
         return np.pad(v, [(0, 0)] * (v.ndim - 1) + [(0, dk - d)])
 
     def chunk(i):
-        return down_chunk(spec.ffn // S, D, fmt("down", i))
+        return _chunk(spec.ffn // S, D, _down_q(fmt("down", i), spec.ffn // S, S, D))
 
     Kc = {i: [] for i, k in enumerate(spec.kinds) if k == ATTN}
     Vc = {i: [] for i in Kc}
@@ -402,8 +426,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
                 continue
             g = w(p + "feed_forward.w1.weight") @ h
             u = w(p + "feed_forward.w3.weight") @ h
-            x = x + w(p + "feed_forward.w2.weight") @ _fake_q((g / (1 + np.exp(-g))) * u, D,
-                                                               chunk(i))
+            x = x + w(p + "feed_forward.w2.weight") @ Q.fake_act_gathered(
+                (g / (1 + np.exp(-g))) * u, D, chunk(i), S)
         out.append(w(head) @ _fake_q(norm(x, W["model.embedding_norm.weight"]), D))
     return np.array(out)
 
@@ -448,13 +472,14 @@ class Image(EmbedHost):
             FM.uniform(fmt, dict.fromkeys(("gateup", "down"), range(spec.moe.first)))
         self.wformat, self.head_format = wformat, fmt("head")
         self.formats = _formats(spec, formats)
-        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
+        # every matrix in groups of WG rows (docs/isa.md "Weight groups"; WG 1: rows)
+        mb = lambda n, k, f: Q.grp_bytes(n, k, f, D, cfg.WG)            # noqa: E731
         self.spec, self.cfg, self.cap, self.batch, self.rows = spec, cfg, cap, 1, rows
         self.dk = -(-d // D) * D                        # cached K row / query width
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
         mo = spec.moe
-        b = _Bump()
+        b = _Bump(align=_align(cfg))
         R = rows
         self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * d * R), "sin": b.alloc(2 * d * R),
                    "gf": b.alloc(4 * H), "logits": b.alloc(4 * spec.vocab * R)}
@@ -471,7 +496,7 @@ class Image(EmbedHost):
                 self.mats[kind].update(mlp)
         # formats group -> its block layouts (_layout); layer 0's those of the image (and of
         # a MoE's dense MLP region)
-        self.layouts = {g: self._layout(g, mlp, rb) for g in dict.fromkeys(self.lf)}
+        self.layouts = {g: self._layout(g, mlp, mb) for g in dict.fromkeys(self.lf)}
         g0 = self.layouts[self.lf[0]]
         self.lofs, self.mf, self.dchunk = g0.lofs, g0.mf, g0.dchunk
         if mo is not None:
@@ -493,10 +518,10 @@ class Image(EmbedHost):
         head = cap * dk + cap * k_scale_bytes(dk, D) + dk * cap + 4 * cap
         self.kv_bytes = (n_attn * self.nkv_loc * head                   # KV cache and
                          + (spec.layers - n_attn) * 8 * K * self.h_loc)  # conv state, per sequence
-        self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
-                     b.alloc(self.v_loc * Q.scale_bytes(H, self.head_format, D)))
-        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
-        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.head = tuple(b.alloc(x) for x in mb(self.v_loc, H, self.head_format))
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1; not
+        # a grouped head's, qwen3.Image)
+        shared = spec.tied and self.head_format == "int8" and S == 1 and cfg.WG == 1
         if embed_host is None:      # an int8 table of its own on the host by default where its
             embed_host = (bool(lookup) and not shared         # DRAM is expert slots
                           and getattr(spec, "embed", "f32") == "int8" and spec.moe is not None)
@@ -505,14 +530,18 @@ class Image(EmbedHost):
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
                                     rows=rows, imem=cfg.IMEM_WORDS,
-                                    waitc=cfg.SEQ_WC) if lookup else {}
+                                    waitc=cfg.SEQ_WC, S=cfg.S, wg=gall_wg(cfg),
+                                    chash=cfg.CHASH) if lookup else {}
         self.choices = {"embed_host": self.embed_host,          # (the compile worker's
                         "formats": self.formats}                # image)
         self.offload = None
         if mo is not None:          # the dense MLPs, then path (a)'s words and expert slots
             self.dense0 = (b.next + 4095) // 4096 * 4096
             b.next = self.dense0 + mo.first * self.DS
-            self.fmt = MO.ExpertFormat(H, mo.ffn, D, wformat)
+            self.fmt = MO.ExpertFormat(H, mo.ffn, D, wformat, gall_wg(cfg))
+            # (in groups, with the channel hash: the slots' lanes by their addresses)
+            self.slot_lanes = (cfg.WG, D, self.fmt.data) if self.fmt.grp > 1 and cfg.CHASH \
+                else None
             n = mo.E if experts is None else experts
             if not mo.k <= n <= mo.E:
                 raise ValueError(f"{n} expert slots per layer: from top-k {mo.k} to {mo.E}")
@@ -520,48 +549,51 @@ class Image(EmbedHost):
                                         [n] * (spec.layers - mo.first), self.fmt.nbytes)
             b.next = self.offload.end
         self.nbytes = b.next
+        low_check(self, cfg, False, "lfm2.Image")      # (above AW 32: all of it below 4 GiB)
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
 
-    def _layout(self, g: tuple, mlp: dict, rb) -> SimpleNamespace:
+    def _layout(self, g: tuple, mlp: dict, mb) -> SimpleNamespace:
         """The layer block layouts of formats group g (conv, attention, gate / up, down): each
         projection's format (mf), W_down's chunk, the conv and attention blocks' offsets (the
-        norms and the dense MLP first, at the same offsets in both) and sizes (size)."""
+        norms and the dense MLP first, at the same offsets in both) and sizes (size). mb(n, k,
+        f): an [n, k] matrix's (data, scale) bytes."""
         spec, cfg, cap = self.spec, self.cfg, self.cap
         D, H, d, F_, K = cfg.D, spec.hidden, spec.head_dim, spec.ffn, spec.conv_k
-        sb = lambda k, f: Q.scale_bytes(k, f, D)                        # noqa: E731
+        A = _align(cfg)
+
+        def mat(bump, n, k, f):
+            return tuple(bump.alloc(x) for x in mb(n, k, f))
         fc, fa, fg, fd = g
         mf = {"win": fc, "wout": fc, "wq": fa, "wk": fa, "wv": fa, "wo": fa, "wg": fg,
               "wu": fg, "wd": fd}
         mo = spec.moe
-        lb = _Bump()                                    # offsets inside one layer block
+        lb = _Bump(align=A)                             # offsets inside one layer block
         common = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
-        dchunk = _chunk(self.f_loc, D, D if fd == "int8" else 2 * D)
+        dchunk = _chunk(self.f_loc, D, _down_q(fd, self.f_loc, cfg.S, D))
         # the dense MLP: in every layer block, or for a MoE model (whose MoE layers have none)
         # in a region of its own, one MLP per dense layer (layers 0 .. moe.first - 1)
-        mb = lb if mo is None else _Bump()
-        dense = {name: (mb.alloc(n * rb(k, mf[name])), mb.alloc(n * sb(k, mf[name])))
-                 for name, (n, k) in mlp.items()}
-        dense["wd"] = [(mb.alloc(self.h_loc * rb(dchunk, fd)),
-                        mb.alloc(self.h_loc * sb(dchunk, fd)))
-                       for _ in range(F_ // dchunk)]
+        db = lb if mo is None else _Bump(align=A)
+        dense = {name: mat(db, n, k, mf[name]) for name, (n, k) in mlp.items()}
+        S = cfg.S                   # W_down's parts S chunks, the all-gather's order (qwen3's)
+        dense["wd"] = [mat(db, self.h_loc, S * dchunk, fd) for _ in range(F_ // (S * dchunk))]
         ns = SimpleNamespace(mf=mf, dchunk=dchunk)
         if mo is None:
             common.update(dense)
         else:                       # the router (int8 in every format), its bias, j * E
-            ns.mlp_ofs, ns.DS = dense, (mb.next + 4095) // 4096 * 4096
-            common.update(router=(lb.alloc(mo.E * H), lb.alloc(mo.E * sb(H, "int8"))),
+            ns.mlp_ofs, ns.DS = dense, (db.next + 4095) // 4096 * 4096
+            common.update(router=mat(lb, mo.E, H, "int8"),
                           ebias=lb.alloc(4 * mo.E), gbase=lb.alloc(4))
-        cb = _Bump(lb.next)
+        cb = _Bump(lb.next, A)
         conv = dict(common, taps=cb.alloc(4 * K * self.h_loc),
                     state=cb.alloc(4 * 2 * K * self.h_loc))         # mirrored (_ring_rows)
-        ab = _Bump(lb.next)
+        ab = _Bump(lb.next, A)
         attn = dict(common, qn=ab.alloc(4 * d), kn=ab.alloc(4 * d))
         for kind, bump, L in ((CONV, cb, conv), (ATTN, ab, attn)):
             for name, (n, k) in self.mats[kind].items():
                 if name not in L:
-                    L[name] = (bump.alloc(n * rb(k, mf[name])), bump.alloc(n * sb(k, mf[name])))
+                    L[name] = mat(bump, n, k, mf[name])
         dk = self.dk
         attn["kv"] = [{"k": ab.alloc(cap * dk), "ks": ab.alloc(cap * k_scale_bytes(dk, D)),
                        "vt": ab.alloc(dk * cap), "vs": ab.alloc(4 * cap)}
@@ -595,19 +627,24 @@ class Image(EmbedHost):
             imgs[s][addr:addr + v.size] = v
 
         qb = QC.Batch()                 # the matrices, quantized in worker processes
+        gw = cfg.WG                     # in groups of WG rows (docs/isa.md "Weight groups")
+        gh = cfg.CHASH                  # (their rows in the channel hash's order, at their address)
 
         def put_q(addr_pair, parts, fmt):
             for s, p in enumerate(parts):
-                qb.submit(p, fmt, D, lambda q, sc, s=s: (put(s, addr_pair[0], q),
-                                                         put(s, addr_pair[1], sc)))
+                qb.submit(p, fmt, D, lambda q, sc, s=s, k=p.shape[1]: [
+                    put(s, x, y) for x, y in zip(addr_pair, Q.grouped(
+                        q, sc, fmt, k, gw, D, at=addr_pair[0] if gh else None))])
 
         def put_parts(addrs, parts, fmt, C):
-            """Each slice's rows quantized whole and stored in column parts of C (qwen3's)."""
+            """Each slice's rows quantized whole and stored in column parts of S C in the
+            all-gather's order (qwen3's)."""
             for s, p in enumerate(parts):
-                qb.submit(p, fmt, D, lambda q, sc, s=s: [
+                k = p.shape[1]
+                qb.submit(p, fmt, D, lambda q, sc, s=s, k=k: [
                     (put(s, a0, pq), put(s, a1, ps))
-                    for (a0, a1), (pq, ps) in zip(addrs, Q.column_parts(q, sc, fmt, p.shape[1],
-                                                                         C, D))])
+                    for (a0, a1), pr in zip(addrs, _gathered_parts(q, sc, fmt, k, C, S, D))
+                    for pq, ps in [Q.grouped(*pr, fmt, S * C, gw, D, at=a0 if gh else None)]])
 
         def rows(a, k):
             return [a[s * k:(s + 1) * k] for s in range(S)]
@@ -675,7 +712,8 @@ class Image(EmbedHost):
 
     def serve(self, W: dict, backend, pool_file=None) -> ExpertServer:
         """The host's expert server on the backend's DRAM (moe.serve)."""
-        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file)
+        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file,
+                        lanes=getattr(self, "slot_lanes", None))
 
     def state_regions(self, slot: int = 0) -> list:
         """The context's state that its KV caches do not hold, as DRAM regions (address,
@@ -749,6 +787,7 @@ class Image(EmbedHost):
     def descriptors(self, sid: int) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
         D, d, H, K, n = cfg.D, spec.head_dim, spec.hidden, spec.conv_k, self.h_loc
+        gw = cfg.WG
 
         def layer(li, it=None, at=None):
             """Descriptors of layer `li` (static), or of element li of its run's unit at
@@ -769,11 +808,11 @@ class Image(EmbedHost):
             for name, (r, k) in self.mats[kind].items():
                 da, sa = lofs[name]
                 fm = mf[name]
-                setattr(ns, name, QTensor.weight(off + da, off + sa, r, k, fm, D))
+                setattr(ns, name, QTensor.weight(off + da, off + sa, r, k, fm, D, grp=gw))
             if moe:
                 E = spec.moe.E
                 da, sa = lofs["router"]
-                ns.router = QTensor.weight(off + da, off + sa, E, H, "int8", D)
+                ns.router = QTensor.weight(off + da, off + sa, E, H, "int8", D, grp=gw)
                 ns.ebias = Tensor(off + lofs["ebias"], (E,), (1,))
                 ns.gbase = Tensor(off + lofs["gbase"], (1,), (1,))
             else:
@@ -785,13 +824,14 @@ class Image(EmbedHost):
                         da, sa = mofs[name]
                         fm = mf[name]
                         setattr(ns, name, QTensor.weight(moff + da, moff + sa, self.f_loc, H,
-                                                         fm, D))
-                C = g.dchunk
+                                                         fm, D, grp=gw))
+                C = cfg.S * g.dchunk
                 fm = mf["wd"]
-                parts = tuple(QTensor.weight(moff + da, moff + sa, n, C, fm, D)
+                parts = tuple(QTensor.weight(moff + da, moff + sa, n, C, fm, D, grp=gw)
                               for da, sa in mofs["wd"])
                 ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), parts[0].rs,
-                                parts[0].srs, D, parts=parts, pw=C, wf=parts[0].wf)
+                                parts[0].srs, D, parts=parts, pw=C, wf=parts[0].wf,
+                                grp=parts[0].grp, gs=cfg.S)
             if kind == CONV:
                 ns.taps = Tensor(off + lofs["taps"], (K, n), (n, 1))
                 ns.state = Tensor(off + lofs["state"], (2 * K, n), (n, 1))     # _ring_rows
@@ -800,7 +840,7 @@ class Image(EmbedHost):
                 ns.kn = Tensor(off + lofs["kn"], (d,), (1,))
                 ns.kv = KVDesc({sid + j * cfg.S: {k: off + v for k, v in r.items()}
                                 for j, r in enumerate(lofs["kv"])}, self.cap, self.dk, D, cfg.S,
-                               sid, dv=d)
+                               sid, dv=d, wg=gall_wg(cfg))
                 ns.kvs = [ns.kv]
             return ns
 
@@ -821,8 +861,8 @@ class Image(EmbedHost):
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             oscr=_tdesc(self.io["o"], (self.cfg.act_rows, self.nq_loc * d)) if "o" in self.io
             else None,
-            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
-            **_lookup_desc(self.lookup, spec, self.cap))
+            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format, cfg.WG),
+            v_loc=self.v_loc, **_lookup_desc(self.lookup, spec, self.cap))
 
 
 # =============================================================================== kernel
@@ -889,6 +929,9 @@ def lfm2_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
 
     run_layers(m.plan, layer)
     _lm_head(x, m, spec)
+
+
+lfm2_step.ahead = loop_ahead
 
 
 def _ring_store(lw, last, ringo: int, K: int, n: int) -> None:
@@ -989,14 +1032,17 @@ def lfm2_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
                      None if run else OutTokens(0))
 
 
-def run_layers(runs, layer, nest: dict | None = None) -> None:
+def run_layers(runs, layer, nest: dict | None = None, before=None) -> None:
     """Emit the layers of a plan (runs of `plan`) as layer(index, it): a run with repeats is
     one hardware loop over its unit (the index is the element's layer in the first iteration,
     `it` the loop variable), the others are unrolled (`it` None). nest (subs' of the runs): a
     unit's repeated part is a hardware loop inside it, its layers layer(index, it, jt) with
     jt = (the inner loop variable, the part's layers, its bytes); one copy of the part's
-    layers in the program instead of one a repeat."""
+    layers in the program instead of one a repeat. before(first, unit, reps): as each run
+    begins, before its loop (qwen35's _CvPipe)."""
     for first, unit, reps in runs:
+        if before is not None:
+            before(first, unit, reps)
         for it in ([None] if reps == 1 else ol.range(reps)):
             if nest is None:
                 for e in range(len(unit)):

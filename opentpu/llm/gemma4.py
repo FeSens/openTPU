@@ -80,8 +80,8 @@ from .. import isa as I
 from .. import qcache as QC
 from .. import quant as Q
 from .. import language as ol
-from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, Tensor, current, k_scale_bytes,
-                        trace_fit)
+from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, Tensor, current, gall_wg,
+                        k_scale_bytes, trace_fit)
 from ..isasim import Config
 from ..kernels import gather as GA
 from ..kernels import mailbox as MB
@@ -93,9 +93,9 @@ from . import generate as G
 from . import moe as MO
 from .lfm2 import plan
 from ..host.offload import LINE, BackendDram, ExpertServer, Layout, RowLayout, RowServer
-from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, RunPos, _Bump, _lm_head, _lm_head_rows, _qdesc,
-                    _tdesc, amask_bytes, amask_table, fill_logits, finite,
-                    step_descriptors)
+from .qwen3 import (ATTN_BLOCK, ATTN_DEPTH, HIGH, LOW_ROOM, RunPos, _align, _Bump, _lm_head,
+                    _lm_head_rows, _qdesc, _tdesc, amask_bytes, amask_table, fill_logits, finite,
+                    low_check, step_descriptors)
 
 SLIDE, FULL = "sliding", "full"
 
@@ -646,9 +646,10 @@ def softcap(spec: Spec, logits: np.ndarray) -> np.ndarray:
 
 # =============================================================================== DRAM image
 RING_BLOCKS = 1         # sliding K / V ring: the window plus this many attention blocks
-CARD_BYTES = 1 << 32    # a slice's DRAM at most (32-bit addresses; the card's 4 GiB): the PLE
-                        # table's place and the formats follow the fit to the configuration's
-                        # DRAM, at most this (_fit_bytes)
+CARD_BYTES = 1 << 32    # a slice's DRAM at most at AW 32 (the card's 4 GiB): the PLE table's
+                        # place and the formats follow the fit to the configuration's DRAM, at
+                        # most this (above AW 32 what R0 + w reaches beside the run-time areas,
+                        # qwen3.HIGH - LOW_ROOM: no layout with the weights above it) (_fit_bytes)
 PLE_CHUNK = 8192        # PLE records quantized per pass (host memory)
 BIG = 2.0 ** 100        # (tpos + 0.5 - c) * BIG * BIG: +-inf, the run-time mask rows
 MLP_CHUNK = 768         # the MLP's F chunk at most: 4 prefill rows' gate / up in flight fit
@@ -670,8 +671,8 @@ def _mlp_chunk(f: int, D: int, q: int, tmem: int = 1 << 16) -> int:
 
 def _fit_bytes(cfg: Config) -> int:
     """The DRAM an image must fit for its formats and PLE place (Image): the configuration's,
-    at most CARD_BYTES (a probe's 1 << 40 is the card's 4 GiB)."""
-    return min(cfg.DRAM_BYTES, CARD_BYTES)
+    at most CARD_BYTES (a probe's 1 << 40 is the card's 4 GiB), above AW 32 HIGH - LOW_ROOM."""
+    return min(cfg.DRAM_BYTES, CARD_BYTES if cfg.AW <= 32 else HIGH - LOW_ROOM)
 
 
 def _ffn_pad(f: int, fd: str, D: int) -> int:
@@ -741,17 +742,25 @@ def expert_format(spec: Spec, wformat: str, formats: str | None = None) -> str:
 class _KV(KVDesc):
     """qwen3's KV cache layout, but K rows `ps` bytes apart with each row's block scales right
     after its data: a run-time position adds pos * ps to both (global layers: the RoPE row's
-    stride too, one argument word; sliding layers: their slot tpos * ps). A multi-row K append must go row by row (QST writes one row's scales after
-    the other's)."""
+    stride too, one argument word; sliding layers: their slot tpos * ps). A multi-row K append
+    must go row by row (QST writes one row's scales after the other's). In groups (wg > 1,
+    GALL: KVDesc's) K's groups of wg tokens fill the region's first cap d bytes and their scale
+    areas follow (the region's cap ps bytes hold both: a group's area is wg rows' scales); an
+    append addresses its row by a register (QST GRP), not by pos * ps."""
 
-    def __init__(self, heads: dict, cap: int, d: int, D: int, ps: int):
-        super().__init__(heads, cap, d, D, 1, 0)
+    def __init__(self, heads: dict, cap: int, d: int, D: int, ps: int, wg: int = 1):
+        super().__init__(heads, cap, d, D, 1, 0, wg=wg)
         self.ps = ps
 
     def k(self, h: int) -> QTensor:
         a = Affine.of(self._h(h)["k"])
-        return QTensor(a, a + self.d, (self.cap, self.d), self.ps, self.ps, self.D,
-                       rsc=self.d == self.D)
+        rsc = self.d == self.D
+        if self.wg > 1:
+            return QTensor(a, a + self.cap * self.d, (self.cap, self.d),
+                           Q.grp_row_bytes(self.d, "int8", self.D, self.wg),
+                           Q.grp_scale_bytes(self.d, "int8", self.D, self.wg, rsc), self.D,
+                           rsc=rsc, grp=self.wg)
+        return QTensor(a, a + self.d, (self.cap, self.d), self.ps, self.ps, self.D, rsc=rsc)
 
 
 class Image:
@@ -834,7 +843,6 @@ class Image:
         # Engine's compile worker)
         self.choices = dict(formats=formats, ple_format=ple_format, ple_host=self.ple_host,
                             head_format=self.head_format)
-        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
         self.v_loc = spec.vocab
         self.ring = min(cap, spec.window + RING_BLOCKS * block)         # sliding cache slots
         hs, hg, rot = spec.head_dim, spec.global_head_dim, spec.global_rot
@@ -848,8 +856,16 @@ class Image:
         self.ks = {FULL: self.ps, SLIDE: -(-(hs + k_scale_bytes(hs, D)) // D) * D
                    if spec.k_rows else self.ps}
         self.ple_S = GA.record_blocks(-(-L * P // D), ple_format) if P else 0  # record blocks
-        self.ple_rec = GA.record_bytes(self.ple_S, ple_format, D) if P else 0
-        b = _Bump()
+        # the gathers' groups (GALL: every MM in groups, kernels/gather.py; else 1)
+        self.gwg = gall_wg(cfg)
+        self.ple_rec = GA.record_bytes(self.ple_S, ple_format, D, self.gwg) if P else 0
+        # every matrix an MM streams in groups of WG rows (docs/isa.md "Weight groups"; WG 1:
+        # rows), allocations at whole groups' chunks
+        gw, A = cfg.WG, _align(cfg)
+
+        def mat(bump, n, k, f):
+            return tuple(bump.alloc(x) for x in Q.grp_bytes(n, k, f, D, gw))
+        b = _Bump(align=A)
         R = rows
         # the layer-major prefill's rows a chunk (a MoE model's: compile_layer_run)
         self.prefill_rows = (PREFILL_CHUNK if spec.experts else 0) if prefill_rows is None \
@@ -872,8 +888,7 @@ class Image:
             if spec.experts:
                 self.io["moe_scratch"] = b.alloc(4 * H * (LINE // 4 + 1))
         sb = lambda k, f: Q.scale_bytes(k, f, D)                        # noqa: E731
-        self.wproj = (b.alloc(L * P * rb(H, self.pformat)), b.alloc(L * P * sb(H, self.pformat))) \
-            if P else None
+        self.wproj = mat(b, L * P, H, self.pformat) if P else None
         # layer blocks: one layout per key
         self.dchunk = {(f, fd): _mlp_chunk(_ffn_pad(f, fd, D), D, D if fd == "int8" else 2 * D,
                                            cfg.TMEM_WORDS)
@@ -886,12 +901,12 @@ class Image:
             kind, own, ff, (fa, fg, fd, fp) = k
             d = hg if kind == FULL else hs
             nq = spec.n_q * d
-            lb = _Bump()
+            lb = _Bump(align=A)
             o = {n: lb.alloc(4 * H) for n in _norms(P, bool(mo))}
             o["ls"], o["qn"] = lb.alloc(4), lb.alloc(4 * d)
             if mo:                  # moe_ffn's input norm (ones: the router's gains are
                 o["g_post"], o["gbase"] = lb.alloc(4 * H), lb.alloc(4)      # folded), j * E,
-                o["router"] = (lb.alloc(mo.E * H), lb.alloc(mo.E * sb(H, "int8")))  # int8
+                o["router"] = mat(lb, mo.E, H, "int8")                       # int8
             fp_ = _ffn_pad(ff, fd, D)
             mats = {"wq": (nq, H, fa), "wo": (H, nq, fa), "wg": (fp_, H, fg), "wu": (fp_, H, fg)}
             if P:
@@ -903,10 +918,9 @@ class Image:
                 if not spec.kv_same(i):
                     mats.update(wv=(nkv * d, H, fa))
             for n, (r, c, f) in mats.items():
-                o[n] = (lb.alloc(r * rb(c, f)), lb.alloc(r * sb(c, f)))
+                o[n] = mat(lb, r, c, f)
             C = self.dchunk[ff, fd]
-            o["wd"] = [(lb.alloc(H * rb(C, fd)), lb.alloc(H * sb(C, fd)))
-                       for _ in range(fp_ // C)]
+            o["wd"] = [mat(lb, H, C, fd) for _ in range(fp_ // C)]
             if own:
                 ck = self.ring if kind == SLIDE else cap
                 o["kv"] = [{"k": lb.alloc(ck * self.ks[kind]), "vt": lb.alloc(d * ck),
@@ -936,10 +950,13 @@ class Image:
                 for e in range(len(unit)):
                     self.loc[first + it * len(unit) + e] = (base, us, it, offs[e])
             b.next = base + reps * us
-        self.head = (b.alloc(spec.vocab * Q.row_bytes(H, self.head_format, D)),
-                     b.alloc(spec.vocab * sb(H, self.head_format)))
-        # the head's gather scales (kernels.gather.table: the embedding rows' gathers)
-        self.head_gs = b.alloc(spec.vocab * Q.gather_scale_bytes(H, self.head_format, D))
+        # the head's rows and scale rows; in groups (GALL) its rows as the gathers stream them
+        # (kernels.gather.table_bytes), their gather scales (kernels.gather.table)
+        trb, tsb = GA.table_bytes(H, self.head_format, D, self.gwg)
+        self.head = (b.alloc(spec.vocab * trb), b.alloc(spec.vocab * sb(H, self.head_format)))
+        self.head_gs = b.alloc(spec.vocab * tsb)
+        # the LM head's MM reads the gather table's rows; at WG > 1 a grouped copy of its own
+        self.head_mm = self.head if gw == 1 else mat(b, spec.vocab, H, self.head_format)
         self.ple = b.alloc((rows if self.ple_host else spec.vocab) * self.ple_rec)
         self.ple_store = None           # ple_host: [vocab, ple_rec] uint8, filled by build
         self.lookup = {}
@@ -948,7 +965,8 @@ class Image:
                           ({"int8" if ple_format == "int8" else "4bit"} if P else set()))
             self.lookup = {"rope_t": b.alloc(cap * self.ps), "iota": b.alloc(4 * block),
                            "onehot": {f: b.alloc(4 * cfg.MCOLS * D * GA.onehot_blocks(
-                               D, cfg.MCOLS, "int8" if f == "int8" else "fp4")) for f in fmts},
+                               D, cfg.MCOLS, "int8" if f == "int8" else "fp4", self.gwg))
+                                      for f in fmts},
                            # the decode loop's area
                            "gen": G.alloc(b, spec, cap, block, cfg.IMEM_WORDS, cfg.SEQ_WC)}
             # the prompt runs' mask tiles, ends then starts (Additive); a MoE model's for its
@@ -960,7 +978,10 @@ class Image:
                                    amask_M=cfg.MCOLS)
         self.offload = None
         if mo:                      # path (a)'s words and expert slots (docs/offload.md)
-            self.fmt = MO.ExpertFormat(H, mo.ffn, D, self.efmt)
+            self.fmt = MO.ExpertFormat(H, mo.ffn, D, self.efmt, gall_wg(cfg))
+            # (in groups, with the channel hash: the slots' lanes by their addresses)
+            self.slot_lanes = (cfg.WG, D, self.fmt.data) if self.fmt.grp > 1 and cfg.CHASH \
+                else None
             n = mo.E if experts is None else experts
             if not mo.k <= n <= mo.E:
                 raise ValueError(f"{n} expert slots per layer: from top-k {mo.k} to {mo.E}")
@@ -969,6 +990,7 @@ class Image:
             b.next = self.offload.end
         self.kv_bytes = sum(self._kv_bytes(i) for i in range(L) if spec.kv_src[i] == i)
         self.nbytes = b.next
+        low_check(self, cfg, False, "gemma4.Image")      # (above AW 32: all of it below 4 GiB)
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
@@ -1005,7 +1027,11 @@ class Image:
         def f32(a):
             return F.ftz(np.asarray(a, np.float32))
 
-        tasks = []          # (DRAM addresses, (kind, tensor, selection, scale, format, ...))
+        # (DRAM addresses, (kind, tensor, selection, scale, format, ...), grouping: None, or
+        # (kind, format, K[, first row]): the (rows, scale rows) pairs grouped at WG, the head's
+        # rows also into its grouped copy)
+        tasks = []
+        gw, gh = cfg.WG, cfg.CHASH      # (gh: the groups' rows in the channel hash's order)
         put(self.io["gf"], f32(W["model.norm.weight"]))
         if P:
             put(self.io["g_pln"], f32(W["model.per_layer_projection_norm.weight"]
@@ -1016,7 +1042,8 @@ class Image:
             rows = [r for i in range(L)
                     for r in range(spec.src(i) * P, (spec.src(i) + 1) * P)]
             tasks.append((self.wproj, ("mat", "model.per_layer_model_projection.weight",
-                                       ("rows", tuple(rows)), H ** -0.5, self.pformat, D)))
+                                       ("rows", tuple(rows)), H ** -0.5, self.pformat, D),
+                          ("mat", self.pformat, H)))
         norms = _norms(P, spec.experts > 0)
         for i in range(L):
             p = f"model.layers.{spec.src(i)}."
@@ -1030,43 +1057,59 @@ class Image:
             if spec.experts:        # the router: proj x scale / sqrt(H) (int8), j * E
                 put(base + o["g_post"], np.ones(H, np.float32))
                 put(base + o["gbase"], np.float32([i * spec.experts]))
-                for addr, arr in zip(o["router"], QC.quantize_mxu(MO.gemma_router(W, p),
-                                                                  "int8", D)):
+                for addr, arr in zip(o["router"], Q.grouped(*QC.quantize_mxu(
+                        MO.gemma_router(W, p), "int8", D), "int8", H, gw, D,
+                        at=base + o["router"][0] if gh else None)):
                     put(base + addr, arr)
             src = {"wq": a + "q_proj", "wo": a + "o_proj", "wg": p + "mlp.gate_proj",
                    "wu": p + "mlp.up_proj", "wpg": p + "per_layer_input_gate",
                    "wpp": p + "per_layer_projection", "wk": a + "k_proj", "wv": a + "v_proj"}
             if k[1]:
                 put(base + o["kn"], f32(W[a + "k_norm.weight"]))
-            for n, (r, _, f) in o["mats"].items():     # gate / up: rows padded with zeros
+            for n, (r, c, f) in o["mats"].items():     # gate / up: rows padded with zeros
                 sel = ("pad", r) if n in ("wg", "wu") and r != spec.ffn[i] else None
                 tasks.append((tuple(base + x for x in o[n]),
-                              ("mat", src[n] + ".weight", sel, 1.0, f, D)))
+                              ("mat", src[n] + ".weight", sel, 1.0, f, D), ("mat", f, c)))
             fd = self.lf[i][2]
             C = self.dchunk[k[2], fd]               # whole rows, stored in column parts
             tasks.append((tuple(base + x for pair in o["wd"] for x in pair),
                           ("parts", p + "mlp.down_proj.weight",
-                           ("cols", 0, C * len(o["wd"])), 1.0, fd, D, C)))
+                           ("cols", 0, C * len(o["wd"])), 1.0, fd, D, C), ("mat", fd, C)))
         head = "model.embed_tokens.weight" if spec.tied else "lm_head.weight"
-        hf = self.head_format
-        rb, sb, gb = (Q.row_bytes(H, hf, D), Q.scale_bytes(H, hf, D),
-                      Q.gather_scale_bytes(H, hf, D))
+        hf, wgg = self.head_format, self.gwg
+        (rb, gb), sb = GA.table_bytes(H, hf, D, wgg), Q.scale_bytes(H, hf, D)
         for r in range(0, spec.vocab, HEAD_CHUNK):
             e = min(spec.vocab, r + HEAD_CHUNK)
             tasks.append(((self.head[0] + r * rb, self.head[1] + r * sb, self.head_gs + r * gb),
-                          ("gather", head, ("rowrange", r, e), 1.0, hf, D)))
+                          ("gather", head, ("rowrange", r, e), 1.0, hf, D), ("head", hf, H, r)))
         if self.ple_host:                               # the host's store: record t at t rec
             self.ple_store = np.zeros((spec.vocab, self.ple_rec), np.uint8)
         for r in range(0, spec.vocab if P else 0, PLE_CHUNK):
             e = min(spec.vocab, r + PLE_CHUNK)
             tasks.append(((-1 - r if self.ple_host else self.ple + r * self.ple_rec,),
                           ("ple", Weights.PLE, ("rowrange", r, e), tuple(self._cols()),
-                           self.ple_format, D, self.ple_S, (P / 2) ** 0.5)))
-        for (addrs, _), arrays in zip(tasks, _run_tasks(W, [t for _, t in tasks], jobs)):
+                           self.ple_format, D, self.ple_S, (P / 2) ** 0.5, wgg), None))
+        for (addrs, _, g), arrays in zip(tasks, _run_tasks(W, [t for _, t, _ in tasks], jobs)):
+            if g and g[0] == "mat":                     # (W_down: each column part's pair)
+                arrays = [x for j in range(0, len(arrays), 2)
+                          for x in Q.grouped(arrays[j], arrays[j + 1], g[1], g[2], gw, D,
+                                             at=addrs[j] if gh else None)]
+            elif g and gw > 1:                          # the head's rows from g[3] on, grouped
+                od, osc = Q.grp_bytes(g[3], g[2], g[1], D, gw)
+                for addr, arr in zip((self.head_mm[0] + od, self.head_mm[1] + osc),
+                                     Q.grouped(arrays[0], arrays[1], g[1], g[2], gw, D,
+                                               at=self.head_mm[0] + od if gh else None)):
+                    put(addr, arr)
+                if wgg > 1:                             # the gathers' rows in groups
+                    d, gsc = GA.pack_table(arrays[0], arrays[2], hf, D, wgg,
+                                           addrs[0] if gh else None)
+                    arrays = (d, arrays[1], gsc)
             for addr, arr in zip(addrs, arrays):
                 if addr < 0:                            # PLE records from row -1 - addr
                     v = np.ascontiguousarray(arr).view(np.uint8).reshape(-1, self.ple_rec)
                     self.ple_store[-1 - addr:-1 - addr + len(v)] = v
+                elif g is None and gh and wgg > 1:      # on-card PLE records, hashed in place
+                    put(addr, GA.hash_records(arr, addr, self.ple_S, self.ple_format, D, wgg))
                 else:
                     put(addr, arr)
         if self.lookup:
@@ -1079,7 +1122,7 @@ class Image:
                 put(lk["amask"], np.concatenate([amask_table(self.block, lk["amask_M"]),
                                                  amask_table(self.block, lk["amask_M"], True)]))
             for f, addr in lk["onehot"].items():
-                put(addr, GA.onehot(D, cfg.MCOLS, "int8" if f == "int8" else "fp4"))
+                put(addr, GA.onehot(D, cfg.MCOLS, "int8" if f == "int8" else "fp4", wgg))
             G.build(lambda s, addr, a: put(addr, a), 0, 1, spec, self.cap, lk["gen"])
         return [img]
 
@@ -1128,7 +1171,16 @@ class Image:
             return []
         if len(tokens) > self.rows:
             raise ValueError(f"{len(tokens)} tokens, the PLE slot holds {self.rows}")
-        return [(self.ple, self.ple_store[[int(t) for t in tokens]].reshape(-1))]
+        return [(self.ple, self._slot_records(self.ple_store[[int(t) for t in tokens]], 0)
+                 .reshape(-1))]
+
+    def _slot_records(self, recs: np.ndarray, row: int) -> np.ndarray:
+        """ple_store's records as the PLE slot stores them from slot row `row` on (in groups
+        with the channel hash: each one's lanes by its address, kernels.gather.hash_records)."""
+        if self.gwg == 1 or not self.cfg.CHASH:
+            return recs
+        return GA.hash_records(recs, self.ple + row * self.ple_rec, self.ple_S,
+                               self.ple_format, self.cfg.D, self.gwg)
 
     # ---- path (a): the expert pool and its server (docs/offload.md)
     def expert(self, W, g: int) -> np.ndarray:
@@ -1140,7 +1192,8 @@ class Image:
 
     def serve(self, W, backend, pool_file=None) -> ExpertServer:
         """The host's expert server on the backend's DRAM (moe.serve)."""
-        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file)
+        return MO.serve(self.offload, lambda g: self.expert(W, g), backend, pool_file,
+                        lanes=getattr(self, "slot_lanes", None))
 
     def row_server(self, backend) -> RowServer | None:
         """ple_host: the host's server of the generate loop's requests (each token's id, posted
@@ -1150,7 +1203,7 @@ class Image:
             return None
         return RowServer(BackendDram(backend), RowLayout(self.io["ple_mbox"], self.ple,
                                                          self.ple_rec),
-                         lambda t: self.ple_store[t])
+                         lambda t: self._slot_records(self.ple_store[t][None], 0)[0])
 
     def state_regions(self, slot: int = 0) -> list:
         """The context's state that its positions do not keep, as DRAM regions (address,
@@ -1336,12 +1389,13 @@ class Image:
     def descriptors(self, sid: int = 0) -> SimpleNamespace:
         spec, cfg = self.spec, self.cfg
         D, H, P, L, R = cfg.D, spec.hidden, spec.ple_dim, spec.layers, self.rows
+        gw = cfg.WG                     # the matrices' groups (docs/isa.md "Weight groups")
 
         def kv(li, off):
             d, o = spec.hd(li), self.bofs[self._key(li)]
             ck = self.ring if spec.kinds[li] == SLIDE else self.cap
             return _KV({j: {n: off + v for n, v in e.items()} for j, e in enumerate(o["kv"])},
-                       ck, d, D, self.ks[spec.kinds[li]])
+                       ck, d, D, self.ks[spec.kinds[li]], self.gwg)
 
         def layer(li, it=None, jt=None):
             """Descriptors of layer li (static), or of the layer at li's place in its run's
@@ -1361,11 +1415,12 @@ class Image:
             ns.qn = Tensor(off + o["qn"], (d,), (1,))
             for n, (r, c, f) in o["mats"].items():
                 da, sa = o[n]
-                setattr(ns, n, QTensor.weight(off + da, off + sa, r, c, f, D))
+                setattr(ns, n, QTensor.weight(off + da, off + sa, r, c, f, D, grp=gw))
             C = self.dchunk[ff, fd]
-            parts = tuple(QTensor.weight(off + da, off + sa, H, C, fd, D) for da, sa in o["wd"])
+            parts = tuple(QTensor.weight(off + da, off + sa, H, C, fd, D, grp=gw)
+                          for da, sa in o["wd"])
             ns.wd = QTensor(parts[0].data, parts[0].scale, (H, C * len(parts)), parts[0].rs,
-                            parts[0].srs, D, parts=parts, pw=C, wf=parts[0].wf)
+                            parts[0].srs, D, parts=parts, pw=C, wf=parts[0].wf, grp=parts[0].grp)
             if own:
                 ns.kn = Tensor(off + o["kn"], (d,), (1,))
                 ns.kv = kv(li, off)
@@ -1384,7 +1439,7 @@ class Image:
                 ns.g_post = Tensor(off + o["g_post"], (H,), (1,))
                 ns.gbase = Tensor(off + o["gbase"], (1,), (1,))
                 da, sa = o["router"]
-                ns.router = QTensor.weight(off + da, off + sa, E, H, "int8", D)
+                ns.router = QTensor.weight(off + da, off + sa, E, H, "int8", D, grp=gw)
             return ns
 
         ns = SimpleNamespace(
@@ -1403,17 +1458,19 @@ class Image:
             pli=_tdesc(self.io["pli"], (R, L, P)),
             mask=_tdesc(self.io["mask"], (2, self.block)), z2=self.io["z2"],
             xbuf=_tdesc(self.io["xbuf"], (self.prefill_rows, H)) if self.prefill_rows else None,
-            wproj=_qdesc(*self.wproj, L * P, H, D, self.pformat) if P else None,
-            head=_qdesc(*self.head, spec.vocab, H, D, self.head_format), v_loc=spec.vocab,
-            head_tab=GA.table(self.head[0], self.head_gs, spec.vocab, H, self.head_format, D),
+            wproj=_qdesc(*self.wproj, L * P, H, D, self.pformat, gw) if P else None,
+            head=_qdesc(*self.head_mm, spec.vocab, H, D, self.head_format, gw), v_loc=spec.vocab,
+            head_tab=GA.table(self.head[0], self.head_gs, spec.vocab, H, self.head_format, D,
+                              self.gwg),
             ple=GA.record_table(self.ple, R if self.ple_host else spec.vocab, self.ple_S,
-                                self.ple_format, D) if P else None)
+                                self.ple_format, D, self.gwg) if P else None)
         if self.lookup:
             lk = self.lookup
             ns.rope_t = Tensor(Affine(lk["rope_t"]), (self.cap, self.rw), (self.ps // 4, 1))
             ns.iota = _tdesc(lk["iota"], (self.block,))
             ns.onehot = {f: _tdesc(a, (cfg.MCOLS, D * GA.onehot_blocks(
-                D, cfg.MCOLS, "int8" if f == "int8" else "fp4"))) for f, a in lk["onehot"].items()}
+                D, cfg.MCOLS, "int8" if f == "int8" else "fp4", self.gwg)))
+                         for f, a in lk["onehot"].items()}
             ns.gen = G.desc(lk["gen"], spec, self.cap)
         # the generate loop's post of the sampled token (generate.py): ple_host, a request for
         # its record, which the next token's gather waits for (_gathered)
@@ -1429,8 +1486,12 @@ class Image:
                                          scratch=self.io.get("moe_scratch"),
                                          need_off=2 * Lo.layers * Lo.E,
                                          em_base=Lo.slots[0][0],
-                                         em_rec=MO.em_record(spec.hidden, spec.top_k),
+                                         em_rec=MO.em_record(spec.hidden, spec.top_k,
+                                                             MO.em_qd(cfg)),
                                          em_rows=self.prefill_rows)
+            # an expert run's experts: past the prefill rows' scratch (moe.em_scratch)
+            ns.moe_dev.em_slots = MO.em_expert_slots(
+                Lo, self.prefill_rows * ns.moe_dev.em_rec, ns.moe_dev.slots)
         return ns
 
     def _unit(self, li) -> int:
@@ -1441,9 +1502,9 @@ class Image:
         raise KeyError(li)
 
 
-def _ple_records(rows, cols, fmt: str, D: int, S: int, scale: float) -> np.ndarray:
+def _ple_records(rows, cols, fmt: str, D: int, S: int, scale: float, wg: int = 1) -> np.ndarray:
     x = np.asarray(rows, np.float32)[:, np.asarray(cols)] * np.float32(scale)
-    return GA.pack_records(x, fmt, D, S)
+    return GA.pack_records(x, fmt, D, S, wg)
 
 
 # ---- Image.build's quantization jobs: in worker processes, cached by content
@@ -1483,7 +1544,8 @@ def _job(W, job) -> tuple:
     (through opentpu.qcache, the image caches' disk cache of the quantizer's results);
     ("gather", ...) the same and the rows' gather scales; ("parts", ..., C) each column part's
     rows and scale rows of the whole rows' quantization (quant.column_parts); ("ple", tensor,
-    row range, columns, format, D, S, scale) -> the PLE records."""
+    row range, columns, format, D, S, scale, wg) -> the PLE records (in groups at wg > 1:
+    kernels.gather.pack_records)."""
     if job[0] == "mat":
         _, name, sel, scale, fmt, D = job
         return QC.quantize_mxu(_job_matrix(W, name, sel, scale), fmt, D)
@@ -1497,8 +1559,8 @@ def _job(W, job) -> tuple:
         a = _job_matrix(W, name, sel, scale)
         return tuple(x for pr in Q.column_parts(*QC.quantize_mxu(a, fmt, D), fmt, a.shape[1],
                                                  C, D) for x in pr)
-    _, name, sel, cols, fmt, D, S, scale = job
-    return (_ple_records(_job_matrix(W, name, sel, 1.0), cols, fmt, D, S, scale),)
+    _, name, sel, cols, fmt, D, S, scale, wg = job
+    return (_ple_records(_job_matrix(W, name, sel, 1.0), cols, fmt, D, S, scale, wg),)
 
 
 def _worker_job(job) -> tuple:

@@ -4,6 +4,10 @@ The generate program of an attention bucket wraps the model's resident decode st
 kernel at a run-time position, qwen3.RunPos; the step itself is unchanged) in a hardware loop:
 
     LD the state block (the token, the position's run-time values, the tokens left, stop ids)
+    the step kernel's ahead, if it has one: work every token's step would do the same, done
+    once and held for the loop (qwen3.loop_ahead: the int8 gather's operand in ACT RAM;
+    qwen35._loop_ahead: the first DeltaNet layer's taps and windows, which each token's LM
+    head then loads for the next)
     LOOP min(tokens left, block - tpos) times (RLD of the device-computed count):
         each run-time argument c * var: RLD MUL of the variable's state word into its
             argument register (the registers the host wrote before each run)
@@ -32,7 +36,7 @@ import numpy as np
 from .. import fp32 as F
 from .. import isa as I
 from .. import language as ol
-from ..compiler import CompileError, Tensor, current, trace_fit
+from ..compiler import CompileError, Tensor, current, mul_bound, trace_fit
 
 # ---- the state block (fp32 words in DRAM, one per slice; 128-byte aligned). Its 64-byte beats
 # have one writer each during a run: words 0..15 the card's (the run-time variables), 16..31 the
@@ -50,7 +54,11 @@ OUT_MARK = 0xFFFFFFFF                             # out[] before the token lands
                                                   # stores ids, never this NaN)
 
 
+# the descriptors' names a step kernel's ahead sets for its step (held to the loop's end)
+AHEAD = ("gather_pin", "cv_pipe", "lm_tail")
+
 MODES = 2                  # chain areas: 0 greedy, 1 sampled (Samp)
+RING = 16                  # a chain area's program slots past this many buckets: a ring
 BLK = 64                   # the sampler's block of logits (block maxima, gathers)
 K_MAX = 64                 # the largest top-k the sampler takes
 TOPP_MIN = 2.0 ** -126     # the smallest top-p the sampler takes (below: the first token only)
@@ -81,22 +89,35 @@ def alloc(b, spec, cap: int, block: int, imem_words: int = 1 << 15, waitc: bool 
     (pa, pb: 1 / R and R for the ids in the context, 1 for the others), uniforms (one per
     position, from the host) and constants (iota: 0 .. BLK - 1). A program slot holds two
     programs that fit IMEM (`imem_words`: prog_bytes), with their wait entries on a WAITC device
-    (`waitc`: Config.SEQ_WC)."""
+    (`waitc`: Config.SEQ_WC). Past RING buckets a mode's slots are a ring of RING (`nslot`):
+    bucket k's programs in slot (k - 1) mod RING, written there as a run first reaches them
+    (Engine._generate_chain), so the area stays RING slots a mode at any KV capacity (Qwen3.6-
+    35B-A3B's 262,144 positions: 1,024 buckets, 1,280 MiB of slots, 40 MiB as a ring)."""
     nb = buckets(cap, block)
     V = _vpad(spec)
     slot = prog_bytes(imem_words, waitc)
-    return {"state": b.alloc(4 * STATE_WORDS), "out": b.alloc(4 * (cap + 1)),
-            "ptab": b.alloc(8 * (nb + 2) * MODES), "progs": b.alloc(slot * nb * MODES),
-            "slot": slot,
-            "lg": b.alloc(4 * V), "pa": b.alloc(4 * V), "pb": b.alloc(4 * V),
-            "uni": b.alloc(4 * (cap + 1)), "iota": b.alloc(4 * BLK), "nb": nb,
-            "ptab2": b.alloc(16 * (nb + 2) * MODES), "xs": b.alloc(4 * spec.hidden)}
+    ns = min(nb, RING)
+    g = {"state": b.alloc(4 * STATE_WORDS), "out": b.alloc(4 * (cap + 1)),
+         "ptab": b.alloc(8 * (nb + 2) * MODES), "progs": b.alloc(slot * ns * MODES),
+         "slot": slot,
+         "lg": b.alloc(4 * V), "pa": b.alloc(4 * V), "pb": b.alloc(4 * V),
+         "uni": b.alloc(4 * (cap + 1)), "iota": b.alloc(4 * BLK), "nb": nb,
+         "ptab2": b.alloc(16 * (nb + 2) * MODES), "xs": b.alloc(4 * spec.hidden)}
+    if ns < nb:                 # (a ring; an area of a slot a bucket has no "nslot")
+        g["nslot"] = ns
+    return g
+
+
+def nslot(g: dict) -> int:
+    """A chain area's program slots a mode: a bucket each, or a ring of RING (alloc)."""
+    return g.get("nslot", g["nb"])
 
 
 def prog_slot(g: dict, blocks: int, mode: int = 0, part: int = 0) -> int:
-    """The chain area's slot of bucket `blocks` (1, 2, ...) in chain area `mode`; a split
-    program's second part in the slot's second half."""
-    return g["progs"] + g["slot"] * (mode * g["nb"] + blocks - 1) + part * g["slot"] // 2
+    """The chain area's slot of bucket `blocks` (1, 2, ...) in chain area `mode` (a ring's:
+    (blocks - 1) mod its slots); a split program's second part in the slot's second half."""
+    n = nslot(g)
+    return g["progs"] + g["slot"] * (mode * n + (blocks - 1) % n) + part * g["slot"] // 2
 
 
 def slot_words(backend, prog) -> np.ndarray:
@@ -143,7 +164,9 @@ def ptab_words(g: dict, progs: dict, mode: int = 0, split: bool = False) -> np.n
     bucket k at words 2k, 2k + 1 (absent buckets 0). split: the table at ptab2_addr for
     {blocks: (first part's words[, second part's])}: part j of bucket k at words 2 (2k + j),
     2 (2k + j) + 1 (a bucket in one program: its program as the first part)."""
-    t = np.zeros(2 * (2 if split else 1) * (max(progs) + 2), np.uint32)
+    # (a ring's whole table: the entries of buckets whose slots others took are absent)
+    n = g["nb"] if "nslot" in g else max(progs)
+    t = np.zeros(2 * (2 if split else 1) * (n + 2), np.uint32)
     for k, w in progs.items():
         for j, wj in enumerate(w if split else (w,)):
             e = 2 * k + j if split else k
@@ -160,16 +183,17 @@ def rules(spec, block: int) -> dict:
     return {"tok": None, "tpos": (1, block), "ring": (1, getattr(spec, "conv_k", 1))}
 
 
-def check_args(run_args, spec, block: int) -> None:
+def check_args(run_args, spec, block: int) -> dict:
     """Every run-time variable has an update rule and stays an exact fp32 integer in the state
     block (below 2^24); RLD MUL forms c * var in the sequencer, mod 2^32 as the host's
-    arg_words."""
+    arg_words. Returns {name: the value is below it}."""
     bound = {"tok": spec.vocab, "tpos": block, "ring": getattr(spec, "conv_k", 1)}
     for v, c in run_args:
         if v.name not in bound:
             raise CompileError(f"run-time variable {v.name}: no update rule (generate.rules)")
         if bound[v.name] > 1 << 24:
             raise CompileError(f"{v.name} < {bound[v.name]} is not exact in fp32")
+    return bound
 
 
 def state_words(spec, tok: int, p: int, n: int, stop_ids, block: int,
@@ -250,11 +274,11 @@ class Greedy:
         if self.seen != self.nc:
             raise CompileError(f"the LM head gave {self.seen} of {self.nc} chunks")
         best = b.argmax(_col(b, self.cm, 0))          # [max, chunk]
-        tok = _pick(b, best[1:2], 2, self.cm.base + 1, "the best chunk's id")
+        tok = _pick(b, best[1:2], self.nc, 2, self.cm.base + 1, "the best chunk's id")
         if b.S > 1:                                   # the slices' vocabulary rows, in order
             ix = ol.all_gather(tok)
             best = b.argmax(ol.all_gather(best[0:1]))
-            tok = _pick(b, best[1:2], 1, ix.base, "the best slice's id")
+            tok = _pick(b, best[1:2], b.S, 1, ix.base, "the best slice's id")
         return tok
 
 
@@ -349,6 +373,9 @@ class Sampler:
         y = y[0, :] if len(y.shape) == 2 else y
         n = y.cols
         c0 = col0 - self.o                       # this slice's row
+        if c0 % BLK:
+            raise CompileError(f"a sampler's chunk from row {c0}: the block maxima need chunks "
+                               f"of whole blocks of {BLK} (qwen3.head_rows_chunk)")
         a = y.base
         if self.samp.pen and not (self.shared or self.pen_from):     # in place in the
             if self.pt is None:                                          # penalty's tiles
@@ -440,7 +467,7 @@ class Sampler:
         t = u * zk
         le = ol.sum(_step(cum - t)) * -1.0 + float(km)
         pick = ol.minimum(le, ol.sum(kept) - 1.0)
-        return _pick(b, pick, 1, sid.base, "the sampled id")
+        return _pick(b, pick, km, 1, sid.base, "the sampled id")
 
     def after(self, tok) -> None:
         """The penalty's context gets tok: pa[tok] = 1 / R, pb[tok] = R."""
@@ -537,12 +564,13 @@ def _col(b, t, c: int):
     return out
 
 
-def _pick(b, k, stride: int, base: int, what: str):
-    """A new [1] tile holding T[base + stride * k] (k a tile holding a small integer)."""
+def _pick(b, k, n: int, stride: int, base: int, what: str):
+    """A new [1] tile holding T[base + stride * k] (k a tile holding an integer below n: the
+    register's bound, so the waits pass's footprint of the read is the n words', isa.rld)."""
     if stride != 1:
         k = k * float(stride)
     r = b.scratch()
-    b.rld(r, k)
+    b.rld(r, k, bound=(0, stride * (n - 1)), comment=what)
     out = b.alloc((1,))
     b.emit(I.vop(I.V_COPY, out.base, base, 0, 1, 1, 0, 0, 0, rb=r, comment=what))
     b.unscratch(r)
@@ -578,6 +606,8 @@ def _token_end(b, g, st, pos, spec, block, samp, sink, tok, split: bool = False)
     ids = st[S_STOP:S_STOP + N_STOP]
     hit = ol.minimum(ol.abs(ids - tok), 1.0) * -1.0 + 1.0     # 1 where equal (integers)
     halt = ol.load(g.state[S_HALT:S_HALT + 1])
+    if b.S > 1:     # every slice's word, gathered: the host writes them one after another (two
+        halt = ol.max(ol.all_gather(halt))     # cards apart), the slices stop at one token
     stop = ol.maximum(ol.max(hit), halt)
     r = b.scratch()
     b.rld(r, stop, comment="stop")
@@ -604,11 +634,15 @@ def _token_end(b, g, st, pos, spec, block, samp, sink, tok, split: bool = False)
 
 def _arguments(b, body: list, mark: int, st, spec, block) -> None:
     """The run-time arguments (c * var alone in an address) loaded at body[mark], now that the
-    step has named them all."""
-    check_args(b.run_seen, spec, block)
-    body[mark:mark] = [I.rld(15 - k, st.base + SLOT[v.name], mul=int(c),
-                             comment=f"argument {c}*{v.name}")
-                       for k, (v, c) in enumerate(b.run_args)]
+    step has named them all; each RLD MUL bounded by c * [0, var's bound) (check_args;
+    compiler.mul_bound: a negative c's, mod 2^AW, wraps to 0), so the waits pass's footprints of
+    the addresses it forms are its own (a KV append's, an embedding row's, a sliding layer's
+    mask row) and not all of DRAM."""
+    bound = check_args(b.run_seen, spec, block)
+    body[mark:mark] = [x for k, (v, c) in enumerate(b.run_args)
+                       for x in I.rld_mul(15 - k, st.base + SLOT[v.name], int(c),
+                                          bound=mul_bound(c, bound[v.name], b.aw),
+                                          comment=f"argument {c}*{v.name}", aw=b.aw)]
     b.run_words = None
 
 
@@ -633,11 +667,13 @@ def _chain(b, tab_at: int, cond=None, off=None, what: str = "next bucket") -> No
             b.unscratch(x)
 
 
-def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
+def _generate(m, pos, block, step, spec, chain, samp=None, debug=False, ahead=True):
     b = current()
     g = m.gen
     st = ol.load(g.state)
     consts = Sampler.constants(b, g, samp) if samp is not None else None
+    if ahead and getattr(step, "ahead", None) is not None:
+        step.ahead(m, pos)      # the step's work for every token, once (qwen3.loop_ahead): held
     left = st[S_LEFT:S_LEFT + 1]
     n = ol.minimum(left, (st[S_TPOS:S_TPOS + 1] * -1.0) + float(block))  # to the bucket's end
     r = b.scratch()
@@ -655,6 +691,8 @@ def _generate(m, pos, block, step, spec, chain, samp=None, debug=False):
     _token_end(b, g, st, pos, spec, block, samp, sink, tok)
     _arguments(b, body, mark, st, spec, block)
     b.end_loop(loop)
+    for k in AHEAD:                     # (what the step's ahead held to the loop's end)
+        m.__dict__.pop(k, None)
     ol.store(g.state[:S_HALT], st[:S_HALT])      # not the host's stop word
     if chain:              # tokens left: on to the next bucket's program (chain table)
         _chain(b, ptab_addr(g.addr, int(samp is not None)) + 8 * (pos.blocks + 1),
@@ -726,16 +764,28 @@ def compile_generate(image, kernel, blocks: int, lo: int, block: int, chain: boo
     rp = RunPos(blocks, block, lo, image.lookup.get("zmask", 0), image.cap)
     fn, kw = {None: (_generate, {"chain": chain, "debug": debug}), 0: (_generate_layers, {}),
               1: (_generate_head, {"debug": debug})}[part]
-    progs, k = [], ol.jit(fn)
-    for s in range(image.cfg.S):
-        def args(s=s):
-            return {"m": image.descriptors(s), "pos": rp, "block": block, "step": kernel,
-                    "spec": image.spec, "samp": samp, **kw}
+    k = ol.jit(fn)
+
+    def args(s, **more):
+        return {"m": image.descriptors(s), "pos": rp, "block": block, "step": kernel,
+                "spec": image.spec, "samp": samp, **kw, **more}
+    if part is not None:
         # the split form has no smaller form to fall back to: placed best-fit where next-fit
         # leaves no gap (trace_fit; a small TMEM), as a decode step is
-        progs.append((trace_fit(k, image.cfg, s, args) if part is not None else
-                      k.trace(image.cfg, s, args())).finish())
-    return progs
+        return [trace_fit(k, image.cfg, s, lambda s=s: args(s)).finish()
+                for s in range(image.cfg.S)]
+    ahead = getattr(kernel, "ahead", None) is not None
+    try:
+        progs = [k.trace(image.cfg, s, args(s)).finish() for s in range(image.cfg.S)]
+        if not ahead or fits(image, progs):
+            return progs
+    except CompileError:
+        if not ahead:
+            raise
+    # what the step's ahead holds for the loop left its tokens too little ACT RAM or TMEM, or
+    # its instructions IMEM: each token does that work again, as before the ahead (not the split
+    # form, compile_bucket's next)
+    return [k.trace(image.cfg, s, args(s, ahead=False)).finish() for s in range(image.cfg.S)]
 
 
 def fits(image, progs) -> bool:

@@ -3,7 +3,7 @@
 # request, chatmoe's pool residency, qual.sh's ECC_EACH) qualified on production's bitstream b10245f5 as loaded (no JTAG
 # load, LOAD=0; production stays on the card), under ONE otpu-lock. Its deploy directory D
 # (~/otpu-build/deploy_hostr21_b10245f5): otpu.bit -> production's, host/ (this tree, COMMIT, models -> ~/openTPU/models),
-# refcache/ (tools/qual/refs.py's references for this tree's keys, computed on hwe-bench on production's configuration,
+# refcache/ (tools/qual/refs.py's references for this tree's keys, computed on the simulation host on production's configuration,
 # configs/deploy_hostr21_b10245f5.pkl), chatmoe/ (the streamed MoE models' references: qwen35-35b recomputed on this
 # tree, lfm2-8b and gemma4-26b production's, whose programs S does not change).
 # PART (env): A = qual.sh fast (ECC_EACH=1) + E2B-it + otpu-chat on eight models against production's replies;
@@ -16,9 +16,9 @@
 #   the server's "pool warm:" lines, serve_bench's check part through the warming 503 (wait_up); then the pool read
 #   back into the page cache. PASS: a 503 "warming" seen, then 200 within the cap, "pool warm: done", serve_bench's
 #   check passed.
-# Every line that says FAIL, NOT CLEAN or EXIT <non-zero> is the lead's to read; the last line: HOSTR21 SESSION END.
+# Every line that says FAIL, NOT CLEAN or EXIT <non-zero> is to be read; the last line: HOSTR21 SESSION END.
 # About 2.5 h (A ~70 min with the images' first builds for this tree, B ~45, C ~40).
-# Stage (from the Mac): see the deploy directory's README. Run (no pipe; the lead's GO):
+# Stage (from a laptop): see the deploy directory's README. Run (no pipe):
 #   setsid -f ~/.local/bin/otpu-lock --wait 3600 -- bash ~/otpu-build/deploy_hostr21_b10245f5/host/tools/offload/\
 #     sessions/hostr21.sh > ~/otpu-build/deploy_hostr21_b10245f5/session.log 2>&1 < /dev/null
 set -u
