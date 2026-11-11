@@ -337,7 +337,7 @@ one conversation, Hugging Face in bf16 with the checkpoint's sampling, seed 0, r
 template; 2637 tokens, the first 2000 scored), as on docs/isa.md the -it model is far from
 calibrated (float perplexity 142, the base's 18.6; on the chat 3.54). The reference is int8 with
 the int8 PLE table on the host, on the same tokens. The scan (`formats_scan.py scan gemma4 OUT
---ids chat-it.json --tokens 2000`, omarchy, 2 h 19 min, tree a241e4e3) ran at the finals' length,
+--ids chat-it.json --tokens 2000`, the build host, 2 h 19 min, tree a241e4e3) ran at the finals' length,
 so its rows are the finals; pass 2 added the groups in this order of dKL per byte: down@25-34,
 attn@25-34, gateup@25-34, gateup@0-9, gateup@15-24, down@0-9, down@15-24, gateup@10-14,
 attn@15-24, attn@0-9, down@10-14, attn@10-14, then the PLE groups.
@@ -384,7 +384,7 @@ the own-KV layers' loop, and its prompt runs then hold 2 rows instead of 3-4): t
 layers 0-23's down projections in fp4. Since 2026-10-09 the default (`Spec.fit_formats`) is
 gemma-4-E4B-it's pick, three loops: **the head and layers 0-11's gate / up projections in fp4**.
 
-On gemma-4-E4B-it (2026-10-09, omarchy, tree d26d6610): a chat of its own (`tools/chat_text.py
+On gemma-4-E4B-it (2026-10-09, the build host, tree d26d6610): a chat of its own (`tools/chat_text.py
 gemma4-e4b`, 2694 tokens, the first 2000), `formats_scan.py ppl --ids`, dKL against int8 with
 the PLE table on the host (as E4B's images place it), every row's table on the host:
 
@@ -522,10 +522,10 @@ and 12-29; its rows' bytes and bars:
 | `down@0-11=fp4` | 2060 | 35 | +0 | +0.9% | 0.09 | |
 | `down@12-29=fp4` | 2043 | 52 | +0 | +1.4% | 0.14 | |
 
-The attention is two thirds of the dense bytes (555 of 820 MB). Measured so far (omarchy,
+The attention is two thirds of the dense bytes (555 of 820 MB). Measured so far (the build host,
 2026-10-02, 900 tokens of docs/isa.md): the card's own formats sit 3.82% (SE 0.16) from float
 (perplexity 19.18 against 18.27), and all dense layers in fp4 cost +7.93% (SE 0.61) for +56%,
-3.7 SE over their bar; the rest of the scan is not run. It resumes from its caches on omarchy
+3.7 SE over their bar; the rest of the scan is not run. It resumes from its caches on the build host
 (tree-g26, the variants' head inputs in `g26-scan.json.xl` with the first attention row's
 per-layer checkpoint, the experts' 4-bit cache `qc26`, 11 GB):
 

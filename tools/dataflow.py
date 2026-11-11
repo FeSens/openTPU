@@ -24,7 +24,9 @@ timing and the movement do not depend on the data, only config.json is read) MM 
 products (`fast`): every product is 0 there, so its outputs are the ones the full MM computes.
 
     python3 tools/dataflow.py MODEL KIND N POS [--mcols M] [--layers L] [--wformat F]
-        [--head-format H] [--json FILE]          KIND: decode, rows, batch (tools/vpu_hack.py)
+        [--head-format H] [--set K=V,...] [--json FILE]
+                                                 KIND: decode, rows, batch (tools/vpu_hack.py);
+                                                 --set: Config fields over the board's (S=4, ...)
     python3 tools/dataflow.py moe MODEL --prefix P [--pos POS]    a MoE decode row, every expert
         resident (tools/moe_prefill_cosim.py's timing hack)
 
@@ -50,16 +52,19 @@ sys.path.insert(0, str(ROOT))
 from opentpu import fp32 as F  # noqa: E402
 from opentpu import isa as I  # noqa: E402
 from opentpu import isasim as SIM  # noqa: E402
+from opentpu import quant as Q  # noqa: E402
 
 BEAT = 64                     # DRAM beat (otpu_native_dram): a partial write is read-merge-written
 IBYTES = 32                   # bytes per instruction (8 words)
-UNITS = {I.LD: "DMA", I.ST: "DMA", I.WAITW: "DMA", I.DSTEP: "SE", I.STREAM: "SE", I.MM: "MXU",
+UNITS = {I.LD: "DMA", I.ST: "DMA", I.WAITW: "DMA", I.LDA: "DMA", I.DSTEP: "SE", I.STREAM: "SE",
+         I.MM: "MXU",
          I.QACT: "QUANT", I.QST: "QUANT", I.VOP: "VPU", I.RLD: "COLL", I.GATHER: "COLL"}
 RPORTS = ("MXU", "DMA", "Q", "Q2", "Q3", "VA", "VB", "COLL", "SE")
 WPORTS = ("DMA", "MXU", "VPU", "COLL")
-COMPOSITE = {I.V_EXP2, I.V_EXP2SUB, I.V_RECIP, I.V_RSQRT, I.V_LOG2}
+COMPOSITE = {I.V_EXP2, I.V_EXP2SUB, I.V_RECIP, I.V_RSQRT, I.V_LOG2, I.V_SIGMOID, I.V_SILU}
 SUMS = {I.V_RSUM, I.V_RSSQ, I.V_RDOT}
-PASSES = {I.V_EXP2: 3, I.V_EXP2SUB: 3, I.V_RECIP: 2, I.V_RSQRT: 4, I.V_LOG2: 4}
+PASSES = {I.V_EXP2: 3, I.V_EXP2SUB: 3, I.V_RECIP: 2, I.V_RSQRT: 4, I.V_LOG2: 4,
+          I.V_SIGMOID: 6, I.V_SILU: 6}      # (VSIG: six passes at CNS 3, four at 5)
 
 
 def vfunc(ins) -> int:
@@ -97,7 +102,7 @@ def vpu_cycles(ins, lanes: int) -> int:
     if f in SUMS:
         rl = 64 // lanes
         return rows * -(-ch // rl) * rl
-    if f == I.V_OUTER:
+    if f == I.V_OUTER or (f == I.V_MAC and (ins.w[5] >> 24) & 3 == I.B_COL):   # (+ the fill)
         return max(2, ch) + rows * ch
     return rows * ch * PASSES.get(f, 1)
 
@@ -137,7 +142,7 @@ class Acc:
         self.vpu = 0                     # VPU / stream engine issue cycles
         self.mxu_adv = 0                 # MXU advances (chunk cycles of the array)
         self.portb = 0                   # D-byte chunks on port B
-        self.porta = 0                   # 32-byte scale lines on port A
+        self.porta = 0                   # port A requests: 32-byte scale lines (GRP: beats)
 
     def add(self, o: "Acc") -> None:
         self.n += o.n
@@ -334,10 +339,14 @@ class LedgerSlice(SIM.Slice):
         sa = (self.reg(ins.ra) + w[0]) & 0xFFFFFFFF
         ssa = (self.reg(ins.rb) + w[1]) & 0xFFFFFFFF
         out = (self.reg(ins.rc) + w[2]) & 0xFFFFFFFF
-        N, KB = w[3] & 0xFFFF, (w[3] >> 16) & 0xFF
+        N, KB, k0 = w[3] & 0xFFFF, (w[3] >> 16) & 0xFF, (w[3] >> 24) & 0xFF
         rs = w[4]
         ors, M = w[5] & 0xFFFF, (w[5] >> 16) & 0xFF
         srs = w[6]
+        hld = 0
+        if srs & I.MM_SPL:          # SPL (SPLMM, isasim._mm): KB terms from two parts of a chunk a
+            hld = (srs >> I.MM_HLD & (1 << 31 - I.MM_HLD) - 1) << 10    # group, hi at sa + g rs,
+            srs &= (1 << I.MM_HLD) - 1                                  # lo HLD after it
         fl = ins.flags
         wf = (fl >> I.WF_SHIFT) & 3
         pair, unit, rsc = bool(fl & I.F_PAIR), bool(fl & I.F_UNIT), bool(fl & I.F_RSC)
@@ -345,17 +354,44 @@ class LedgerSlice(SIM.Slice):
         chunks = -(-KB * bpb // D)                    # D-byte chunks a streamed row
         adv = -(-KB // 2) if pair else KB             # advances a row
         groups = -(-M // cfg.MCOLS)
-        a.mxu_adv += N * adv * groups
-        a.portb += N * chunks
+        # weight groups (docs/isa.md): Rg rows a group, whole groups streamed, each group's rows
+        # chunk-interleaved at sa + g * rs; an advance takes a P-chunk (Rg rows x D bytes) for
+        # one of the M ACT rows, 4-bit with PAIR both blocks of a chunk (phase 2a's packed PE,
+        # docs/weight_groups.md), without it one a block (otpu_mxu's cmd_KBa). A group's
+        # chunk c is its rows' K-block c (P = Rg x bpb bytes; otpu_mxu's pg: a 4-bit chunk is a
+        # block), so a group streams KB chunks whatever KB's parity, where a row of one streams
+        # whole D-byte chunks (4-bit: two blocks each, an odd KB's last half of one)
+        Rg = 1 << ins.rd
+        G = -(-N // Rg)
+        gch = chunks if Rg == 1 else 2 if hld else KB  # chunks a row (Rg 1) or a group (SPL: its parts')
+        gb = gch * (D if Rg == 1 else Rg * bpb)       # their bytes
+        gadv = -(-KB // 2) if pair and wf != I.W8 else KB
+        a.mxu_adv += N * adv * groups if Rg == 1 else G * M * gadv
+        a.portb += G * Rg * chunks if Rg == 1 else G * gb // D
         kv = self.names[self.cur][1].startswith("attention.")   # q.K^T, P.V: the KV cache
         kind = "kv" if kv else "weights"
-        self._dram_read(a, kind, N * chunks * D,
-                        _span_beats(sa + np.arange(N, dtype=np.int64) * rs, chunks * D))
+        gs = sa + np.arange(G, dtype=np.int64) * rs
+        self._dram_read(a, kind, G * gb, _span_beats(np.concatenate([gs, gs + hld]), gb // 2)
+                        if hld else _span_beats(gs, gb))
         if not unit:
-            per = 4 if rsc else {I.W8: 4 + KB, I.W4I: 8 + 4 * KB, I.W4F: 8 + 4 * KB,
-                                 I.WNV: 16 + 8 * KB}[wf]
-            self._dram_read(a, "kvscale" if kv else "scales", N * per)
-            a.porta += N * (1 if rsc else adv)
+            # a row's scale bytes: its Sw (rows of one: the scale row's header, 4 / 8 / 8 / 16
+            # bytes; in groups the Sw words' part, SWP = 4 R, NVFP4 8 R) and its blocks' entries
+            per = 4 if rsc else ({I.W8: 4 + KB, I.W4I: 8 + 4 * KB, I.W4F: 8 + 4 * KB,
+                                  I.WNV: 16 + 8 * KB} if Rg == 1 else
+                                 {I.W8: 4 + KB, I.W4I: 4 + 4 * KB, I.W4F: 4 + 4 * KB,
+                                  I.WNV: 8 + 8 * KB})[wf]
+            self._dram_read(a, "kvscale" if kv else "scales", G * Rg * per)
+            if Rg == 1:
+                a.porta += N * (1 if rsc else adv)
+            else:
+                # docs/weight_groups.md: a request (port A's 128-byte beat) a group's step, RSC's a chunk;
+                # the group's Sw line in its first step's beat, or (k0's entries in another beat)
+                # a request of its own before it
+                fmt = {I.W8: "int8", I.W4I: "int4", I.W4F: "fp4", I.WNV: "nvfp4"}[wf]
+                so = Q.swp(fmt, Rg) + k0 * Rg * Q.SCALE_DATA[fmt]
+                g0 = ssa + np.arange(G, dtype=np.int64) * srs
+                sws = 0 if rsc else int(np.count_nonzero(g0 // 128 != (g0 + so) // 128))
+                a.porta += G * (gch if rsc else gadv) + sws
         a.act_rd += N * KB * M * D + N * KB * M * 8       # bytes and records, per output row
         a.act_rd_phys += N * adv * groups * cfg.MCOLS * (D + 8)
         # otpu_mxu's act_ren: a command of one group reads only its M columns (PAIR: 2M)
@@ -389,6 +425,20 @@ class LedgerSlice(SIM.Slice):
         self._uses_read(np.unique(np.concatenate(us)))
 
     XD = 1024                         # otpu_quant's row buffer: chunks of LANES words
+    QSTB = False                      # otpu_quant QSTB (QUANT_QSTB): QST rows through it, ...
+    QSW = 16                          # ... their pass 1 at 4 x QUANT_SWW bytes a cycle
+
+    def _qst_buffered(self, ins, dst: int, KB: int, drs: int, es: int) -> bool:
+        """otpu_quant's QSTB rows: ROW, not HALF, through the row buffer, pass 1 QSW bytes a
+        cycle (GRP rows; else element stride 1, dst and the row stride QSW aligned): read
+        once."""
+        f = ins.flags
+        if not self.QSTB or not f & I.F_ROW or f & I.F_HALF or \
+                KB * self.cfg.D > self.XD * self.cfg.LANES:
+            return False
+        if f & I.F_QGRP:
+            return not f & I.F_QCOL
+        return es == 1 and dst % self.QSW == 0 and drs % self.QSW == 0
 
     def _a_qact(self, ins, a):
         cfg, w = self.cfg, ins.w
@@ -398,8 +448,21 @@ class LedgerSlice(SIM.Slice):
         cs = (w[3] & 0xFFFFFFFF) if ins.flags & I.F_CSCALE else None
         rsc = (w[4] & 0xFFFFFFFF) if ins.flags & I.F_RSCALE else None
         passes = 1 if KB * cfg.D <= self.XD * cfg.LANES else 2
-        self._quant_reads(a, src, rows, KB, w[2], cs, rsc, passes)
+        st = ins.flags & I.F_QST                # (ST: srs w6; its rows to DRAM at R[rc] + w3)
+        self._quant_reads(a, src, rows, KB, w[5] if st else w[2], cs, rsc, passes)
         a.act_wr += (2 if dup else 1) * rows * KB * (cfg.D + 8)
+        if st:
+            d, nb = self.da(ins.rc, w[2]), I.qrow_bytes(KB, cfg.D)
+            self._dram_write(a, "qact_st", rows * nb,
+                             _span_beats([d + r * w[6] for r in range(rows)], nb))
+
+    def _a_lda(self, ins, a):
+        cfg, w = self.cfg, ins.w
+        rows, KB = w[1] & 0xFF, w[1] >> 16
+        d, nb = self.da(ins.ra, w[0]), I.qrow_bytes(KB, cfg.D)
+        self._dram_read(a, "lda", rows * nb, _span_beats([d + r * w[2] for r in range(rows)], nb))
+        a.portb += rows * -(-nb // cfg.D)
+        a.act_wr += rows * KB * (cfg.D + 8)
 
     def _a_qst(self, ins, a):
         cfg, w = self.cfg, ins.w
@@ -408,13 +471,20 @@ class LedgerSlice(SIM.Slice):
         sdst = (self.reg(ins.rc) + w[2]) & 0xFFFFFFFF
         rows, KB = w[3] & 0xFFFF, w[3] >> 16
         srs, drs, es = w[4], w[5], w[6]
+        hld = 0
+        if srs & I.QST_HL:          # HL (QSTHL, through the row buffer): one read, pass 1 pops
+            hld = (srs >> I.QST_HLD & 0x7FF) << 10      # each chunk twice (2 KB D / QSW: pass
+            srs &= (1 << I.QST_HLD) - 1                 # 0's KB D / LANES at QSW = 2 LANES)
         row_mode, half = bool(ins.flags & I.F_ROW), bool(ins.flags & I.F_HALF)
-        self._quant_reads(a, src, rows, KB, srs, None, None, 2)
+        passes = 1 if hld or self._qst_buffered(ins, dst, KB, drs, es) else 2
+        self._quant_reads(a, src, rows, KB, srs, None, None, passes)
         ne = KB * cfg.D // 2 if half else KB * cfg.D
         baddr = dst + np.arange(rows)[:, None] * drs + np.arange(ne)[None, :] * es
         sb = 4 if row_mode else 4 + 4 * -(-KB // 4)
         saddr = sdst + np.arange(rows)[:, None] * sb + np.arange(sb)[None, :]
         allb = np.concatenate([baddr.reshape(-1), saddr.reshape(-1)])
+        if hld:                                         # (lo's bytes and scales, HLD after)
+            allb = np.concatenate([allb, allb + hld])
         beats, cnt = np.unique(allb // BEAT, return_counts=True)
         part = int((cnt < BEAT).sum())                # beats written in part: read, merge, write
         self._dram_write(a, "qst", allb.size, beats)
@@ -443,6 +513,15 @@ class LedgerSlice(SIM.Slice):
             if not ins.flags & I.F_DONE:
                 dv = [av] if ins.flags & I.F_DSCALAR else av + np.arange(cols)
                 us.append(self._rd(a, "VA", dv, 1))
+            self._uses_read(np.unique(np.concatenate(us)))
+            u = self._wr(a, "VPU", didx, ch)
+            return lambda: self._uses_write(u)
+        if func == I.V_MAC:                     # dst on port B (in place); B's columns filled
+            didx = dst + r * drs + c
+            us.append(self._rd(a, "VA", av + r * ars + c, ch))
+            us.append(self._rd(a, "VB", didx, ch))
+            if bmode == I.B_COL:
+                us.append(self._rd(a, "VB", bv + np.arange(cols), -(-cols // L)))
             self._uses_read(np.unique(np.concatenate(us)))
             u = self._wr(a, "VPU", didx, ch)
             return lambda: self._uses_write(u)
@@ -530,10 +609,10 @@ class LedgerSlice(SIM.Slice):
         ssa = (self.reg(ins.rb) + w[1]) & 0xFFFFFFFF
         N, KB, k0 = w[3] & 0xFFFF, (w[3] >> 16) & 0xFF, (w[3] >> 24) & 0xFF
         ors, M, ab = w[5] & 0xFFFF, (w[5] >> 16) & 0xFF, w[5] >> 24
-        srs = w[6]
+        srs = w[6] & (1 << I.MM_HLD) - 1 if w[6] & I.MM_SPL else w[6]     # (SPL: HLD above srs)
         unit, rsc = bool(ins.flags & I.F_UNIT), bool(ins.flags & I.F_RSC)
         wf = (ins.flags >> I.WF_SHIFT) & 3
-        sw, _, _ = self._mx_scales(wf, ssa, srs, N, KB, k0, unit, rsc)
+        sw, _, _ = self._mx_scales(wf, ssa, srs, N, KB, k0, unit, rsc, 1 << ins.rd)
         W = I.MX_W[wf]
         acc = np.zeros((M, N), np.int64)
         y = F.mul(F.mul(F.i2f(acc), sw[None, :]),
@@ -744,21 +823,23 @@ def compile_tile(model, T, pos, mcols=None, wformat="fp4", head="int8", layers=N
 
 
 def compile_any(model, kind, n, pos, mcols=None, wformat="fp4", head="int8", layers=None,
-                dram_bytes=1 << 32):
+                dram_bytes=1 << 32, sets=None):
     """vpu_hack.compile_case's full tuple; kind "tile": compile_tile."""
     if kind == "tile":
         return compile_tile(model, n, pos, mcols, wformat, head, layers, dram_bytes)
     sys.path.insert(0, str(ROOT / "tools"))
     import vpu_hack as VH
     return VH.compile_case(model, kind, n, pos, mcols, wformat, head, layers=layers,
-                           dram_bytes=dram_bytes, full=True)
+                           dram_bytes=dram_bytes, full=True, sets=sets)
 
 
-def case(model, kind, n, pos, mcols=None, layers=None, wformat="fp4", head="int8", rows_kw=None):
+def case(model, kind, n, pos, mcols=None, layers=None, wformat="fp4", head="int8", rows_kw=None,
+         sets=None):
     """(cfg, programs, poke, info) of a dense case (tools/vpu_hack.compile_case; kind "tile":
-    a tiled prompt run)."""
+    a tiled prompt run); sets: Config fields over the board's."""
     card_env()
-    cfg, progs, img, area, spec = compile_any(model, kind, n, pos, mcols, wformat, head, layers)
+    cfg, progs, img, area, spec = compile_any(model, kind, n, pos, mcols, wformat, head, layers,
+                                              sets=sets)
     end = area["end"] if area else img.nbytes
     # the run's DRAM is the image's; a program over IMEM (8 batched rows) runs as one here (the
     # card splits the step into groups of rows that fit, each streaming the weights again)
@@ -1321,10 +1402,13 @@ def main(argv=None) -> int:
         ap.add_argument("--layers")
         ap.add_argument("--wformat", default="fp4")
         ap.add_argument("--head-format", default="int8")
+        ap.add_argument("--set", default="", help="K=V,... Config fields over the board's")
         ap.add_argument("--json")
         o = ap.parse_args(a)
+        sets = {k: int(v) for k, v in (kv.split("=") for kv in o.set.split(",") if kv)}
         cfg, progs, poke, info = case(o.model, o.kind, o.n, o.pos, o.mcols, o.layers, o.wformat,
-                                      o.head_format)
+                                      o.head_format, sets=sets)
+        info["sets"] = sets
     info["instructions_static"] = max(len(p) for p in progs)
     r = ledger(cfg, progs, poke=poke)
     r["case"] = info

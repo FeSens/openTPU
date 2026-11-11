@@ -1,6 +1,6 @@
 # EXPERIMENTAL (docs/vpu_pump.md): out-of-context synthesis + implementation of otpu_vpu (the VPU
 # with the stream engine's core side, otpu_se_comp and otpu_se_tail) on the YPCB's part, at one
-# clock. Vivado on omarchy only:
+# clock. Vivado on the build host only:
 #   vivado -mode batch -nojournal -source rtl/exp/vpu_pump/ooc_vpu.tcl -tclargs <out> <PERIOD_NS> \
 #     <LANES> <CL> <HAS_SE> [WBUF] [PART]
 # Production: 7.5 8 2 1 1 (CL is unused with the stream engine: COMP8). Prints OTPU_* lines.

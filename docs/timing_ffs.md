@@ -525,7 +525,7 @@ margin, below):
 and its scrub, then the first inference run (`perf.py qwen3 int8`) ended on an uncorrectable ECC
 error; over the fast qual channel 1 counted 1,747 corrected and 293 uncorrectable words, channel
 0 one, and token-exact runs then diverged. The window was stopped and the bitstreams compared on
-one sequence (opentpu's `~/otpu-build/bisect150/pwr.sh`, `xadc.py` beside it: scrub; idle 10
+one sequence (the card host's `~/otpu-build/bisect150/pwr.sh`, `xadc.py` beside it: scrub; idle 10
 s; the DRAM turnaround stress 30 s; `perf.py` qwen3 and lfm2 int8), with the XADC's minimum and
 maximum of each supply over each step:
 
@@ -604,7 +604,7 @@ maximum of each supply over each step:
     X4-X11. They land on X0-X3 beside the PHYs, away from their logic: the VPU's and the
     quantizer's own paths fail by 1-2 ns. A hard pblock that keeps the XDMA beside the PCIe
     block (`OTPU_XDMA_PBLOCK`; the placer had moved it to X0Y5-Y7) makes it worse.
-- **Placement screens** (omarchy's `~/otpu-build/tff/screen/`). Each screen starts from r150m's
+- **Placement screens** (the build host's `~/otpu-build/tff/screen/`). Each screen starts from r150m's
   opt checkpoint, re-places the array and runs the build's place_design and phys_opt_design
   (about 20 minutes, no route). The estimate after phys_opt (with the 0.15 ns margin) predicts the
   route:
@@ -638,7 +638,7 @@ maximum of each supply over each step:
   either side). The second window, on production's host ec87de44 with loadcal 6b8d9d4c and
   1c4b3bf8, read ECC 0 / 0 on both channels in every qual (156 reads: the fast qual, E2B, the
   chats, MoE, the stresses, the heavy xl quals) and in the 5 h soak (20 quals, 1,161 reads).
-  Promoted the same day (opentpu's `deploy_r150o_1da7d3b9`; E3 production-prev): the
+  Promoted the same day (the card host's `deploy_r150o_1da7d3b9`; E3 production-prev): the
   promotion's own load windows under prefill beside the DMA summed 94 taps, every lane 4 or more
   (E3 105, its narrowest lane 4).
 - What 150 MHz buys, on the same runs: prefill 4% (Qwen3-0.6B 173.1 -> 180.1 tok/s, LFM2.5

@@ -214,7 +214,7 @@ and with several images.
   module, else its first base in the table): fp4 experts, DeltaNet int8 in layers 0-19 and NVFP4
   after them, attention NVFP4, the shared expert int8, int8 head, int8 embedding on the host.
   Section 5.1 has the scan that chose them.
-- The pool is MX, built like `pool-q35-mx` (tools/offload/pack_pool.py) on hwe-bench:
+- The pool is MX, built like `pool-q35-mx` (tools/offload/pack_pool.py) on the simulation host:
   - `pool-mcpv35-mx.split.bin`, 17,532,190,720 bytes: 10,240 experts in 1.71 MB slots, with
     its .packed (all 10,240), .format and .key;
   - its key holds this checkpoint's identity, the hash of its config.json.
@@ -323,7 +323,7 @@ That is about 250 G MAC, about 3.7 s per crop at full MXU rate. The card measure
 crop of 1,008 patches (session mcpv2, 6). The unpadded projections save
 20% against the first estimate's padded heads (312 G). A 448^2 image is 1 crop and 64 tokens;
 a large image with 9 slices is 10 crops, about 37 s, and about 640 tokens. The m8 build
-(MCOLS 8) halves it. On hwe-bench's ISA simulator a crop takes 5-7 minutes (a simulator,
+(MCOLS 8) halves it. On the simulation host's ISA simulator a crop takes 5-7 minutes (a simulator,
 not the card).
 
 `--max-slices` (HF's `max_slice_nums`) bounds the cost: 1 gives the thumbnail alone.
@@ -416,7 +416,7 @@ slot. For an image prompt the host rewrites those rows (`minicpmv.Vision.positio
 
 The first design had two device runs build those rows (an RLD of the positions and masked
 selects). The host's gather writes the same values without a program: indexing and DMA, no
-arithmetic, the same class as a tokenizer's position ids (the lead approved it, 2026-10-13). It
+arithmetic, the same class as a tokenizer's position ids (approved 2026-10-13). It
 is 256 bytes per slot over PCIe (cos and sin, 32 frequencies each), once per image prompt: up to
 1 MB at a 4096-token cache.
 
@@ -475,7 +475,7 @@ References:
   `LazyExperts`: HF's eager expert loop reading each routed expert from the checkpoint; 0 logit
   difference against `from_pretrained` on a tiny model).
 
-Results (hwe-bench, ISA simulator):
+Results (the simulation host, ISA simulator):
 - Greedy: the card's 16 tokens equal HF's through the end of the turn.
 - The vocabulary's partial head block gives the logits of the head padded with zero rows, bit
   for bit (tests/test_minicpmv.py).
@@ -511,7 +511,7 @@ Results (hwe-bench, ISA simulator):
 
   qwen35-35b ships at +4.00% (SE 0.16) on its own text (docs/mx_mxu.md). The first rule (the
   lead's, 2026-10-13: the most slots with a dKL point estimate at most +4.00%) picked DeltaNet
-  int8 in layers 0-19 with the shared expert int8. Decode time confirms it (the lead, 2026-10-13):
+  int8 in layers 0-19 with the shared expert int8. Decode time confirms it (2026-10-13):
   it is also the best net (+3.5) and meets the quality bar.
   - It is MiniCPM-V's default on the card (`streamed.FORMATS["minicpmv"]`: fp4 experts, head
     int8, formats `delta@0-19=int8,attn=nvfp4,delta=nvfp4,mlp=int8`).
@@ -547,7 +547,7 @@ Results (hwe-bench, ISA simulator):
 
   The ViT MLPs stay int8. The first token's dKL hardly moves with the rows; the reply's dKL
   follows.
-- **The reply's dKL** (`tools/minicpmv_hf.py vision --rows`, hwe-bench). HF's greedy reply to
+- **The reply's dKL** (`tools/minicpmv_hf.py vision --rows`, the simulation host). HF's greedy reply to
   "Describe this image in one sentence." is cut at its first `<|im_end|>` (21, 32 and 32
   tokens). The reply is then teacher-forced with each variant's rows in place of HF's, and the
   table gives the KL from HF's next-token distribution in nats per reply token, plus the share
@@ -573,7 +573,7 @@ Results (hwe-bench, ISA simulator):
   - The card's int8 tower costs ~5e-3 nats a reply token. That is ~3x the floor of tanh alone,
     half the language model's int8 dKL (9.9e-3) and a ninth of its card formats' (4.7e-2 from
     float, 5.1). Every variant's top token disagrees with HF's at most once per reply.
-  - Decided (the lead, 2026-10-13): the tower stays int8, with no fix. The variants cannot be
+  - Decided (2026-10-13): the tower stays int8, with no fix. The variants cannot be
     told apart at 3 images; the card's 5.3e-3 is half the language model's own int8 dKL; the
     top token differs from HF's at most once a reply.
 - **The 0.776 row** is one row of 203: cats.jpg's second crop (40 x 28), output row 68, its
@@ -589,7 +589,7 @@ Results (hwe-bench, ISA simulator):
   - the post LayerNorm brings it to 0.945 and the projector's 2 x 2 merge to 0.776.
 
   It is int8's precision, not a fault of the card's: the fp32 reference with the MXU's numerics
-  (quant.fake_w, fake_act, mx_matmul; scratch vit_emul.py, the Mac, torchvision 0.28's crop)
+  (quant.fake_w, fake_act, mx_matmul; scratch vit_emul.py, a laptop, torchvision 0.28's crop)
   gives the row 0.737 at layer 25 and 0.820 out, the worst row too. One operand at a time
   (layer 25 / out): the weights int8 0.831 / 0.956, the LayerNorm outputs 0.928 / 0.994, the
   MLP's hidden 0.928 / 0.994; Q, K, V, P and the attention output 0.990 or more. Of the
@@ -625,14 +625,14 @@ The model reads about 15% above the card in absolute tok/s, so the differences a
     of card time) is about +0.09 s a crop: +0.9 s, 2.5%, on 10 crops.
 - Data moved per 10-crop image: staged 0.6 GB plus at most 0.6 GB of refills; streamed 5.4 GB.
 
-The choice (the lead's, 2026-10-13): staged through the expert server (4.2). Decode keeps every
+The choice (2026-10-13): staged through the expert server (4.2). Decode keeps every
 slot between images, and it moves the fewest bytes. The card measured it in session mcpv2 (6):
 decode +8.4% (36 slots a layer against 27), an image +0.3-0.9 s. It has been the default since
 then; resident is `--vision-resident`.
 
 ## 6. Card plan
 
-On opentpu, `/data/otpu/minicpmv/` holds:
+On the card host, the data disk's `minicpmv/` holds:
 - the slim checkpoint: 6,021,430,313 bytes (sha256 sums in `SUMS-slim`, all checked there on
   2026-10-13);
 - the MX pool: 17,532,190,720 bytes with its .packed, .format and .key (`SUMS-pool`, checked).
@@ -641,18 +641,18 @@ On opentpu, `/data/otpu/minicpmv/` holds:
   for byte, then layer 40, then the vision pieces from 41 x E);
 - `img/` (the sessions' images) and `refs/` (their ISA references);
 - `pylib/`: torchvision 0.29.1+cpu, pillow 12.3.0 and transformers 5.18.0 over the venv's torch
-  2.14.0 (hwe-bench's `~/mcpv/tf518`, file for file). Neither host's venv has torchvision or
+  2.14.0 (the simulation host's `~/mcpv/tf518`, file for file). Neither host's venv has torchvision or
   pillow (pyproject's `minicpmv` extra names them; the tests that need pillow skip without it),
   and without torchvision the resize falls back to torch's (not bit for bit HF's): the
   card's image rows would not be the references'. The processor's crops of the sessions'
-  images hash the same on hwe-bench and opentpu with it.
+  images hash the same on the simulation host and the card host with it.
 
-Relays go hwe-bench -> Mac -> opentpu, between card sessions. Nothing large goes on /home.
+Relays go the simulation host -> a laptop -> the card host, between card sessions. Nothing large goes on /home.
 
-Sessions (the lead runs them; scripts on this branch):
+Sessions (scripts on this branch):
 1. **mcpv1** (`tools/offload/sessions/mcpv1.sh`; production's bitstream and configuration):
    through otpu-chat's engine and Chat (`tools/qual/chatmoe.py --image N:PATH`), each run
-   token-exact against the ISA simulator's (REF=1 on hwe-bench):
+   token-exact against the ISA simulator's (REF=1 on the simulation host):
    - text: chatmoe.py's two text turns;
    - thumb: cats.jpg at `--max-slices 1` (one crop), two turns;
    - sliced: doc.png at the default 9 slices (7 crops), one turn;
@@ -662,7 +662,7 @@ Sessions (the lead runs them; scripts on this branch):
    Each turn reports the crops' seconds through the card's tower, TTFT, prefill and decode
    tok/s and the slots' hits.
 
-   PASSED 2026-10-13 16:36 (opentpu): text, thumb and serve token-exact; serve's first reply
+   PASSED 2026-10-13 16:36 (the card host): text, thumb and serve token-exact; serve's first reply
    was thumb's, its repeat had 87 of 88 prompt tokens cached (TTFT 0.63 s) and its next turn
    103. Its times are the cold ones explained under mcpv2.
 2. **mcpv2** (`tools/offload/sessions/mcpv2.sh`): where the time goes, and staged vision.
@@ -675,7 +675,7 @@ Sessions (the lead runs them; scripts on this branch):
    Each run follows a page-cache reset: every other big file is dropped and the pool read in
    with dd.
 
-   PASSED 2026-10-13 17:22 (opentpu; RUNS tower text staged stower, sliced waits for its
+   PASSED 2026-10-13 17:22 (the card host; RUNS tower text staged stower, sliced waits for its
    reference); text and staged are token-exact.
 
    Findings:
@@ -729,7 +729,7 @@ Sessions (the lead runs them; scripts on this branch):
    - **The first crop of a patch count.** It takes ~23 s more on the card host (doc.png's
      first 32 x 32: 28.9 s). BoardBackend.start computes each new program's WAITC wait
      entries (waits.entries) the first time it is started: attend 14.1 s, wmerge 2.5 s, qkv
-     1.4 s, the rest 4.7 s. On the Mac it is 6-17 s, depending on load; attend's 214,534 visits
+     1.4 s, the rest 4.7 s. On a laptop it is 6-17 s, depending on load; attend's 214,534 visits
      dominate it.
      - The analysis is linear in the instructions a run executes: it walks every iteration
        of each loop of known count (attend at 1,024 patches: 214,534 visits). Each visit
@@ -741,7 +741,7 @@ Sessions (the lead runs them; scripts on this branch):
          checked only where an instruction has some.
        - The entries are the same (tests: random programs over every unit, the tower's
          programs resident and staged).
-       - Speed on the Mac: the tower's 13 programs at 1,024 patches 9.5 -> 2.4 s (attend
+       - Speed on a laptop: the tower's 13 programs at 1,024 patches 9.5 -> 2.4 s (attend
          5.3x); Qwen3.5-0.8B's, Qwen3-0.6B's and LFM2.5-230M's decode programs 2.3-4.2x.
      - Since then (decision 9) `opentpu/host/vision_warm.py` computes them ahead. After the
        engine's load, a spawned process at nice 19 builds the image's layout and computes
@@ -775,7 +775,7 @@ Sessions (the lead runs them; scripts on this branch):
 3. **mcpv3** (`tools/offload/sessions/mcpv3.sh`): this tree's defaults (staged vision, the
    tower's wait entries computed ahead, waits._MemoPass, the odd-stride residual), the sliced
    reference's first run, and what the pool's disk costs.
-   - **First run (2026-10-13, ~19:25 opentpu): FAILED in 3 minutes, on the host only.**
+   - **First run (2026-10-13, ~19:25 on the card host's clock): FAILED in 3 minutes, on the host only.**
      - Every run died opening the engine: "staged vision: 438 pieces, 0 expert slots past
        k = 8".
      - 3779dc22 checked staged vision's room in every minicpmv.Image's constructor (the
@@ -789,7 +789,7 @@ Sessions (the lead runs them; scripts on this branch):
        streamed.engine.
      - test_the_real_staged_layout_has_room_at_the_cards_slots builds the real layout on the
        card's 4 GiB: the probe at 8 slots a layer, the engine's 36.
-   - **mcpv3b PASSED** (2026-10-13 19:56 opentpu; tree 3e3190ab). ECC 0/0, selftest all pass.
+   - **mcpv3b PASSED** (2026-10-13 19:56 on the card host's clock; tree 3e3190ab). ECC 0/0, selftest all pass.
      - Token-exact: warmup, text and thumb. Also sliced, for the first time: doc.png's 7
        crops, 488 prompt tokens, 32 reply tokens.
    - **The tower, as co-simulated.**
@@ -827,7 +827,7 @@ Sessions (the lead runs them; scripts on this branch):
    - Per pool: a warm-up process, then pool_disk.py's arms cached, dropped, dropped, cached.
      Each arm asks the same text turn, 26 prompt tokens and 32 reply tokens, greedy.
 
-   PASSED 2026-10-13 20:20 (opentpu). Every arm valid by mincore; q35's files unchanged;
+   PASSED 2026-10-13 20:20 (the card host). Every arm valid by mincore; q35's files unchanged;
    selftest all pass before and after.
 
    | pool | arm | prefill tok/s (device) | decode tok/s | misses | ms of reads a miss | disk reads |
@@ -857,9 +857,9 @@ Sessions (the lead runs them; scripts on this branch):
      - The in-order read after the dropped arms still ran at 478 MB/s.
      - `tools/offload/pool_reads.py` tells them apart, on the host alone and read only: the
        file's extents (filefrag) and its mount, 2 x 200 random experts dropped and read back
-       (one at a time, then 8 queued at once), 512 MB in order. hwe-bench's NVMe, a 2 GB test
+       (one at a time, then 8 queued at once), 512 MB in order. The simulation host's NVMe, a 2 GB test
        pool: 0.61 ms an expert one at a time, 0.52 queued.
-     - **pool_reads on the card host** (2026-10-13 21:29 opentpu, host idle, under the lock;
+     - **pool_reads on the card host** (2026-10-13 21:29 on the card host's clock, host idle, under the lock;
        q35's size, mtime and sums unchanged):
 
        | pool | file | one at a time | 8 queued | 512 MB in order |
@@ -902,7 +902,7 @@ Sessions (the lead runs them; scripts on this branch):
 1. Vocabulary 248,144: the partial head block, tested bit-identical to a zero-padded head.
 2. The projector's GELU: tanh (5.2).
 3. No MTP head in the checkpoint; DSpark later.
-4. The card host's storage: `/data/otpu/minicpmv/`.
+4. The card host's storage: the data disk's `minicpmv/`.
 5. `--max-slices`: default 9, in otpu-chat and as otpu-serve's request field and option.
 6. M-RoPE rows written by the host's gather (4.3).
 7. The vision weights: int8, without a fix for the 0.776 row (the reply's dKL, 5.2; the fp4

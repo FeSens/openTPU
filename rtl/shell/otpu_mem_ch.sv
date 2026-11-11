@@ -716,11 +716,14 @@ endmodule
 // Synchronous FIFO, first-word fall-through, distributed RAM (the channel bridge's queues).
 // RO = 1: rvalid, wready and the head entry from registers (their next values), so no path from
 // them starts at the pointers or goes through the RAM; the same cycles (rdata differs only while
-// rvalid is low).
+// rvalid is low). HCP > 1 (RO): the RAM in HCP column groups, each read at a copy of its own of
+// the head's read address (DONT_TOUCH; the channel bridge's W FIFO at bcu1525-s2: rp1 into 297
+// address pins over 50 columns of SLR1, -0.208 ns at 300 MHz in s2syn); the same cycles.
 module otpu_sfifo #(
   parameter int W = 8,
   parameter int DEPTH = 16,
-  parameter bit RO = 1'b0
+  parameter bit RO = 1'b0,
+  parameter int HCP = 1
 ) (
   input  logic         clk,
   input  logic         rst,
@@ -732,6 +735,8 @@ module otpu_sfifo #(
   output logic [W-1:0] rdata
 );
   localparam int AW = $clog2(DEPTH);
+  initial if (HCP < 1 || (HCP > 1 && (!RO || W % HCP != 0)))
+    $fatal(1, "otpu_sfifo: HCP %0d (1, or with RO a divisor of W)", HCP);
   (* ram_style = "distributed" *) logic [W-1:0] mem [DEPTH];
   logic [AW:0] wp, rp;
   always_ff @(posedge clk) begin
@@ -741,23 +746,45 @@ module otpu_sfifo #(
       if (rvalid && rready) rp <= rp + 1'b1;
     end
   end
-  always_ff @(posedge clk) if (wvalid && wready) mem[wp[AW-1:0]] <= wdata;
+  always_ff @(posedge clk) if (HCP == 1 && wvalid && wready) mem[wp[AW-1:0]] <= wdata;
   if (RO) begin : g_ro
     // the next head: on a pop the entry after it (this cycle's write if there is none), into an
-    // empty FIFO this cycle's write; the flags from the pointers after this cycle's push and pop
+    // empty FIFO this cycle's write. The flags (rv, wr; one: a single entry) and the head's read
+    // address (rp1) are registers; their next values are this cycle's (or a compare of the fill
+    // d) picked by this cycle's push and pop, so a late push or pop goes through one LUT, not an
+    // adder and a compare (found on FIFOs clocked at 450 MHz: the W FIFO's head, wp - rp
+    // == 1 two of its path's 4 levels, rp + 1 one; the command FIFO's rv, 5 levels after the pop)
     logic [W-1:0]  head;
-    logic [AW-1:0] rp1;
-    logic [AW:0]   wp_n, rp_n;
-    logic          one, rv = 1'b0, wr = 1'b1;
-    assign rp1  = rp[AW-1:0] + 1'b1;
-    assign one  = (wp - rp) == (AW + 1)'(1);
-    assign wp_n = wp + (AW + 1)'(wvalid && wready);
-    assign rp_n = rp + (AW + 1)'(rvalid && rready);
+    logic [AW-1:0] rp1 = AW'(1);
+    logic [AW:0]   d;
+    logic          push, pop, one = 1'b0, rv = 1'b0, wr = 1'b1;
+    assign push = wvalid && wready;
+    assign pop  = rvalid && rready;
+    assign d    = wp - rp;
+    logic [W-1:0]  nxt;                    // the entry at rp1
+    if (HCP > 1) begin : g_hcp
+      localparam int GW = W / HCP;
+      (* dont_touch = "true" *) logic [HCP-1:0][AW-1:0] rpc = {HCP{AW'(1)}};
+      always_ff @(posedge clk)
+        if (rst) rpc <= {HCP{AW'(1)}};
+        else if (pop) rpc <= {HCP{rp1 + 1'b1}};
+      for (genvar g = 0; g < HCP; g++) begin : g_c
+        (* ram_style = "distributed" *) logic [GW-1:0] cmem [DEPTH];
+        always_ff @(posedge clk) if (wvalid && wready) cmem[wp[AW-1:0]] <= wdata[g * GW +: GW];
+        assign nxt[g * GW +: GW] = cmem[rpc[g]];
+      end
+    end else begin : g_h1
+      assign nxt = mem[rp1];
+    end
     always_ff @(posedge clk) begin
-      if (rvalid && rready) head <= one ? wdata : mem[rp1];
-      else if (!rvalid)     head <= wdata;
-      if (rst) begin rv <= 1'b0; wr <= 1'b1; end
-      else begin rv <= wp_n != rp_n; wr <= (wp_n - rp_n) != (AW + 1)'(DEPTH); end
+      if (pop)      head <= one ? wdata : nxt;
+      else if (!rv) head <= wdata;
+      if (rst) begin rv <= 1'b0; wr <= 1'b1; one <= 1'b0; rp1 <= AW'(1); end
+      else begin
+        if (pop) rp1 <= rp1 + 1'b1;
+        if (push && !pop) begin rv <= 1'b1; wr <= d != (AW + 1)'(DEPTH - 1); one <= !rv; end
+        if (pop && !push) begin rv <= !one; wr <= 1'b1; one <= d == (AW + 1)'(2); end
+      end
     end
     assign rvalid = rv;
     assign wready = wr;

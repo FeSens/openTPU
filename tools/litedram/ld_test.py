@@ -342,7 +342,9 @@ class BIST(LiteXModule):
         for g in range(ngroups):
             gw = 8 * modules
             rot = (st << (7 * g % 64)) | (st >> (64 - 7 * g % 64)) if g else st
-            rnd = Cat(rot[:64], rot[:gw - 64] ^ rot[64 - (gw - 64):64])
+            # a 72-bit group's last byte from the word's ends; a 64-bit group (a DIMM without ECC)
+            # is the word
+            rnd = Cat(rot[:64], rot[:gw - 64] ^ rot[64 - (gw - 64):64]) if gw > 64 else rot[:64]
             pat = Cat(dat_addr, ~dat_addr, dat_addr)[:gw] ^ Cat(self.seed.storage, self.seed.storage)[:gw]
             groups.append(Mux(addrmode, pat, rnd))
         self.comb += exp.eq(Cat(*groups))

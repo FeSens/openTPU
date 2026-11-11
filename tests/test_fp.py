@@ -23,6 +23,25 @@ def _vals(n):
     return np.concatenate([v, edge]).astype(np.float32)
 
 
+def _split_vals(n):
+    """fp32 values for the split's lo byte: exponents 110 .. 140 (the lo shift's 118 .. 133 and
+    either side), random and edge mantissas, both signs; values on the two roundings' ties and
+    near q8's saturation."""
+    e = rng.integers(110, 141, n, dtype=np.uint32)
+    m = rng.integers(0, 1 << 23, n, dtype=np.uint32)
+    m[: n // 4] = rng.choice(np.uint32([0, 1, 0x7FFFFF, 0x400000, 0x3FFFFF, 0x7FFFFE]), n // 4)
+    s = rng.integers(0, 2, n, dtype=np.uint32)
+    v = F.from_bits((s << 31) | (e << 23) | m).copy()
+    k = rng.integers(0, 128 * 256, n // 2)
+    ties = np.concatenate([(k + 0.5) / 256, np.arange(128) + 0.5, np.arange(129) + 127.5 / 256,
+                           np.arange(129) + 128.5 / 256, 127 + np.arange(256) / 256,
+                           127.5 + np.arange(-4, 5) / 512, [127.99, 128.0, 2.0 ** -9,
+                                                            2.0 ** -9 * 3, 2.0 ** -10]])
+    ties = F.f32(np.concatenate([ties, -ties]))
+    return np.concatenate([v, ties, np.nextafter(ties, np.float32(np.inf)),
+                           np.nextafter(ties, np.float32(-np.inf))]).astype(np.float32)
+
+
 def _vectors(n=20000):
     a, b = _vals(n), _vals(n)
     # near-cancellation pairs for add/sub
@@ -123,6 +142,17 @@ def _vectors(n=20000):
     nx = F.from_bits(nans)
     for op, fn in ((5, F.exp2), (6, F.recip), (7, F.rsqrt), (11, F.fabs), (12, F.log2)):
         add(op, nx, nx, F.bits(fn(nx)))
+    # the split's lo byte and the split build's q8 (otpu_quant SPLIT): every class, the lo
+    # shift's exponents 110 .. 140 with random and edge mantissas, ties of both roundings
+    # (256 |x| at k + 1/2, |x| at k + 1/2) and the saturation edges near 127 and 128
+    sp = np.concatenate([_split_vals(n), y, ca, nx, qn])
+    lo8 = lambda v: v.view(np.uint8).astype(np.uint32)
+    add(15, sp, sp, lo8(F.q8lo(sp)))
+    add(16, sp, sp, lo8(F.q8(sp)))
+    s = np.concatenate([_full(n), F.from_bits(np.uint32(
+        [(sg << 31) | (e << 23) | m for sg in (0, 1) for e in (0, 1, 7, 8, 9, 10, 254, 255)
+         for m in (0, 1, 0x400000, 0x7FFFFF)])), nx])
+    add(17, s, s, F.bits(F.mul(s, F.F32(2.0 ** -8))))
     # the sign of a zero sum (IEEE 754 roundTiesToEven: x - x = x + (-x) = +0, (-0) + (-0) = -0)
     for op, x, y in _zero_sign_cases():
         add(op, x, y, F.bits((F.add if op == 0 else F.sub)(x, y)))
@@ -327,6 +357,45 @@ def test_rsqrt_error_bound():
     assert u.max() < 1.05, (u.max(), x[np.argmax(u)])
     p = np.exp2(np.arange(-126, 128, 2)).astype(np.float32)
     assert np.array_equal(F.rsqrt(p), (1 / np.sqrt(p.astype(np.float64))).astype(np.float32))
+
+
+def _lo_model(x):
+    """otpu_fp's qlo_s1 / qlo_s2 / qlo_q8 on the bits of x (the split's lo byte and the split
+    build's q8), integer arithmetic only: (lo, q8) as int8."""
+    u = F.bits(x).astype(np.int64)
+    s, e, m = u >> 31, (u >> 23) & 0xFF, (u & 0x7FFFFF) | (1 << 23)
+    zero = (e < 118) | ((e == 255) & ((u & 0x7FFFFF) != 0))
+    sat = (e >= 134) & ~zero
+    sh = np.where(zero | sat, 24, 142 - e)
+    k = sh - 1
+    ip = m >> sh
+    g = (m >> k) & 1
+    st = (m & ((1 << k) - 1)) != 0
+    f = (ip & 0xFF) + (g & (st | (ip & 1))).astype(np.int64)
+    up = ((ip >> 7) & 1).astype(bool) & (((ip & 0x7F) != 0) | (g == 1) | st | ((ip >> 8) & 1 == 1))
+    v = np.clip(np.where(up & ((ip >> 8) != 127), f - 256, f), -127, 127)
+    qi = np.minimum((ip >> 8) + up, 127)
+    lo = np.where(zero, 0, np.where(sat, 127, v))
+    q = np.where(zero, 0, np.where(sat, 127, qi))
+    return (np.where(s == 1, -lo, lo).astype(np.int8), np.where(s == 1, -q, q).astype(np.int8))
+
+
+def test_split_lo_model():
+    """The lo byte (fp32.q8lo: sat127(rint(256 x) - 256 q8(x)), NaN 0) and q8 as otpu_fp's split
+    functions compute them from one 16-bit shift (floor(256 |x|), guard, sticky), on the lo
+    shift's exponents either side, ties of both roundings, q8's saturation edges and every
+    class; and the split itself: where q8 does not saturate q8(x) + q8lo(x) / 256 is x to 2^-9,
+    to 2^-8 where lo saturates (rint(256 x) - 256 q8(x) = +-128: x within 2^-9 of a half), q8lo
+    odd in x."""
+    x = np.concatenate([_split_vals(1 << 16), _vals(1 << 14)])
+    lo, q = _lo_model(x)
+    assert np.array_equal(lo, F.q8lo(x)), x[np.nonzero(lo != F.q8lo(x))[0][:8]]
+    assert np.array_equal(q, F.q8(x)), x[np.nonzero(q != F.q8(x))[0][:8]]
+    ok = np.isfinite(x) & (np.abs(x) <= 127)
+    lo = F.q8lo(x)[ok]
+    err = np.abs(F.q8(x)[ok] + lo / 256.0 - x[ok].astype(np.float64))
+    assert err.max() <= 2.0 ** -8 and err[np.abs(lo) < 127].max() <= 2.0 ** -9, err.max()
+    assert np.array_equal(F.q8lo(-x), -F.q8lo(x).astype(np.int16))
 
 
 def test_rtl_fp_bit_exact(tmp_path):

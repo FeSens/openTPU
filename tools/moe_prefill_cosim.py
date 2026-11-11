@@ -57,6 +57,7 @@ sys.path.insert(0, str(ROOT))
 
 from opentpu import isa as I  # noqa: E402
 from opentpu import language as ol  # noqa: E402
+from opentpu import quant as Q  # noqa: E402
 from opentpu import rtlsim  # noqa: E402
 from opentpu.compiler import Affine, Tensor  # noqa: E402
 from opentpu.isasim import board_config  # noqa: E402
@@ -372,6 +373,22 @@ def lm_passes(ids: np.ndarray, R: int = 2) -> int:
     return sum(len(np.unique(ids[r:r + R])) for r in range(0, len(ids), R))
 
 
+def em_layer_slots(L, scratch: int, distinct: int, k: int) -> int:
+    """Slots a layer for an expert run's image (Layout L's layers, at most E slots each): its
+    scratch of `scratch` bytes, then every used expert in a slot of its own (em_dram) and at
+    least the 3 E slots expert-major needs by default (streamed.expert_major_fits), so that, as
+    on the card, the run's experts' bound starts past the scratch (moe.em_expert_slots; an image
+    of fewer than em_layers layers has every slot as the bound)."""
+    need = -(-scratch // L.pitch) + max(distinct, 3 * L.E)
+    return min(L.E, max(k, -(-need // len(L.slots))))
+
+
+def em_layers(L, scratch: int) -> int:
+    """The MoE layers an expert run's image needs for em_layer_slots' 3 E slots past the scratch
+    at E slots a layer (4 on the 35B: 25 + 768 slots)."""
+    return -(-(-(-scratch // L.pitch) + 3 * L.E) // L.E)
+
+
 def em_dram(img, li: int, ids: np.ndarray, seed=None):
     """(DRAM, the experts' slots): the zero image with the words the expert run of layer li
     reads once every expert its chunk needs has landed (the module docstring). seed: random
@@ -403,18 +420,25 @@ def em_dram(img, li: int, ids: np.ndarray, seed=None):
         put(a + tail, (li * E + ids[r]).astype(np.float32))     # global ids
         put(a + tail + 4 * k, np.full(k, 1.0 / k, np.float32))  # weights
         put(a + tail + 8 * k, np.float32([1.0 if rng is None else 0.5 + rng.random()]))
-    scratch = len(MO.em_slots(Lo, rows * dev.em_rec))
+    # the experts past the server's scratch (Layout.scratch: the image's prefill rows' records,
+    # moe.em_slots), where the run's slot bound has them (dev.em_slots)
+    scratch = len(MO.em_slots(Lo, max(rows, dev.em_rows) * dev.em_rec))
     used, slots = np.unique(ids), Lo.all_slots()
     if scratch + len(used) > len(slots):
         raise ValueError(f"{scratch} scratch slots and {len(used)} experts: the image has "
                          f"{len(slots)} slots")
     es = slots[scratch:scratch + len(used)]
-    f = dev.fmt
+    f, lanes = dev.fmt, getattr(img, "slot_lanes", None)
     for e, a in zip(used, es):
         if rng is not None:                                     # its weights
             w = [0.05 * rng.standard_normal(sh).astype(np.float32)
                  for sh in ((f.F0, H), (f.F0, H), (H, f.F0))]
-            put(a, f.pack(*w))
+            data = f.pack(*w)
+            if lanes is not None:       # with the channel hash: lanes by address (pool_build's)
+                wg, D, own = lanes
+                for o, n in own:
+                    data[o:o + n] = Q.hash_rows(data[o:o + n], a + o, wg, D)
+            put(a, data)
         put(Lo.dir + 8 * (li * E + int(e)), np.array([a, 0x3F800000], np.uint32))  # {slot, 1.0}
         put(a + Lo.tag, np.uint32([1]))                         # landed
     return dram, es
@@ -471,8 +495,9 @@ def cmd_em(a):
         ids = em_ids(rows, mo.k, mo.E, used, a.seed, a.route)
         distinct = em_passes(ids, mo.E)[1]
         L = img.offload
-        need = len(MO.em_slots(L, rows * MO.em_record(s.hidden, mo.k))) + distinct
-        n = max(mo.k, -(-need // len(L.slots)))     # slots a layer: the scratch and every expert
+        n = em_layer_slots(L, max(rows, img.prefill_rows)
+                           * MO.em_record(s.hidden, mo.k, MO.em_qd(img.cfg)),
+                           distinct, mo.k)
         s, img = model_image(kind, M, spec, prefix, "moe", 1, cfg, a.cap, experts=n)
         progs, ra = img.compile_expert_run(li, a.em_pass)
         C, S = img.em_pass                          # (the pass's entries, a short pass's)

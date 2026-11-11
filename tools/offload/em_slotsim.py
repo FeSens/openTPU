@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decode slot hits after a prompt, by the slots' state at the prompt's end (docs/offload.md 13.18).
 
-Offline, on offload's router traces (~/otpu-build/offload/traces on omarchy: <model>.<text>.npz, each MoE
+Offline, on offload's router traces (~/otpu-build/offload/traces on the build host: <model>.<text>.npz, each MoE
 layer's top-k of 2048 tokens, L<i>_idx). Per MoE layer S slots (the card's: the 35B 41 = 1640 / 40, the 26B
 16 = 480 / 30). Every window of a prompt of P rows (its last TAIL rows layer-major, as the chat's "157E +
 4L") and then T decode rows (the trace's next rows: a proxy for a reply's routing), every layer and text;

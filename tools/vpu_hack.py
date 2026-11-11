@@ -16,6 +16,35 @@ run mean anything afterwards (the results are wrong, as with tools/decode_gaps.p
       nose      every DSTEP / STREAM a NOP: an infinitely fast stream engine, and no state traffic
       halfse    each DSTEP's rows halved: an SE of twice the datapath rate; also halves its state
                 traffic (DRAM), which a faster SE would not, so it overstates (docs/vpu_pump.md)
+      qse       each DSTEP's rows quartered: an SE of four times the datapath rate (as halfse)
+      nostate   each DSTEP reads and writes no state (ZERO, and flag bit 7: otpu_dma's
+                simulation-only DF_SIM_NOWR, needs +ds_sim=1): the datapath's time with its state
+                traffic free (docs/se_engine.md)
+      qmin      each QACT one D-block (its rows' first block): the quantizer free, its dependencies
+                kept (it still reads its input's first block and writes its ACT range's first one)
+                -- the bound of any QACT speed-up (docs/weight_groups.md)
+      qhalf     each QACT's blocks halved (ceil): a quantizer of twice the rate, or of one pass over
+                the row (its max known before it: pass 0 done by the producer)
+      nossq     each row sum of squares over >= 1,024 columns (an RMSNorm's statistic: hidden-wide
+                rows) one chunk of 8: the bound of computing it in QACT's pass 0 beside the max
+                (docs/dataflow.md 4.3, NORM; the scalar 1 / rms chain after it is kept)
+      nogather  each GATHER a BAR: the collective's moves free, the slices' synchronization kept
+                (the bound of any GATHER speed-up)
+      halfmm    each MM of M > 1 rows takes ceil(M / 2) (its replay halved): an MXU of two
+                activation rows a step (MCOLS 16 at WG 8, or its DSPs pumped at 2x), its drain and
+                epilogue at today's rate (the bound of any rows-a-step widening; M = 1 MMs as built)
+      w2mm      each grouped int8 MM of M > 1 rows and N > 8 a 4-bit one (WF int4, groups of 16
+                rows): two int8 groups a step (two weight rows a DSP on A and D, the 4-bit path's
+                second column end), its results, epilogue and drain as built (TMEM's writes
+                kept); it reads half the chunks from DRAM, so it understates where DRAM binds
+      exp2l     each EXP2SUB a RECIP of its shape: an exp2 of two passes (a degree-4 polynomial,
+                6 ops: 4 columns a cycle, latency 2 T) instead of three
+      fsum      each RSUM of attention.py's a NOP: the row sums of the softmax taken with its
+                EXP2SUB (a fused sum on the composite's output, no VPU slot)
+      st16      each DSTEP with flag ST16 (isa.F_DST16): its DRAM state in 16 bits, half the
+                chunks each way (needs the board's ST16, Config.ST16; the 16-bit state study's
+                timing on programs compiled for the fp32 state: each head's state the first half
+                of its area. The images of a Config.ST16 target do it for real: Spec.state16)
 
 `keep(ins)` (optional) protects instructions that must stay exact because a later RLD turns their
 values into addresses or loop counts (the MoE routing's bookkeeping: tools/moe_prefill_cosim.py).
@@ -26,9 +55,12 @@ import dataclasses
 
 from opentpu import isa as I
 
-COMPOSITE = {I.V_EXP2, I.V_EXP2SUB, I.V_RECIP, I.V_RSQRT, I.V_LOG2}
+COMPOSITE = {I.V_EXP2, I.V_EXP2SUB, I.V_RECIP, I.V_RSQRT, I.V_LOG2, I.V_SIGMOID, I.V_SILU}
 SUMS = {I.V_RSUM, I.V_RSSQ, I.V_RDOT}
-MODES = ("novop", "nocomp", "comp1", "half", "halfcomp", "halfew", "nose", "halfse")
+MODES = ("novop", "nocomp", "comp1", "half", "halfcomp", "halfew", "nose", "halfse", "qse",
+         "nostate", "qmin", "qhalf", "nossq", "nogather", "st16", "halfmm", "w2mm", "exp2l",
+         "fsum")
+F_SIM_NOWR = 0x80                   # otpu_dma (simulation, +ds_sim=1): the DSTEP writes nothing
 
 
 def vfunc(ins) -> int:
@@ -59,6 +91,17 @@ def _half(ins) -> I.Instr:
     return _with(ins, w4=rows | (cols << 16))
 
 
+def _in_attention(ins) -> bool:
+    return any("attention.py" in str(f) for f in (ins.src or ()))
+
+
+def _w2(ins) -> bool:
+    """A grouped int8 MM (LG >= 1, WF 0, no KT) of M > 1 rows and more than one group."""
+    m, nrows = (ins.w[5] >> 16) & 0xFF, ins.w[3] & 0xFFFF
+    return (ins.rd >= 1 and (ins.flags >> I.WF_SHIFT) & 3 == I.W8 and not ins.w[4] & 1
+            and m > 1 and nrows > 1 << ins.rd)
+
+
 def _comp1(ins) -> I.Instr:
     f = vfunc(ins)
     if f == I.V_EXP2SUB:                # A - B, B in its own mode
@@ -85,11 +128,18 @@ def apply(prog, modes: str, keep=None):
             continue
         if ins.op == I.VOP:
             comp = vfunc(ins) in COMPOSITE
-            if "novop" in ms:
+            if "nossq" in ms and vfunc(ins) == I.V_RSSQ and _shape(ins)[1] >= 1024:
+                new, n["nossq"] = _with(ins, w4=_shape(ins)[0] | (8 << 16)), n["nossq"] + 1
+            elif "novop" in ms:
                 new, n["novop"] = I.nop(f"dropped {ins.comment}"), n["novop"] + 1
             elif comp and "nocomp" in ms:
                 new, n["nocomp"] = I.nop(f"dropped {ins.comment}"), n["nocomp"] + 1
+            elif "fsum" in ms and vfunc(ins) == I.V_RSUM and _in_attention(ins):
+                new, n["fsum"] = I.nop(f"dropped {ins.comment}"), n["fsum"] + 1
             else:
+                if vfunc(ins) == I.V_EXP2SUB and "exp2l" in ms:
+                    new = _with(ins, w6=(ins.w[5] & 0xFF00FFFF) | (I.V_RECIP << 16))
+                    n["exp2l"] += 1
                 if comp and "comp1" in ms:
                     new, n["comp1"] = _comp1(new), n["comp1"] + 1
                 if comp and "halfcomp" in ms:
@@ -99,22 +149,49 @@ def apply(prog, modes: str, keep=None):
         elif ins.op in (I.DSTEP, I.STREAM):
             if "nose" in ms:
                 new, n["nose"] = I.nop(f"dropped {ins.comment}"), n["nose"] + 1
-            elif "halfse" in ms and ins.op == I.DSTEP:
-                rows, cols = _shape(ins)
-                new, n["halfse"] = _with(ins, w4=-(-rows // 2) | (cols << 16)), n["halfse"] + 1
+            else:
+                for m, k in (("halfse", 2), ("qse", 4)):
+                    if m in ms and ins.op == I.DSTEP:
+                        rows, cols = _shape(new)
+                        new, n[m] = _with(new, w4=-(-rows // k) | (cols << 16)), n[m] + 1
+                if "st16" in ms and ins.op == I.DSTEP:
+                    new = dataclasses.replace(new, flags=new.flags | I.F_DST16,
+                                              comment=f"hacked {ins.comment}")
+                    n["st16"] += 1
+                if "nostate" in ms and ins.op == I.DSTEP:
+                    new = dataclasses.replace(new, flags=new.flags | I.F_DZERO | F_SIM_NOWR,
+                                              comment=f"hacked {ins.comment}")
+                    n["nostate"] += 1
+        elif ins.op == I.MM and "halfmm" in ms and (ins.w[5] >> 16) & 0xFF > 1:
+            m = (ins.w[5] >> 16) & 0xFF
+            new = _with(ins, w6=(ins.w[5] & 0xFF00FFFF) | (-(-m // 2) << 16))
+            n["halfmm"] += 1
+        elif ins.op == I.MM and "w2mm" in ms and _w2(ins):
+            fl = (ins.flags & ~(3 << I.WF_SHIFT)) | (I.W4I << I.WF_SHIFT)
+            new = dataclasses.replace(ins, rd=ins.rd + 1, flags=fl, comment=f"hacked {ins.comment}")
+            n["w2mm"] += 1
+        elif ins.op == I.GATHER and "nogather" in ms:
+            new, n["nogather"] = I.bar(), n["nogather"] + 1
+        elif ins.op == I.QACT and ("qmin" in ms or "qhalf" in ms):
+            kb = ins.w[1] >> 16
+            m = "qmin" if "qmin" in ms else "qhalf"
+            kb = 1 if m == "qmin" else -(-kb // 2)
+            new, n[m] = _with(ins, w2=(ins.w[1] & 0xFFFF) | (kb << 16)), n[m] + 1
         out.append(new)
     return out, n
 
 
-PASSES = {I.V_EXP2: 3, I.V_EXP2SUB: 3, I.V_RECIP: 2, I.V_RSQRT: 4, I.V_LOG2: 4}
+PASSES = {I.V_EXP2: 3, I.V_EXP2SUB: 3, I.V_RECIP: 2, I.V_RSQRT: 4, I.V_LOG2: 4,
+          I.V_SIGMOID: 6, I.V_SILU: 6}      # (VSIG: six passes at CNS 3, four at 5)
 
 
 def issue_cycles(ins, lanes: int = 8) -> int:
     """The VPU's (or the stream engine's) issue cycles for an instruction as built (docs/stream.md
     11): a chunk of `lanes` columns a cycle; a composite holds slot 0 for its passes through the
-    three stages (EXP2 3, RECIP 2, RSQRT / LOG2 4: 2.67, 4 and 2 columns a cycle); a row sum's
-    row is padded to 64 columns (whole partial-loop rounds); OUTER first fills its column
-    buffers (at least 2 chunks); DSTEP / STREAM 8 state words a cycle. Latency not counted."""
+    three stages (EXP2 3, RECIP 2, RSQRT / LOG2 4, SIGMOID / SILU 6: 2.67, 4, 2 and 1.33 columns a
+    cycle); a row sum's row is padded to 64 columns (whole partial-loop rounds); OUTER first fills
+    its column buffers (at least 2 chunks); DSTEP / STREAM 8 state words a cycle. Latency not
+    counted."""
     if ins.op in (I.DSTEP, I.STREAM):
         if ins.op == I.DSTEP:
             rows, cols = _shape(ins)
@@ -131,7 +208,7 @@ def issue_cycles(ins, lanes: int = 8) -> int:
     if f in SUMS:
         rl = 64 // lanes
         return rows * -(-ch // rl) * rl
-    if f == I.V_OUTER:
+    if f == I.V_OUTER or (f == I.V_MAC and (ins.w[5] >> 24) & 3 == I.B_COL):   # (+ the fill)
         return max(2, ch) + rows * ch
     return rows * ch * PASSES.get(f, 1)
 
@@ -190,18 +267,20 @@ def _prefix(spec, layers: str | None):
 
 def compile_case(model, kind: str, n: int, pos: int, mcols: int | None = None,
                  wformat: str = "fp4", head: str = "int8", cap: int | None = None,
-                 layers: str | None = None, dram_bytes: int = 1 << 40, full: bool = False):
+                 layers: str | None = None, dram_bytes: int = 1 << 40, full: bool = False,
+                 sets: dict | None = None):
     """(cfg, program) of a case, compiled only (no weights): kind "decode" (compile_step at pos),
     "rows" (n prompt rows at pos.., no logits) or "batch" (n slots at pos, Qwen3 family:
     opentpu/llm/batch.py's step with the picks); `layers` cuts the model (_prefix). full: (cfg,
-    programs, image, the batch area or None, spec)."""
+    programs, image, the batch area or None, spec). sets: Config fields over the board's (another
+    target's arch, e.g. S 4)."""
     from opentpu.isasim import board_config
     from opentpu.llm import load_spec, model_dir
     spec = _prefix(load_spec(model_dir(model)), layers)
     R = n if kind in ("rows", "batch") else 1
     cap = cap or 256 * ((pos + R - 1) // 256 + 1)
     mk = {"MCOLS": mcols} if mcols else {}
-    cfg = board_config(DRAM_BYTES=dram_bytes, **mk)
+    cfg = board_config(DRAM_BYTES=dram_bytes, **{**(sets or {}), **mk})
     kw = dict(wformat=wformat, head_format=head, rows=R)
     if kind == "batch":
         kw.update(batch=n, lookup=True)

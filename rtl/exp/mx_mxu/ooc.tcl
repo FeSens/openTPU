@@ -1,5 +1,5 @@
 # EXPERIMENTAL (docs/mx_mxu.md): out-of-context synthesis + implementation of the MX MXU
-# experiment's tops (mx_top: the MX datapath; base_top: today's) on one part. Vivado on omarchy:
+# experiment's tops (mx_top: the MX datapath; base_top: today's) on one part. Vivado on the build host:
 #   vivado -mode batch -nojournal -source rtl/exp/mx_mxu/ooc.tcl -tclargs <out> <top> <fam> \
 #     <part> [GENERIC=VALUE ...]
 # top: mx_top | base_top; fam: x7 (DSP48E1 cells, mx_top pumped at 2 x clk_s from an MMCM) |

@@ -76,7 +76,7 @@ def _states(eng, spec, slot):
         dn = m.layer(li).dn
         for q in range(img.nl // 2):
             for t in [dn.state(q, 0), dn.state(q, 1), dn.window(q)]:
-                n, b = 4 * int(np.prod(t.shape)), Affine.of(t.base).static()
+                n, b = t.esize * int(np.prod(t.shape)), Affine.of(t.base).static()
                 out.append(dram[b:b + n].copy())
     return out
 
@@ -130,6 +130,23 @@ def test_mtp_greedy_is_plain_greedy(tiny_mtp, drafter):
     assert np.array_equal(lg[0], lg[1])
 
 
+def test_mtp_greedy_with_16bit_states(tiny_mtp, monkeypatch):
+    """The same with the DeltaNet states in 16 bits (Config.ST16 e6m9: the steps' DSTEPs and
+    the fork's STREAM into the other slot with flag ST16), mixed drafts: plain greedy decode's
+    tokens, states and windows on 16-bit states."""
+    import sys
+    cfg = dataclasses.replace(CFG, ST16="e6m9")
+    monkeypatch.setattr(sys.modules[__name__], "CFG", cfg)
+    test_mtp_greedy_is_plain_greedy(tiny_mtp, "mixed")
+    W, spec, kw = tiny_mtp
+    eng = mtp_engine(spec, W, cap=256, cfg=cfg, **kw)
+    verify = eng.image.compile_rows([(0, 6), (0, 7)], [0, 1], tokens=[1, 2], fork=True,
+                                    hidden=True)
+    ss = [i for i in verify[0] if i.op in (I.STREAM, I.DSTEP)]
+    assert any(i.op == I.STREAM and i.w[1] != i.w[2] for i in ss) and eng.image.st16
+    assert all(i.flags & (I.F_SST16 if i.op == I.STREAM else I.F_DST16) for i in ss)
+
+
 def test_mtp_program_follows_its_reference():
     """The MTP program over a 4-row prompt chunk (its hidden rows from the rows kernel's
     `hidden`): the draft head's logits against mtp_reference on the fp32 model's hidden rows,
@@ -158,11 +175,14 @@ def test_mtp_program_follows_its_reference():
     assert np.mean(ids == np.argmax(want, axis=1)) >= 0.75
 
 
-def test_mtp_verify_and_draft_on_rtl(have_verilator):
+@pytest.mark.parametrize("st16", ["", "e6m9"])
+def test_mtp_verify_and_draft_on_rtl(have_verilator, st16):
     """A forked verify run (row 1's DeltaNet steps a STREAM into the other state slot, dst !=
-    src) and an MTP run on the RTL's board memory path: DRAM equals the ISA simulator's."""
+    src) and an MTP run on the RTL's board memory path: DRAM equals the ISA simulator's; e6m9:
+    with the states in 16 bits (Config.ST16, otpu_dma ST16: the fork's STREAM ST16)."""
     from opentpu import rtlsim
     from opentpu.isasim import Machine
+    CFG = dataclasses.replace(globals()["CFG"], ST16=st16)
     _, W, spec = _tiny_model(8)
     W = _mtp_weights(W, spec)
     toks = [int(t) for t in np.random.default_rng(7).integers(0, 1000, 8)]

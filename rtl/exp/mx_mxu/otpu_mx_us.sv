@@ -1,7 +1,7 @@
 // EXPERIMENTAL (docs/mx_mxu.md): not in any file list, not in the board build.
 //
-// The MX MXU column on UltraScale+ (DSP48E2; xcku5p as the stand-in for the BCU1525's VU9P and
-// the F2's VU47P): one physical column whose 128 DSPs make two products each at the core clock
+// The MX MXU column on UltraScale+ (DSP48E2; xcku5p as the stand-in for the BCU1525's
+// VU9P): one physical column whose 128 DSPs make two products each at the core clock
 // by INT8 packing, and two accumulating column ends. The 7-series version (pumped) is
 // otpu_mx_x7.sv, which also states the numerics.
 //

@@ -57,7 +57,10 @@ tokens to out[p0 .. P) before the prefill. Each run then loads its R tokens, out
 TMEM with one LD at a run-time address. Each embedding gather takes its row address from a
 scratch register (RLD MUL, the row's bytes), released after the gather. The arguments are then
 tpos's six coefficients for every R: R rows share one tpos, at r-row offsets as immediates
-(RunPos.offset). The port-A rule is kept: out[] and the state are read by LD (port B), and since
+(RunPos.offset). Every one of those RLD MULs carries its bound (the arguments' c * [0, tpos's
+bound), compiler.mul_bound; a token row's, the table's rows), so the waits pass takes the
+addresses they form as theirs: unbounded, a register made each footprint all of DRAM (the 27B's
+T 8 run: 285 of 4,942 wait entries tighter than they need be). The port-A rule is kept: out[] and the state are read by LD (port B), and since
 4e0b866 port A is flushed at every run start anyway.
 
 **Programs per bucket** (one image; R_max = 4, or 3 on the 4B):
@@ -181,7 +184,7 @@ On the ISA simulator the logits and every slice's DRAM equal compile-time runs o
 word for word, and with int8 weights today's prefill too. Real layouts (cap 4096, fp4 and int8):
 every program fits IMEM; R_max 4 / 4 / 3.
 
-**Card** (pa e4db91c9, 133.33 MHz, 2026-10-02 07:18-07:37 opentpu; fp4, int8 head; tree
+**Card** (pa e4db91c9, 133.33 MHz, 2026-10-02 07:18-07:37 on the card host's clock; fp4, int8 head; tree
 76ef74b; `mtp_decode --loop device --prompt-runs`, prompts 0 and 7; MTP's tokens equal plain's in
 every run; with prompt runs on and off the tokens are equal for all three models, both prompts,
 plain and MTP). Wall seconds to the first token, warm program cache; "device" is the prefill
@@ -220,7 +223,7 @@ link to the host's pick) or the host's per-run cost grows. Next: the other dense
 A run's device time is about its weight passes, ceil(rows / MCOLS): each pass streams every
 weight. A bucket where prompt runs took fewer rows than today's prefill (fit_chunk's
 compile_rows runs) at the same positions would stream the weights more often. Compiled on
-the real layouts (omarchy, compile only; cap 4096, block 256, MCOLS 4, image rows 8; fp4 and
+the real layouts (the build host, compile only; cap 4096, block 256, MCOLS 4, image rows 8; fp4 and
 the mixes with an int8 head), the rows of a run in buckets 1 and 16 and the weight passes of
 three prompts (P tokens from p0), prompt runs / today's:
 
@@ -278,7 +281,7 @@ blocks 4-bit (by the weights' shapes: Phi-4-mini's mix about 56% fp4 blocks, Smo
 about 43%, both keep 3); the 4B, fp4 and its mix, goes from 3 rows to 2.
 
 **Card, the row choice** (fmvf 542fc43a, 2026-10-02, tree 666b2ef 13:14 and 5dd7823 14:15-14:18
-opentpu; one engine a model, warm-ups first, then A / B / B / A; tokens equal in every phase,
+The card host; one engine a model, warm-ups first, then A / B / B / A; tokens equal in every phase,
 and the 4B's R = 3 and R = 2 splits give the same 16 tokens a turn):
 
 | model | prompt | A | B | per pair (B - A) |
@@ -304,12 +307,12 @@ image's rows, the cache's end): compile_rows of the next larger size at the buck
 run-time position must not fit, or take no more rows than R_max by prefer_rows. The answer is kept with R_max (progcache.fact: once per layout and bucket).
 Every layout above is covered in buckets 1 and 16.
 
-**Card** (fmvf 542fc43a, 2026-10-02 11:04-11:13 opentpu, E2B 11:16-11:28; tree ce0f3b1, cap
+**Card** (fmvf 542fc43a, 2026-10-02 11:04-11:13 on the card host's clock, E2B 11:16-11:28; tree ce0f3b1, cap
 1024; one engine a model: prompt runs on with a new program cache, off, on again; the qual
 prompt (A0), PROMPTS[7] (B0) and a next turn of 13 tokens at the run-time position after B0's
 reply (B1); up to 32 tokens each on the device loop; tokens equal in every phase for every
 model, and equal to the ISA simulator's prompt runs for Qwen3-0.6B, LFM2.5-230M, LFM2-2.6B and
-E2B, whose references fit omarchy's memory). TTFT seconds, on (cold) / off / on (warm), and the
+E2B, whose references fit the build host's memory). TTFT seconds, on (cold) / off / on (warm), and the
 prefill's runs and device Mcycles (on / off):
 
 | model | prompt | on cold | off | on warm | runs | Mcycles |
@@ -487,7 +490,7 @@ every bucket of the 16 layouts is covered (a prompt there took today's route bef
 R_max changes (the next size stays over 4096: LFM2-2.6B int8 bucket 2 at 4 rows 4676 -> 4484,
 SmolLM3's mix bucket 16 at 4 rows 4311 -> 4247, E2B int8 bucket 16 at 4 rows 4299 -> 4168).
 
-On the card (window3, fmvf 542fc43a, 2026-10-02 16:36-16:54 opentpu; one engine a model, a new
+On the card (window3, fmvf 542fc43a, 2026-10-02 16:36-16:54 on the card host's clock; one engine a model, a new
 program cache each; prompt runs cold, prompt runs warm, then today's route; the tokens equal in
 every phase):
 

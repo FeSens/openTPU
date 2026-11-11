@@ -15,7 +15,7 @@ Per layer, the relative error of the block's output (mean over tokens of |a - b|
                                    [--tokens 64] [--slots 64] [--inputs moe_inputs_64.npz]
 
 REF.npz: ids0, the text's token ids (hf_long-style). The experts' format is the third argument;
-the router and activations are int8 as on the device. 26B-A4B on omarchy (2026-10-01): int8
+the router and activations are int8 as on the device. 26B-A4B on the build host (2026-10-01): int8
 experts 0.016 / 0.019 / 0.015 against float experts at layers 10 / 20 / 29, fp4 0.094 / 0.122 /
 0.104 (docs/gemma4.md, "26B-A4B"); about 4 GB of memory with --slots 64 (2 GiB of DRAM).
 """

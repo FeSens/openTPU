@@ -16,9 +16,9 @@
 # at the first expert-major prompt after a loop that ended there), both arms run untiled (OTPU_TILE=0).
 # Output: R/q{WA,AT,WB,BT}.{log,json}, R/q{AT,BT}.trace.json, and per turn A's and B's TTFT, the calls, each phase's
 # seconds and the rest of the TTFT outside them, B - A; the last line MTPT EXIT <fails>.
-# Stage (from the Mac; no host work while a session runs):
-#   git archive <stamps sha> | ssh opentpu 'D=~/otpu-build/les/mtpt/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <stamps sha, full> > ~/otpu-build/les/mtpt/host/COMMIT; mkdir -p ~/otpu-build/les/mtpt/runs'
+# Stage (from a laptop; no host work while a session runs):
+#   git archive <stamps sha> | ssh CARD_HOST 'D=~/otpu-build/les/mtpt/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <stamps sha, full> > ~/otpu-build/les/mtpt/host/COMMIT; mkdir -p ~/otpu-build/les/mtpt/runs'
 # Run (no pipe), inside a held session (OTPU_LOCK_HELD set) directly, else under otpu-lock:
 #   EXPECT=<build> setsid -f ~/.local/bin/otpu-lock --wait 600 -- bash ~/otpu-build/les/mtpt/host/tools/offload/\
 #     sessions/mtpt.sh > ~/otpu-build/les/mtpt.launch.log 2>&1 < /dev/null

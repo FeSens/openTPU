@@ -3,7 +3,7 @@ Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanc
 | Tool Version : Vivado v.2026.1 (lin64) Build 6511674 Tue Jun 16 11:01:26 MDT 2026
 | Date         : Sun Sep 27 21:26:35 2026
 | Host         : b9f2f233b4ce running 64-bit Ubuntu 22.04.5 LTS
-| Command      : report_design_analysis -congestion -file /home/bonetto/otpu-build/rca/hp-fx/congestion.rpt
+| Command      : report_design_analysis -congestion -file /home/user/otpu-build/rca/hp-fx/congestion.rpt
 | Design       : otpu_fpga_top
 | Device       : xc7k480t
 | Design State : Routed

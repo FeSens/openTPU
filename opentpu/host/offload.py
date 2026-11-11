@@ -406,7 +406,7 @@ class PoolFile:
     def willneed(self, ids) -> None:
         """Queue these experts' reads into the page cache at once (POSIX_FADV_WILLNEED, where
         the host has it): a request's misses that are not there read in parallel, not one
-        after another (opentpu's SATA SSD: 4.2 -> 3.4-3.6 ms an expert of 1.67 MB)."""
+        after another (the card host's SATA SSD: 4.2 -> 3.4-3.6 ms an expert of 1.67 MB)."""
         if hasattr(os, "posix_fadvise"):
             for g in ids:
                 os.posix_fadvise(self.fd, int(g) * self.slot, self.slot, os.POSIX_FADV_WILLNEED)
@@ -587,8 +587,15 @@ class ExpertServer:
     kept for the next layer's hints)."""
 
     def __init__(self, mem, layout: Layout, pool, policy: str = "lru", half: float = 32.0,
-                 part: int = 512 << 10, drop: bool = False):
+                 part: int = 512 << 10, drop: bool = False, lanes: tuple | None = None,
+                 entry_lanes=None):
         self.mem, self.L, self.pool = mem, layout, pool
+        # (wg, D, [(offset, bytes)]): the slots hold grouped matrices (their data at those
+        # offsets) on a machine with the channel hash (GALL, moe.ExpertFormat grp): a write's
+        # bytes there with their lanes as their addresses store them (quant.hash_rows);
+        # entry_lanes(g): an entry past the experts' own data offsets (place: MiniCPM-V's
+        # staged vision pieces, kernels.pieces.Layout.data_regions)
+        self.lanes, self.entry_lanes = lanes, entry_lanes
         if policy not in ("lru", "lfu"):
             raise ValueError(f"replacement policy {policy!r}")
         if part <= 0 or part % RUN:
@@ -745,7 +752,8 @@ class ExpertServer:
         n = L.slot_bytes
         for g, a in zip(new, slots):
             m = n if sizes is None else min(n, -(-int(sizes[g]) // RUN) * RUN)
-            self._write(a, 0, self._part_of(g, 0, m))
+            self._write(a, 0, self._part_of(g, 0, m),
+                        regions=None if self.entry_lanes is None else self.entry_lanes(g))
             self.placed[g] = a
             self.place_bytes += m
         self._flush()
@@ -1242,12 +1250,23 @@ class ExpertServer:
             self._staged = None
 
     def _write(self, slot: int, at: int, data, tag: int | None = None, then=None,
-               **kw) -> None:
+               regions=None, **kw) -> None:
         """data to slot + at; with tag (expert g's), the slot's tag word {g + 1} after it, in
         the same DMA's last beat (memories without write_slot: a write after it). then():
-        called once data's first part is on its way (the request's answer: write_slot); kw:
-        write_slot's cut and staged (an idle part)."""
+        called once data's first part is on its way (the request's answer: write_slot);
+        regions: the grouped data's offsets in place of the experts' (lanes); kw: write_slot's
+        cut and staged (an idle part)."""
         t = None if tag is None else (slot + self.L.tag, _tag_beat(tag + 1))
+        if self.lanes is not None:
+            from ..quant import hash_rows
+            wg, D, own = self.lanes
+            regions = own if regions is None else regions
+            data = np.array(np.asarray(data, np.uint8) if isinstance(data, SplitRecord) else
+                            np.frombuffer(data, np.uint8))  # (a split record: its own bytes)
+            for o, n in regions:
+                lo, hi = max(o, at), min(o + n, at + data.size)
+                if lo < hi:
+                    data[lo - at:hi - at] = hash_rows(data[lo - at:hi - at], slot + lo, wg, D)
         w = getattr(self.mem, "write_slot", None)
         if w is not None:
             w(slot + at, data, t, then, **kw)
@@ -1708,20 +1727,22 @@ class BoardDram:
     BackendDram calls, copies an expert's 1.67-5.85 MB four times on its way (the slot's bytes
     out of the pool, CHASH's swaps, the two channel runs, a bounce for the DMA's alignment) and
     widens every smaller write with a read of the card; the 35B-A3B's card run wrote 544 MB/s
-    against the link's 1.37. Here:
-    - write_slot: an expert's bytes (or a part's: a hint's, ExpertServer.step) go to the two
-      channels' runs in one pass (the beat interleave and CHASH's swaps, `np.take` of 64-byte
+    against the link's 1.37. On a slice of nch channels of `beat` bytes (Board.nch / beat: the
+    cards' two of 64, the WG targets' eight of 128; slice 0's channels). Here:
+    - write_slot: an expert's bytes (or a part's: a hint's, ExpertServer.step) go to the
+      channels' runs in one pass (the beat interleave and CHASH's permutation, `np.take` of
       beats) into page-aligned staging buffers, then one DMA call per channel; an expert of a
-      split-format pool file (SplitRecord) is read straight into the runs (one preadv of an
-      iovec array, preadv_iov, where the record has readiov), and when nothing is in flight
+      split-format pool file (SplitRecord, the cards' two channels of 64 bytes only) is read
+      straight into the runs (one preadv of an iovec array, preadv_iov, where the record has
+      readiov), and when nothing is in flight
       (a request's first miss) in `pieces` parts, the first `lead` of it (None: equal parts),
       each DMAed as soon as it is read: the link starts after a fifth of the expert is read,
       not half (docs/offload.md 10.8); an idle part read ahead (stage, beside the DMA before
       it) goes whole (docs/offload.md 13.12);
     - the host's own words (served and the directory: the card only reads them) are kept in a
-      shadow and written with no read first: a write within one 64-byte beat (an entry,
-      served) as that beat alone, one DMA call on its channel; a longer one as whole 128-byte
-      blocks;
+      shadow and written with no read first: a write within one beat (an entry, served) as
+      that beat alone, one DMA call on its channel; a longer one as whole wide chunks (a beat
+      on every channel: the cards' 128-byte blocks) between its edge beats;
     - one worker thread makes every DMA call in order, while the server stages the next
       expert: an expert's data lands before its directory entry, every entry before served
       (one queue, one h2c stream). flush() waits for the queue and raises a worker's error;
@@ -1734,12 +1755,20 @@ class BoardDram:
                  lead: float | None = 0.2):
         from .board import BEAT
         self.board, self.L = backend.board, layout
-        blk = 2 * BEAT                        # a chunk: one beat on each channel
+        # a slice's channels and their beat (Board.nch / beat; no board: the cards')
+        self.nch, self.h = getattr(self.board, "nch", 2), getattr(self.board, "beat", BEAT)
+        blk = self.nch * self.h               # a chunk: one beat on each channel
+        if self.h > LINE:                     # (the WG targets' 128-byte beats, LINE 64)
+            raise ValueError(f"the channels' {self.h}-byte beats are longer than the layout's "
+                             f"{LINE}-byte lines: served's beat would carry the answer's words "
+                             f"(which the card zeroes)")
         end = layout.dir + 8 * layout.E * layout.layers
-        if layout.served % blk or layout.served < layout.mbox + 2 * LINE:
+        if layout.served % min(blk, TAG) or layout.served < layout.mbox + 2 * LINE:
             raise ValueError("served must start a 128-byte block of the host's own words")
         self.blk, self.lo = blk, layout.served
-        self.shadow = np.zeros(-(-(end - self.lo) // blk) * blk, np.uint8)
+        # the shadow from served to the chunk grid's end past the directory (the grid the
+        # card's: a chunk's beats in one call)
+        self.shadow = np.zeros(-(-end // blk) * blk - self.lo, np.uint8)
         self.depth, self._bufs, self._base, self._i1 = depth, None, None, None
         self._idx: dict = {}                  # (address, chunks) -> channel 0's beat indices
         self._pieces: dict = {}               # bytes -> per staging pair: its split pieces
@@ -1802,32 +1831,32 @@ class BoardDram:
     def write(self, addr: int, data) -> None:
         b = (np.ascontiguousarray(data).view(np.uint8).reshape(-1)
              if isinstance(data, np.ndarray) else np.frombuffer(bytes(data), np.uint8))
-        a = addr - self.lo
+        a, h, lo = addr - self.lo, self.h, self.lo
         if 0 <= a and a + len(b) <= len(self.shadow):         # the host's own words
             self.shadow[a:a + len(b)] = b
-            h = self.blk // 2
-            if a % h + len(b) <= h:                             # one beat: one DMA call
-                out, at = self.shadow[a - a % h:a - a % h + h].copy(), self.lo + a - a % h
+            if addr % h + len(b) <= h:                          # one beat: one DMA call
+                at = addr - addr % h
+                out = self.shadow[at - lo:at - lo + h].copy()
                 self._put(lambda: self._beat(at, out))
                 return
             # the beats the span touches, never more: a beat beside them may be the card's (the
             # answer's second line before a lines=2 directory, which the card zeroes after use;
             # widened to its 128-byte block, a directory write put the stale answer back). The
-            # edge beats off the block grid go alone, the blocks between in one call
-            b0, b1 = a // h * h, -(-(a + len(b)) // h) * h
+            # edge beats off the chunk grid go alone, the chunks between in one call
+            b0, b1 = addr // h * h, -(-(addr + len(b)) // h) * h
             a0, a1 = -(-b0 // self.blk) * self.blk, b1 // self.blk * self.blk
             if a1 <= a0:
                 a0 = a1 = b1
             for e0, e1 in ((b0, a0), (a0, a1), (a1, b1)):
                 if e0 == e1:
                     continue
-                out, at = self.shadow[e0:e1].copy(), self.lo + e0
+                out, at = self.shadow[e0 - lo:e1 - lo].copy(), e0
                 if (e0, e1) == (a0, a1):
                     self._put(lambda at=at, out=out: self._blocks(at, out))
-                else:                                           # (one beat, or two in a row
-                    for k in range(0, e1 - e0, h):              # across a block's edge)
+                else:                                           # (beats in a row, across a
+                    for k in range(0, e1 - e0, h):              # chunk's edge at most)
                         self._put(lambda at=at + k, out=out[k:k + h]: self._beat(at, out))
-        elif len(b) == self.blk // 2 and addr % len(b) == 0:   # a whole beat (a slot's tag):
+        elif len(b) == self.h and addr % len(b) == 0:          # a whole beat (a slot's tag):
             out = b.copy()                                      # no read, one DMA call
             self._put(lambda: self._beat(addr, out))
         else:                                                   # the card's words: in order
@@ -1835,16 +1864,18 @@ class BoardDram:
             self.board.write(addr, b)
 
     def _staging(self, nbytes: int) -> None:
-        """depth pairs of page-aligned buffers for an expert's two channel runs (a shorter
-        write, a hint's part, uses their first bytes)."""
-        if self._bufs is not None and len(self._bufs[0][0]) >= nbytes // 2:
+        """depth sets ("pairs": the cards' two channels) of page-aligned buffers for an
+        expert's channel runs, one a channel (a shorter write, a hint's part, uses their first
+        bytes)."""
+        if self._bufs is not None and len(self._bufs[0][0]) >= nbytes // self.nch:
             return
         if self._held:
             raise RuntimeError(f"staging pairs for {nbytes} bytes with a staged part held")
         self.flush()
         n = nbytes // self.blk
-        self._bufs = [[_page_buf(nbytes // 2) for _ in (0, 1)] for _ in range(self.depth)]
-        self._base = 2 * np.arange(n, dtype=np.intp)
+        self._bufs = [[_page_buf(nbytes // self.nch) for _ in range(self.nch)]
+                      for _ in range(self.depth)]
+        self._base = self.nch * np.arange(n, dtype=np.intp)
         self._i1, self._idx, self._pieces, self._iovs = np.empty(n, np.intp), {}, {}, {}
         while not self._free.empty():
             self._free.get()
@@ -1906,15 +1937,16 @@ class BoardDram:
         return list(zip(c[:-1], c[1:]))
 
     def _tag_channel(self, at: int) -> int:
-        """The channel that holds the beat at `at` (64-byte aligned)."""
-        m, c = at // self.blk, at // (self.blk // 2) % 2
-        return c ^ (m.bit_count() & 1) if self.board.chash else c
+        """The channel that holds the beat at `at` (beat aligned)."""
+        from .board import beat_at
+        return beat_at(at, self.board.chash, self.nch, self.h)[0]
 
     def _in_place(self, addr: int, data, n: int) -> bool:
-        """data is read from its file straight into the runs (a split record on a CHASH card,
-        at a RUN-aligned address, of whole chunks)."""
+        """data is read from its file straight into the runs (a split record on a CHASH card of
+        two channels of 64-byte beats, the split format's, at a RUN-aligned address, of whole
+        chunks)."""
         return (isinstance(data, SplitRecord) and self.board.chash and addr % RUN == 0
-                and n % self.blk == 0)
+                and n % self.blk == 0 and (self.nch, self.h) == (2, 64))
 
     def _runs(self, addr: int, data, n: int, tag):
         """A free staging pair i for a split record's n bytes to addr (and the slot's tag beat
@@ -1974,8 +2006,10 @@ class BoardDram:
         called once the first part's DMA is queued (ExpertServer: the request's answer, so the
         link starts on the expert's lead). cut False: one DMA call per channel even with nothing
         in flight (an idle part: no request waits on its first bytes); staged: stage's read of
-        these bytes, queued as they are."""
-        from .board import swapped
+        these bytes, queued as they are. On channels other than the cards' two of 64 bytes the
+        tag goes in the DMA only where a chunk is the slot's tag chunk (TAG bytes), else in a
+        call of its own after it."""
+        from .board import chunk_hash
         n = data.nbytes if isinstance(data, np.ndarray) else len(data)
         if staged is not None:
             if staged[:3] != (addr, n, None if tag is None else tag[0]):
@@ -1991,7 +2025,7 @@ class BoardDram:
             self.direct += 1
             self.staged += 1
             return
-        if tag is not None and (tag[0] != addr + n or n % self.blk):
+        if tag is not None and (tag[0] != addr + n or n % self.blk or self.blk != TAG):
             self.write_slot(addr, data, None, then, cut)
             self.write(*tag)
             return
@@ -2021,63 +2055,62 @@ class BoardDram:
             if tag is not None:
                 self.write(*tag)
             return
-        order = (0, 1)
+        order = tuple(range(self.nch))
         if tag is not None:                     # the tag chunk after the bytes, in their DMA
             tb = np.ascontiguousarray(tag[1]).view(np.uint8).reshape(-1)
             src = np.concatenate([src, tb, np.zeros(self.blk - len(tb), np.uint8)])
             ct = self._tag_channel(tag[0])
-            order = (1 - ct, ct)
+            order = tuple(c for c in order if c != ct) + (ct,)
         n = len(src) // self.blk
         self._staging(len(src))
         i0 = self._idx.get((addr, n))
-        if i0 is None:                          # once per slot: CHASH's swaps at its address
-            i0 = self._idx[addr, n] = (self._base[:n] + swapped(addr, n) if self.board.chash
-                                       else self._base[:n])
-        i1 = self._i1[:n]
-        np.bitwise_xor(i0, 1, out=i1)           # channel 1 takes each chunk's other beat
+        if i0 is None:                          # once per slot: CHASH's permutation at its address
+            i0 = self._idx[addr, n] = (self._base[:n] + chunk_hash(addr, n, self.nch, self.h)
+                                       if self.board.chash else self._base[:n])
         i = self._pair()                        # a staging pair the worker is done with
-        bufs, beats, h = self._bufs[i], src.view("V64"), n * self.blk // 2
-        np.take(beats, i0, out=bufs[0][:h].view("V64"))       # channel 0's run
-        np.take(beats, i1, out=bufs[1][:h].view("V64"))       # channel 1's
-        self._put(lambda: self._dma(addr // 2, bufs, 0, h, order), i)
+        vb = f"V{self.h}"                       # a beat
+        bufs, beats, h = self._bufs[i], src.view(vb), n * self.h
+        np.take(beats, i0, out=bufs[0][:h].view(vb))          # channel 0's run
+        ic = self._i1[:n]
+        for c in range(1, self.nch):            # channel c takes each chunk's beat c ^ h(m)
+            np.bitwise_xor(i0, c, out=ic)
+            np.take(beats, ic, out=bufs[c][:h].view(vb))
+        self._put(lambda: self._dma(addr // self.nch, bufs, 0, h, order), i)
         if then is not None:
             then()
 
     def _beat(self, at: int, data: np.ndarray) -> None:
-        """One 64-byte beat of the host's words (at: 64-byte aligned) to the channel that holds
-        it (CHASH: beat b of chunk m on channel b ^ parity(m))."""
+        """One beat of the host's words (at: beat aligned) to the channel that holds it (CHASH:
+        beat b of chunk m on channel b ^ h(m), board.chunk_hash; the cards' parity of m)."""
+        from .board import beat_at
         t0 = time.perf_counter()
-        m, c = at // self.blk, at // (self.blk // 2) % 2
-        if self.board.chash:
-            c ^= m.bit_count() & 1
-        self.board.t.mem_write(c, m * (self.blk // 2), data)
+        self.board.t.mem_write(*beat_at(at, self.board.chash, self.nch, self.h), data)
         if self.calls is not None:
             self.calls.append((t0, time.perf_counter(), len(data)))
 
     def _blocks(self, at: int, data: np.ndarray) -> None:
-        """Whole chunks of the host's words (at, len: multiples of 128) to the two channels, as
-        Board.write does (CHASH's swaps), without its general path's copies."""
-        from .board import BEAT, swapped
+        """Whole chunks of the host's words (at, len: multiples of a chunk) to the channels, as
+        Board.write does (CHASH's permutation), without its general path's copies."""
+        from .board import split
         t0 = time.perf_counter()
-        v = data.reshape(-1, 2, BEAT)
-        sw = swapped(at, len(v)) if self.board.chash else np.zeros(len(v), bool)
-        for c in (0, 1):
-            run = np.where(sw[:, None], v[:, 1 - c], v[:, c])
-            self.board.t.mem_write(c, at // 2, run.reshape(-1))
+        for c, off, run in split(at, data, self.board.chash, self.nch, self.h):
+            self.board.t.mem_write(c, off, run)
         if self.calls is not None:
             self.calls.append((t0, time.perf_counter(), len(data)))
 
-    def _dma(self, off: int, bufs, a: int = 0, b: int | None = None, order=(0, 1)) -> None:
+    def _dma(self, off: int, bufs, a: int = 0, b: int | None = None, order=None) -> None:
         """bufs[c][a:b] to channel c's run from channel offset off + a, the channels in
-        `order` (a tag's channel last: each call ends before the next starts)."""
+        `order` (None: 0, 1, ...; a tag's channel last: each call ends before the next
+        starts)."""
         t0 = time.perf_counter()
+        order = range(len(bufs)) if order is None else order
         for c in order:
             self.board.t.mem_write(c, off + a, bufs[c][a:b])
         t1 = time.perf_counter()
         self.dma_s += t1 - t0
-        self.dma_bytes += 2 * len(bufs[0][a:b])
+        self.dma_bytes += len(bufs) * len(bufs[0][a:b])
         if self.calls is not None:
-            self.calls.append((t0, t1, 2 * len(bufs[0][a:b])))
+            self.calls.append((t0, t1, len(bufs) * len(bufs[0][a:b])))
 
     def read(self, addr: int, n: int) -> bytes:
         """n bytes from the card. Within one 64-byte beat (a poll's seq, a request's row) that
@@ -2089,12 +2122,11 @@ class BoardDram:
         if self._q.unfinished_tasks:
             raise RuntimeError(f"BoardDram.read with {self._q.unfinished_tasks} of the worker's "
                                f"DMA calls unfinished: flush first")
-        h = self.blk // 2
+        from .board import beat_at
+        h = self.h
         if addr % h + n <= h:
-            m, c = addr // self.blk, addr // h % 2
-            if self.board.chash:
-                c ^= m.bit_count() & 1
-            beat = np.asarray(self.board.t.mem_read(c, m * h, h)).view(np.uint8)
+            c, off = beat_at(addr - addr % h, self.board.chash, self.nch, h)
+            beat = np.asarray(self.board.t.mem_read(c, off, h)).view(np.uint8)
             return beat[addr % h:addr % h + n].tobytes()
         return np.asarray(self.board.read(addr, n)).view(np.uint8).tobytes()
 

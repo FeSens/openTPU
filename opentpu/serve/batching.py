@@ -102,8 +102,11 @@ class BatchWorker(SC.Worker):
                         self._decode_step(dec)
                 for r in [r for r in self.running if r.finish is not None]:
                     self._end(r, r.finish)
-            except BaseException as e:            # every running request fails; the server
-                traceback.print_exc()             # goes on with an empty device
+            except BaseException as e:
+                if self._link_recovered(e):       # (the link reset: each request resumes)
+                    continue
+                traceback.print_exc()             # every running request fails; the server
+                #                                   goes on with an empty device
                 self.stats["errors"] += 1
                 for r in list(self.running):
                     r.error = f"{type(e).__name__}: {e}"
@@ -120,20 +123,57 @@ class BatchWorker(SC.Worker):
             except BaseException:
                 pass
 
+    def _link_recovered(self, e, r=None) -> bool:
+        """After a run that failed on the link (cards.LinkError: x2's two cards), as chat35x2's
+        turn: the link reset (CardsTransport.recover: the cores stopped, LRST) and the slots'
+        contexts dropped (the run may have written its rows' caches and states); each request
+        running then goes back to the queue's head and resumes with its prompt and its output so
+        far as the context to make (_want: the store's longest match, the rest fed again). Once
+        a request: one the link fails again ends in error, as any other failure. False: not a
+        link's failure, or no recovery (the error path's). (r: scheduler.Worker's, a turn's
+        request; a batched run is every running request's.)"""
+        from ..host.cards import LinkError
+        t = getattr(getattr(self.eng.backend, "board", None), "t", None)
+        live = [r for r in self.running if r.finish is None]
+        if not isinstance(e, LinkError) or not hasattr(t, "recover") or \
+                any(getattr(r, "_relinked", False) for r in live):
+            return False
+        traceback.print_exc()
+        try:
+            t.recover()
+        except BaseException:
+            traceback.print_exc()
+            return False
+        self.stats["link_recoveries"] = self.stats.get("link_recoveries", 0) + 1
+        self._reset_device()
+        with self.cv:
+            for r in live:
+                self.running.remove(r)
+                r._relinked, r.slot, r.next = True, None, None
+            self.waiting[:0] = live
+        return True
+
     def _free_slots(self) -> list[int]:
         return [s for s in range(self.B) if self.slot_req[s] is None]
 
     # ---- slots
-    def _save_slot(self, s: int) -> None:
+    def _save_slot(self, s: int, r: SC.Request | None = None) -> None:
+        """Slot s's context into the store (r: the request it makes way for, its "save" phase)."""
         if self.slot_dirty[s] and self.slot_dev[s]:
-            self.cache.save(self.ios[s], list(self.slot_dev[s]))
+            io = self.ios[s]
+            t0, mark = time.perf_counter(), self._io_mark(io)
+            self.cache.save(io, list(self.slot_dev[s]))
             self.stats["saves"] += 1
+            dt = self._phase(r, "save", t0)
+            self.stats["save_s"] += dt
+            self._io_parts(r, "save", dt, mark, io=io)
         self.slot_dirty[s] = False
 
     def _bind(self, r: SC.Request) -> None:
         """r into a free slot, its prompt's longest prefix in place."""
         t0 = time.perf_counter()
-        want, P = r.prompt, self.io.layout.P
+        r.t_start = r.t_start or t0
+        want, P = self._want(r), self.io.layout.P
         limit = len(want) - 1
         free = self._free_slots()
         common = [self._common(self.slot_dev[s], want) for s in range(self.B)]
@@ -167,10 +207,11 @@ class BatchWorker(SC.Worker):
             if k:
                 self.stats["restores"] += 1
         r.fed = list(want[:k])
-        r.cached = k
         r.slot = s
-        self.stats["cached_tokens"] += k
-        self.stats["prompt_tokens"] += len(want)
+        if want is r.prompt:                    # (a resume's context: not the request's prompt)
+            r.cached = k
+            self.stats["cached_tokens"] += k
+            self.stats["prompt_tokens"] += len(want)
         self.slot_req[s], self.slot_dev[s], self.slot_dirty[s] = r, r.fed, True
         self.slot_used[s] = time.monotonic()
         r._feed = list(want[k:-1])               # fed in runs; the last token, a step's row
@@ -200,6 +241,7 @@ class BatchWorker(SC.Worker):
         r.prefill_tokens += len(part)
         self.stats["prefill_tokens"] += len(part)
         self.stats["prefill_s"] += time.perf_counter() - t0
+        r.prefill_s += time.perf_counter() - t0
         if r.cancelled.is_set():
             r.finish = "abort"
         if not r._feed or r.finish is not None:
@@ -355,6 +397,7 @@ class BatchWorker(SC.Worker):
         n = left if getattr(eng.backend, "run_generate", None) else min(left, SC.CHUNK)
         pick = self._sampler(r)
         samp = self._samp(r)
+        st0 = pick.rng.bit_generator.state if samp is not None else None
         t = r.next
         r.fed.append(t)
         got = eng.generate_card(t, n, stop_ids=sorted(r.stop_ids),
@@ -363,6 +406,9 @@ class BatchWorker(SC.Worker):
                                               or bool(self.waiting)),
                                 sampling=samp, context=list(r.fed),
                                 rng=pick.rng if samp is not None else None)
+        if st0 is not None:      # one uniform a token picked: a run that stop() halted drew
+            pick.rng.bit_generator.state = st0       # its whole run's ahead, and the steps
+            pick.rng.random(len(got))                # after it go on from the next one
         r.fed += got[:-1]
         if not got:
             r.fed.pop()

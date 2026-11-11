@@ -58,6 +58,23 @@ def test_design_size_block_128_rtl(have_verilator):
     assert rel(rr.outputs["out"], want) < 0.03
 
 
+@pytest.mark.parametrize("S,d,T,block", [(1, 32, 100, 64), (2, 32, 200, 64), (1, 128, 300, 128)])
+def test_attention_decode_fsum_rtl(have_verilator, S, d, T, block):
+    """FSUM (Config.FSUM, otpu_vpu FSUM): attention's sum(p) from its EXP2SUBs on the RTL, the
+    ISA simulator's state bit for bit, and its output that of the machine without FSUM."""
+    big = dict(D=128, ACT_BLOCKS=16) if d == 128 else {}
+    args, want = attn_args(np.random.default_rng(T), Hq=4, Hkv=2, d=d, T=T, cap=-(-T // 256) * 256,
+                           block=block)
+    cfg = Config(S=S, FSUM=True, **big)
+    comp, _ = compile_kernel(attention_decode, cfg, **args)
+    assert any(i.flags & I.F_FSUM for p in comp.programs for i in p if i.op == I.VOP)
+    ri, rr = both(attention_decode, cfg, **args)
+    pc, pim = compile_kernel(attention_decode, Config(S=S, **big), **args)
+    plain = run(pc, pim, "isa")
+    assert np.array_equal(rr.outputs["out"], plain.outputs["out"])
+    assert rel(rr.outputs["out"], want) < 0.03
+
+
 # ------------------------------------------------------------------------------------ fuzzing
 DATA, INT8, SCALES, SCALES4, SCRATCH = 0, 16384, 49152, 57344, 65536
 # MX scale rows (docs/isa.md "Weight formats") at a fixed pitch, so that an MM may start at any
@@ -316,6 +333,23 @@ def test_fuzz_mm_replay(have_verilator, mcols, rows, seed):
     assert np.array_equal(tmems[0], m.slices[0].tmem)
 
 
+@pytest.mark.parametrize("qd,mcols,rows,seed", [(3, 2, 8, 0), (4, 2, 8, 1), (4, 4, 16, 4),
+                                                 (4, 2, 6, 3), (7, 4, 8, 5)])
+def test_fuzz_mm_queue_depth_qd(have_verilator, qd, mcols, rows, seed):
+    """The MXU's command queue QD deep (otpu_mxu QD; bcu1525-x2's MXU_QD 4): the commands behind
+    h and n stream their chunks from their accept and reach the pipeline through n.
+    test_fuzz_mm_replay's programs (MMs with replays, VOPs, loads and gathers between them):
+    the results the ISA's."""
+    rng = np.random.default_rng(3000 + seed)
+    cfg = Config(S=1, MCOLS=mcols, ACT_ROWS=rows)
+    prog = _random_program(rng, cfg, n_ops=60)
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [prog], [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [i.copy() for i in imgs], uarch={"MXU_QD": qd})
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
+
+
 # the single pumped TMEM copy as release r2 builds it (targets/ypcb-00338.toml: r2pgRs)
 R2_TMEM = {"TMEM_IMPL": 3, "TMEM_NSB": 2, "TMEM_SBP": 3, "TMEM_RPL": 1, "TMEM_TDP": 1,
            "TMEM_GST": 1, "TMEM_PMP": 1}
@@ -365,6 +399,42 @@ def test_one_copy_tmem_of_128k_words(have_verilator, mcols, rows, seed):
     assert np.array_equal(tmems[0], m.slices[0].tmem)
 
 
+@pytest.mark.parametrize("card,seed", [(0, 1), (0, 2), (1, 1), (1, 2), (1, 3)])
+def test_random_power_up(have_verilator, monkeypatch, card, seed):
+    """Every variable no `initial` block sets powers up at a random value (OTPU_X_INITIAL=unique:
+    Verilator's --x-initial unique, seeded by OTPU_X_SEED; docs/asic.md "Power-up state"), as on
+    an ASIC, not at 0 as on an FPGA: no power-up value outlives the reset, on the simulation's
+    micro-architecture and on the card's one TMEM copy with replays and guests (card). A random
+    program's DRAM is the ISA's, and so is its TMEM at every word it writes: a RAM's words are
+    not reset (the writes of the cycles before the reset holds land in some), and the ISA starts
+    TMEM at 0. The words the program writes are those an ISA run from TMEM all ones agrees on,
+    and the program reads no other (its DRAM is the same)."""
+    monkeypatch.setenv("OTPU_X_INITIAL", "unique")
+    monkeypatch.setenv("OTPU_X_SEED", str(seed))
+    rng = np.random.default_rng(5000 + seed)
+    uarch = {**rtlsim.BOARD_UARCH, **R2_TMEM, **R2_ARB, "COLL_GATHER": 1} if card else None
+    # (the card's WAITC at WIN 32, a target's under OTPU_TARGET: the wait entries for a window
+    # of 32, Config.WC_WIN, as the target's Config has them)
+    ua = {**rtlsim.UARCH, **(uarch or {})}
+    cfg = Config(S=1, MCOLS=2, ACT_ROWS=8,
+                 WC_WIN=32 if ua.get("SEQ_WC") and ua.get("WIN", 16) > 16 else 16)
+    spc = (cfg.D // 4) // min(cfg.D // 4, cfg.LANES)
+    if card and ua.get("SE_R", 0) > spc:     # (SE_R, timing only: at most otpu_dma's segments a
+        uarch["SE_R"] = spc                  # chunk, 1 at this D)
+    prog = _random_program(rng, cfg, n_ops=60, gather=bool(card))
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [prog], [i.copy() for i in imgs]).run()
+    m1 = Machine(cfg, [prog], [i.copy() for i in imgs])
+    m1.slices[0].tmem[:] = 0xFFFFFFFF
+    m1.run()
+    assert np.array_equal(m1.slices[0].dram, m.slices[0].dram)
+    wr = m.slices[0].tmem == m1.slices[0].tmem
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [i.copy() for i in imgs], uarch=uarch,
+                                 max_cycles=1_000_000)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0][wr], m.slices[0].tmem[wr])
+
+
 @pytest.mark.parametrize("seed", range(6))
 def test_mxu_reads_on_the_card_tmem(have_verilator, seed, tmp_path, monkeypatch):
     """The MXU's TMEM reads (ACC, ASCALE) on the m8 card's TMEM (R2_TMEM at 128K words, MCOLS 8:
@@ -388,6 +458,72 @@ def test_mxu_reads_on_the_card_tmem(have_verilator, seed, tmp_path, monkeypatch)
     assert np.array_equal(drams[0], m.slices[0].dram)
     st = re.search(r"TMEMSTAT .* rd= ?(\d+),[\d,]+ rpl= ?(\d+),", log.read_text())
     assert st and int(st[1]) > 0, log.read_text()
+
+
+# WPB 2 on the pumped one copy (otpu_tmem IMPL 3 PMP 1: a bank's second write on its RAMs' port B
+# at the odd edge; otpu_slice ARB_MASK: a unit is granted unless two units before it write a bank
+# it writes)
+R2_ARB2 = {**R2_ARB, "WPB": 2}
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_one_copy_two_writes_a_bank(have_verilator, seed):
+    """The pumped one copy at WPB 2 (R2_TMEM, R2_ARB2: the bcu1525-x2:wmx TMEM) on programs of
+    MMs that accumulate, VOPs, QACT / MM pairs, QSTs, LDs / STs and GATHERs, every unit writing
+    beside the others (the MXU's drain, the VPU's results, the DMA's loads and the collective):
+    the results are the ISA's at WPB 1 and 2 (the cycles: test_one_copy_two_writers)."""
+    rng = np.random.default_rng(9100 + seed)
+    cfg = Config(S=1, MCOLS=8, ACT_ROWS=16, TMEM_WORDS=1 << 17)
+    prog = _random_program(rng, cfg, n_ops=60, gather=True, acc_p=0.5,
+                           kinds=["vop", "vop", "vop", "qact_mm", "qact_mm", "qst", "ldst",
+                                  "gather"])
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [prog], [i.copy() for i in imgs]).run()
+    for w, arb in ((1, R2_ARB), (2, R2_ARB2)):
+        ua = {**rtlsim.BOARD_UARCH, **R2_TMEM, **arb, "COLL_GATHER": 1}
+        drams, tmems, _ = rtlsim.run(cfg, [prog], [i.copy() for i in imgs], uarch=ua,
+                                      max_cycles=1_000_000)
+        assert np.array_equal(tmems[0], m.slices[0].tmem), w
+        assert np.array_equal(drams[0], m.slices[0].dram), w
+
+
+def test_one_copy_two_writers(have_verilator):
+    """Two units writing TMEM at once, independent: LDs (the DMA) beside VPU FILLs. At WPB 1 a bank
+    takes one of them a cycle (the slice's mask arbiter holds the other); at WPB 2 both land, in
+    fewer cycles. The results are the ISA's."""
+    rng = np.random.default_rng(9200)
+    cfg = Config(S=1, MCOLS=8, TMEM_WORDS=1 << 17)
+    prog = [I.ld(DATA, 0, 4096),
+            I.vop(I.V_FILL, 8192, 0, 0, 64, 256, 256, 0, 0, I.B_SCALAR, 2.5),
+            I.ld(DATA, 4096, 4096),
+            I.vop(I.V_FILL, 24576, 0, 0, 64, 256, 256, 0, 0, I.B_SCALAR, -1.5),
+            I.halt()]
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [prog], [i.copy() for i in imgs]).run()
+    cyc = {}
+    for w, arb in ((1, R2_ARB), (2, R2_ARB2)):
+        drams, tmems, st = rtlsim.run(cfg, [prog], [i.copy() for i in imgs],
+                                      uarch={**rtlsim.BOARD_UARCH, **R2_TMEM, **arb},
+                                      max_cycles=1_000_000)
+        assert np.array_equal(tmems[0], m.slices[0].tmem), w
+        cyc[w] = st["cycles"]
+    assert cyc[2] < cyc[1], cyc
+
+
+@pytest.mark.parametrize("mcols,rows,seed", [(2, 8, 1), (2, 6, 3)])
+def test_one_copy_two_writes_replays_make_progress(have_verilator, mcols, rows, seed):
+    """test_one_copy_replays_make_progress's programs at WPB 2 (the replays beside a bank's two
+    writes): the ISA's results within a million cycles."""
+    rng = np.random.default_rng(3000 + seed)
+    cfg = Config(S=1, MCOLS=mcols, ACT_ROWS=rows)
+    prog = _random_program(rng, cfg, n_ops=60, gather=True)
+    imgs = _images(rng, 1)
+    m = Machine(cfg, [prog], [i.copy() for i in imgs]).run()
+    drams, tmems, _ = rtlsim.run(cfg, [prog], [i.copy() for i in imgs],
+                                 uarch={**rtlsim.BOARD_UARCH, **R2_TMEM, **R2_ARB2, "COLL_GATHER": 1},
+                                 max_cycles=1_000_000)
+    assert np.array_equal(drams[0], m.slices[0].dram)
+    assert np.array_equal(tmems[0], m.slices[0].tmem)
 
 
 def held_collective_program(out: int = SCRATCH) -> list:
@@ -611,7 +747,10 @@ def test_scoreboard_stress_two_slices(have_verilator, seed):
 def test_dram_range_ending_at_4gib(have_verilator, young):
     TOP, END = (1 << 32) - (1 << 20), 1 << 32
     rng = np.random.default_rng(3100)
-    img = rng.integers(0, 256, 1 << 20, dtype=np.uint8)
+    # the simulated 1 MiB DRAM is the top MiB of 4 GiB through its low address bits; the image
+    # leaves its last 64 KiB free for a booted program (BOOT, ICACHE: rtlsim puts it after the
+    # image), so the simulated DRAM is not doubled and the top MiB still lands on the image
+    img = rng.integers(0, 256, (1 << 20) - (1 << 16), dtype=np.uint8)
     img[:4 * 4096] = rng.standard_normal(4096).astype(np.float32).view(np.uint8)
     prog = [I.ld(TOP, 0, 4096),
             I.vop(I.V_FILL, 8192, 0, 0, 64, 256, 256, 0, 0, I.B_SCALAR, 2.5),   # ~2K cycles
@@ -621,8 +760,9 @@ def test_dram_range_ending_at_4gib(have_verilator, young):
     else:
         prog.append(I.waitw(END - 4, 30000, I.f32bits(2.5), I.C_EQ, timeout=100_000))
     prog.append(I.halt())
+    assert len(img) + 2 * 32 * len(prog) <= Config(S=1).DRAM_BYTES       # (wait entries too)
     m = Machine(Config(S=1, DRAM_BYTES=1 << 32), [prog], [None])
-    m.slices[0].dram[TOP:] = img
+    m.slices[0].dram[TOP:TOP + len(img)] = img
     m.run()
     drams, tmems, _ = rtlsim.run(Config(S=1), [prog], [img.copy()])
     assert np.array_equal(tmems[0], m.slices[0].tmem)
@@ -659,24 +799,66 @@ def test_count_fields_are_immediates(have_verilator, op):
 
 
 # GATHER's dst is R[rb] + w2 and every slice names the same one (otpu_coll writes at slice 0's),
-# here through different registers; slices that name different ones stop the simulation, as
-# they raise in the ISA simulator.
-def test_gather_dst_through_registers(have_verilator):
-    cfg = Config(S=2)
+# here through different registers (the odd slices' programs one instruction longer: with WAITC
+# and boot, each slice's wait entries after the longest program, as the host loads them); slices
+# that name different ones stop the simulation, as they raise in the ISA simulator.
+# hub: otpu_top COLL_HUB (otpu_board's collective at S > 1; 2: at COLL_PIPE, its reads in flight)
+@pytest.mark.parametrize("S,hub", [(2, 0), (4, 0), (2, 1), (4, 1), (2, 2), (4, 2)])
+def test_gather_dst_through_registers(have_verilator, S, hub):
+    cfg = Config(S=S)
+    ua = {"COLL_HUB": 1, "COLL_PIPE": int(hub == 2)} if hub else None
     rng = np.random.default_rng(3300)
-    imgs = _images(rng, 2)
-    progs = [[I.ld(DATA, 0, 4096), I.gather(0, 5000, 2, 16, 32, 16, 64), I.halt()],
-             [I.li(6, 40), I.ld(DATA, 0, 4096), I.gather(0, 4960, 2, 16, 32, 16, 64, rb=6),
-              I.halt()]]
+    imgs = _images(rng, S)
+    progs = [[I.ld(DATA, 0, 4096), I.gather(0, 5000, 2, 16, 32, 16, 64), I.halt()] if s % 2 == 0
+             else [I.li(6, 40), I.ld(DATA, 0, 4096), I.gather(0, 4960, 2, 16, 32, 16, 64, rb=6),
+                   I.halt()] for s in range(S)]
     m = Machine(cfg, progs, [i.copy() for i in imgs]).run()
-    drams, tmems, _ = rtlsim.run(cfg, progs, [i.copy() for i in imgs])
-    for s in range(2):
+    drams, tmems, _ = rtlsim.run(cfg, progs, [i.copy() for i in imgs], uarch=ua)
+    for s in range(S):
         assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
     progs[1][0] = I.li(6, 48)
     with pytest.raises(SimError, match="disagree"):
         Machine(cfg, progs, [i.copy() for i in imgs]).run()
     with pytest.raises(RuntimeError, match="otpu_coll"):
-        rtlsim.run(cfg, progs, [i.copy() for i in imgs])
+        rtlsim.run(cfg, progs, [i.copy() for i in imgs], uarch=ua)
+
+
+@pytest.mark.parametrize("pipe", [0, 1])
+@pytest.mark.parametrize("S,r2", [(2, False), (2, True), (3, False), (4, True)])
+def test_gathers_through_the_hub(have_verilator, S, r2, pipe):
+    """otpu_top COLL_HUB: otpu_board's collective at S > 1 (otpu_coll_hub beside the unit, an
+    otpu_coll_port a slice, two register stages each way; S 3 the slices' count not a power of
+    two; pipe: COLL_PIPE, the hub's reads in flight). GATHERs of random shapes (rows 1..4, cols 1..300 and 1, 8, 9: whole, partial and
+    single lanes; each slice its own source and row stride), back to back and between BARs,
+    with an ST of 4,096 TMEM words beside them (r2: release r2's TMEM, the collective the DMA's
+    guest, held reads); every slice's TMEM and DRAM are the ISA's."""
+    rng = np.random.default_rng(3401 + 10 * S)
+    cfg = Config(S=S)
+    shapes = [(int(rng.integers(1, 5)), int(rng.integers(1, 301))) for _ in range(6)]
+    shapes += [(1, 1), (3, 8), (2, 9)]
+    progs: list = [[I.ld(DATA, 0, 4096), I.st(SCRATCH, 0, 4096)] for _ in range(S)]
+    dst = 8192
+    for i, (rows, cols) in enumerate(shapes):
+        drs = cols + int(rng.integers(0, 5))
+        seg = rows * drs + int(rng.integers(0, 9))
+        for s in range(S):
+            srs = cols + int(rng.integers(0, 17))
+            src = int(rng.integers(0, 4096 - rows * srs))
+            progs[s].append(I.gather(src, dst, rows, cols, srs, drs, seg))
+            if i % 3 == 2:
+                progs[s].append(I.bar())
+        dst += S * seg
+    assert dst <= cfg.TMEM_WORDS
+    for p in progs:
+        p.append(I.halt())
+    imgs = _images(rng, S)
+    m = Machine(cfg, progs, [i.copy() for i in imgs]).run()
+    ua = {"COLL_HUB": 1, "COLL_PIPE": pipe} | ({**R2_TMEM, **R2_ARB} if r2 else {})
+    drams, tmems, _ = rtlsim.run(cfg, progs, [i.copy() for i in imgs], uarch=ua,
+                                 max_cycles=2_000_000)
+    for s in range(S):
+        assert np.array_equal(tmems[s], m.slices[s].tmem), f"slice {s} TMEM"
+        assert np.array_equal(drams[s], m.slices[s].dram), f"slice {s} DRAM"
 
 
 # ------------------------------------------------------------------ the board's memory path

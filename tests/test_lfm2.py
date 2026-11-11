@@ -96,7 +96,7 @@ def test_tiny_matches_hf(tiny):
     dev = np.array([eng.step(t) for t in toks])
     assert _cos(dev, hf).min() > 0.998
     # the device follows the quantized math (it differs only in fp32 rounding)
-    emu = emulated_logits(spec, W, toks[:12])
+    emu = emulated_logits(spec, W, toks[:12], S=eng.cfg.S)
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
@@ -106,7 +106,39 @@ def test_tiny_fp4_follows_emulation(tiny):
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
     eng = Engine(spec, W, cap=256, wformat="fp4")
     dev = np.array([eng.step(t) for t in toks])
-    assert _cos(dev, emulated_logits(spec, W, toks, wformat="fp4")).min() > 0.9995
+    assert _cos(dev, emulated_logits(spec, W, toks, wformat="fp4", S=eng.cfg.S)).min() > 0.9995
+
+
+@pytest.mark.parametrize("ffn", [1536, 10752])
+def test_tiny_4bit_down_in_block_chunks_at_s4(ffn, monkeypatch):
+    """The two cards' S 4 with a slice's F an odd number of D blocks (10752: LFM2-2.6B's, 7 chunks
+    of 384 as the MLP's hardware loop; 1536: one chunk, unrolled): a 4-bit W_down's chunks are whole
+    blocks, its parts of S C whole D-byte chunks, and the device follows the float64 emulation."""
+    from opentpu import target as T
+    from opentpu.llm import lfm2 as LF
+    from opentpu.llm.lfm2 import _chunk, _down_q
+    if ffn == 10752:
+        monkeypatch.setattr(LF, "MLP_UNROLL_BODIES", 0)
+    torch.manual_seed(2)
+    kinds = ("conv", "attn", "conv")
+    hc = transformers.Lfm2Config(
+        hidden_size=512, num_hidden_layers=3, num_attention_heads=8, num_key_value_heads=4,
+        intermediate_size=ffn, vocab_size=1000, norm_eps=1e-5,
+        layer_types=["full_attention" if k == "attn" else "conv" for k in kinds],
+        conv_L_cache=3, conv_bias=False, block_auto_adjust_ff_dim=False,
+        tie_word_embeddings=True, max_position_embeddings=4096,
+        rope_parameters={"rope_type": "default", "rope_theta": 1e6})
+    m = transformers.Lfm2ForCausalLM(hc).float().eval()
+    W = {k: v.float().numpy() for k, v in m.state_dict().items()}
+    spec = Spec(512, kinds, 8, 4, 64, ffn, 1000, formats="conv=nvfp4,gateup=nvfp4,down=fp4")
+    cfg = dataclasses.replace(T.config(T.load("bcu1525-x2:st16")), DRAM_BYTES=1 << 30)
+    assert _chunk(ffn // 4, 128, _down_q("fp4", ffn // 4, 4, 128)) == 384
+    toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 8)]
+    eng = Engine(spec, W, cap=256, cfg=cfg, wformat="int8", head_format="int8", rows=8)
+    assert eng.image.mlp_loop == (ffn == 10752)
+    dev = np.array([eng.step(t) for t in toks])
+    emu = emulated_logits(spec, W, toks, wformat="int8", head_format="int8", S=4)
+    assert _cos(dev, emu).min() > 0.9995
 
 
 def test_tiny_formats_per_kind(tiny, monkeypatch):
@@ -122,7 +154,7 @@ def test_tiny_formats_per_kind(tiny, monkeypatch):
                               wo="int4", wg="int8", wu="int8", wd="fp4")
     toks = [int(t) for t in np.random.default_rng(4).integers(0, 1000, 12)]
     dev = np.array([a.step(t) for t in toks])
-    emu, e8 = emulated_logits(mix, W, toks), emulated_logits(spec, W, toks)
+    emu, e8 = emulated_logits(mix, W, toks, S=a.cfg.S), emulated_logits(spec, W, toks, S=a.cfg.S)
     assert _cos(dev, emu).min() > 0.9995
     assert np.abs(dev - emu).mean() < 0.7 * np.abs(dev - e8).mean()
     r, b = Engine(mix, W, cap=256, resident=True), Engine(mix, W, cap=256)
@@ -642,3 +674,55 @@ def test_tiny_image_from_the_quantization_cache(tiny, tmp_path, monkeypatch):
     assert qcache.stats["miss"] == n["miss"] and qcache.stats["hit"] == 2 * n["hit"] + n["miss"]
     for got in (first, again):
         assert all(np.array_equal(a, b) for a, b in zip(got, want))
+
+
+def test_warm_prompts_leave_nothing_to_compile(tmp_path, monkeypatch):
+    """boards/bcu1525/chat35/warm35x2.py's prompt runs on the two cards' S 4: warmed ahead from the
+    arguments the chat keeps, a prompt from position 0 across two buckets finds every run's
+    programs and its bucket's fit in the program cache (at S > 1 no compile workers: the chat's
+    thread would compile them), and the device follows the float64 emulation."""
+    import sys
+    from opentpu import progcache as PC
+    from opentpu import target as T
+    from opentpu.llm import prefill as PF
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "boards" / "bcu1525" / "chat35"))
+    import warm35x2 as WX
+    monkeypatch.setenv("OTPU_PROG_CACHE", str(tmp_path))
+    torch.manual_seed(3)
+    kinds = ("conv", "attn", "conv")
+    hc = transformers.Lfm2Config(
+        hidden_size=512, num_hidden_layers=3, num_attention_heads=8, num_key_value_heads=4,
+        intermediate_size=1536, vocab_size=1000, norm_eps=1e-5,
+        layer_types=["full_attention" if k == "attn" else "conv" for k in kinds],
+        conv_L_cache=3, conv_bias=False, block_auto_adjust_ff_dim=False,
+        tie_word_embeddings=True, max_position_embeddings=4096,
+        rope_parameters={"rope_type": "default", "rope_theta": 1e6})
+    m = transformers.Lfm2ForCausalLM(hc).float().eval()
+    W = {k: v.float().numpy() for k, v in m.state_dict().items()}
+    spec = Spec(512, kinds, 8, 4, 64, 1536, 1000)
+    cfg = dataclasses.replace(T.config(T.load("bcu1525-x2:st16")), DRAM_BYTES=1 << 30)
+    eng = Engine(spec, W, cap=512, cfg=cfg, wformat="int8", head_format="int8", rows=8,
+                 prompt_runs=True, resident=True)
+    assert PF.supported(eng) and eng.prog_cache
+    args = (eng.spec, eng.cfg, eng.cap, eng.batch, eng.rows, eng._image_kw, eng.image.stream_fill,
+            eng.layout, eng.block, eng._conv_lo, False, eng.gen_debug, eng.gen_split, False, [None])
+    from opentpu.serve import progstate as PS
+    assert PS.warm_reach(eng)["buckets"] == 0
+    WX.warm_prompts(args, [0, 1])
+    assert PS.warm_reach(eng)["buckets"] == 1
+    WX.warm_prompts(args, [2])
+    r = PS.warm_reach(eng)
+    assert r["tokens"] == r["of_tokens"] == 512 and r["buckets"] == 2 and r["slots"] == 1, r
+    monkeypatch.setattr(eng.backend, "waitc", True, raising=False)      # (their entries too)
+    assert PS.warm_reach(eng)["buckets"] == 0
+    WX.warm_prompts(args[:13] + (True,) + args[14:], [1])
+    assert PS.warm_reach(eng)["buckets"] == 1
+    monkeypatch.setattr(eng.backend, "waitc", False)
+    eng.__dict__.pop("_prompt_progs", None), eng.__dict__.pop("_prompt_rmax", None)
+    toks = [int(t) for t in np.random.default_rng(1).integers(0, 1000, 264)]
+    before = dict(PC.stats)
+    runs = list(eng.prefill_chunks(toks))
+    assert PC.stats.get("compile", 0) == before.get("compile", 0)
+    assert sum(len(p) for p, _ in runs) == len(toks) and max(len(p) for p, _ in runs) > 1
+    emu = emulated_logits(spec, W, toks, wformat="int8", head_format="int8", S=4)
+    assert _cos(runs[-1][1], emu[-1]) > 0.9995

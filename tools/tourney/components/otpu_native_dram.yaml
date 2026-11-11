@@ -5,6 +5,7 @@ description: 'Native DRAM adapter (the board''s): slice ports A (words), B (chun
   write acknowledges (n_wdone, wr_idle).'
 allowed:
 - rtl/mem/otpu_native_dram.sv
+- rtl/mem/otpu_xstg.sv
 synth:
   parts:
   - top: otpu_native_dram

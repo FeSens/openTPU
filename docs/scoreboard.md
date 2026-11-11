@@ -17,7 +17,6 @@ compiler for the points the model is calibrated on.
 # from the repository root; the tool imports nothing from opentpu/
 python3 tools/scoreboard.py report                         # the YPCB in production
 python3 tools/scoreboard.py report --board bcu1525 --mts 2400 --mhz 200
-python3 tools/scoreboard.py report --board f2
 python3 tools/scoreboard.py compare --mcols 8 --tmem-words 262144 --rows 16 --board bcu1525
 python3 tools/scoreboard.py whatifs                        # the standard what-ifs on the YPCB
 python3 tools/scoreboard.py whatifs --board bcu1525        # ... against another board
@@ -37,7 +36,7 @@ Each option overrides the board preset:
 
 | option | what it changes |
 |---|---|
-| `--board ypcb\|bcu1525\|f2` | the preset (below) |
+| `--board ypcb\|bcu1525` | the preset (below) |
 | `-S N` | slices, tensor-parallel: weights, KV heads and experts are split |
 | `--mcols N` | MXU columns: `MCOLS x D` MACs a cycle and MCOLS rows a pass (int8; a PAIRed 4-bit row takes two) |
 | `--act-rows N` | rows a weight pass (MM replay, "virtual MCOLS"): a run of R rows streams the weights `ceil(R / N)` times |
@@ -77,7 +76,7 @@ PYTHONPATH=. python3 tools/scoreboard_cosim.py probe models/Qwen3-0.6B --tmem 65
     --act-rows 16 --buckets 1,4                # compile only: the rows a prefill run fits
 ```
 
-Run the co-sim on omarchy through `~/otpu-build/slot.sh`. A two-layer Qwen3 run needs about
+Run the co-sim on the build host through `~/otpu-build/slot.sh`. A two-layer Qwen3 run needs about
 4 GB and 10-40 minutes.
 
 ## 1. The workloads
@@ -99,7 +98,7 @@ formats.
     table shows those.
 - **MoE**: Gemma 4 26B-A4B and Qwen3.5-35B-A3B.
   - Expert slots fill the memory the slices address beside the rest of the image. The other
-    experts come over PCIe from the host, or from a second card tier (F2's DDR4).
+    experts come over PCIe from the host, or from a second, slower memory tier on the card where a board has one.
   - Decode is the card's time with the experts present, plus each layer's link time that the
     card does not hide.
   - Prefill is layer-major, R = 2, with pooled slots (docs/offload.md 13).
@@ -310,9 +309,6 @@ Against the 51 dense card points (decode, prefill, batched), the mean |error| is
 | BCU1525 DDR4-2400, 100 MHz | 25.6 | 23.5 | 61.8 | 43.1 | 12.18 | 1.56x |
 | BCU1525 DDR4-2400, 200 MHz | 51.2 | 47.1 | 121.8 | 85.5 | 23.17 | 3.06x |
 | BCU1525 DDR4-2400, 200 MHz, port 256 + MXU x2 | 73.0 | 65.6 | 186.1 | 144.6 | 29.66 | 4.49x |
-| F2 (HBM, S 4, 250 MHz) | 128.0 | 116.4 | 286.6 | 205.1 | 52.11 | 7.25x |
-| F2, port 256 + MXU x2 | 256.0 | 219.1 | 468.9 | 363.7 | 81.28 | 12.38x |
-| F2, port 512 + MXU x4 | 414.0 | 330.8 | 663.4 | 575.8 | 104.52 | 17.88x |
 
 The presets (`scoreboard.py boards`):
 
@@ -322,15 +318,10 @@ The presets (`scoreboard.py boards`):
   its 2 x 16 GB.
   - Bring-up is DDR4-1600 at 100 MHz, with mem_eff 0.95 assumed.
   - PCIe Gen3 x16 at 9 GB/s is assumed, not measured.
-- **f2**: AWS F2, VU47P. 16 GB of HBM (~460 GB/s, taken as 115 GB/s a slice at 0.90), S = 4
-  at 250 MHz.
-  - Its 64 GB of DDR4 is a second tier for experts, assumed to be one 19.2 GB/s channel.
-  - Its PCIe is taken as 20 GB/s.
 
 A slice streams at most 128 B a core cycle through its port.
 - **YPCB**: its DDR3 sits 3% under that.
-- **BCU1525 and F2**: port-bound. On the BCU1525 at 100 MHz the port is half its DDR4, and
-  on F2 at 250 MHz it is 128 of 460 GB/s.
+- **BCU1525**: port-bound. At 100 MHz the port is half its DDR4.
 - **DDR4-2400** buys the BCU1525 nothing until the port widens.
 
 ### YPCB (production)
@@ -426,37 +417,6 @@ bound (the unit taking the largest share of the time, averaged over the models):
 | gemma4-26b | 44% (1694 slots) | 14.60 | 16 | 24.6 | 10.4 | 24.8 | 41.3 | port 85% | port 73% |
 | qwen35-35b | 39% (4005 slots) | 22.06 | 41 | 34.0 | 7.5 | 36.1 | 28.3 | port 84% | port 60% |
 
-### F2 (HBM, S 4, 250 MHz)
-
-**f2: S 4, MCOLS 4 (rows a pass 4, MXU x1), TMEM 64K words, VPU x1, 250 MHz, HBM 115 GB/s a slice: 103.5 GB/s, 128.0 B a cycle (port-bound), 128.0 GB/s in all; host link 20 GB/s**
-
-summary (geometric means, fp4 weights, context 512): decode 116.4 tok/s, prefill 1024 286.6 tok/s, batched 16 users 205.1 tok/s in all, MoE 52.11 (sqrt of decode x prefill 1024 tok/s)
-
-bound (the unit taking the largest share of the time, averaged over the models): decode port 91%, prefill MXU 47%, batch MXU 66%, moe port 69%
-
-| model | decode tok/s | MB/token | prefill 256 tok/s | TTFT 256 s | prefill 1024 tok/s | TTFT 1024 s | rows a run | decode bound | prefill 1024 bound |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| qwen3 | 265.2 | 440 | 756.5 | 0.34 | 668.7 | 1.53 | 8 | port 82% | MXU 58% |
-| lfm2 | 711.7 | 165 | 1,983.4 | 0.13 | 1,669.5 | 0.61 | 8..4 | port 87% | MXU 53% |
-| qwen35 | 208.8 | 571 | 512.2 | 0.50 | 508.9 | 2.01 | 4 | port 92% | MXU 50% |
-| qwen35-2b | 94.4 | 1,301 | 293.8 | 0.87 | 293.2 | 3.49 | 4 | port 96% | MXU 79% |
-| qwen35-4b | 46.8 | 2,671 | 107.7 | 2.38 | 107.3 | 9.54 | 2 | port 97% | port 84% |
-| smollm3 | 67.8 | 1,794 | 159.8 | 1.60 | 157.1 | 6.52 | 4 | port 93% | MXU 86% |
-| phi4-mini | 51.4 | 2,397 | 130.4 | 1.96 | 127.3 | 8.05 | 2 | port 94% | port 85% |
-| lfm2-2.6b | 85.1 | 1,446 | 190.8 | 1.34 | 176.4 | 5.80 | 4..2 | port 95% | port 67% |
-| gemma4 | 76.0 | 1,446 | 211.3 | 1.21 | 206.6 | 4.96 | 4 | port 84% | MXU 76% |
-
-| batched decode, total / each tok/s | 1 users | 4 users | 8 users | 16 users | 16 users bound |
-|---|---:|---:|---:|---:|---:|
-| qwen3 | 265.2 / 265.2 | 510.5 / 127.6 | 510.5 / 63.8 | 510.5 / 31.9 | MXU 44% |
-| smollm3 | 67.8 / 67.8 | 144.1 / 36.0 | 144.1 / 18.0 | 144.1 / 9.0 | MXU 79% |
-| phi4-mini | 51.4 / 51.4 | 117.2 / 29.3 | 117.2 / 14.7 | 117.2 / 7.3 | MXU 74% |
-
-| MoE | experts on the card | decode tok/s | misses a token | prefill 256 tok/s | TTFT 256 s | prefill 1024 tok/s | TTFT 1024 s | decode bound | prefill 1024 bound |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| gemma4-26b | all | 35.56 | 0 | 55.0 | 4.7 | 53.9 | 19.0 | port 83% | port 63% |
-| qwen35-35b | 86% (8786 slots) + 1453 far | 55.27 | 4 | 68.8 | 3.7 | 69.6 | 14.7 | port 84% | port 47% |
-
 ### MoE on one slice (today's code) against S slices
 
 | board | model | slices | experts on the card | decode tok/s | prefill 1024 tok/s |
@@ -465,10 +425,6 @@ bound (the unit taking the largest share of the time, averaged over the models):
 | BCU1525 DDR4-2400, 200 MHz | gemma4-26b | 2 | 44% | 14.60 | 24.8 |
 | BCU1525 DDR4-2400, 200 MHz | qwen35-35b | 1 | 16% | 11.09 | 20.7 |
 | BCU1525 DDR4-2400, 200 MHz | qwen35-35b | 2 | 39% | 22.06 | 36.1 |
-| F2 | gemma4-26b | 1 | 14% + 3304 far | 8.75 | 16.5 |
-| F2 | gemma4-26b | 4 | all | 35.56 | 53.9 |
-| F2 | qwen35-35b | 1 | 16% + 8624 far | 14.48 | 25.6 |
-| F2 | qwen35-35b | 4 | 86% + 1453 far | 55.27 | 69.6 |
 
 
 ## 5. What-ifs
@@ -517,27 +473,6 @@ bound (the unit taking the largest share of the time, averaged over the models):
 | MoE runs of 8 rows (64-id requests) | 1.000x | 1.000x | 1.000x | 0.945x | 0.986x | port 92% / MXU 51% / MXU 68% / port 44% |
 | MoE runs of 8 rows, each row its experts | 1.000x | 1.000x | 1.000x | 1.235x | 1.054x | port 92% / MXU 51% / MXU 68% / port 62% |
 
-**Against f2** (S 4, MCOLS 4 (rows a pass 4, MXU x1), TMEM 64K words, VPU x1, 250 MHz, HBM 115 GB/s a slice: 103.5 GB/s, 128.0 B a cycle (port-bound), 128.0 GB/s in all; host link 20 GB/s):
-
-| what-if (against f2) | decode | prefill | batched | MoE | score | bound after: decode / prefill / batched / MoE |
-|---|---:|---:|---:|---:|---:|---|
-| (f2 itself) | 1.000x | 1.000x | 1.000x | 1.000x | 1.000x | port 91% / MXU 47% / MXU 66% / port 69% |
-| MCOLS 8 | 1.001x | 1.352x | 1.718x | 1.003x | 1.236x | port 91% / port 45% / MXU 58% / port 69% |
-| TMEM x2 (8 ACT RAM rows) | 1.000x | 1.052x | 1.029x | 1.000x | 1.020x | port 91% / MXU 70% / MXU 80% / port 69% |
-| TMEM x4 (16 ACT RAM rows) | 1.000x | 1.059x | 1.042x | 1.000x | 1.025x | port 91% / MXU 71% / MXU 81% / port 69% |
-| 64 rows a run, today's kernel | 1.000x | 1.101x | 1.042x | 1.000x | 1.035x | port 91% / MXU 78% / MXU 81% / port 69% |
-| tile kernel, 16 rows a run (64K TMEM) | 1.000x | 1.052x | 1.000x | 1.000x | 1.013x | port 91% / MXU 80% / MXU 66% / port 69% |
-| tile kernel, 16 rows, MCOLS 8 | 1.001x | 1.738x | 1.718x | 1.003x | 1.316x | port 91% / MXU 69% / MXU 58% / port 69% |
-| 8 users in one pass (replay) | 1.000x | 1.009x | 1.029x | 1.000x | 1.009x | port 91% / MXU 47% / MXU 80% / port 69% |
-| VPU x2 | 1.000x | 1.043x | 1.015x | 1.012x | 1.017x | port 91% / MXU 49% / MXU 66% / port 70% |
-| MXU pumped x2 | 1.000x | 1.281x | 1.452x | 1.007x | 1.170x | port 91% / port 64% / port 70% / port 70% |
-| MCOLS 8 + TMEM x4 + VPU x2 | 1.001x | 1.726x | 1.816x | 1.015x | 1.336x | port 91% / MXU 58% / MXU 72% / port 70% |
-| MXU x2 + TMEM x4 + VPU x2 (pumped) | 1.000x | 1.748x | 1.816x | 1.015x | 1.340x | port 91% / MXU 57% / MXU 72% / port 70% |
-| port 256 B a cycle (memory permitting) | 1.078x | 1.059x | 1.050x | 1.073x | 1.065x | MXU 92% / MXU 75% / MXU 81% / MXU 68% |
-| port 256 B + MXU x2 | 1.882x | 1.636x | 1.773x | 1.560x | 1.709x | port 86% / MXU 38% / MXU 59% / port 56% |
-| MoE runs of 8 rows (64-id requests) | 1.000x | 1.000x | 1.000x | 1.030x | 1.007x | port 91% / MXU 47% / MXU 66% / port 42% |
-| MoE runs of 8 rows, each row its experts | 1.000x | 1.000x | 1.000x | 1.308x | 1.070x | port 91% / MXU 47% / MXU 66% / port 58% |
-
 
 What each what-if sets:
 
@@ -581,13 +516,10 @@ What each what-if sets:
   - A 256-byte port with an MXU x2 gives the BCU1525 1.8x decode and 1.6-1.8x on the other
     workloads.
   - At DDR4-2400 and 200 MHz that is 4.5x the YPCB's score.
-- **On a fast board the per-row costs start to show.**
-  - F2 at 512 B a cycle with an MXU x4 streams 3.2x F2's bytes but decodes 2.9x faster.
-  - The vector unit stays a small lever: VPU x2 is worth nothing on decode (vpu-pump's
-    co-sim: the VPU is 0.6-0.8% of it) and about 5% on prefill.
+- **The vector unit stays a small lever.**
+  - VPU x2 is worth nothing on decode (vpu-pump's co-sim: the VPU is 0.6-0.8% of it) and
+    about 5% on prefill.
   - For Qwen3.5, DSTEP is the bigger lever.
-  - An MXU x4 needs 4 x 716 DSPs a slice (11.5K for S = 4) against the VU47P's 9,024, so it
-    has to be pumped (2x clock) rather than replicated.
 - **MoE.**
   - On the YPCB only 14-16% of the experts fit, so a decode token misses 87-104 experts over
     PCIe Gen2.
@@ -596,8 +528,7 @@ What each what-if sets:
   - The model's expert cost matches tiling's expert co-sim: 0.101 ms (35B) and 0.210 ms (26B)
     at M = 1-2, twice that at M = 4 on MCOLS 4. The expert is stream-bound until its rows
     double the MXU's PAIR pass.
-  - The BCU1525's two 4 GiB slices hold 39-44% and hide the link entirely. F2 holds the whole
-    26B and 86% of the 35B, with the rest in its DDR4.
+  - The BCU1525's two 4 GiB slices hold 39-44% and hide the link entirely.
   - MoE prefill is bound by the port re-streaming each run's union of experts. A request
     line of 16 ids caps a layer run at 2 rows (k = 8), so a 1024-token prompt streams about
     12 experts a run, 512 runs a layer.
@@ -610,8 +541,8 @@ What each what-if sets:
 ## 7. Caveats and decisions for the user
 
 - **4 GiB a slice.** Addresses are 32 bits, so a slice holds 4 GiB of model (`--fast-gb`).
-  The BCU1525's 2 x 16 GB a slice and F2's DDR4 tier need address windows or far-memory
-  DMA, which is an ISA decision.
+  The BCU1525's 2 x 16 GB a slice needs address windows or far-memory DMA, which is an ISA
+  decision.
 - **Gemma 4 and the MoE models run on one slice in today's code.** Their S > 1 rows assume
   tensor-parallel slices like the dense models. Section 4 gives MoE at S = 1 for comparison.
 - **TMEM above 64K words** needs two RTL fixes before its what-ifs hold.
@@ -664,12 +595,10 @@ What each what-if sets:
     - The model's `--vpu 2` is a VPU and stream engine of twice the rate (8 lanes pumped),
       not today's 16-lane VPU.
 - **The S > 1 collective cost** (1000 cycles a layer and row) comes from one co-sim at S = 2.
-  Between 0 and 6000 cycles it moves F2's decode by -7% to +2% and its prefill by -16% to
-  +4%.
 - **Context-dependent vector work** (softmax over the context) enters only through the KV
   bytes. That fits the card's batched steps at contexts 64 and 1024 to 0.4%.
-- **Assumed, not measured**: the BCU1525's PCIe and DDR4 efficiency, F2's DDR4 tier and PCIe,
-  and the S > 1 collective cost.
+- **Assumed, not measured**: the BCU1525's PCIe and DDR4 efficiency, and the S > 1 collective
+  cost.
 - **Batched decode** exists for Qwen3 and the Llama-likes only. Gemma 4, LFM2 and Qwen3.5
   batching is modelled the same way but has no kernel yet.
 
@@ -686,7 +615,7 @@ The model shapes come from `scoreboard.py gen-models DIR...`, which reads the co
 and the safetensors headers, into `tools/scoreboard_models.json`. Refresh the rows a run fits
 with `tools/scoreboard_cosim.py probe`.
 
-The co-sim campaign (`tools/scoreboard_campaign.sh PART`, on hwe-bench as four slot jobs) runs a model's first one
+The co-sim campaign (`tools/scoreboard_campaign.sh PART`, on the simulation host as four slot jobs) runs a model's first one
 and two layers. The difference between them is a layer's cycles, with the run's own cost
 removed. In order, it covers:
 
@@ -698,6 +627,6 @@ removed. In order, it covers:
 6. Qwen3.5's DeltaNet layers at MCOLS 4 and 8: the 0.8B and 2B at R 4, and the 4B at R 2
    and R 3 (parts 3 and 4).
 
-It ran on hwe-bench on 2026-10-12: parts 1 and 2 took about 25 minutes each, parts 3 and 4
+It ran on the simulation host on 2026-10-12: parts 1 and 2 took about 25 minutes each, parts 3 and 4
 about 20. Its results are in
 `tools/scoreboard_cosim_runs.jsonl`, which `validate` and `scoreboard.py cosim FILE` read.

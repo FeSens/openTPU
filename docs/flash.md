@@ -53,7 +53,7 @@ it exists.
 ## Over JTAG (now)
 
 `boards/ypcb-00338/flash_jtag.sh` uses the Vivado hardware manager: native Vivado 2026.1 on
-the PC with the cable (opentpu). Its modes:
+the PC with the cable (the card host). Its modes:
 
 | Command | What it does | Takes the card |
 |:--|:--|:--|
@@ -67,7 +67,7 @@ the PC with the cable (opentpu). Its modes:
 That replaces the running design, so the card leaves the bus. Afterwards, load a bitstream or
 run `boot`, then `sudo otpu-setup --rescan`.
 
-Checked against Vivado 2026.1 without the card (on omarchy):
+Checked against Vivado 2026.1 without the card (on the build host):
 
 - the syntax of `create_hw_cfgmem`, `readback_hw_cfgmem` (`-all -format -file`) and
   `program_hw_cfgmem`;
@@ -80,10 +80,10 @@ Not checked:
   makes of the chain;
 - the run times.
 
-The session, one step at a time, with the lead's go and, for step 3, the user's:
+The session, one step at a time, with the maintainer's go and, for step 3, the user's:
 
 1. `detect`.
-2. `backup ~/otpu-build/factory-flash/factory-<date>.bin`. Copy it to the Mac as well. This
+2. `backup ~/otpu-build/factory-flash/factory-<date>.bin`. Copy it to a laptop as well. This
    file is the only copy of the factory image once step 3 runs. From it, read the factory
    image's COR0 (its configuration rate) and where its image starts.
 3. `program ~/otpu-build/deploy_pnbl32_e2521032/otpu.mcs`. The image lands at address 0 and
@@ -231,7 +231,7 @@ Checks and safety:
 
 **The PCIe link.** IPROG takes the card off the bus the way a JTAG load does, so `boot` ends
 with the same rescan and link retrain (`opentpu/host/pcie/relink.sh`). Until that retrain has
-worked on opentpu's root port, a reboot into a slot may need a warm reboot of the PC.
+worked on the card host's root port, a reboot into a slot may need a warm reboot of the PC.
 
 ### Order of work
 

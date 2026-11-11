@@ -172,7 +172,11 @@ resident decode is 3,909 to 4,254 instructions (fp4, one slice), past the 4,096 
 bucket 8 on (the 35B-A3B's, with its MoE blocks: 4,082 to 4,131 at bucket 1).
 
 With more than 8 pairs per slice (`PAIR_LOOP`; `Spec.pair_loop` forces either layout), a
-DeltaNet block is group-major (`Image.grouped`, `DeltaNetParts`):
+DeltaNet block is group-major (`Image.grouped`, `DeltaNetParts`). On one slice with the streams
+on an engine of their own (`Config.SE_OWN`, bcu1525-wg) the threshold is 16 (`PAIR_LOOP_OWN`,
+`pair_loop(cfg)`): unrolled, every pair's taps and window load ahead of the DSTEPs (cv_ahead), and
+Qwen3.5-4B's resident decode is 2,752 to 3,097 instructions over a 32K context. The
+group-major layout:
 - The block holds one block per head group of og = 4 heads.
 - A group's block holds its two pairs' blocks, then its out_proj column block, then its pairs'
   gates (decays and betas, written by each token).
@@ -456,6 +460,54 @@ Resources (yosys estimate, `tools/synth/run.py otpu_dma`): otpu_dma 33.2 K LUT, 
 version): 28,333 LUT / 29,853 FF / 30 BRAM36 / 70 DSP, WNS +0.257 ns (otpu_dma without DSTEP:
 1,940 LUT, 14.5 BRAM36, WNS +0.705 ns). Not yet in a full bitstream build.
 
+### The next layer's taps and windows beside the MLP (cv_pre)
+
+With cv_ahead a DeltaNet layer loads every pair's taps and window before its DSTEPs, and the DMA
+runs its instructions one at a time: on bcu1525-wg (Qwen3.5-4B, 16 pairs) the loads are about 8 K
+cycles at the head of the mixer, while the DMA has nothing to do through the MLP's weight stream.
+With `Spec.cv_pre` (on with cv_ahead unless qk_once; `_CvPipe` in `qwen35_step`, at a run-time
+position with DSTEP) each DeltaNet layer's taps and windows load into one TMEM buffer beside the
+MLP before it (`swiglu_down`'s `each(i)`: the previous layer's window stores over the first half
+of its F-chunks, the next layer's loads over the rest), and its windows store beside its own MLP.
+A run's first DeltaNet layer loads as the run begins (`run_layers`' `before`). In a hardware
+loop the body's last DeltaNet layer loads the next iteration's first. The scoreboard orders a
+buffer's stores ahead of the next layer's loads into it. The logits, windows and states are bit
+for bit those without it (`test_cv_pre_is_bit_exact`, 1 and 2 slices); the 4B's resident decode
+is 16 instructions longer (2,768 to 3,113 over a 32K context).
+
+On the bcu1525-wg board model (SE_R 2, the card calibration `+cp=3333,+dimm_lat=58,+dimm_bw=86`,
+RLY 0x22555599; Qwen3.5-4B's first N layers, fp4, int8 head, position 60; N 8 is six DeltaNet
+and two attention layers, the unit a loop of 2):
+
+| cycles | N 1 | N 2 | N 8 | a DeltaNet layer (N 2 - N 1) |
+|---|---:|---:|---:|---:|
+| cv_pre off | 197,067 | 370,490 | 1,341,260 | 173,423 |
+| cv_pre on | 197,545 | 364,741 | 1,300,971 | 167,196 |
+
+A DeltaNet layer is 6.2 K cycles (3.6%) shorter, against a floor of about 147.6 K (its 60.3 MB of
+weights and 4.2 MB of states at 65.5 GB/s). At N 1 nothing is hidden: the run's first loads
+come before the layer, and the window stores already ran beside the MLP's first MMs.
+
+The two heads of a pair on one key head (shared: Qwen3.5-4B's 32 value heads on 16 key heads)
+step in one DSTEP with `Config.DSTEP2` (the PAIR flag, [isa.md](isa.md); `dstep_sh` in
+`_deltanet_dstep`): one stream's setup, fill and write drain for the two. Pair 0 keeps a DSTEP a
+head, so head b's prep still runs beside head a's step. Without DSTEP2 the compiler emits the
+same words as before (`deltanet_step2`'s fallback), so other targets' programs are unchanged
+(`test_shared_dstep_pair_is_bit_exact`). The 4B's resident decode is 45 instructions shorter
+(2,723 to 3,068 with cv_pre). The DSTEP's read-ahead is the DMA's LD chunk buffer, `otpu_dma`
+DEPTH chunks (`[uarch] DMA_DEPTH`, default 128): at 128 a stream keeps at most two runs of 64
+chunks in flight. Its 1,024-bit rows take 29 BRAM18 at any depth up to 512. On the same board
+model:
+
+| cycles | N 1 | N 2 | N 8 | a DeltaNet layer (N 2 - N 1) |
+|---|---:|---:|---:|---:|
+| cv_pre | 197,545 | 364,741 | 1,300,971 | 167,196 |
+| + a shared pair in one DSTEP | 195,701 | 360,675 | 1,293,745 | 164,974 |
+| + DMA_DEPTH 512 | 192,949 | 354,006 | 1,268,662 | 161,057 |
+
+Alone, at SE_R 2, DEPTH 256 or 512 takes a head's DSTEP from 1,389 to 1,264 cycles (a pair's
+from 1,293 to 1,167 a head).
+
 ## What limits it
 
 These are the limits of the ISA and the RTL for this model, found while mapping it; the numbers
@@ -531,6 +583,12 @@ would need a state per sequence.
   and resident decode give array-major's logits, windows and states bit for bit, and the
   resident decode is shorter; the same group-major decode on the Verilator board model through
   the host driver; Qwen3.5-4B's resident decode (layout only) under IMEM at every bucket.
+- cv_pre (the next DeltaNet layer's taps and windows loaded beside the MLP) against cv_ahead
+  alone, on 1 and 2 slices: the decode program one LD a pair longer (the first run's loads), the
+  same logits, windows and states after a chunked prefill.
+- A shared pair in one DSTEP (`Config.DSTEP2`) against a DSTEP a head, on 1 and 2 slices, resident
+  and per position: one DSTEP2 for every pair but the first, the same logits over six tokens and
+  the same layer DRAM. Group-major's bit-exact check also runs with DSTEP2 on.
 - The tiny model on the Verilator board model through the host driver, over five tokens (a
   full turn of the convolution ring), bit-identical to the ISA simulator.
 - Qwen3.5-0.8B: 8 greedy tokens equal to HF's ("The capital of France is Paris."), and one real

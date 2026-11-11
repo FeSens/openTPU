@@ -4,7 +4,8 @@ mem_read) or through the accelerator's interleave (Board).
 Byte lanes: each channel is 64 data bits (plus an ECC byte the host never sees) behind a
 controller with a 512-bit port; one 64-byte beat is one BL8 burst, so byte b of a channel offset
 travels on DQ byte lane b % 8 (DQ[8L+7:8L]). Error counts come per byte lane and per DQ bit
-(64), from which otpu-diag names the failing lane.
+(64), from which otpu-diag names the failing lane. The tests take the channels' beat (`beat`:
+the cards' 64 bytes, the WG targets' channels' 128, Board.beat; also 64 data bits each).
 
 Every test returns a dict: ok, msg, and the counts ("lanes": [8], "bits": [64], plus
 "addr_bits" for the address tests).
@@ -48,30 +49,32 @@ def _result(e: dict, what: str) -> dict:
     return {**e, "ok": ok, "msg": what if ok else f"{what}: {lane_text(e)}"}
 
 
-def walking_data(t, ch: int, off: int) -> dict:
-    """Walking 1 and walking 0 over the 512 bits of a beat: beat k of the pattern has only bit
-    k set (then only bit k clear); 2 x 512 beats written, read back."""
-    one = np.zeros((512, BEAT), np.uint8)
-    one[np.arange(512), np.arange(512) // 8] = 1 << (np.arange(512) % 8)
+def walking_data(t, ch: int, off: int, beat: int = BEAT) -> dict:
+    """Walking 1 and walking 0 over the beat x 8 bits of a beat: beat k of the pattern has only
+    bit k set (then only bit k clear); 2 x beat x 8 beats written, read back."""
+    nb = 8 * beat
+    one = np.zeros((nb, beat), np.uint8)
+    one[np.arange(nb), np.arange(nb) // 8] = 1 << (np.arange(nb) % 8)
     want = np.concatenate([one, ~one]).reshape(-1)
     t.mem_write(ch, off, want)
     return _result(errors(t.mem_read(ch, off, len(want)), want),
-                   "walking 1 and walking 0 over the 512-bit beat")
+                   f"walking 1 and walking 0 over the {nb}-bit beat")
 
 
-def address_bits(t, ch: int, ch_bytes: int) -> dict:
-    """A unique 64-byte tag at offset 0 and at every power of two from 64 up; each tag names its
-    own offset, so a tag found at the wrong place names the address bit it aliases with."""
-    offs = [0] + [1 << k for k in range(6, (ch_bytes - 1).bit_length())]
+def address_bits(t, ch: int, ch_bytes: int, beat: int = BEAT) -> dict:
+    """A unique beat-long tag at offset 0 and at every power of two from a beat up; each tag
+    names its own offset, so a tag found at the wrong place names the address bit it aliases
+    with."""
+    offs = [0] + [1 << k for k in range(beat.bit_length() - 1, (ch_bytes - 1).bit_length())]
 
     def tag(o):
-        return np.frombuffer(np.uint64(0xA5A5_0000_0000_0000 | (ch << 40) | o).tobytes() * 8,
-                             np.uint8)
+        return np.frombuffer(np.uint64(0xA5A5_0000_0000_0000 | (ch << 40) | o).tobytes()
+                             * (beat // 8), np.uint8)
     for o in offs:
         t.mem_write(ch, o, tag(o))
     bad = {}
     for o in offs:
-        got = t.mem_read(ch, o, BEAT)
+        got = t.mem_read(ch, o, beat)
         if np.array_equal(got, tag(o)):
             continue
         v = int(np.frombuffer(got[:8].tobytes(), np.uint64)[0])
@@ -86,11 +89,11 @@ def address_bits(t, ch: int, ch_bytes: int) -> dict:
 
 
 def random_blocks(t, ch: int, ch_bytes: int, n: int = 16, size: int = 1 << 20,
-                  seed: int = 5) -> dict:
+                  seed: int = 5, beat: int = BEAT) -> dict:
     """n blocks of random bytes spread evenly over the channel (the last one at its top)."""
     size = min(size, ch_bytes // (2 * n))
     rng = np.random.default_rng(seed + ch)
-    offs = [k * (ch_bytes // n) // BEAT * BEAT for k in range(n - 1)] + [ch_bytes - size]
+    offs = [k * (ch_bytes // n) // beat * beat for k in range(n - 1)] + [ch_bytes - size]
     data = [rng.integers(0, 256, size, dtype=np.uint8) for _ in offs]
     for o, d in zip(offs, data):
         t.mem_write(ch, o, d)
@@ -105,7 +108,8 @@ def bandwidth(t, ch: int, nbytes: int) -> dict:
     (board.DMA_PLACE), and H2C from one that is not (through XdmaTransport.mem_write's staging
     copy)."""
     from .board import BASE, placed
-    buf = placed(nbytes, BASE[ch])
+    bases = getattr(t, "bases", BASE)                   # (a transport without them: the fake's)
+    buf = placed(nbytes, bases[ch] if ch < len(bases) else 0)
     buf[:] = np.random.default_rng(0).integers(0, 256, nbytes, dtype=np.uint8)
     t0 = time.perf_counter()
     t.mem_write(ch, 0, buf)

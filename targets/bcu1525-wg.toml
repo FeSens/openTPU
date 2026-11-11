@@ -1,0 +1,185 @@
+# The BCU1525 (VU9P, four DDR4 UDIMMs) as one wide slice: one slice with the MXU's weight
+# groups (WG 8: P = 1 KiB a step on port W, 8 channels x 128 bytes), its 8 channels virtual: two a
+# DIMM, interleaved at 4 KiB inside it (DIMM d holds channels 2d and 2d + 1), on AMD's DDR4 MIG at
+# DDR4-2400 (the GOODRAM GR2400D464L17S/8G: 1 rank, x8, DM, no ECC), one 512-bit AXI4 port a DIMM
+# at 300 MHz. Goal: decode at the DIMMs' bandwidth (4 x 19.2 GB/s peak); the MXU's port W at
+# 150 MHz streams 153.6 GB/s, twice it (docs/bcu1525_wg.md).
+# Built at 150 MHz and run on the card (its :bhw16 variant: docs/bcu1525_wg.md section 10).
+
+[target]
+name = "bcu1525-wg"
+kind = "fpga"
+platform_id = 5
+description = "BCU1525 at WG 8: xcvu9p, 4 x DDR4-2400 UDIMM (MIG), XDMA Gen3; 1 slice x 8 channels"
+
+[arch]
+S = 1
+D = 128
+MCOLS = 8                       # 8 physical MXU columns, 8 weight rows a step (WG 8)
+WG = 8
+ACT_BLOCKS = 128
+ACT_ROWS = 16
+TMEM_WORDS = 131072
+IMEM_WORDS = 32768
+AW = 36                         # DRAM addresses of 36 bits (Phase A,
+#                                 docs/bcu1525_wg.md): 64 GB later at the same AW
+DRAM_BYTES = 34359738368        # 32 GiB: the slice's 8 channels' 4 GiB, all of each 8 GB DIMM
+#                                 (64 GB DIMMs: 68719476736, channel_bytes 8589934592)
+BHW = 0                         # the bank-half window (otpu_mig_pair): off; bcu1525-wg:bhw 33
+LANES = 8
+PAIR = false                    # WG > 1: every MM in groups (GALL)
+DSTEP = true
+STREAM = true
+SEQ_WC = true
+OUTER = false                   # DeltaNet runs DSTEP, no VOP OUTER
+DSTEP2 = true
+KT = false                      # MM's K tail (CAPS2 bit5, docs/isa.md "K tail"): the bitstreams
+#                                 built so far have none; variant kt (bcu1525-wg:kt) the next one's
+ICACHE = false                  # IMEM holds the program (4096 instructions); variant ic: a cache
+
+[uarch]
+MXU_IMPL = 2
+MXU_CL = 16
+MXU_E = 8
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 3                   # one copy, the card m8's pick too
+TMEM_NSB = 2
+TMEM_RPL = true
+TMEM_TDP = true
+TMEM_GST = true
+TMEM_PMP = 1                    # pumped at 2x (core_clk2x: 300 MHz at 150, the bridges' aclk)
+TMEM_STYLE = "ultra"
+IMEM_STYLE = "block"
+IMEM_WC_STYLE = "ultra"
+ACT_UCOLS = 0
+MXU_RF_STYLE = "distributed"
+RPB = 0
+WPB = 1
+WIN = 16
+FIFO_DEPTH = 2048               # the MXU's chunk FIFO, its lanes in UltraRAM
+MXU_FIFO_STYLE = "ultra"
+MXU_QD = 4
+QUANT_R1 = true
+QUANT_PW = 2
+TRACE_DEPTH = 16384             # the VU9P has room for the trace buffer
+PQ_WIN = 1024
+CHASH = true
+NAT_APF = 8
+NAT_AD = 16
+NAT_RD = 16
+NAT_WPOST = true
+NAT_SWG = true
+NAT_FILL = false                # the MIG takes WSTRB (DM_NO_DBI: the DIMMs' DM pins)
+NAT_XPOST = true
+NAT_RHB = true
+NAT_XSTG = 2                    # the adapters beside the slice (SLR1); the channels' AXI halves
+NAT_XSTG_P = 2                  #   go to their DIMMs' SLRs inside the bridges (otpu_hbm_ch N)
+SE_R = 2                        # two row groups on the stream engine (f150s2, f150s2d on the card)
+DMA_DEPTH = 512                 # a DSTEP's read-ahead: 29 BRAM18 at any depth up to 512 (f150s2d)
+
+[tech]
+family = "xilinxus"
+part = "xcvu9p-fsgd2104-2L-e"
+vendor = "xilinx"
+
+[platform]
+board = "bcu1525-wg"
+core_mhz = 100.0                # development builds first
+mem = "ddr4"
+mem_mts = 2400
+mem_ctrl = "mig"                # AMD's DDR4 IP, AXI4 512 bits at 300 MHz a DIMM
+hostcal = false
+channels_per_slice = 8
+channel_bytes = 4294967296      # a virtual channel, half a DIMM: the host's DMA reaches channel j
+                                # at j x this; DIMM j >> 1 at its byte
+                                # {off[31:12], j & 1, off[11:0]}
+beat_bytes = 128
+host = "pcie"
+pcie_gen = 3
+pcie_lanes = 16
+# The co-simulation's channel model per virtual channel: half a DIMM's 19.2 GB/s at 95% (page
+# misses, turnarounds), DDR4 8 Gb refresh (tRFC 350 ns every tREFI 7.8 us) on top, ~250 ns from
+# the bridge's command to its data (the MIG, the SmartConnect, the crossings). Estimates until
+# the card measures them.
+sim_ch_gbps = 9.12
+sim_lat_ns = 250
+sim_refi_ns = 7800
+sim_rfc_ns = 350
+
+# MM's K tail (docs/weight_groups.md): otpu_mxu KT, the compiler's paired
+# operands where K ends in the middle of a block (GPT-OSS's hidden 2880)
+[variants.kt]
+KT = true
+
+# ic: IMEM an instruction cache over the program in DRAM (otpu_seq ICACHE, docs/icache.md): 64
+# lines of 32 instructions and their wait entries, the loop-stack prefetcher 2 lines ahead, the
+# lines filled on port B; IMEM_WORDS the longest program, 16384 instructions (the 4096 cap lifts).
+# Its RAMs: IMEM's 512 rows of one chunk (1024 bits: 15 RAMB36, the width's, at any depth to 512)
+# and the wait entries' 512 rows of four (240 bits: 3.5 RAMB36, in block RAM: four URAM288 for
+# 30 Kbit is the width's too), against IMEM's 28.5 RAMB36 and its entries' 4 URAM288 (yosys,
+# xcup: 36 RAMB18E2 at 16 lines and at 64; 57 RAMB18E2 + 4 URAM288 without the cache). 64 lines,
+# not 16: the same RAMs, the tags' lookups 64:1 (otpu_seq +422 LUTs, +212 flip-flops), and a
+# decode's or a prefill tile's program held whole (GPT-OSS decode 434 -> 38 fills a token, 27B
+# prefill T4 3,401 -> 1,737: the study's icsim; no stall at either)
+[variants.ic]
+ICACHE = true
+IMEM_WORDS = 131072
+IMEM_WC_STYLE = "block"
+IC_LINES = 64
+
+# The bank-half window (bcu1525-wg:bhw; Config.BHW, otpu_mig_pair BHW): the slice's first 8 GiB
+# take the MIG map's bank-high bit (b15's DIMM address bit 16) from their top bit, so what a decode
+# writes (I/O, KV, the DeltaNet states, tables, programs: the first 4 GiB) sits on 8 banks of 16
+# and the DeltaNet mixers' weights (4 .. 8 GiB) on the other 8; every other weight above 8 GiB on
+# all 16. A write then never shares a bank with the mixers' stream beside it (the board model's
+# r60: docs/bcu1525_wg.md, the bank-half window). CAPS2 bits 11:6 report it; CFG_HASH has it.
+# With it the sequencer's window of 32 (Config.WC_WIN 32: the wait entries' counts saturate at 15,
+# opentpu/waits.py; otpu_seq WIN 32, ~+5.9 K LUTs; docs/bcu1525_s2.md):
+# q36-4 at r60 366,899 -> 361,496 cycles. CFG_HASH has it. And MM's K tail (KT, the kt variant's):
+# the S 1 bitstream for every model, as bcu1525-s2 (the Qwens' programs are KT's word for word).
+[variants.bhw]
+BHW = 33
+WIN = 32
+KT = true
+
+# bhw16: bhw with the DeltaNet states in 16 bits (Config.ST16 "e6m9", otpu_dma ST16 1; docs/isa.md
+# "ST16"): a DSTEP or STREAM with its flag ST16 reads and writes its state in e6m9 (6 exponent
+# bits, bias 31, 9 mantissa bits; rounded to nearest even, saturated, flushed below 2^-30), fp32 in
+# the engine: half the state's bytes each way. The flag is the image's (qwen35 Spec.state16): the
+# 35B's on, the 27B's per its dKL, every other model's fp32 states as on bhw. The study (bf16st):
+# dKL against the float baseline e6m9 1/19 of bf16's on the 2B, the 35B decode bound -7.08% on the
+# state's bytes. CAPS2 bits 14:13 report it; CFG_HASH has it (bhw's stays)
+[variants.bhw16]
+BHW = 33
+WIN = 32
+KT = true
+ST16 = "e6m9"
+
+# wmx: bhw16 with the wider MXU and the instruction cache, bcu1525-x2:wmx's slice on one card (the
+# board model's S = 1 prefill and decode points; docs/wide_mxu.md)
+[variants.wmx]
+BHW = 33
+WIN = 32
+KT = true
+ST16 = "e6m9"
+ICACHE = true
+IMEM_WORDS = 131072
+IMEM_WC_STYLE = "block"
+IC_LINES = 64
+VPU_CNS = 5
+MXU_PUMP = true
+WPB = 2                         # TMEM's second write a bank (port B at the odd fast edge)
+FSUM = true                     # EXP2SUB's fused row sums (otpu_vpu FSUM: the take an empty VOP)
+VSIG = true                     # VOP SIGMOID / SILU (otpu_se_comp SIG: four passes, not 6 / 7)
+VMAC = true                     # VOP MAC (otpu_vpu MAC: the DeltaNet's convolution a pass a tap)
+
+# bhw16fs: bhw16 with EXP2SUB's fused row sums (Config.FSUM, otpu_vpu FSUM; docs/isa.md VOP flag
+# FSUM): attention's sum(p) is its EXP2SUB's, not an RSUM's (bit for bit the same words). CAPS2
+# bit16 reports it; CFG_HASH has it (bhw16's stays)
+[variants.bhw16fs]
+BHW = 33
+WIN = 32
+KT = true
+ST16 = "e6m9"
+FSUM = true

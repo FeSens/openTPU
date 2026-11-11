@@ -215,7 +215,13 @@ def test_a_loop_program_that_fits_is_not_split():
     and the areas the programs address move: the same instructions, only address words
     differing (by 262,144, 1,331,200 and 1,331,328 bytes), their own sum; the tiles' DeltaNet
     rows (Image.dnrows: 8 of the image's gr / on rows for 4) move them by 9,216 and 12,288 bytes
-    more. A change of the programs themselves updates the sums here."""
+    more. A change of the programs themselves updates the sums here: ol.load_home (9aa097d8,
+    the DeltaNet input norm's gain in a TMEM home) moved TMEM words only (6261e98d / d36072c1),
+    the DN tail's two VOPs (d2de6822) added 3 instructions to each of the four DeltaNet
+    programs (1191e8cb / 843cd971), the gathers' one-hot operand made in TMEM (gather._made)
+    two FILLs for its LD, one instruction more in each of the six (5806e9c6 / 2d75e3f3), the
+    loop's address registers bounded from the state block's tpos (compiler.mul_bound: the same
+    instructions with their bounds; 038ffe6a / 996357c1)."""
     import hashlib
     from pathlib import Path
     from opentpu import isa as I
@@ -240,9 +246,9 @@ def test_a_loop_program_that_fits_is_not_split():
             h.update(np.asarray(I.assemble(p), "<u4").tobytes())
     assert n == 38
     untiled = os.environ.get("OTPU_TILE", "").strip() == "0"
-    assert h.hexdigest() == ("7f3bacfe386c84838742206943cb20db6ea989d2a4eb6cf63fdab651d5ffc103"
+    assert h.hexdigest() == ("996357c19260b7cddf92962e04a58d66019d7650de8febaeac49affa206d352e"
                              if untiled else
-                             "99da9dd63f736e7c92e4602d9a5a71ba84ba1b23ee78d5b3b2a4a7a349687e49")
+                             "038ffe6a034291bdcc5931d86b2a7d1284cb4f9c54f31824ccf32f900abc9d09")
 
 
 @pytest.mark.parametrize("P, drafter, sp", [

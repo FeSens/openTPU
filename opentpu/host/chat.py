@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -934,10 +935,13 @@ def make_backend(name: str, spec, cap: int, dev: str, model: str | None = None,
     if name == "isa":
         return "isa", None
     if name == "board":
-        from opentpu.host.board import (Board, BoardBackend, XdmaTransport,   # the PCIe driver
-                                        device_config)
-        tr = XdmaTransport(dev)
-        cfg = device_config(Board(tr, lock=False).info())     # MCOLS / LANES of the bitstream
+        from opentpu.host import board as BD                  # the PCIe driver
+        dev = dev or BD.default_dev()
+        # "/dev/xdmaA+/dev/xdmaB": cards in tensor parallel, card 0 first (opentpu.host.cards),
+        # checked as builds of OTPU_TARGET's machine
+        tr = BD.open_transport(dev, target=os.environ.get("OTPU_TARGET") if "+" in dev else None)
+        Board, BoardBackend = BD.Board, BD.BoardBackend
+        cfg = BD.device_config(Board(tr, lock=False).info())  # MCOLS / LANES of the bitstream
         return (lambda c, imgs: BoardBackend(c, imgs, transport=tr, model=model)), cfg
     if name == "board-sim":
         from opentpu.host.board import BoardBackend, SimTransport, sim_config
@@ -1009,7 +1013,9 @@ def main(argv=None):
                     help=f"{' or '.join(MODELS)} (models/<name>), or a checkpoint directory")
     ap.add_argument("--backend", default="isa",
                     choices=["isa", "bend", "board", "board-sim", "rtl"])
-    ap.add_argument("--dev", default="/dev/xdma0", help="XDMA device prefix (--backend board)")
+    ap.add_argument("--dev", help="XDMA device prefix (--backend board; default OTPU_DEV, else "
+                    "the one openTPU card present, else /dev/xdma0); /dev/xdmaA+/dev/xdmaB: two "
+                    "cards as one machine (card 0 first, OTPU_TARGET their build)")
     ap.add_argument("--clock-mhz", type=float,
                     help="core clock, to turn device cycles into tokens/s (default: the "
                          "bitstream's CORE_KHZ, or 100 on a register map 1 bitstream)")
@@ -1077,6 +1083,10 @@ def main(argv=None):
                      help="the prompt layer by layer in runs of R rows, every slot serving the "
                           "running layer (default 2 where the model has layer runs: Qwen3.5 "
                           "and Gemma 4 MoE; 0: token by token, LFM2's)")
+    moe.add_argument("--slots", type=int, default=1, metavar="N",
+                     help="sequences on the card, each its KV and DeltaNet state (Qwen3.5 MoE, "
+                          "for otpu-serve35 --slots: N > 1 decodes N requests together in "
+                          "batched steps, opentpu/serve/batching35.py; the chat uses slot 0)")
     moe.add_argument("--embed-table", choices=("host", "card"),
                      help="an untied embedding table on the host (the default: more slots) or "
                           "on the card")
@@ -1114,8 +1124,11 @@ def main(argv=None):
         if a.wformat == FM.AUTO:        # the formats it ran with on the card
             wformat, head, formats = ST.defaults(spec)
             a.head_format = a.head_format or head
-    print(f"loading {path.name} onto openTPU ({a.backend}) ...", flush=True)
-    from opentpu.host.board import ConfigMismatch
+    from opentpu.host.board import ConfigMismatch, default_dev
+    if a.backend == "board" and not a.dev:
+        a.dev = default_dev()
+    print(f"loading {path.name} onto openTPU ({a.backend}"
+          f"{' ' + a.dev if a.backend == 'board' else ''}) ...", flush=True)
     try:
         backend, cfg = make_backend(a.backend, spec, a.cap, a.dev, path.name,
                                     lookup=not a.per_position, wformat=wformat,
@@ -1124,6 +1137,9 @@ def main(argv=None):
         raise SystemExit(f"otpu-chat: {e}") from None
     if a.mtp and (not hasattr(spec, "mtp") or a.per_position):
         raise SystemExit("otpu-chat: --mtp takes a Qwen3.5 model and resident decode")
+    if a.slots > 1 and (getattr(spec, "moe", None) is None or not hasattr(spec, "mtp") or a.mtp
+                        or a.per_position):
+        raise SystemExit("otpu-chat: --slots takes a Qwen3.5 MoE model, resident, without --mtp")
     if cfg is None and not streams and not a.mtp and not _maps_on_design(spec):
         from opentpu.host.board import sim_config     # Gemma 4 (one KV head): the card's
         from opentpu.isasim import board_config
@@ -1140,6 +1156,10 @@ def main(argv=None):
                                              lookup=True).nbytes
         cfg = board_config(DRAM_BYTES=1 << max(20, (need - 1).bit_length()), **flags)
     t0 = time.perf_counter()
+    # (--slots: the batch area for batched steps; no snapshots: BatchWorker35 saves and restores
+    # a slot's context through the KV store)
+    bkw = dict(batch=a.slots, batch_area=True, snapshots=0) if a.slots > 1 else \
+        dict(snapshots=SNAPSHOTS)
     try:
         if streams:                     # the card's 4 GiB (the simulator's too: board_config)
             from opentpu.isasim import board_config
@@ -1148,7 +1168,7 @@ def main(argv=None):
                             head_format=a.head_format, formats=formats,
                             embed_host=None if a.embed_table is None else a.embed_table == "host",
                             layer_major=a.layer_major, prog_cache=not a.no_prog_cache,
-                            snapshots=SNAPSHOTS, mtp=a.mtp, mtp_from=a.mtp_from)
+                            mtp=a.mtp, mtp_from=a.mtp_from, **bkw)
             ST.poll_idle(eng, a.poll_idle)
             print(f"experts: {ST.describe(eng, eng.pool_path)}", flush=True)
         elif a.mtp:
@@ -1161,15 +1181,23 @@ def main(argv=None):
             eng = Engine(spec, load_weights(path), cap=a.cap, cfg=cfg, backend=backend,
                          wformat=wformat, head_format=a.head_format,
                          resident=not a.per_position, prog_cache=not a.no_prog_cache,
-                         prompt_runs=not a.no_prompt_runs, snapshots=SNAPSHOTS)
+                         prompt_runs=not a.no_prompt_runs, **bkw)
     except (ConfigMismatch, ST.PoolError) as e:
         raise SystemExit(f"otpu-chat: {e}") from None
     weights = weights_label(eng.image, wformat)
     print(f"weights: {weights}", flush=True)
     how, secs = IC.last                     # (the image cache: opentpu/imgcache.py)
+    skipped = how == "skip"
     how = {"hit": "read from the image cache", "miss": "built and cached"}.get(how, "built")
     print(f"loaded in {time.perf_counter() - t0:.1f} s (the image {how} in {secs:.1f} s)",
           flush=True)
+    if skipped and IC.why_skipped:      # (the next load builds it again: say why)
+        print(f"otpu-chat: the image was not cached: {IC.why_skipped}", flush=True)
+    if not a.no_prog_cache:             # (under its free-disk floor every chat compiles again)
+        from opentpu.serve import progstate as PS
+        saves = PS.saves()
+        if saves["saving"] is False:
+            print(PS.saves_line(saves, "otpu-chat") + " (OTPU_PROG_CACHE_FREE_GB)", flush=True)
     if getattr(eng.backend, "status", None) is not None:
         eng.backend.status.update(weights=weights)      # for otpu-smi
     tok = tokenizer()

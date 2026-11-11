@@ -1,7 +1,7 @@
 """otpu-diag: the full hardware diagnostic of the openTPU card (or its board model, --sim).
 
     otpu-diag                             # every check on /dev/xdma0, about a minute
-    otpu-diag --mem full                  # plus a march C- over all 4 GiB (both channels)
+    otpu-diag --mem full                  # plus a march C- over every channel (all of DRAM)
     otpu-diag --soak 20                   # rerun the kernel set 20 times, count intermittents
     otpu-diag --model qwen3               # plus the model check of otpu-selftest
     otpu-diag --json diag.json            # the report as JSON too
@@ -17,8 +17,9 @@ The exit code is 1 when any check failed.
 Sections: platform (PCIe, driver, ID, configuration, calibration, STATUS errors, temperature,
 power estimate), regs (read/write patterns, read-only sanity), i2c (with CAPS.i2c: scan the
 LM73 bus and the PCIe SMBus, identify the LM73, TI current monitors and PMBus devices; read
-only, opentpu/host/i2c.py), mem (per channel: walking 1 / 0
-data bits, address bits, random blocks, partial writes, DMA bandwidth; the interleave; --mem
+only, opentpu/host/i2c.py), mem (per channel, every slice's NCH: walking 1 / 0
+data bits, address bits, random blocks, partial writes, DMA bandwidth (a card's: the board
+model and the fake have no DMA timing); the interleave; --mem
 full: march C-), isa (one program per instruction variant, opentpu/host/opchecks.py, bit for
 bit against the ISA simulator), system (the demo, masked-write and vops programs, the cycle
 counters, --soak), model (--model).
@@ -38,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from opentpu.host.runstate import busy_exits
+from opentpu.target import AW_MAX
 from . import i2c as I2C
 from . import memcal
 from . import memtest as M
@@ -198,13 +200,19 @@ def diagnose(rows: list[Row], regmap: int | None = None) -> list[str]:
                      "warm reboot) or a slower root port; a narrower one is lane order / GT "
                      "placement (board.md section 6.3) or the slot's width")
     for c in (0, 1):
-        if st.get(f"DDR3 calibration channel {c}") == FAIL:
+        if st.get(calib_name(c)) == FAIL:
             hints.append(f"channel {c} did not calibrate: LiteDRAM bitstreams: the host's "
                          "calibration (otpu-memcal show, otpu-memcal cal --force); MIG bitstreams: "
                          "the MIG pinout / clocking of that channel; memory voltage (board.md "
                          "section 6.2)")
+        if st.get(calib_name(c, False)) == FAIL:        # (more than two channels a slice)
+            hints.append(f"one of the {('even', 'odd')[c]} channels did not calibrate (STATUS "
+                         f"CALIB{c}: all of them): the memory controllers' calibration or "
+                         "clocking")
     # memory: byte lanes and address bits, per channel
-    for c in (0, 1):
+    chans = sorted({int(r.group[2:]) for r in rows
+                    if r.section == "mem" and r.group[:2] == "ch" and r.group[2:].isdigit()})
+    for c in chans:
         lanes, bits, addr = np.zeros(8, int), np.zeros(64, int), {}
         for r in rows:
             if r.section == "mem" and r.group == f"ch{c}" and r.data:
@@ -301,13 +309,25 @@ def summary(rows: list[Row], hints: list[str]) -> str:
 
 
 # ------------------------------------------------------------------------------ the run
+def calib_name(k: int, per_channel: bool = True) -> str:
+    """The row of STATUS CALIB<k> (otpu_board ANDs every channel k + 2j into bit k): channel
+    k's on a board of two channels a slice (per_channel), else the even (k 0) or odd (1)
+    channels'."""
+    if per_channel:
+        return f"DDR3 calibration channel {k}"
+    return f"memory calibration, {('even', 'odd')[k]} channels (STATUS CALIB{k})"
+
+
 def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     d = Diag()
     want = set(a.only.split(",")) if a.only else set(SECTIONS)
-    ch_bytes = len(t.ch[0]) if hasattr(t, "ch") else CH_BYTES
+    # the memory: a slice's channels and their beat, every slice's channels (the tests'), a
+    # channel's bytes (the model's and the fake's own; else the bitstream's, CFG_DRAM):
+    # the cards' 2 x 2 GiB of 64-byte beats until the configuration says otherwise
+    geo = {"nch": 2, "beat": 64, "chans": 2,
+           "ch_bytes": len(t.ch[0]) if hasattr(t, "ch") else CH_BYTES}
     ctx = {"cfg": None, "board": None, "info": None}
-    link, calib = "ID register", ["DDR3 calibration channel 0", "DDR3 calibration channel 1"]
-    core = [link, "configuration (VERSION)"] + calib + ["DRAM initialized (ECC)"]
+    link = "ID register"
 
     # ---- platform
     print("platform", flush=True)
@@ -332,10 +352,18 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
 
     def config():
         i = ctx["info"] = ctx["board"].info()
-        ctx["cfg"] = device_config(i, DRAM_BYTES=2 * ch_bytes)
+        c = i.get("cfg")
+        if c:                               # register map 4: CFG_SLICES, CFG_DRAM
+            geo.update(nch=c["channels"], beat=c["beat_bytes"], chans=c["S"] * c["channels"])
+            if not hasattr(t, "ch"):
+                geo["ch_bytes"] = c["channel_bytes"]
+        ctx["cfg"] = device_config(i, DRAM_BYTES=geo["nch"] * geo["ch_bytes"])
         msg = config_summary(i)
         return True, msg, {"info": {k: v for k, v in i.items() if k != "caps"}}
     d.check("platform", "configuration (VERSION)", config, [link])
+    nch, beat, ch_bytes = geo["nch"], geo["beat"], geo["ch_bytes"]
+    calib = [calib_name(k, nch == 2) for k in (0, 1)]
+    core = [link, "configuration (VERSION)"] + calib + ["DRAM initialized (ECC)"]
 
     for c, bit in ((0, R.ST_CALIB0), (1, R.ST_CALIB1)):
         def cal(bit=bit):
@@ -345,7 +373,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             ok = bool(t.reg_read(R.R_STATUS) & bit)
             return ok, "calibrated" if ok else "NOT calibrated (STATUS bit " \
                 f"{bit.bit_length() - 1})"
-        d.check("platform", f"DDR3 calibration channel {c}", cal, [link])
+        d.check("platform", calib[c], cal, [link])
 
     def scrub():
         t0 = time.time()
@@ -423,7 +451,14 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             if i["regmap"] >= 2:
                 if v[2] not in (2, 3, 4, 5):
                     bad.append(f"REGMAP {v[2]}")
-                if c2 and (v[8] & ~R.CAP2_GATHER or not v[8] & R.CAP2_GATHER
+                if c2 and (v[8] & ~(R.CAP2_GATHER | R.CAP2_NO_OUTER | R.CAP2_DSTEP2 | R.CAP2_SE_OWN
+                                     | R.CAP2_BMC | R.CAP2_KT | R.CAP2_BHW_MASK << R.CAP2_BHW_SHIFT
+                                     | R.CAP2_ICACHE | R.CAP2_ST16_MASK << R.CAP2_ST16_SHIFT
+                                     | R.CAP2_FSUM | R.CAP2_SPLITQ | R.CAP2_ST16S
+                                     | R.CAP2_QHL | R.CAP2_VSIG | R.CAP2_VMAC
+                                     | R.CAP2_QSTHL | R.CAP2_OUTER1 | R.CAP2_QONCE
+                                     | R.CAP2_SPLMM)
+                           or not v[8] & R.CAP2_GATHER
                            and (i.get("cfg") or {}).get("S", 1) > 1):
                     bad.append(f"CAPS2 {v[8]:#x}")      # reserved bits, or no GATHER at S > 1
                 if not 10_000 <= v[4] <= 300_000:
@@ -439,7 +474,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
                 pow2 = lambda x: x > 0 and not x & (x - 1)
                 if not (1 <= c["S"] <= 64 and pow2(c["TMEM_WORDS"]) and pow2(c["IMEM_WORDS"])
                         and c["ACT_BLOCKS"] > 0 and 1 <= c["channels"] <= 16
-                        and c["DRAM_BYTES"] <= 1 << 32 and c["platform"]):
+                        and c["DRAM_BYTES"] <= 1 << AW_MAX and c["platform"]):
                     bad.append(f"CFG {c}")
             if v[6] & ~0xFF:
                 bad.append(f"STATUS reserved bits {v[6]:#x}")
@@ -483,27 +518,31 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
     # ---- memory
     if "mem" in want:
         print("mem", flush=True)
-        for c in (0, 1):
-            need = [link, f"DDR3 calibration channel {c}"]
+        # (the fake's copies are host memory timed by the wall clock: a busy host read 0.13 GB/s
+        # there, under the check's 0.25)
+        from .fake import FakeTransport
+        untimed = ("the board model has no DMA timing" if sim else
+                   "the fake has no DMA timing" if isinstance(t, FakeTransport) else None)
+        for c in range(geo["chans"]):                  # every slice's channels
+            need = [link, calib[c % 2]]
             g = f"ch{c}"
 
             def res(r):
                 return r["ok"], r["msg"], {k: v for k, v in r.items() if k not in ("ok", "msg")}
             d.check("mem", f"channel {c} data bits (walking 1 / 0)",
-                    lambda c=c: res(M.walking_data(t, c, ch_bytes // 4)), need, g)
+                    lambda c=c: res(M.walking_data(t, c, ch_bytes // 4, beat)), need, g)
             d.check("mem", f"channel {c} address bits",
-                    lambda c=c: res(M.address_bits(t, c, ch_bytes)), need, g)
+                    lambda c=c: res(M.address_bits(t, c, ch_bytes, beat)), need, g)
             d.check("mem", f"channel {c} random blocks",
-                    lambda c=c: res(M.random_blocks(t, c, ch_bytes)), need, g)
+                    lambda c=c: res(M.random_blocks(t, c, ch_bytes, beat=beat)), need, g)
             d.check("mem", f"channel {c} sub-beat updates (host merge)",
-                    lambda c=c: partial_writes(t, c, base=ch_bytes // 2), need, g)
-            if sim:
-                d.check("mem", f"channel {c} DMA bandwidth",
-                        lambda: (SKIP, "the board model has no DMA timing"), need, g)
+                    lambda c=c: partial_writes(t, c, base=ch_bytes // 2, beat=beat), need, g)
+            if untimed:
+                d.check("mem", f"channel {c} DMA bandwidth", lambda: (SKIP, untimed), need, g)
             else:
                 d.check("mem", f"channel {c} DMA bandwidth",
                         lambda c=c: res(M.bandwidth(t, c, a.bw_mib << 20)), need, g)
-        top = 2 * ch_bytes
+        top = nch * ch_bytes                            # slice 0's logical DRAM
 
         def interleave():
             m = 1 << 20
@@ -512,10 +551,10 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
             return pattern_test(b, regions)
         d.check("mem", "interleave patterns", interleave, [link] + calib)
         if a.mem == "full":
-            for c in (0, 1):
+            for c in range(geo["chans"]):
                 d.check("mem", f"channel {c} march C- (full)",
                         lambda c=c: res(M.march(t, c, ch_bytes, progress=M.progress_line)),
-                        [link, f"DDR3 calibration channel {c}"], f"ch{c}")
+                        [link, calib[c % 2]], f"ch{c}")
 
     # ---- instruction set
     img = diag_image(ctx["cfg"])
@@ -542,7 +581,7 @@ def run(a, t, dev: str, sim: bool) -> tuple[list[Row], list[str]]:
         d.check("system", "masked (partial) DRAM writes",
                 lambda: run_demo(b, ctx["cfg"], masked_program())[:2], core)
         d.check("system", "RDOT / OUTER / LOG2 program",
-                lambda: run_demo(b, ctx["cfg"], vops_program())[:2], core)
+                lambda: run_demo(b, ctx["cfg"], vops_program(ctx["cfg"].OUTER))[:2], core)
         d.check("system", "cycle counters", lambda: cycle_check(b, t, ctx["info"], sim), core)
         if a.soak:
             d.check("system", f"soak x{a.soak}", lambda: soak(b, ctx["cfg"], img, a.soak),
@@ -692,7 +731,7 @@ def main(argv=None, open_transport=None) -> int:
     ap.add_argument("--sim", action="store_true", help="the Verilator board model")
     ap.add_argument("--dev", default="/dev/xdma0")
     ap.add_argument("--mem", choices=["quick", "full"], default="quick",
-                    help="full: also a march C- over every byte of both channels")
+                    help="full: also a march C- over every byte of every channel")
     ap.add_argument("--soak", type=int, default=0, metavar="N",
                     help="rerun the kernel set N times, counting intermittent failures")
     ap.add_argument("--model", help="qwen3, lfm2, qwen35 or a checkpoint directory")

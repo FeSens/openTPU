@@ -25,12 +25,22 @@ the left rows QACT over the chunk's tokens padded to D. MM's window drops (mx_ma
 Modes (a variant's label ends in ";dn=MODE"; parse): cN chunks of N rows, nothing quantized
 (the algorithm alone); cN-q<ids> those matmuls on the MXU's int8 operands, one pass; cN-h<ids>
 those in three passes of operands split into their int8 part and the int8 of the remainder
-(hi.hi + hi.lo + lo.hi: ~16-bit operands on today's MXU); e.g. c64-q568 the state's matmuls int8,
-c64-h12347q568 the intra-chunk ones split.
+(hi.hi + hi.lo + lo.hi: ~16-bit operands on today's MXU); cN-a<ids> / -w<ids> two passes, only the
+activation's (QACT) / the streamed side's operand split; cN-s<ids> as h, the three terms one MM
+SPL (Config.SPLMM, docs/isa.md "Split terms": the lo terms' offsets + 8, so an activation group
+whose offset is past 8 drops from them; the sum rounded once, which float64 does not see); e.g.
+c64-q568 the state's matmuls int8, c64-h12347q568 the intra-chunk ones split. A suffix -s<fmt> stores the state 16-bit (Config.ST16:
+e6m9 or bf16, isasim.st16_pack) at each chunk's end, as its DRAM copy between chunks; "r[-s<fmt>]"
+is the sequential recurrence with the state rounded so after every row, as DSTEP with ST16 stores
+it (r-se6m9: production's bcu1525 :bhw16 prefill). A suffix -o takes the operands as the openTPU
+kernel without new RTL does (tools/dn_cost.py): a token contraction's streamed side X^T (M2's V^T,
+M3's and M8's K^T, M7's U^T) by an identity MM from X's rows quantized a token (int8, or split when
+the matmul splits that side), then quantized a row of X^T (ROW), and M8 as St' = e^gl St + U^T Kd
+[dv, dk] with U^T (from U's rows likewise, split when M8 splits its activation side) the activation.
 
     python tools/dn_chunk.py check
     python tools/dn_chunk.py ppl MODEL --formats F [--wformat fp4] [--tokens 2000]
-                                 [--modes c64,c64-q568,...] [--out J]
+                                 [--modes r-se6m9,c64-h12345678-se6m9,...] [--ref r-se6m9] [--out J]
 """
 from __future__ import annotations
 
@@ -46,6 +56,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # (formats_scan)
 import formats_scan as FS  # noqa: E402
 from opentpu import isa as I  # noqa: E402
+from opentpu import isasim as IS  # noqa: E402
 from opentpu import quant as Q  # noqa: E402
 from opentpu.llm import qwen35 as Q35  # noqa: E402
 from opentpu.llm.qwen3 import _v_parts  # noqa: E402
@@ -109,10 +120,24 @@ def _hi_t(a, x):
     return ah, xq * xs[..., None]
 
 
+def _lo_keep(kind: str, a, b):
+    """MM SPL's lo terms (how "s"): 1 for a's elements whose QACT group (the hi part's, as _mm_d /
+    _mm_t quantize a) keeps them, its offset at most W - 8 (the lo terms' offsets are hi's + 8),
+    else 0."""
+    K = -(-a.shape[-1] // D) * D
+    if kind == "d":
+        qa = Q.fake_act(_pad(a, K), D)
+    else:
+        xs = _v_parts(_pad(b, b.shape[-1]))[1]
+        qa = Q.fake_act(_pad(a * np.where(xs == 0, 1.0, xs)[:, None, :], K), D)
+    return np.repeat(qa.da <= W8 - 8, D // 8, -1)[..., :a.shape[-1]]
+
+
 def mm(kind: str, a, b, how):
     """kind "d": a @ b^T over d; "t": a @ b over the chunk's tokens. how None: exact; "q": the
     MXU's int8 operands (one pass); "h": each operand split into its int8 part and the int8 of
-    its remainder, three passes (hi.hi + hi.lo + lo.hi: ~16-bit operands on today's MXU)."""
+    its remainder, three passes (hi.hi + hi.lo + lo.hi: ~16-bit operands on today's MXU); "s":
+    "h"'s terms as one MM SPL (the lo terms without a's groups past offset W - 8: _lo_keep)."""
     exact = (lambda x, y: np.einsum("hrk,hnk->hrn", x, y)) if kind == "d" else \
         (lambda x, y: np.einsum("hrn,hnm->hrm", x, y))
     if how is None:
@@ -121,7 +146,27 @@ def mm(kind: str, a, b, how):
     if how == "q":
         return one(a, b)
     ah, bh = (_hi_d if kind == "d" else _hi_t)(a, b)
+    if how == "a":
+        return one(ah, b) + one(a - ah, b)
+    if how == "w":
+        return one(a, bh) + one(a, b - bh)
+    if how == "s":
+        m = _lo_keep(kind, a, b)
+        return one(ah, bh) + one(ah * m, b - bh) + one((a - ah) * m, bh)
     return one(ah, bh) + one(ah, b - bh) + one(a - ah, bh)
+
+
+def _tq(x, split: bool):
+    """Rows of x [h, n, d] as an identity MM transposes them: quantized a row (QST ROW: int8, one
+    scale a row), split into the int8 part and the int8 of the remainder (two passes) or not."""
+    hi = np.asarray(Q.fake_act(_pad(x, x.shape[-1]), D, row=True)).view(np.ndarray)
+    if not split:
+        return hi
+    return hi + np.asarray(Q.fake_act(_pad(x - hi, x.shape[-1]), D, row=True)).view(np.ndarray)
+
+
+def _sw(a):
+    return np.ascontiguousarray(np.swapaxes(a, 1, 2))
 
 
 def _solve(L):
@@ -134,22 +179,32 @@ def _solve(L):
 
 
 def parse(mode: str):
-    """(C, {matmul id: how}) of a mode "cN[-<how><ids>...]": N rows a chunk; each how ("q" one
-    int8 pass, "h" three passes of split operands) followed by the matmul ids (1-8, module
-    doc) it applies to; the rest exact. E.g. c64-q568: the state's matmuls int8, the intra-
-    chunk ones exact; c64-h12347q568."""
+    """(C, {matmul id: how}, state format) of a mode "cN[-<how><ids>...][-s<fmt>]": N rows a
+    chunk; each how ("q" one int8 pass, "h" three passes of split operands, "s" those as one MM
+    SPL, "a" / "w" one side split) followed by the
+    matmul ids (1-8, module doc) it applies to; the rest exact; fmt (e6m9, bf16) the state's
+    16-bit store at a chunk's end, None fp32. E.g. c64-q568: the state's matmuls int8, the intra-
+    chunk ones exact; c64-h12347q568-se6m9. "r[-s<fmt>]": C 0, the sequential recurrence."""
     import re
-    m = re.fullmatch(r"c(\d+)(?:-((?:[qh]\d+)+))?", mode)
-    if m is None:
+    m = re.fullmatch(r"(?:r|c(\d+)(?:-((?:[qhasw]\d+)+))?)(?:-s(e6m9|bf16))?(-o)?", mode)
+    if m is None or (m.group(1) is None) != mode.startswith("r"):
         raise ValueError(f"mode {mode!r}")
     how = {}
-    for h, ids in re.findall(r"([qh])(\d+)", m.group(2) or ""):
+    for h, ids in re.findall(r"([qhasw])(\d+)", m.group(2) or ""):
         how.update({int(i): h for i in ids})
-    return int(m.group(1)), how
+    return int(m.group(1) or 0), how, m.group(3), bool(m.group(4))
 
 
-def recur_seq(q, k, v, g, beta):
-    """formats_scan's recurrence: o [T, h, dv]."""
+def _st16(S, fmt):
+    """S as its 16-bit store reads back (fmt None: S)."""
+    if fmt is None:
+        return S
+    return IS.st16_f32(IS.st16_pack(S.astype(np.float32), fmt), fmt).astype(np.float64)
+
+
+def recur_seq(q, k, v, g, beta, sfmt=None):
+    """formats_scan's recurrence: o [T, h, dv] (sfmt: the state stored 16-bit after each row,
+    the row's output from the fp32 state before the store, as DSTEP's)."""
     T, nh, dk = q.shape
     S, o = np.zeros((nh, dk, v.shape[2])), np.zeros((T, nh, v.shape[2]))
     for t in range(T):
@@ -157,16 +212,29 @@ def recur_seq(q, k, v, g, beta):
         delta = (v[t] - np.einsum("hij,hi->hj", S, k[t])) * beta[t][:, None]
         S = S + k[t][:, :, None] * delta[:, None, :]
         o[t] = np.einsum("hij,hi->hj", S, q[t])
+        S = _st16(S, sfmt)
     return o, S
 
 
-def recur_chunk(q, k, v, g, beta, mode: str):
-    """The chunked recurrence (module doc): o [T, h, dv] and the final state."""
-    C, how = parse(mode)
+def recur(q, k, v, g, beta, mode: str):
+    """The recurrence of a mode (parse): o [T, h, dv] and the final state."""
+    C, how, sfmt, _ = parse(mode)
+    if C == 0:
+        return recur_seq(q, k, v, g, beta, sfmt)
+    return recur_chunk(q, k, v, g, beta, mode)
+
+
+def recur_chunk(q, k, v, g, beta, mode: str, S0=None):
+    """The chunked recurrence (module doc): o [T, h, dv] and the final state (S0: the initial
+    state [h, dk, dv], else zeros)."""
+    C, how, sfmt, ot = parse(mode)
     h = how.get
+    sa = {i: how.get(i) in ("a", "h", "s") for i in range(1, 9)}    # (-o: which sides split)
+    sw = {i: how.get(i) in ("w", "h", "s") for i in range(1, 9)}
     T, nh, dk = q.shape
     dv = v.shape[2]
-    S, o = np.zeros((nh, dk, dv)), np.zeros((T, nh, dv))
+    S = np.zeros((nh, dk, dv)) if S0 is None else np.array(S0, np.float64)
+    o = np.zeros((T, nh, dv))
     for c0 in range(0, T, C):
         n = min(C, T - c0)
         tr = lambda a: np.ascontiguousarray(np.swapaxes(a[c0:c0 + n], 0, 1))   # noqa: E731
@@ -177,16 +245,30 @@ def recur_chunk(q, k, v, g, beta, mode: str):
         #                                       triangle zeroed first, as it would overflow)
         Kb = Kc * b[..., None]
         Tm = _solve(mm("d", Kb, Kc, h(1)) * Gam * low)                          # M1
-        U0 = mm("t", Tm, Vc * b[..., None], h(2))                               # M2
-        Wc = mm("t", Tm, Kb * np.exp(gc)[..., None], h(3))                      # M3
+        if ot:          # V^T, K^T [h, d, n] streamed: identity-MM transposes of their rows
+            Vt = _sw(_tq(Vc, sw[2]) if h(2) else Vc)
+            Kt = _sw(_tq(Kc, sw[3] or sw[8]) if h(3) or h(8) else Kc)
+            U0 = mm("d", Tm * b[:, None, :], Vt, h(2))                          # M2
+            Wc = mm("d", Tm * (b * np.exp(gc))[:, None, :], Kt, h(3))           # M3
+        else:
+            U0 = mm("t", Tm, Vc * b[..., None], h(2))                           # M2
+            Wc = mm("t", Tm, Kb * np.exp(gc)[..., None], h(3))                  # M3
         St = np.ascontiguousarray(np.swapaxes(S, 1, 2))     # [h, dv, dk]: S's columns
         U = U0 - mm("d", Wc, St, h(5))                                          # M5
         A = mm("d", Qc, Kc, h(4)) * Gam * lowd                                  # M4
-        O = mm("d", Qc * np.exp(gc)[..., None], St, h(6)) + mm("t", A, U, h(7))  # M6, M7
+        O = mm("d", Qc * np.exp(gc)[..., None], St, h(6))                       # M6
         gl = gc[:, -1]
-        Kd = Kc * np.exp(gl[:, None] - gc)[..., None]
-        S = np.exp(gl)[:, None, None] * S + mm(
-            "t", np.ascontiguousarray(np.swapaxes(Kd, 1, 2)), U, h(8))           # M8
+        if ot:          # U^T [h, dv, n]: M7's streamed side, M8's activation rows
+            Ut = _sw(_tq(U, sw[7] or sa[8]) if h(7) or h(8) else U)
+            O = O + mm("d", A, Ut, h(7))                                        # M7
+            St = np.exp(gl)[:, None, None] * St + mm(                           # M8
+                "d", Ut * np.exp(gl[:, None] - gc)[:, None, :], Kt, h(8))
+            S = _st16(np.swapaxes(St, 1, 2), sfmt)
+        else:
+            O = O + mm("t", A, U, h(7))                                         # M7
+            Kd = Kc * np.exp(gl[:, None] - gc)[..., None]
+            S = _st16(np.exp(gl)[:, None, None] * S + mm(
+                "t", np.ascontiguousarray(np.swapaxes(Kd, 1, 2)), U, h(8)), sfmt)  # M8
         o[c0:c0 + n] = np.swapaxes(O, 0, 1)
     return o, S
 
@@ -225,7 +307,7 @@ def _qwen35(spec, W, i, x, w, fq, c, s, D, wf):
     beta = 1 / (1 + np.exp(-(h @ w(a + "in_proj_b.weight").T)))
     g = -np.exp(np.asarray(W[a + "A_log"], np.float64)) * Q35._softplus(
         h @ w(a + "in_proj_a.weight").T + W[a + "dt_bias"])
-    o, _ = recur_chunk(q, k, v, g, beta, _mode())
+    o, _ = recur(q, k, v, g, beta, _mode())
     o = Q35._norm(o, np.asarray(W[a + "norm.weight"], np.float64), eps) * Q35._silu(z)
     x = x + fq(o.reshape(T, -1), D, outr) @ w(a + "out_proj.weight").T
     h = fq(Q35._norm(x, g1(p + "post_attention_layernorm.weight"), eps), D)
@@ -257,21 +339,29 @@ def check():
     beta = 1 / (1 + np.exp(-rng.standard_normal((T, nh))))
     o0, S0 = recur_seq(q, k, v, g, beta)
     ok = True
-    for m in ("c16", "c32", "c64", "c7", "c16-q12345678", "c64-q12345678", "c64-q12347",
-              "c64-q568", "c64-q1", "c64-q23", "c64-q47", "c64-h12345678", "c64-h12347q568",
-              "c16-h12345678"):
-        o, S = recur_chunk(q, k, v, g, beta, m)
+    for m in ("r", "c16", "c32", "c64", "c128", "c7", "c16-q12345678", "c64-q12345678",
+              "c64-q12347", "c64-q568", "c64-q1", "c64-q23", "c64-q47", "c64-h12345678",
+              "c64-h12347q568", "c16-h12345678", "r-se6m9", "r-sbf16", "c64-se6m9",
+              "c64-h12345678-se6m9", "c64-h12345678-sbf16", "c128-h12345678-se6m9",
+              "c64-q1h2345678-se6m9", "c64-o", "c64-h12345678-o", "c64-h12345678-se6m9-o",
+              "c64-a12345678-se6m9", "c64-w12345678-se6m9", "c64-a2347h1568-se6m9-o",
+              "c64-q14a2347h568-se6m9-o", "c64-q14a237h568-se6m9-o", "c64-q1s2345678-se6m9-o",
+              "c64-s12345678"):
+        o, S = recur(q, k, v, g, beta, m)
         e = np.abs(o - o0).max() / np.abs(o0).max()
         es = np.abs(S - S0).max() / np.abs(S0).max()
         rel = np.linalg.norm(o - o0) / np.linalg.norm(o0)
-        print(f"{m:6s} max|do|/max|o| {e:.3e}  ||do||/||o|| {rel:.3e}  max|dS|/max|S| {es:.3e}")
-        if not np.isfinite(o).all() or "-" not in m and (e > 1e-9 or es > 1e-9):
+        print(f"{m:20s} max|do|/max|o| {e:.3e}  ||do||/||o|| {rel:.3e}  max|dS|/max|S| {es:.3e}")
+        if not np.isfinite(o).all() or m.rstrip("-o").count("-") == 0 and (e > 1e-9 or es > 1e-9):
             ok = False
     print("check", "ok" if ok else "FAILED")
     return 0 if ok else 1
 
 
-def ppl(model, formats: str, wformat: str, n_tok: int, modes: list, out=None):
+def ppl(model, formats: str, wformat: str, n_tok: int, modes: list, out=None, ref=None):
+    """KL to float of the formats' row (the fp64 sequential recurrence) and of each mode's,
+    dKL paired against the formats' row ("vs prod") and against mode ref's ("vs ref", e.g.
+    r-se6m9: production's 16-bit state)."""
     path = FS.model_dir(model)
     spec, run, nbytes, _, _ = FS._open(path, D)
     ids = FS.text_ids(path, n_tok)
@@ -281,17 +371,23 @@ def ppl(model, formats: str, wformat: str, n_tok: int, modes: list, out=None):
     rows = run(specs, ids, lambda m: print(f"[{time.time() - t0:6.0f} s] {m}", flush=True))
     FS._finish(rows, nbytes)
     base = np.asarray(rows[formats]["kl_tok"])
+    rb = np.asarray(rows[f"{formats};dn={ref}"]["kl_tok"]) if ref else None
     for r in rows.values():
         dk = np.asarray(r["kl_tok"]) - base
         r["dkl_prod"], r["se_prod"] = float(dk.mean()), float(dk.std(ddof=1) / math.sqrt(len(dk)))
+        if rb is not None:
+            dk = np.asarray(r["kl_tok"]) - rb
+            r["dkl_ref"], r["se_ref"] = float(dk.mean()), float(dk.std(ddof=1) / math.sqrt(len(dk)))
     if out:
         Path(out).write_text(json.dumps({"model": str(model), "tokens": len(ids),
-                                         "formats": formats, "wformat": wformat,
+                                         "formats": formats, "wformat": wformat, "ref": ref,
                                          "variants": rows}, indent=1))
     for lab, r in rows.items():
+        vs = f"  vs {ref} {100 * r['dkl_ref']:+.4f}% (+-{100 * r['se_ref']:.4f})" \
+            if "dkl_ref" in r else ""
         print(f"{lab:60s} ppl {r['ppl']:8.4f}  KL/float {100 * r['kl_float']:.3f}%  dKL "
               f"{100 * r['dkl']:+.3f}% (+-{100 * r['se_dkl']:.3f})  vs prod "
-              f"{100 * r['dkl_prod']:+.4f}% (+-{100 * r['se_prod']:.4f})  top1/int8 "
+              f"{100 * r['dkl_prod']:+.4f}% (+-{100 * r['se_prod']:.4f}){vs}  top1/int8 "
               f"{r['agree_int8']:.3f}", flush=True)
 
 
@@ -305,12 +401,15 @@ def main():
     a.add_argument("--formats", required=True)
     a.add_argument("--wformat", default="fp4")
     a.add_argument("--tokens", type=int, default=2000)
-    a.add_argument("--modes", default="c64,c16-q12345678,c64-q12345678,c64-q568")
+    a.add_argument("--modes", default="r-se6m9,c64-h12345678,c64-h12345678-se6m9")
+    a.add_argument("--ref", default="r-se6m9", help="a mode of --modes to pair against too "
+                   "(empty: none)")
     a.add_argument("--out")
     a = ap.parse_args()
     if a.cmd == "check":
         return check()
-    ppl(a.model, a.formats, a.wformat, a.tokens, a.modes.split(","), a.out)
+    modes = a.modes.split(",")
+    ppl(a.model, a.formats, a.wformat, a.tokens, modes, a.out, a.ref if a.ref in modes else None)
     return 0
 
 

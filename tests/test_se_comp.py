@@ -85,7 +85,7 @@ def _program(rng, n_instr, lanes, fixed=None):
     return chunks
 
 
-def run_comp(chunks, tmp_path, lanes=8, ns=3, ext=0, ha=2, ipct=100, epct=0, seed=1):
+def run_comp(chunks, tmp_path, lanes=8, ns=3, ext=0, ha=2, ipct=100, epct=0, seed=1, nx=None):
     lines = [f"{len(chunks):x} {ipct:x} {epct:x} {seed:x}"]
     for f, x, y in chunks:
         lines.append(" ".join([f"{f:x}"] + [f"{int(w):08x}" for w in F.bits(x)] +
@@ -96,7 +96,7 @@ def run_comp(chunks, tmp_path, lanes=8, ns=3, ext=0, ha=2, ipct=100, epct=0, see
     exe = rtlsim.build("tb_se_comp", [R / "vpu/otpu_fp.sv", R / "vpu/otpu_fpipe.sv",
                                       R / "top/otpu_pkg.sv", R / "vpu/otpu_se_comp.sv",
                                       rtlsim.TB / "tb_se_comp.sv"],
-                       {"LANES": lanes, "NS": ns, "EXT": ext, "HA": ha})
+                       {"LANES": lanes, "NS": ns, "EXT": ext, "HA": ha, "NX": ns if nx is None else nx})
     r = rtlsim.run_sim([exe, f"+in={fin}", f"+out={fout}"], timeout=600)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     got, cyc = {}, None
@@ -195,25 +195,31 @@ def test_se_comp_mixed_stalls(seed, tmp_path):
     check(chunks, got)
 
 
-@pytest.mark.parametrize("ns,ext,ha", [(3, 1, 2), (2, 0, 2), (4, 0, 1), (4, 1, 3), (1, 0, 2)])
-def test_se_comp_configs(ns, ext, ha, tmp_path):
-    """Other stage counts and hold leads, and the stage units outside the module (EXT)."""
+@pytest.mark.parametrize("ns,ext,ha,nx", [(3, 1, 2, 3), (2, 0, 2, 2), (4, 0, 1, 4), (4, 1, 3, 4),
+                                          (1, 0, 2, 1), (5, 1, 3, 3), (5, 0, 2, 5)])
+def test_se_comp_configs(ns, ext, ha, nx, tmp_path):
+    """Other stage counts and hold leads, and the stage units outside the module (EXT; NX < NS:
+    the VPU's CNS 5, stages 3 and 4 the module's own)."""
     rng = np.random.default_rng(10 * ns + ext)
     chunks = _program(rng, 16, 8)
-    got, _ = run_comp(chunks, tmp_path, ns=ns, ext=ext, ha=ha, ipct=80, epct=20, seed=ns)
+    got, _ = run_comp(chunks, tmp_path, ns=ns, ext=ext, ha=ha, ipct=80, epct=20, seed=ns, nx=nx)
     check(chunks, got)
 
 
-def test_se_comp_throughput(tmp_path):
+@pytest.mark.parametrize("ns", [3, 5])
+def test_se_comp_throughput(ns, tmp_path):
     """Columns per cycle at full rate, 8 lanes, NS = 3: EXP2/EXP2SUB 8/3, RECIP 4, RSQRT and
-    LOG2 2 (a pass of T = 25 cycles per NS ops)."""
+    LOG2 2 (a pass of T = 25 cycles per NS ops); NS = 5 (the VPU's CNS 5, NX 3): every one 4."""
     rng = np.random.default_rng(7)
     rates = {}
-    for f, p in [(V_EXP2, 3), (V_EXP2SUB, 3), (V_RECIP, 2), (V_RSQRT, 4), (V_LOG2, 4)]:
+    ops = {V_EXP2: 9, V_EXP2SUB: 9, V_RECIP: 6, V_RSQRT: 10, V_LOG2: 10}
+    for f in FUNCS:
+        p = -(-ops[f] // ns)
         n = 25 * 40
         x, y = _operands(rng, f, n * 8)
         chunks = [(f, x[i * 8:(i + 1) * 8], y[i * 8:(i + 1) * 8]) for i in range(n)]
-        got, cyc = run_comp(chunks, tmp_path)
+        got, cyc = run_comp(chunks, tmp_path, ns=ns, ext=int(ns == 5), ha=3 if ns == 5 else 2,
+                            nx=3)
         check(chunks, got)
         rates[f] = n * 8 / cyc
         assert abs(rates[f] - 8 / p) < 0.05 * 8 / p, rates

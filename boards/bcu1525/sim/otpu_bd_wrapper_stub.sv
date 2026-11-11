@@ -10,6 +10,8 @@ module otpu_bd_wrapper #(parameter int PCIE_LANES = 16) (
   input  logic [PCIE_LANES-1:0] pcie_mgt_rxp, pcie_mgt_rxn,
   output logic [PCIE_LANES-1:0] pcie_mgt_txp, pcie_mgt_txn,
   output logic        pcie_link_up, core_clk, core_clk2x, core_rstn, xdma_aclk, xdma_aresetn,
+  output logic        acc_clk, temp_alarm, ot_alarm,
+  input  logic        acc_clk_ce,
   output logic [9:0]  device_temp,
 `define STUB_L(P) \
   output logic [31:0] P``_awaddr, P``_araddr, P``_wdata, \
@@ -32,6 +34,8 @@ module otpu_bd_wrapper #(parameter int PCIE_LANES = 16) (
   `STUB_L(M_AXI_MEMCAL1),
   `STUB_L(M_AXI_MEMCAL2),
   `STUB_L(M_AXI_MEMCAL3),
+  `STUB_L(M_AXI_BMC),
+  `STUB_L(M_AXI_GOV),
   `STUB_D(M_AXI_DMA0),
   `STUB_D(M_AXI_DMA1),
   `STUB_D(M_AXI_DMA2),

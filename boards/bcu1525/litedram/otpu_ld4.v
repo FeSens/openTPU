@@ -44388,7 +44388,7 @@ BUFGCE BUFGCE(
 //------------------------------------------------------------------------------
 IDELAYCTRL #(
 	// Parameters.
-	.SIM_DEVICE ("ULTRASCALE")
+	.SIM_DEVICE ("ULTRASCALE_PLUS")
 ) IDELAYCTRL (
 	// Inputs.
 	.REFCLK (idelay_clk),

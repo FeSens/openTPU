@@ -54,7 +54,7 @@ def diag_image(cfg=None) -> np.ndarray:
     w = np.asarray(I.assemble(prog), np.uint32)
     if cfg is not None and getattr(cfg, "SEQ_WC", False):
         from opentpu import waits as W
-        w = W.loadable(w, W.entries(w, cfg.D, cfg.S, prog=prog), cfg.D)
+        w = W.loadable(w, W.entries(w, cfg.D, cfg.S, prog=prog, aw=cfg.AW, win=cfg.WC_WIN), cfg.D)
     img[CHAIN_AT:CHAIN_AT + 4 * len(w)] = w.view(np.uint8)
     return img
 
@@ -89,9 +89,17 @@ def _mm(cfg, m=None, qflags=None, pre=(), ab=0, ors=16, **kw) -> list:
               I.mm(W8, SC, RES, 16, 2, 256, ors, m, ab, 8, **kw), I.st(OUT, RES, n))
 
 
+def _addi(aw: int):
+    """ADDI at the machine's address bits (cfg.AW): the immediate mod 2^AW (isa.wrap), so a
+    check's register arithmetic is the device's (mod 2^32, or 2^36 on the BCU)."""
+    return lambda rd, ra, imm: I.addi(rd, ra, I.wrap(imm, aw), aw=aw)
+
+
 def op_checks(cfg, gen: bool = False, waitw: bool = False,
               gather: bool = True) -> list[tuple[str, str, list]]:
     M = cfg.MCOLS
+    aw = getattr(cfg, "AW", 32)
+    addi = _addi(aw)
     out = []
 
     def add(group, name, prog):
@@ -101,14 +109,14 @@ def op_checks(cfg, gen: bool = False, waitw: bool = False,
     add("control", "HALT", [I.halt()])
     add("control", "NOP", _p(I.nop(), I.nop(), I.st(OUT, A, 64)))
     add("control", "LI / ADDI (register offsets)",
-        _p(I.li(1, 0x400), I.addi(2, 1, 0x100), I.addi(3, 2, -0x40), I.st(OUT, A, 16, ra=1),
+        _p(I.li(1, 0x400), addi(2, 1, 0x100), addi(3, 2, -0x40), I.st(OUT, A, 16, ra=1),
            I.st(OUT, 64, 16, ra=2), I.st(OUT, 128, 16, ra=3)))
-    add("control", "LOOP", _p(I.loop(2, 5), I.addi(1, 1, 256), I.st(OUT, A, 32, ra=1)))
+    add("control", "LOOP", _p(I.loop(2, 5), addi(1, 1, 256), I.st(OUT, A, 32, ra=1)))
     add("control", "LOOP nested",
-        _p(I.loop(4, 3), I.loop(2, 4), I.addi(1, 1, 128), I.st(OUT, A, 16, ra=1),
-           I.addi(2, 2, 64), I.st(OUT + 0x4000, 32, 8, ra=2)))
+        _p(I.loop(4, 3), I.loop(2, 4), addi(1, 1, 128), I.st(OUT, A, 16, ra=1),
+           addi(2, 2, 64), I.st(OUT + 0x4000, 32, 8, ra=2)))
     add("control", "LOOP count from a register (rcount)",
-        _p(I.li(4, 3), I.loop(2, 2, rcount=4), I.addi(1, 1, 256), I.st(OUT, A, 32, ra=1)))
+        _p(I.li(4, 3), I.loop(2, 2, rcount=4), addi(1, 1, 256), I.st(OUT, A, 32, ra=1)))
     add("control", "LOOP count 0 (skips its body)",
         _p(I.loop(1, 0), I.st(OUT, A, 32), I.st(OUT + 256, 64, 32)))
     add("control", "BAR", _p(I.bar(), I.st(OUT, A, 64)))
@@ -164,7 +172,7 @@ def op_checks(cfg, gen: bool = False, waitw: bool = False,
 
     # ---- VPU: every function under its legal broadcast modes
     for f, name in I.VFUNCS.items():
-        if f in (I.V_OUTER, I.V_ARGMAX):
+        if f in (I.V_OUTER, I.V_ARGMAX, I.V_MAC) or f in (I.V_SIGMOID, I.V_SILU) and not cfg.VSIG:
             continue
         if f in I.READS_B:
             modes = [("FULL", I.B_FULL), ("ROW", I.B_ROW), ("COL", I.B_COL),
@@ -172,7 +180,8 @@ def op_checks(cfg, gen: bool = False, waitw: bool = False,
         else:
             modes = [("", I.B_FULL)]
         group = ("vpu-new" if f in (I.V_RDOT, I.V_LOG2) else "vpu-reduce" if f in I.REDUCE
-                 else "vpu-composite" if f in (I.V_EXP2, I.V_RECIP, I.V_RSQRT, I.V_EXP2SUB)
+                 else "vpu-composite" if f in (I.V_EXP2, I.V_RECIP, I.V_RSQRT, I.V_EXP2SUB,
+                                               I.V_SIGMOID, I.V_SILU)
                  else "vpu")
         for mname, bm in modes:
             nm = f"VOP {name.upper()}" + (f" {mname}" if mname else "")
@@ -181,15 +190,21 @@ def op_checks(cfg, gen: bool = False, waitw: bool = False,
                                   I.st(OUT, RES, 3)))
             else:
                 add(group, nm, _vop(f, bm))
-    for dname in ("scalar", "column", "one"):
+    for dname in (("scalar", "column", "one") if cfg.OUTER        # (a VPU without OUTER;
+                  else ("one",) if cfg.OUTER1 else ()):            # OUTER1: decay one)
         add("vpu-new", f"VOP OUTER {dname}",
             _p(I.vop(I.V_COPY, RES, A, 0, 4, 64, 64, 64, 0),
                I.outer(RES, 2048, 1024, 3072, 4, 64, 64, 1, dname),
                I.st(OUT, RES, 256)))
+    for mname, bm in (("COL", I.B_COL), ("SCALAR", I.B_SCALAR)) if cfg.VMAC else ():
+        add("vpu-new", f"VOP MAC {mname}",                          # (a VPU with MAC)
+            _p(I.vop(I.V_COPY, RES, A, 0, 4, 200, 256, 256, 0),
+               I.mac(RES, 2048, B, 4, 200, 256, 256, bm, imm=0.75),
+               I.st(OUT, RES, 1024)))
 
     # ---- VPU on edge values (zeros, denormals, huge, inf, NaN)
     for f in (I.V_EXP2, I.V_RECIP, I.V_RSQRT, I.V_EXP2SUB, I.V_LOG2, I.V_ADD, I.V_SUB, I.V_MUL,
-              I.V_MAX, I.V_MIN, I.V_ABS, I.V_COPY):
+              I.V_MAX, I.V_MIN, I.V_ABS, I.V_COPY) + ((I.V_SIGMOID, I.V_SILU) if cfg.VSIG else ()):
         add("vpu-new" if f == I.V_LOG2 else "vpu-edge", f"VOP {I.VFUNCS[f].upper()} edge values",
             _edge(f))
     for f in (I.V_RSUM, I.V_RMAX, I.V_RSSQ):
@@ -197,9 +212,9 @@ def op_checks(cfg, gen: bool = False, waitw: bool = False,
             [I.ld(EDGE, TE, 2 * NE), I.vop(f, RES, TE, 0, 2, NE // 2, 1, NE // 2, 0),
              I.st(OUT, RES, 2), I.halt()])
     if gen:
-        out += _gen_checks()
+        out += _gen_checks(aw)
     if waitw:
-        out += _waitw_checks()
+        out += _waitw_checks(aw)
     return out
 
 
@@ -207,16 +222,19 @@ def _fill1(t, v):
     return I.vop(I.V_FILL, t, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, v)
 
 
-def _gen_checks() -> list:
+def _gen_checks(aw: int = 32) -> list:
     """The decode loop's instructions (docs/isa.md RLD, ARGMAX, HALT CHAIN). A register's value
-    shows as the address a store lands at."""
+    shows as the address a store lands at (its arithmetic mod 2^AW: _addi)."""
+    addi = _addi(aw)
     out = []
-    # RLD: truncation (4.0, 128.75, -8.5, 0.99, 1024), inf -> 0x80000000 (+ 0x80000000 = 0),
+    # RLD: truncation (4.0, 128.75, -8.5, 0.99, 1024), inf -> 0x80000000 (- 0x80000000 = 0),
     # RAW bits (EDGE[11] = 0x00000001, a TMEM offset), rd = 0 (no write)
     vals = [4.0, 128.75, -8.5, 0.99, 1024.0]
     prog = [I.ld(EDGE, TE, 2 * NE)] + [_fill1(RES + k, v) for k, v in enumerate(vals)]
     prog += [I.rld(1 + k, RES + k) for k in range(len(vals))]
-    prog += [I.rld(6, TE + 24), I.addi(6, 6, 0x80000000), I.rld(7, TE + 11, raw=True),
+    if aw > 32:                     # (the word zero-extended: -8 is 2^32 - 8, brought back)
+        prog += [addi(3, 3, -(1 << 32))]
+    prog += [I.rld(6, TE + 24), addi(6, 6, -0x80000000), I.rld(7, TE + 11, raw=True),
              I.rld(0, RES + 4)]
     prog += [I.st(OUT + 0x400 * k, 16 * k, 16, ra=1 + k) for k in range(len(vals))]
     prog += [I.st(OUT + 0x2000, 96, 16, ra=6),
@@ -224,19 +242,20 @@ def _gen_checks() -> list:
              I.st(OUT + 0x3000, RES + 16, 16), I.st(OUT + 0x3800, 112, 16, ra=0)]
     out.append(("gen", "RLD (truncation, inf, RAW, register offsets)", _p(*prog)))
     # RLD MUL: times w2 mod 2^32 (a PLE row's bytes, 262143 * 9344 > 2^31), a negative
-    # multiplier, RAW bits times 3, a product past 2^32; each register brought back to an offset
+    # multiplier (at AW > 32 from a register: isa.rld_mul), RAW bits times 3, a product past
+    # 2^32 (mod 2^AW); each register brought back to an offset
     mv = [(262143.0, 9344, False), (-5.0, -7, False), (3.0, 3, True), (65536.0, 65537, False)]
     prog = [_fill1(RES + k, v) for k, (v, _, _) in enumerate(mv)]
     for k, (v, c, raw) in enumerate(mv):
         x = I.f32bits(v) if raw else I.f2i(I.f32bits(v))
-        prog += [I.rld(1 + k, RES + k, raw=raw, mul=c),
-                 I.addi(1 + k, 1 + k, 0x400 * (k + 1) - x * c),
+        prog += [*I.rld_mul(1 + k, RES + k, c, raw=raw, aw=aw),
+                 addi(1 + k, 1 + k, 0x400 * (k + 1) - x * c),
                  I.st(OUT, A + 16 * k, 16, ra=1 + k)]
     out.append(("gen", "RLD MUL (mod 2^32, negative, RAW)", _p(*prog)))
     # RLD drives a LOOP count and a conditional HALT (LOOP R {HALT} with R = 0: no halt)
     out.append(("gen", "RLD loop count, conditional HALT",
                 _p(_fill1(RES, 3.0), _fill1(RES + 1, 0.0), I.rld(4, RES), I.rld(5, RES + 1),
-                   I.loop(2, 0, rcount=4), I.addi(1, 1, 256), I.st(OUT, A, 32, ra=1),
+                   I.loop(2, 0, rcount=4), addi(1, 1, 256), I.st(OUT, A, 32, ra=1),
                    I.loop(1, 0, rcount=5), I.halt(), I.st(OUT + 0x2000, A, 32))))
     # ARGMAX: rows, a row stride of 3, a negative index base plus a register
     out.append(("gen", "VOP ARGMAX rows, drs, index base",
@@ -254,9 +273,10 @@ def _gen_checks() -> list:
     return out
 
 
-def _waitw_checks() -> list:
+def _waitw_checks(aw: int = 32) -> list:
     """WAITW whose condition holds (a word the host would write is in DRAM already): each word
     it takes shows, through RLD RAW, as the address a store lands at."""
+    addi = _addi(aw)
     # EDGE_BITS[0] = 0, [1] = 0x80000000, [2] = 0x3F800000
     conds = [(EDGE + 8, 0x3F800000, I.C_EQ, 0xFFFFFFFF), (EDGE, 1, I.C_NE, 0xFFFFFFFF),
              (EDGE + 4, 0x7FFFFFFF, I.C_GE, 0xFFFFFFFF), (EDGE + 8, 0x3F800000, I.C_EQ, 0xFFFF0000)]
@@ -264,7 +284,7 @@ def _waitw_checks() -> list:
     for k, (a, ref, cmp, mask) in enumerate(conds):
         v = EDGE_BITS[(a - EDGE) // 4]
         prog += [I.waitw(a, RES + k, ref, cmp, mask=mask, interval=16, timeout=1 << 20),
-                 I.rld(1 + k, RES + k, raw=True), I.addi(1 + k, 1 + k, 0x400 * (k + 1) - v),
+                 I.rld(1 + k, RES + k, raw=True), addi(1 + k, 1 + k, 0x400 * (k + 1) - v),
                  I.st(OUT, A + 16 * k, 16, ra=1 + k)]
     out = [("waitw", "WAITW EQ / NE / GE / mask", _p(*prog))]
     # a store to the word lands before WAITW's first read; a younger store to it waits
@@ -272,6 +292,6 @@ def _waitw_checks() -> list:
                 _p(_fill1(RES + 8, 5.0), I.st(OUT + 0x2000, RES + 8, 1),
                    I.waitw(OUT + 0x2000, RES + 9, I.f32bits(5.0), I.C_EQ, timeout=1 << 20),
                    _fill1(RES + 8, 6.0), I.st(OUT + 0x2000, RES + 8, 1),
-                   I.rld(1, RES + 9, raw=True), I.addi(1, 1, 0x100 - I.f32bits(5.0)),
+                   I.rld(1, RES + 9, raw=True), addi(1, 1, 0x100 - I.f32bits(5.0)),
                    I.st(OUT + 0x3000, A, 16, ra=1))))
     return out

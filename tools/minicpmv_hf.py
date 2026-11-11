@@ -27,7 +27,7 @@ its 64 GB of bf16 experts.
         of a previous run's OUT.npz (its card-<format> arrays) instead of running the tower
 
 MODEL: a checkpoint directory (models/MiniCPM-V-4.7-35B-A3B). transformers 5.18 may sit on its
-own path (PYTHONPATH=~/mcpv/tf518 on hwe-bench, with pillow and torchvision 0.29.1+cpu for
+own path (PYTHONPATH=~/mcpv/tf518 on the simulation host, with pillow and torchvision 0.29.1+cpu for
 the image processor).
 """
 from __future__ import annotations

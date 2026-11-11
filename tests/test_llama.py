@@ -25,41 +25,46 @@ def _cos(a, b):
     return (a * b).sum(-1) / np.linalg.norm(a, axis=-1) / np.linalg.norm(b, axis=-1)
 
 
-def _smollm3():
-    return transformers.SmolLM3ForCausalLM(transformers.SmolLM3Config(
+def _smollm3(**kw):
+    return transformers.SmolLM3ForCausalLM(transformers.SmolLM3Config(**dict(dict(
         hidden_size=256, num_hidden_layers=len(NOPE), num_attention_heads=8,
         num_key_value_heads=2, head_dim=128, intermediate_size=512, vocab_size=1000,
         rms_norm_eps=1e-6, rope_parameters={"rope_type": "default", "rope_theta": 5e6},
         no_rope_layers=NOPE, tie_word_embeddings=True, max_position_embeddings=4096,
-        bos_token_id=1, eos_token_id=2, pad_token_id=0))
+        bos_token_id=1, eos_token_id=2, pad_token_id=0), **kw)))
 
 
-def _phi3():
+def _phi3(**kw):
     """Phi-4-mini's attention in small: query groups of 3, RoPE on 96 of 128 dimensions,
     LongRoPE with short factors that are not all 1 (Phi-4-mini's are) and an attention factor
     of sqrt(1 + ln 4 / ln 4096)."""
     short = [1.0 + 0.05 * i for i in range(48)]
-    return transformers.Phi3ForCausalLM(transformers.Phi3Config(
+    return transformers.Phi3ForCausalLM(transformers.Phi3Config(**dict(dict(
         hidden_size=768, num_hidden_layers=2, num_attention_heads=6, num_key_value_heads=2,
         intermediate_size=512, vocab_size=1000, rms_norm_eps=1e-5, rope_theta=1e4,
         partial_rotary_factor=0.75, max_position_embeddings=16384,
         original_max_position_embeddings=4096,
         rope_scaling={"type": "longrope", "short_factor": short,
                       "long_factor": [4 * f for f in short]},
-        tie_word_embeddings=True, bos_token_id=1, eos_token_id=2, pad_token_id=0))
+        tie_word_embeddings=True, bos_token_id=1, eos_token_id=2, pad_token_id=0), **kw)))
 
 
-@pytest.fixture(scope="module", params=["smollm3", "phi3"])
-def tiny(request, tmp_path_factory):
+def _tiny(name, path, **kw):
+    """The tiny model `name` (its config's `kw` overridden; norms' gains random about 1) saved
+    in `path` and read back: (name, the model, load_spec's Spec, load_weights' W)."""
     torch.manual_seed(0)
-    m = {"smollm3": _smollm3, "phi3": _phi3}[request.param]().float().eval()
+    m = {"smollm3": _smollm3, "phi3": _phi3}[name](**kw).float().eval()
     with torch.no_grad():
         for n, p in m.named_parameters():
             if "norm" in n:
                 p.copy_(1 + 0.1 * torch.randn_like(p))
-    path = tmp_path_factory.mktemp(request.param)
     m.save_pretrained(path)                     # the loaders read it back (Phi-3: fused)
-    return request.param, m, load_spec(path), load_weights(path)
+    return name, m, load_spec(path), load_weights(path)
+
+
+@pytest.fixture(scope="module", params=["smollm3", "phi3"])
+def tiny(request, tmp_path_factory):
+    return _tiny(request.param, tmp_path_factory.mktemp(request.param))
 
 
 @pytest.mark.parametrize("K", [256, 768])
@@ -150,7 +155,7 @@ def test_tiny_matches_hf(tiny, config):
     eng = Engine(spec, W, cap=256, cfg=cfg)
     dev = np.array([eng.step(t) for t in toks])
     assert _cos(dev, hf).min() > 0.998
-    emu = emulated_logits(spec, W, toks[:12])
+    emu = emulated_logits(spec, W, toks[:12], S=eng.cfg.S)
     assert _cos(dev[:12], emu).min() > 0.9995
 
 
@@ -159,7 +164,8 @@ def test_tiny_fp4_follows_emulation(tiny):
     toks = [int(t) for t in np.random.default_rng(0).integers(0, 1000, 12)]
     eng = Engine(spec, W, cap=256, wformat="fp4", head_format="int8")
     dev = np.array([eng.step(t) for t in toks])
-    emu = emulated_logits(spec, W, toks, wformat="fp4", head_format="int8")
+    emu = emulated_logits(spec, W, toks, wformat="fp4", head_format="int8",
+                          S=eng.cfg.S)
     assert _cos(dev, emu).min() > 0.9995
 
 

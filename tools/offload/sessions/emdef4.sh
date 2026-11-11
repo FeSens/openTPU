@@ -18,7 +18,7 @@
 #    two turns the ISA references';
 # 5. selftest; the summary: per model and turn each run's TTFT and device s, N - P per pair (Nk - Pk) and of the
 #    means, the calls, and each arm's layer-major calls' host ms a miss.
-# The swap's rule (the lead's): N no worse than P at every turn, token-exact.
+# The swap's rule : N no worse than P at every turn, token-exact.
 # A build other than EXPECT, a failed selftest, another configuration, a FAIL, a failed or timed-out run or a mismatch
 # stops it (then the final selftest). About 20 min.
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash $T/tools/offload/sessions/emdef4.sh

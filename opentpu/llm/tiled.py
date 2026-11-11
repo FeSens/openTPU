@@ -174,11 +174,14 @@ def _attention_tile(res: Res, lw, c, s_, pos, T: int, spec, block: int, parts: i
     I/O scratch, _oscr) as it ends and loaded back whole once the heads are done, or without
     oscr gathered in TMEM; else each part's quantized as it ends (quantize_into: a QACT range
     of its own, an MM of W_o's a range, docs/isa.md MM; not the same bits)."""
-    d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
+    kvc = lw.kvs[0]
+    d, G, eps = spec.head_dim, spec.n_q // kvc.kv_heads(spec.n_kv), spec.eps
     D = ol.block_size()
     dk = -(-d // D) * D
     run = isinstance(pos, RunRows)
-    kvc = lw.kvs[0]
+    S = ol.num_programs()
+    if S > 1:                                  # the slice's heads in TMEM, gathered before W_o
+        whole, oscr, loop = True, None, 0
     xs = _norm_quantize(res.x, lw.g_in, eps)   # T rows: one pass a weight
     qn, kn = _load_opt(lw.qn), _load_opt(lw.kn)
     c, s_ = _rope_gate(lw, c, s_)
@@ -283,6 +286,12 @@ def _attention_tile(res: Res, lw, c, s_, pos, T: int, spec, block: int, parts: i
         _attend_heads(qhs, kvc, kvh, seqs, block, scale, depth=depth, emit=emit)
     xs = qn = kn = None                        # (the norm gains too: placed after x's tiles,
     #                                            they split TMEM under the load back)
+    if S > 1:                                  # every slice's heads [T, n_q d], one QACT
+        ost = ol.quantize(ol.all_gather(o_all), free=True)      # (_o_residual's operand)
+        del o_all
+        x, hl, sid = res.back(), lw.wo.shape[0], ol.program_id()
+        x.set(ol.all_gather(x[:, sid * hl:(sid + 1) * hl] + ol.dot(ost, lw.wo)))
+        return
     if whole:                                  # (the scratch's rows back: the stores before)
         if o_all is None:
             o_all = ol.load(oscr[0:T, 0:nq * d])
@@ -577,7 +586,7 @@ def down_chunk(wg, wd) -> int:
     """The W_down chunk swiglu_down sums by (its `chunk`, else _chunk's): W_down's stored
     column parts, else _chunk of the slice's F."""
     if wd.parts is not None:
-        return wd.pw
+        return wd.pw // wd.gs
     D = ol.block_size()
     return _chunk(wg.shape[0], D, D if wd.wf == 0 else 2 * D)
 
@@ -589,39 +598,96 @@ def _mlp_tile(x, lw, spec, parts: int, sub: int, act=silu, g=None, out=None, xs=
     a [T, C] tile when sub < C), then the down projection by `parts` parts of its output
     columns, each summing the chunks in swiglu_down's order (the same bits). out: the MLP's
     output into that [T, H] tile instead (_add_parts). xs: the operand, quantized already (x
-    then may be None, with out)."""
+    then may be None, with out).
+
+    Where the chunks' activations do not all fit ACT RAM beside the operand (Qwen3.5-27B's F
+    17408 against ACT_BLOCKS 128 x D 128: the down projection's K split, act_groups), they go
+    in groups that do: a group's gate / up MMs, then its down MMs into every part's sum, the
+    sums kept in TMEM across the groups (fresh MM outputs: odd row strides, no bank conflict
+    on their MM ACC) and added to x after the last; each element sums the chunks in the same
+    order (the same bits)."""
     if xs is None:
         xs = _norm_quantize(x, lw.g_post if g is None else g, spec.eps)
     wg, wu, wd = lw.wg, lw.wu, lw.wd
     T = (out if x is None else x).rows
     C = down_chunk(wg, wd)
-    starts = list(range(0, wg.shape[0], C))
-    pieces = [(c0, s0) for c0 in starts for s0 in range(0, C, sub)]
+    groups = act_groups(list(range(0, wg.shape[0], C)), C, xs)
+    ys = None                           # (groups: every part's sum so far)
+    for gi, starts in enumerate(groups):
+        pieces = [(c0, s0) for c0 in starts for s0 in range(0, C, sub)]
 
-    def gate_up(c0, s0):
-        a = c0 + s0
-        return ol.dot(xs, wg[a:a + sub, :]), ol.dot(xs, wu[a:a + sub, :])
+        def gate_up(c0, s0):
+            a = c0 + s0
+            return ol.dot(xs, wg[a:a + sub, :]), ol.dot(xs, wu[a:a + sub, :])
 
-    acts, a = {}, None
-    nxt = gate_up(*pieces[0])
-    for i, (c0, s0) in enumerate(pieces):
-        g, u = nxt
-        if i + 1 < len(pieces):
-            nxt = gate_up(*pieces[i + 1])                      # streams while the VPU works
-        if sub == C:                                           # the chunk's activation
-            acts[c0] = ol.quantize(act(g) * u, free=True)
+        acts, a = {}, None
+        nxt = gate_up(*pieces[0])
+        for i, (c0, s0) in enumerate(pieces):
+            g, u = nxt
+            if i + 1 < len(pieces):
+                nxt = gate_up(*pieces[i + 1])                  # streams while the VPU works
+            if sub == C:                                       # the chunk's activation
+                acts[c0] = ol.quantize(act(g) * u, free=True)
+            else:
+                if s0 == 0:
+                    a = ol.empty([T, C])
+                a[:, s0:s0 + sub].set(act(g) * u)
+                if s0 + sub == C:
+                    acts[c0] = ol.quantize(a, free=True)
+                    a = None
+            del g, u
+        if gi + 1 == len(groups):
+            xs = nxt = None             # the operand's ACT blocks are free for the down MMs
+        nxt = None
+        ws = [wd[:, c0:c0 + C] for c0 in starts]
+        if len(groups) == 1:
+            _add_parts(out if x is None else x, [acts[c0] for c0 in starts], ws, parts, out)
         else:
-            if s0 == 0:
-                a = ol.empty([T, C])
-            a[:, s0:s0 + sub].set(act(g) * u)
-            if s0 + sub == C:
-                acts[c0] = ol.quantize(a, free=True)
-                a = None
-        del g, u
-    xs = nxt = None                     # the operand's ACT blocks are free for the down MMs
-    _add_parts(out if x is None else x, [acts[c0] for c0 in starts],
-               [wd[:, c0:c0 + C] for c0 in starts], parts, out)
+            ys = _sum_parts(ys, [acts[c0] for c0 in starts], ws, parts)
+        acts = None                     # (the group's ACT blocks: the next group's)
+    if ys is not None:
+        dst = out if x is None else x
+        hp = dst.cols // parts
+        for p, y in enumerate(ys):
+            n0 = p * hp
+            if out is None:
+                x[:, n0:n0 + hp].set(x[:, n0:n0 + hp] + y)
+            else:
+                out[:, n0:n0 + hp].set(y)
     return x
+
+
+def act_groups(starts: list, C: int, xs) -> list:
+    """_mlp_tile's chunks (their first columns) in consecutive groups whose activations ([T,
+    C] each: C / D ACT RAM blocks) fit ACT RAM beside the operand xs (live while a group's gate
+    and up MMs run): one group where they all do (every model's but Qwen3.5-27B's on one
+    slice), else as few as fit, of sizes within one of each other."""
+    cfg = current().cfg
+    per = max(1, (cfg.ACT_BLOCKS - xs.KB) // (C // cfg.D))
+    if per >= len(starts):
+        return [starts]
+    k = -(-len(starts) // per)
+    q, r = divmod(len(starts), k)                       # r groups of q + 1, then q
+    groups, i = [], 0
+    for g in range(k):
+        groups.append(starts[i:i + q + (g < r)])
+        i += q + (g < r)
+    return groups
+
+
+def _sum_parts(ys, acts, ws, parts: int) -> list:
+    """_add_parts' sums by part over these chunks, onto ys (each part's [T, H / parts] sum so
+    far; None: the first group's), in the order of the list."""
+    hp = ws[0].shape[0] // parts
+    ys = list(ys) if ys is not None else [None] * parts
+    for p in range(parts):
+        n0 = p * hp
+        for a, w in zip(acts, ws):
+            if ys[p] is None:
+                ys[p] = ol.dot(a, w[n0:n0 + hp, :])
+            else:
+                ol.dot(a, w[n0:n0 + hp, :], acc=ys[p])
+    return ys
 
 
 def mlp_parts(H: int, D: int, T: int, tmem: int) -> int:
@@ -1214,7 +1280,7 @@ def gemma4_layer_tile(m, li: int, pos, row, T: int, block: int = ATTN_BLOCK,
 @ol.jit
 def qwen35_layer_tile(m, li: int, pos, row, T: int, block: int = ATTN_BLOCK,
                       spill: bool = False, drows: int = 0, depth: int = ATTN_DEPTH,
-                      whole: bool = True, oscr: bool = True):
+                      whole: bool = True, oscr: bool = True, part: str | None = None):
     """qwen35_layer_run's expert-major run tiled (Qwen3.5-MoE's layer-major prefill,
     docs/offload.md 13.11): the T rows of the chunk from `row` (their records' X) at the
     run-time positions pos .. pos + T - 1 (a RunRows with the image's mask tiles) through layer
@@ -1223,24 +1289,55 @@ def qwen35_layer_tile(m, li: int, pos, row, T: int, block: int = ATTN_BLOCK,
     an attention layer tiled (_attention_tile, gated; spill: x in the records' X while the
     heads attend); x to X; a MoE layer's route and shared expert over the T rows, its need
     lines between the shared expert's chunks (moe.moe_prologue_rows), a dense layer's MLP
-    tiled. Each row's arithmetic is qwen35_layer_run's."""
-    from .moe import em_x, moe_combine_rows, moe_prologue_rows
-    from .qwen35 import LIN, _deltanet_rows
+    tiled. Each row's arithmetic is qwen35_layer_run's.
+
+    part (a DeltaNet layer by chunks, Config.DNCHUNK: DN_PARTS): "dn-prep" the combine, x to
+    X and the rows' prep to the image's dnq (qwen35._deltanet_prep); "dn-core" the recurrence
+    over the rows, dnq to dno (_deltanet_core_rows); "dn-post" from X and dno the rest of the
+    layer (_deltanet_post, then as above)."""
+    from .moe import combine_stage, em_x, moe_combine_rows, moe_prologue_rows
+    from .qwen35 import LIN, _deltanet_core_rows, _deltanet_post, _deltanet_prep, _deltanet_rows
     spec, dev = m.spec, m.moe_dev
     if not isinstance(pos, RunRows) or pos.amask is None or spec.moe is None:
         raise CompileError("a tiled Qwen3.5 layer run is a MoE model's, at a run-time "
                            "position with the image's mask tiles")
     H, mo, K = spec.hidden, spec.moe, spec.conv_k
+    if part is not None and (part not in DN_PARTS or m.layer(li).kind != LIN or m.dnq is None):
+        raise CompileError(f"part {part!r} of layer {li}: a DeltaNet layer's {DN_PARTS} on an "
+                           "image with the chunked DeltaNet's regions (Config.DNCHUNK)")
+    if part == "dn-core":
+        _deltanet_core_rows(m.layer(li), spec, m.dnq, m.dno, row, T)
+        return
     X = em_x(dev, row, T, H)
-    x = ol.load(X)
-    if li > 0 and m.layer(li - 1).moe:          # (the layer before: its experts' outputs)
+    late = part == "dn-post" and ol.current().unroll            # (merged, stage.py: x's words
+    x = None if late else ol.load(X)                            # only where the residual is)
+    if part != "dn-post" and li > 0 and m.layer(li - 1).moe:    # (the layer before: its
+        st = combine_stage(mo, H)                               # experts' outputs)
         for r0 in range(0, T, EM_GROUP):
             xg = x[r0:min(T, r0 + EM_GROUP), :]
-            xg.set(moe_combine_rows(xg, mo, dev, row + r0))
+            xg.set(moe_combine_rows(xg, mo, dev, row + r0, stage=st))
             del xg
+        del st
     lw = m.layer(li)
     parts, sub = _widths(m, T)
-    if lw.kind == LIN:
+    if part == "dn-prep":
+        xs = _norm_quantize(x, lw.g_in, spec.eps)
+        if ol.current().unroll:                 # (merged, stage.py: x's words free from here)
+            if li > 0 and m.layer(li - 1).moe:
+                ol.store(X, x)
+            ol.current().free_now(x)
+            _deltanet_prep(None, lw, spec, m.dnq, row, xs, T)
+            return
+        _deltanet_prep(x, lw, spec, m.dnq, row, xs)
+        if li > 0 and m.layer(li - 1).moe:
+            ol.store(X, x)
+        return
+    if part == "dn-post":
+        if late:
+            x = _deltanet_post(None, lw, spec, m.dnq, m.dno, row, T=T, X=X)
+        else:
+            x.set(_deltanet_post(x, lw, spec, m.dnq, m.dno, row))
+    elif lw.kind == LIN:
         for r0, n in _pieces(T, drows or T):
             xr = x[r0:r0 + n, :]
             xr.set(_deltanet_rows(xr, lw, K - 1, spec, m.gr[0:n, :], m.on[0:n, :],
@@ -1416,6 +1513,9 @@ def ranges(forms: list) -> list:
 
 
 LAYER_KERNELS = {"gemma4": gemma4_layer_tile, "qwen35": qwen35_layer_tile}
+# a Qwen3.5 DeltaNet layer by chunks (Config.DNCHUNK): its tiles' parts, each over the chunk's
+# rows before the next (qwen35_layer_tile's part; dn_parts)
+DN_PARTS = ("dn-prep", "dn-core", "dn-post")
 # the families whose tiled layer runs are on by default (prefill.layer_tile_flag: unless
 # OTPU_TILE=0) and their rows a run (Engine.tile_rows; at most ACT_ROWS): the most rows whose
 # forms are whole (today's bits) on every Qwen3.5-MoE layer kind and bucket of the card's
@@ -1426,43 +1526,145 @@ LAYER_ROWS = {"qwen35": 8}
 def layer_family(img) -> str | None:
     """The image's family when a tiled expert-major layer run serves it (LAYER_KERNELS, its
     class's module or a base class's: MiniCPM-V's Image is Qwen3.5's; a MoE image with prefill
-    rows, the expert server's words and the mask tiles, which a MoE model's image holds when
-    OTPU_TILE=1 as it is built: prefill.layer_tile_flag), else None."""
+    rows, the expert server's words (or a resident pool's records: em_ok) and the mask tiles,
+    which a MoE model's image holds when OTPU_TILE=1 as it is built: prefill.layer_tile_flag),
+    else None."""
     name = next((n for n in (t.__module__.rsplit(".", 1)[-1] for t in type(img).__mro__)
                  if n in LAYER_KERNELS), None)
-    ok = name is not None and getattr(img, "prefill_rows", 0) and \
-        getattr(img, "offload", None) is not None and "amask" in (img.lookup or {})
+    em = img.em_ok() if hasattr(img, "em_ok") else getattr(img, "offload", None) is not None
+    ok = name is not None and getattr(img, "prefill_rows", 0) and em and \
+        "amask" in (img.lookup or {})
     return name if ok else None
 
 
 def compile_layer_tile(img, li: int, blocks: int, T: int, block: int = ATTN_BLOCK,
-                       slot: int = 0):
+                       slot: int = 0, part: str | None = None):
     """(programs, run_args): layer li's expert-major run tiled (LAYER_KERNELS), T rows at a
     run-time position of bucket `blocks` (from conv_k - 1) and a run-time chunk row ("row"),
     in place of the image's compile_layer_run(li, blocks, R=T, em=True) (Engine.prefill_layers'
     runs of more than one row with tiling on: Engine.layer_tile); the first of its forms that
     fits TMEM, ACT RAM and IMEM (_first_fit). slot: the DeltaNet states' and windows' slot of an
-    MTP image (its committed one, mtp.MTPDecoder: a chat's next turn), as compile_layer_run's."""
+    MTP image (its committed one, mtp.MTPDecoder: a chat's next turn), as compile_layer_run's.
+    part: a DeltaNet layer's part by chunks (DN_PARTS, qwen35_layer_tile's)."""
     from ..compiler import RunVar
     fam = layer_family(img)
     if fam is None:
         raise ValueError(f"no tiled layer run for this image ({type(img).__module__}: an "
                          "expert-major MoE image with the mask tiles, OTPU_TILE=1)")
     cfg, lk = img.cfg, img.lookup
-    if not 0 <= li < img.spec.layers or not 1 <= T <= cfg.act_rows or cfg.S != 1:
+    tiles = 0
+    if part and ":" in part:            # (dn_merged's run: that many tiles merged, stage.py)
+        part, tiles = part.split(":")[0], int(part.split(":")[1])
+    if not 0 <= li < img.spec.layers or not 1 <= T <= cfg.act_rows or \
+            cfg.S != 1 and img.offload is not None:
         raise ValueError(f"layer {li}, {T} rows: a layer's run of at most ACT_ROWS "
-                         f"({cfg.act_rows}) rows, one slice")
+                         f"({cfg.act_rows}) rows (S > 1: a resident pool's)")
     lo = max((blocks - 1) * block, getattr(img.spec, "conv_k", 1) - 1)
     amask = (lk["amask"], 4 * lk["amask_M"] * (block + 1))
     pos = RunRows(blocks, block, lo, lk.get("zmask", 0), img.cap, T, 0, amask)
     row = RunVar("row", img.prefill_rows)
 
     def trace(kw, fit):
-        return [LAYER_KERNELS[fam].trace(cfg, 0, {
-            "m": img.descriptors(0, slot) if slot else img.descriptors(0), "li": li, "pos": pos,
-            "row": row, "T": T, "block": block, **kw}, fit=fit)]
+        return [LAYER_KERNELS[fam].trace(cfg, s, {
+            "m": img.descriptors(s, slot) if slot else img.descriptors(s), "li": li, "pos": pos,
+            "row": row, "T": T, "block": block, **kw}, fit=fit) for s in range(cfg.S)]
 
-    return _first_fit(trace, layer_variants(img, fam, T), cfg)
+    if tiles:
+        from ..stage import trace_merged
+
+        def streams(s):
+            m = img.descriptors(s, slot) if slot else img.descriptors(s)
+            return [lambda j=j: LAYER_KERNELS[fam].fn(m=m, li=li, pos=pos, row=row + j * T, T=T,
+                                                      block=block, part=part)
+                    for j in range(tiles)]
+        err = None
+        for fit, N in [(fit, N) for fit in ("next", "best")
+                       for N in range(cfg.DNMERGE, 1, -1)]:
+            try:
+                bs = trace_merged(cfg, streams, N, fit)
+            except CompileError as e:
+                if not any(w in str(e) for w in ("TMEM", "ACT RAM", "registers")):
+                    raise
+                err = e
+                continue
+            return [b.finish() for b in bs], list(bs[0].run_args)
+        raise err
+    forms = [{"part": part}, {"part": part, "spill": True}] if part else \
+        layer_variants(img, fam, T)
+    return _first_fit(trace, forms, cfg)
+
+
+def dn_parts(runs: list, core: tuple | None = None) -> list:
+    """A DeltaNet layer's runs of a chunk (Engine.prefill_layers': (key, values, rows)) by
+    chunks (Config.DNCHUNK): its tiled runs (keys ending "tile") as DN_PARTS' runs, every
+    tile's prep, then every tile's core, then every tile's post; its untiled runs (the rows
+    before conv_k - 1, layer 0's gathered rows) first, as they are. Runs that are not in that
+    order come back unchanged (the recurrent tiles). core (dn_core's (C, whether it takes a
+    start row)): the core tiles of the tiled rows from the first, up to the last tile's end a
+    multiple of C rows on, as one run of the chunked core, (("dnc", layer), {"row": the first
+    row, "rows": n}), the rest (a chunk's tail) as their core tiles; a first row past 0 only
+    when the core takes it (else every core tile)."""
+    tiled = [r[0][-1] == "tile" for r in runs]
+    if not any(tiled) or tiled.index(True) != len(tiled) - sum(tiled):
+        return runs
+    k = tiled.index(True)
+    part = {p: [(key[:-1] + (p,), vals, rows) for key, vals, rows in runs[k:]] for p in DN_PARTS}
+    if core is not None and (runs[k][1]["row"] == 0 or core[1]):
+        r0, j = runs[k][1]["row"], 0
+        for n, (key, vals, _) in enumerate(runs[k:]):
+            if (vals["row"] + key[2] - r0) % core[0] == 0:
+                j, e = n + 1, vals["row"] + key[2]
+        if j:
+            part["dn-core"][:j] = [(("dnc", runs[k][0][0]), {"row": r0, "rows": e - r0}, None)]
+    return runs[:k] + [r for p in DN_PARTS for r in part[p]]
+
+
+STAGE_TILES = 8                     # a merged run's tiles (dn_merged)
+
+
+def dn_merged(runs: list, N: int) -> list:
+    """dn_parts' runs with each STAGE_TILES tiles in a row of dn-prep, and of dn-post, one merged
+    run at the first's values (stage.py, Config.DNMERGE; N the streams at a time; 0: unchanged):
+    the key's part "dn-prep:8", the others' rows the first's row + j T."""
+    if N < 2:
+        return runs
+    out, i = [], 0
+    while i < len(runs):
+        key, vals, rows = runs[i]
+        grp = runs[i:i + STAGE_TILES]
+        if key[-1] in ("dn-prep", "dn-post") and len(grp) == STAGE_TILES and \
+                all(k[-1] == key[-1] and k[2] == key[2] and v["row"] == vals["row"] + j * key[2]
+                    for j, (k, v, _) in enumerate(grp)):
+            out.append((key[:-1] + (f"{key[-1]}:{STAGE_TILES}",), vals, None))
+            i += STAGE_TILES
+        else:
+            out.append(runs[i])
+            i += 1
+    return out
+
+
+def core_end(core: tuple | None, r0: int, rows: int) -> int | None:
+    """The row a chunk's chunked-core run ends at (dn_parts: from the first tiled row r0 in
+    whole chunks of C, of a chunk of `rows` rows), where the tiles must have an end for the core
+    to take every whole chunk (a prompt's first chunk tiles from r0 = conv_k - 1, so its tiles'
+    ends at the attention blocks' multiples are never r0 + a multiple of C); None: no core."""
+    if core is None or (r0 and not core[1]):
+        return None
+    e = r0 + (rows - r0) // core[0] * core[0]
+    return e if e > r0 else None
+
+
+def dn_core(img) -> tuple | None:
+    """The image's chunked DeltaNet core (Image.compile_dn_run, where its
+    dn_core_ok): (its chunk's rows, Config.DNCHUNK; whether it takes a start row, the run
+    argument "row"), or None (the recurrence's dn-core tiles)."""
+    import inspect
+    import sys
+    ok = getattr(img, "dn_core_ok", None)
+    if not getattr(img.cfg, "DNCHUNK", 0) or ok is None or not ok():
+        return None
+    fn = sys.modules[type(img).__module__].qwen35_dn_run.fn
+    return img.cfg.DNCHUNK, "row" in inspect.signature(fn).parameters
 
 
 def untiled_rows(img) -> int:

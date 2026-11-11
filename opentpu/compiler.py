@@ -69,10 +69,27 @@ class RunVar:
     add `c * var` for one (var, c): the host puts c times the value into one of the run's
     argument registers (docs/isa.md "Arguments"), one per distinct (var, c) of the program
     (Builder.run_args), so the same program serves every value. bound: the value is below it
-    (a V^T append at a run-time token stays in its tile: tile_split)."""
+    (a V^T append at a run-time token stays in its tile: tile_split). raw: under run words
+    (Builder.run_words) its word holds the value's bits, an int32 (RLD raw), not an fp32 (one
+    past 2^24: a V^T place, batch35's one program per slots)."""
 
-    def __init__(self, name: str, bound: int | None = None):
+    raw = False
+
+    def __init__(self, name: str, bound: int | None = None, raw: bool = False):
         self.name, self.bound = name, bound
+        if raw:
+            self.raw = True
+
+    def value(self, values: dict) -> int:
+        """The variable's value among the run's values ({name: value})."""
+        return values[self.name]
+
+    def comp(self) -> "Comp":
+        """Comp(self), one for this variable."""
+        c = self.__dict__.get("_comp")
+        if c is None:
+            c = self._comp = Comp(self)
+        return c
 
     def _aff(self) -> "Affine":
         return Affine(0, {self: 1})
@@ -92,6 +109,34 @@ class RunVar:
 
     def __repr__(self):
         return self.name
+
+
+class Comp(RunVar):
+    """bound - 1 - var for a RunVar of a bound (named var's name and "~"): above AW 32 an
+    argument register holds a zero-extended word, so the argument of an address's c * var with
+    c < 0 is -c * Comp(var), its register c * var plus -c (bound - 1) (Builder._host_arg)."""
+
+    def __init__(self, var: RunVar):
+        super().__init__(var.name + "~", var.bound)
+        self.var = var
+
+    def value(self, values: dict) -> int:
+        return self.bound - 1 - self.var.value(values)
+
+
+def run_var(name: str, bound: int | None = None) -> RunVar:
+    """The RunVar (or Comp, its name ending in "~") of this name and bound."""
+    return RunVar(name[:-1], bound).comp() if name.endswith("~") else RunVar(name, bound)
+
+
+def mul_bound(c: int, bound: int | None, aw: int = 32) -> tuple | None:
+    """The bound of an RLD MUL's c * v for v in [0, bound) (isa.rld's, None without one): c *
+    [0, bound), a negative c's product mod 2^aw the interval from 2^aw + c (bound - 1) that
+    wraps to 0 (hi 2^aw: waits' intervals)."""
+    if not bound:
+        return None
+    lo, hi = sorted((0, int(c) * (int(bound) - 1)))
+    return (lo, hi) if c >= 0 else (lo + (1 << aw), 1 << aw)
 
 
 class DevVar(RunVar):
@@ -114,6 +159,14 @@ class Counter(DevVar):
     value of the host's (a register of their sum, stepped with it: Builder._derived)."""
 
 
+class _Bias(RunVar):
+    """An address register's constant at AW > 32 (Builder.addr, docs/compiler.md "Addresses
+    above 4 GiB"): a key's term (BIAS, B) says its register holds B plus its other terms, the
+    address's constant minus B the offset in the instruction (below 4 GiB, zero-extended)."""
+
+
+BIAS = _Bias("bias")
+BIAS_ALIGN = 1 << 28            # a new base: the address rounded down to 256 MiB
 ARG0 = 8                        # the run's arguments ARG0..7 are R8..R15 at the start
 
 
@@ -167,7 +220,7 @@ def arg_words(run_args: list, values: dict) -> list[int]:
     c * var, in ARG(7 - k) (register R15 - k)."""
     w = [0] * (16 - ARG0)
     for k, (v, c) in enumerate(run_args):
-        w[arg_reg(k) - ARG0] = (c * values[v.name]) & 0xFFFFFFFF
+        w[arg_reg(k) - ARG0] = (c * v.value(values)) & 0xFFFFFFFF
     return w
 
 
@@ -234,12 +287,15 @@ def _static(x) -> int:
 # =============================================================================== descriptors
 @dataclass
 class Tensor:
-    """fp32 tensor in the slice's DRAM. Addresses in bytes, strides in elements."""
+    """fp32 tensor in the slice's DRAM. Addresses in bytes, strides in elements. `esize` 2: a
+    DeltaNet state in 16 bits (Config.ST16; docs/isa.md "ST16"), which only DSTEP and STREAM
+    (flag ST16) read and write."""
     base: Affine
     shape: tuple
     strides: tuple
     host: object = None            # host argument this view belongs to (for outputs)
     offset: Affine = field(default_factory=Affine)   # element offset inside the host array
+    esize: int = 4                 # bytes an element
 
     def __getitem__(self, key) -> "Tensor":
         if not isinstance(key, tuple):
@@ -253,12 +309,12 @@ class Tensor:
                 start = Affine.of(0 if k.start is None else k.start)
                 stop = Affine.of(n if k.stop is None else k.stop)
                 size = (stop - start).static()
-                base, off = base + start * (4 * st), off + start * st
+                base, off = base + start * (self.esize * st), off + start * st
                 shape.append(size)
                 strides.append(st)
             else:
-                base, off = base + Affine.of(k) * (4 * st), off + Affine.of(k) * st
-        return Tensor(base, tuple(shape), tuple(strides), self.host, off)
+                base, off = base + Affine.of(k) * (self.esize * st), off + Affine.of(k) * st
+        return Tensor(base, tuple(shape), tuple(strides), self.host, off, self.esize)
 
 
 @dataclass
@@ -273,12 +329,25 @@ class QTensor:
     one block a token, quantized by QST ROW).
     `parts`: the matrix is stored as separate column slices of width `pw` (each with its own
     contiguous rows and scale rows, so a column-slice MM streams contiguous scales and a part
-    at a loop-dependent column is an address); it can then only be sliced into whole parts.
+    at a loop-dependent column is an address), the last one narrower where the width is not
+    whole parts; it can then only be sliced into whole parts.
+    `gs`: the columns are in an all-gather's order over gs slices (quant.gather_order: chunk c
+    of every slice's columns, then chunk c + 1; kernels.mlp.swiglu_down's W_down, in parts of
+    gs chunks: chunk c's down projection one MM).
     `wf`: the element format (isa.W8 int8; W4I / W4F / WNV: 4-bit elements, D/2 bytes per
     D-block, docs/isa.md "Weight formats").
     `tiles`: (tb, tstride): the columns are stored in tiles of tb (each tile rows x tb, row
     stride rs = tb, tiles tstride bytes apart; int8, unscaled: the V^T cache). A column slice
     must stay within one tile.
+    `grp`: rows a group (docs/isa.md "Weight groups", MM's groups; 1: rows of one, the natural
+    layout): group g's chunk c (K-block c) at data + g rs + c P, P = WG x D, lane j's D bytes at
+    j D: int8 (grp = WG) row g grp + j's block, 4-bit (grp = 2 WG) rows g grp + 2j and 2j + 1's,
+    a byte their elements i; group g's scale area at scale + g srs (quant.group_rows /
+    group_scales). A row slice starts at a group.
+    `kt`: the groups in MM KT's pairs (Config.KT, docs/isa.md "K tail"; quant.grouped kt): group
+    2p's chunks but the last, the pair's tail chunk (both groups' last half blocks), group 2p +
+    1's but the last, rs the pairs' stride; a row slice starts at a pair, and the matrix streams
+    its whole K (no column slice: k0 0).
     """
     data: Affine
     scale: Affine | None
@@ -292,15 +361,23 @@ class QTensor:
     tiles: tuple | None = None
     k0: int = 0
     rsc: bool = False
+    grp: int = 1
+    gs: int = 1
+    kt: bool = False
 
     @staticmethod
-    def weight(data, scale, n: int, k: int, fmt: str, D: int, **kw) -> "QTensor":
+    def weight(data, scale, n: int, k: int, fmt: str, D: int, grp: int = 1, kt: bool = False,
+               **kw) -> "QTensor":
         """The descriptor of an [n, k] matrix in MXU format `fmt` ("int8", "int4", "fp4",
         "nvfp4", opentpu/quant.py quantize_mxu's rows): element rows row_bytes apart, scale rows
-        scale_bytes apart."""
+        scale_bytes apart; grouped for a machine of WG `grp` (quant.quantize_grouped: groups of
+        quant.grp_r(fmt, grp) rows), groups grp_row_bytes and their scale areas
+        grp_scale_bytes apart; kt: the groups in MM KT's pairs, kt_pair_bytes apart."""
         from . import quant as Q
-        return QTensor(Affine.of(data), Affine.of(scale), (n, k), Q.row_bytes(k, fmt, D),
-                       Q.scale_bytes(k, fmt, D), D, wf=Q.mxu_wf(fmt), **kw)
+        rs = Q.kt_pair_bytes(k, fmt, D, grp) if kt else Q.grp_row_bytes(k, fmt, D, grp)
+        return QTensor(Affine.of(data), Affine.of(scale), (n, k), rs,
+                       Q.grp_scale_bytes(k, fmt, D, grp), D, wf=Q.mxu_wf(fmt),
+                       grp=Q.grp_r(fmt, grp), kt=kt, **kw)
 
     def padded_cols(self, r0, nr: int, c0, nc: int, valid: int) -> "QTensor":
         """Rows [r0, r0+nr), columns [c0, c0+nc) of which the first `valid` are real (the rest
@@ -314,6 +391,16 @@ class QTensor:
         if r + valid > tb:
             raise CompileError(f"a column slice of a tiled matrix must stay within one tile "
                                f"of {tb} (columns {c0} + {valid})")
+        if self.grp > 1:          # a tile's groups rs apart, chunk c (columns c D ..) c P in
+            g = self.grp
+            try:
+                at = Affine.of(r0).div_exact(g) * self.rs + Affine.of(r).div_exact(self.D) * (
+                    g * self.D)
+            except CompileError:
+                raise CompileError(f"a grouped tile's slice starts at a group and a D-block "
+                                   f"(rows {r0}, columns {c0})") from None
+            return QTensor(self.data + q * tstride + at, None, (nr, nc), self.rs, 0, self.D,
+                           grp=g)
         return QTensor(self.data + q * tstride + Affine.of(r0) * self.rs + r, None, (nr, nc),
                        self.rs, 0, self.D)
 
@@ -326,7 +413,7 @@ class QTensor:
         if self.parts is not None:
             c0 = _static(0 if ck.start is None else ck.start)
             c1 = _static(self.shape[1] if ck.stop is None else ck.stop)
-            if c0 % self.pw or c1 - c0 != self.pw:
+            if c0 % self.pw or c1 - c0 != min(self.pw, self.shape[1] - c0):
                 raise CompileError(f"this matrix is stored in column parts of {self.pw}: "
                                    f"slice one part at a time")
             return self.parts[c0 // self.pw][rk, :]
@@ -339,7 +426,24 @@ class QTensor:
             raise CompileError("QTensor column slices must be multiples of D")
         if self.tiles is not None:
             return self.padded_cols(r0, nr, c0, nc, nc)
-        if self.wf == I.W8:
+        g = self.grp
+        if self.kt and not (c0.is_static and c0.static() == 0 and nc == self.shape[1]):
+            raise CompileError(f"a KT matrix streams its whole K (docs/isa.md \"K tail\"): no "
+                               f"column slice (columns {c0} + {nc} of {self.shape[1]})")
+        if g > 1:                 # whole groups: chunk c of the group's rows is g D bytes
+            try:
+                r0 = r0.div_exact(g)
+                rp = r0.div_exact(2) if self.kt else r0
+            except CompileError:
+                raise CompileError(f"a row slice of a matrix in groups of {g} rows starts at a "
+                                   f"group (row {r0}; docs/isa.md \"Weight groups\": WG rows "
+                                   f"int8, 2 WG 4-bit)" + (", of KT's pairs at a pair" if self.kt
+                                                         else "")) from None
+            # a group chunk is a K-block, its lanes' D bytes each (4-bit: two rows a lane); KT:
+            # the pair's
+            data = self.data + rp * self.rs + c0.div_exact(self.D) * (
+                self.D * (g if self.wf == I.W8 else g // 2))
+        elif self.wf == I.W8:
             data = self.data + r0 * self.rs + c0
         else:                     # 4-bit rows stream whole D-byte chunks of two D-blocks
             data = self.data + r0 * self.rs + c0.div_exact(2 * self.D) * self.D
@@ -355,7 +459,7 @@ class QTensor:
             if not self.rsc:
                 k0 += c0.div_exact(self.D).static()
         return QTensor(data, scale, (nr, nc), self.rs, self.srs, self.D, wf=self.wf, k0=k0,
-                       rsc=self.rsc)
+                       rsc=self.rsc, grp=g, kt=self.kt)
 
 
 VT_TILE = 256          # V^T cache tile (tokens): the attention block (qwen3.ATTN_BLOCK)
@@ -401,6 +505,51 @@ def vt_untiled(flat: np.ndarray, d: int, cap: int) -> np.ndarray:
     return flat.reshape(cap // tb, d, tb).transpose(1, 0, 2).reshape(d, cap)
 
 
+def gall_wg(cfg) -> int:
+    """The KV caches' groups (KVDesc's wg): WG under GALL (at WG > 1), else 1, rows of one."""
+    return cfg.WG if cfg.WG > 1 and getattr(cfg, "GALL", False) else 1
+
+
+def kv_bytes(k, ks, vt, D: int, wg: int = 1, chash: bool = False, at_k: int = 0,
+             at_vt: int = 0) -> tuple:
+    """A KV head's K [cap, d] (int8), its scale rows [cap, k_scale_bytes] and V^T [d, cap]
+    (int8) as KVDesc stores them: (K, K scales, V^T) bytes, rows of one, or (wg > 1) in groups
+    (quant.group_rows / group_scales; V^T a tile at a time), with the channel hash the lanes
+    as stored at at_k / at_vt (quant.hash_rows)."""
+    from . import quant as Q
+    cap, d = k.shape
+    k8 = np.ascontiguousarray(k).view(np.uint8)
+    ks = np.asarray(ks, np.uint8)
+    if wg == 1:
+        return k8.reshape(-1), ks.reshape(-1), vt_tiled(vt).view(np.uint8)
+    tb = vt_tile(cap)
+    v8 = np.ascontiguousarray(vt).view(np.uint8)
+    kg = Q.group_rows(k8, wg, D).reshape(-1)
+    vg = np.concatenate([Q.group_rows(v8[:, i:i + tb], wg, D).reshape(-1)
+                         for i in range(0, cap, tb)])
+    if chash:
+        kg, vg = Q.hash_rows(kg, at_k, wg, D), Q.hash_rows(vg, at_vt, wg, D)
+    return kg, Q.group_scales(ks, "int8", d, wg, D, rsc=d == D).reshape(-1), vg
+
+
+def kv_rows(kb, ksb, vtb, cap: int, d: int, D: int, wg: int = 1, chash: bool = False,
+            at_k: int = 0, at_vt: int = 0) -> tuple:
+    """kv_bytes' inverse: (K [cap, d] uint8, scale rows [cap, k_scale_bytes], V^T [d, cap]
+    int8) from a head's stored bytes."""
+    from . import quant as Q
+    kb, ksb, vtb = (np.asarray(x, np.uint8).reshape(-1) for x in (kb, ksb, vtb))
+    if wg == 1:
+        return kb.reshape(cap, d), ksb.reshape(cap, -1), vt_untiled(vtb.view(np.int8), d, cap)
+    if chash:
+        kb, vtb = Q.hash_rows(kb, at_k, wg, D), Q.hash_rows(vtb, at_vt, wg, D)
+    tb = vt_tile(cap)
+    kq = Q.ungroup_rows(kb.reshape(cap // wg, -1), cap, wg, D)
+    ks = Q.ungroup_scales(ksb.reshape(cap // wg, -1), "int8", d, cap, wg, D, rsc=d == D)
+    vt = np.concatenate([Q.ungroup_rows(t.reshape(d // wg, -1), d, wg, D)
+                         for t in vtb.reshape(cap // tb, -1)], axis=1)
+    return kq, ks, vt.view(np.int8)
+
+
 def k_scale_bytes(d: int, D: int) -> int:
     """Bytes of a K cache token's scale row (KVDesc.k): 4 (its fp32 scale) for a head of one
     block, else an int8 scale row of d / D blocks."""
@@ -418,15 +567,34 @@ class KVDesc:
     token's column stays within a few DRAM rows at any capacity); one V scale per token [cap]
     (folded into P before P.V). With head_dim < D the rows are zero-padded to d = D and
     dv = head_dim: P.V reads only the first dv rows of V^T.
+
+    wg > 1 (GALL, docs/weight_groups.md): both in groups of wg rows (docs/isa.md
+    "Weight groups"), in the same bytes: K's groups of wg tokens (a group's chunk c its tokens'
+    block c, its scale area their Sw and offset bytes: quant.group_rows / group_scales), each V^T
+    tile's groups of wg dimensions (chunk c the tile's tokens c D ..); the appends QST GRP.
     """
 
     def __init__(self, heads: dict, cap: int, d: int, D: int, S: int, sid: int,
-                 dv: int | None = None):
+                 dv: int | None = None, wg: int = 1):
         self.heads, self.cap, self.d, self.D, self.S, self.sid = heads, cap, d, D, S, sid
         self.dv = d if dv is None else dv
+        self.wg = wg
+        if wg > 1 and (cap % wg or vt_tile(cap) % D):
+            raise CompileError(f"a grouped KV cache of {cap} tokens: whole groups of {wg} and "
+                               f"V^T tiles of whole {D}-token blocks")
+
+    def kv_heads(self, n_kv_heads: int) -> int:
+        """The cache's KV heads: the model's n_kv_heads, or S of them where it has fewer (S a
+        multiple: each of its heads on S / n_kv_heads slices, a copy each, its query heads split
+        between them: layouts.head_parallel_attention_weights)."""
+        return n_kv_heads if n_kv_heads % self.S == 0 else self.S
 
     def owned_heads(self, n_kv_heads: int):
-        return builtins.range(self.sid, n_kv_heads, self.S)
+        """This slice's heads of kv_heads(n_kv_heads). A head past the model's own (a copy for
+        the slices beyond n_kv_heads) counts only where the cache was placed with it: a cache of
+        the model's heads alone (runtime's KVCache) leaves those slices without one."""
+        return [h for h in builtins.range(self.sid, self.kv_heads(n_kv_heads), self.S)
+                if h < n_kv_heads or h in self.heads]
 
     def _h(self, h: int) -> dict:
         if h not in self.heads:
@@ -438,14 +606,25 @@ class KVDesc:
         fp32 scale alone (QST ROW, MM RSC), else an int8 scale row (QST: the token's S and an
         offset per block)."""
         e = self._h(h)
+        rsc = self.d == self.D
+        if self.wg > 1:
+            from . import quant as Q
+            return QTensor(Affine.of(e["k"]), Affine.of(e["ks"]), (self.cap, self.d),
+                           Q.grp_row_bytes(self.d, "int8", self.D, self.wg),
+                           Q.grp_scale_bytes(self.d, "int8", self.D, self.wg, rsc), self.D,
+                           rsc=rsc, grp=self.wg)
         return QTensor(Affine.of(e["k"]), Affine.of(e["ks"]), (self.cap, self.d), self.d,
-                       k_scale_bytes(self.d, self.D), self.D, rsc=self.d == self.D)
+                       k_scale_bytes(self.d, self.D), self.D, rsc=rsc)
 
     def vt(self, h: int) -> QTensor:
         e = self._h(h)
         tb = vt_tile(self.cap)
+        tiles = (tb, self.d * tb) if tb < self.cap else None
+        if self.wg > 1:           # a tile's groups: its tb / D chunks of wg x D bytes each
+            return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), tb * self.wg, 0,
+                           self.D, tiles=tiles, grp=self.wg)
         return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), tb, 0, self.D,
-                       tiles=(tb, self.d * tb) if tb < self.cap else None)
+                       tiles=tiles)
 
     def vt_column(self, h: int, t) -> Affine:
         """The address of token t's byte in V^T row 0 (the next rows are vt(h).rs apart)."""
@@ -453,9 +632,45 @@ class KVDesc:
         q, r = tile_split(t, tb)
         return Affine.of(self._h(h)["vt"]) + q * (self.d * tb) + r
 
+    def vt_place(self, h: int, t) -> tuple:
+        """(wg > 1) Token t's V^T tile (its address) and column in it."""
+        tb = vt_tile(self.cap)
+        q, r = tile_split(t, tb)
+        return Affine.of(self._h(h)["vt"]) + q * (self.d * tb), Affine.of(r)
+
     def vscale(self, h: int) -> Tensor:
         e = self._h(h)
         return Tensor(Affine.of(e["vs"]), (self.cap,), (1,))
+
+
+class _Diverge:
+    """Builder.diverge's region."""
+
+    def __init__(self, b):
+        self.b = b
+
+    def _live(self) -> set:
+        return {(lo, hi) for lo, hi, r in self.b.tmem_regions if r() is not None}
+
+    def __enter__(self):
+        self.cursor, self.before = self.b.tmem_next, self._live()
+        self.args = len(self.b.run_args)
+        return self
+
+    def __exit__(self, kind, *_):
+        if kind is not None:
+            return False
+        gc.collect()                    # (tiles in reference cycles: the pipeline's closures)
+        extra = self._live() - self.before
+        if extra:
+            raise CompileError(f"a slice-dependent region left {len(extra)} TMEM regions "
+                               f"allocated ({sorted(extra)[:4]}): allocate them before it")
+        if len(self.b.run_args) != self.args:
+            raise CompileError(f"a slice-dependent region took the run-time arguments "
+                               f"{self.b.run_args[self.args:]}: take them before it "
+                               f"(Builder.args_ahead)")
+        self.b.tmem_next = self.cursor
+        return False
 
 
 # =============================================================================== TMEM tiles
@@ -512,6 +727,11 @@ def _span(k: slice, n: int) -> tuple:
 class Tile:
     """fp32 values in TMEM: `base` word address, `shape` (1-D or 2-D), row stride `rs`."""
 
+    # exp2(a - b, rowsum=True) on a machine with FSUM: the row sums the EXP2SUB writes with the
+    # tile (its spare row, as the MXU's row maxima), its sum(axis=1) the take; else None
+    # (Builder.fuse_exp2_rowsum)
+    rowsum = None
+
     def __init__(self, b: "Builder", base: int, shape: tuple, rs: int | None = None,
                  buf: int | None = None):
         self.b, self.base, self.shape = b, base, tuple(int(s) for s in shape)
@@ -553,6 +773,8 @@ class Tile:
                 a, e = _span(key[0], self.cols)
                 return Tile(self.b, self.base + a, (e - a,), None, self.buf)
             raise CompileError(f"unsupported 1-D index {key}")
+        if key == (slice(None), None) and self.cols == 1:
+            return Bcast(self, B_ROWVIEW)       # a column: B per row, down its row stride
         rk = key[0]
         ck = key[1] if len(key) > 1 else slice(None)
         if isinstance(rk, (int, np.integer)) and isinstance(ck, slice):
@@ -581,6 +803,14 @@ class Tile:
             raise CompileError(f"row_stride_view({r0}, {n}, {step}) outside {self}")
         return Tile(self.b, self.base + r0 * self.rs, (n, self.cols), self.rs * step, self.buf)
 
+    def rows_at(self, rows: int, cols: int, rs: int) -> "Tile":
+        """Its words as a [rows, cols] tile at row stride rs, the rows free to overlap (rs <
+        cols): an operand that is only read (kernels/gather.py's one-hot). Contiguous tiles."""
+        n = self.rows * self.cols if self.contiguous else 0
+        if rows < 1 or cols < 1 or rs < 1 or (rows - 1) * rs + cols > n:
+            raise CompileError(f"rows_at({rows}, {cols}, {rs}) outside {self}")
+        return Tile(self.b, self.base, (rows, cols), rs, self.buf)
+
     def reshape(self, rows: int, cols: int) -> "Tile":
         """The same words as a [rows, cols] tile (contiguous tiles only; one row always is)."""
         if not (self.contiguous or self.rows == 1) or rows * cols != self.rows * self.cols:
@@ -589,6 +819,8 @@ class Tile:
 
     # ---- in-place update (loop-carried values)
     def set(self, value) -> "Tile":
+        if value is self:               # written in place already (add)
+            return self
         temp = unnamed(sys.getrefcount(value), TEMP_RC_METHOD, value)
         if temp and isinstance(value, Tile) and self.b.retarget_matvec(value, self):
             self.b.bump_version(self.buf)
@@ -607,6 +839,21 @@ class Tile:
             self.b.vop(I.V_COPY, self, value, None)
         self.b.bump_version(self.buf)
         return self
+
+    def add(self, o) -> "Tile":
+        """self + o into self's words: the ADD `self.set(self + o)` ends with, without the temp
+        `self + o` takes until set moves the ADD into self (where TMEM has room for it, the
+        next tiles still go where they went after it: Builder.skip). Returns self."""
+        self.b.skip(self.rows * self.cols)
+        self.b.vop(I.V_ADD, self, self, o)
+        self.b.bump_version(self.buf)
+        return self
+
+    def mac(self, a, b) -> "Tile":
+        """self + a * b into self's words in one pass (VOP MAC, Config.VMAC): `self.set(self +
+        a * b)`'s MUL then ADD bit for bit, b a column broadcast (v[None, :]) or a float.
+        Returns self."""
+        return self.b.mac(self, a, b)
 
     # ---- arithmetic
     def __add__(self, o):
@@ -646,7 +893,9 @@ B_ROWVIEW, B_COLVIEW = "row", "col"
 
 
 class Bcast:
-    """A 1-D tile broadcast along columns (`v[:, None]`) or rows (`v[None, :]`)."""
+    """A 1-D tile broadcast along columns (`v[:, None]`) or rows (`v[None, :]`); a 2-D
+    tile's column ([n, 1], `t[r0:r1, c:c + 1][:, None]`) along columns, read down its row
+    stride (VOP bmode 1's brs)."""
 
     def __init__(self, t: Tile, kind: str):
         self.t, self.kind, self.b = t, kind, t.b
@@ -720,8 +969,11 @@ class Stationary:
                                f"{len(self.chunks)} chunks")
         (ab, mc), = self.chunks
         D = self.src.b.cfg.D
-        src = self.src[:, k * D:(k + kb) * D] if len(self.src.shape) == 2 else \
-            self.src[k * D:(k + kb) * D]
+        if isinstance(self.src, _Parts):        # (filled in parts: its shape only)
+            src = _Parts(self.src.b, self.src.rows, kb * D)
+        else:
+            src = self.src[:, k * D:(k + kb) * D] if len(self.src.shape) == 2 else \
+                self.src[k * D:(k + kb) * D]
         qr = None
         if self.qranges is not None:
             qr = [(max(a, k) - k, min(b, k + kb) - k) for a, b in self.qranges
@@ -739,7 +991,8 @@ class LoopBlock:
     steps: list = field(default_factory=list)     # (register, increment per iteration)
 
 
-_INTERNAL = (os.path.join("opentpu", "compiler.py"), os.path.join("opentpu", "language.py"))
+_INTERNAL = (os.path.join("opentpu", "compiler.py"), os.path.join("opentpu", "language.py"),
+             os.path.join("opentpu", "stage.py"))
 
 
 def _user_frames(depth: int = 4) -> tuple:
@@ -760,6 +1013,14 @@ def _user_frames(depth: int = 4) -> tuple:
 class Builder:
     """Per-slice trace state and instruction emission."""
 
+    unroll = False                      # language.range unrolled (a merged stage's stream: stage.py)
+
+    def stage_wait(self, key) -> None:
+        """A merged stage's stream: wait for the tile before it's stage_post(key) (stage.py)."""
+
+    def stage_post(self, key) -> None:
+        """A merged stage's stream: what the next tile's stage_wait(key) waits for (stage.py)."""
+
     def __init__(self, cfg: Config, sid: int):
         self.cfg, self.sid = cfg, sid
         self.root: list = []
@@ -767,6 +1028,7 @@ class Builder:
         self.loops: list[LoopBlock] = []
         self.tmem_next = 0
         self.fit = "next"               # TMEM placement: next-fit, or "best" (trace_fit's retry)
+        self.homes: dict = {}           # language.load_home's tiles, kept for the whole program
         self.act_next = 0
         self.act_owner = [None] * cfg.ACT_BLOCKS
         self.act_live = [None] * cfg.ACT_BLOCKS      # weakref to the Stationary holding a block
@@ -786,6 +1048,13 @@ class Builder:
         # {name: word}: a register that starts at c * var and steps with loops then starts with
         # an RLD MUL of its word, so only an address of c * var alone takes an argument register
         self.run_words: dict | None = None
+        # transient (with run_words): an address of c * var alone takes a scratch register for
+        # the instruction that uses it (its RLD MUL there), not an argument register held from
+        # the start (a step over slots: each row's values, batch35); pending: those registers,
+        # each with the emitted count after its RLD, given back once an instruction followed
+        self.transient = False
+        self.pending: list = []
+        self.emitted = 0
         # arguments whose registers were given back (release_arg), and those registers while
         # they still hold the argument (zeroed when an address takes one); each one's release:
         # the program's last instruction then and the registers taken by then
@@ -819,21 +1088,68 @@ class Builder:
             self.tmem_regions.append((self.desc_at, 1 << 16, lambda: True))
         self.descs: dict = {}         # descriptor words -> TMEM address
         self.desc_fills = 0
+        # AW > 32 (docs/compiler.md "Addresses above 4 GiB"): a static address at or above 4 GiB
+        # is the window register's base (LI'd where it moves: win_base, None after any loop's
+        # start or end) plus an offset; a loop's address there a biased key's register (BIAS)
+        self.aw = cfg.AW
+        self.win_reg: int | None = None
+        self.win_base: int | None = None
+        self.end_zero: dict = {}      # loop id -> registers its body zeroes at its end (_take_reg)
 
     # ---- emission
     def emit(self, ins: I.Instr) -> None:
         ins.src = _user_frames()
         self.stack[-1].append(ins)
+        self.emitted += 1
+
+    def _transient(self, v: RunVar, c: int) -> int:
+        """A scratch register holding c * v (RLD MUL of v's run word) for the next instruction
+        (Builder.transient)."""
+        self._drain()
+        r = self.scratch()
+        n = self.emitted
+        for x in I.rld_mul(r, self.run_words[v.name], int(c), raw=v.raw,
+                           bound=mul_bound(c, v.bound, self.aw), comment=f"{c}*{v}",
+                           aw=self.aw):
+            self.emit(x)
+        self.emitted = n
+        self.pending.append((r, n))
+        return r
+
+    def _drain(self) -> None:
+        """Give back the transient registers whose instruction has been emitted."""
+        if self.pending:
+            n0 = self.emitted
+            keep = [(r, n) for r, n in self.pending if n == n0]
+            for r, n in self.pending:
+                if n != n0:
+                    self.unscratch(r)
+            self.pending, self.emitted = keep, n0       # (the zeroing LIs are none's)
 
     def addr(self, a) -> tuple[int, int]:
+        """An address as (register, offset): the instruction's R[register] + offset. At AW > 32
+        the offset is a 32-bit word, zero-extended: the window register or a biased key's below
+        an address at or above 4 GiB (docs/compiler.md "Addresses above 4 GiB")."""
         a = Affine.of(a)
         if a.is_static:
-            return 0, a.const
+            if self.aw == 32 or 0 <= a.const < 1 << 32:
+                return 0, a.const
+            return self._window(a.const)
+        r, c = self._addr(a)
+        if self.aw > 32 and not 0 <= c < 1 << 32:
+            raise CompileError(f"address {a}: R{r} + {c:#x} cannot be reached at AW {self.aw} "
+                               f"(an offset of 32 bits, zero-extended; a device value's base "
+                               f"goes into its register)")
+        return r, c
+
+    def _addr(self, a: Affine) -> tuple[int, int]:
+        self._drain()
         run = [(v, c) for v, c in a.terms.items() if isinstance(v, RunVar)]
         for l in a.terms:
             if not isinstance(l, RunVar) and not any(lb.loop is l for lb in self.loops):
                 raise CompileError(f"address uses {l} outside its loop")
         dev = None              # a Counter and a run-time value: the register of their sum
+        ka = 0                  # (the argument register's excess: _host_arg)
         if len(run) == 2 and any(isinstance(v, Counter) for v, _ in run):
             (k, kc), (v, c) = sorted(run, key=lambda t: not isinstance(t[0], Counter))
             if kc != 1 or isinstance(v, DevVar):
@@ -858,27 +1174,46 @@ class Builder:
             else:
                 if run[0] not in self.run_seen:
                     self.run_seen.append(run[0])
+                if words is not None and self.transient and len(a.terms) == 1:
+                    if v.name not in words:
+                        raise CompileError(f"run-time value {v}: no TMEM word (run_words)")
+                    return self._transient(v, c), a.const
                 # c * var alone takes an argument register; with run_words, once all of them
                 # are taken, an address register loaded from var's word where it is used
-                room = run[0] in self.run_args or len(self.run_args) < 16 - ARG0
+                room = self._arg_key(v, c) in self.run_args or len(self.run_args) < 16 - ARG0
                 if words is None or (len(a.terms) == 1 and room):
-                    arg = self.arg_reg(v, c)
-                    if len(a.terms) == 1:           # the argument register itself
-                        return arg, a.const
-        key = frozenset(a.terms.items())
+                    arg, ka = self._host_arg(v, c)
+                    if len(a.terms) == 1 and (self.aw == 32 or 0 <= a.const - ka < 1 << 32):
+                        return arg, a.const - ka    # the argument register itself
+        key, const = frozenset(a.terms.items()), a.const
+        bias = None             # (a host argument's register is set before the loops)
+        host = run and dev is None and words is None and not isinstance(run[0][0], DevVar)
+        if self.aw > 32 and not 0 <= const < 1 << 32 and \
+                (host or any(isinstance(l, Loop) for l in a.terms)):
+            bias = self._bias(key, const)
+            key, const = key | {(BIAS, bias)}, const - bias
         if key not in self.regs:
             r = self._spare_for(key)
             if r is None:
                 r = self._free_for(key)
+                b = bias or 0
                 if r is not None and run:          # it starts at the run-time value
                     (v, c), what = run[0], " + ".join(f"{c_}*{v_}" for v_, c_ in run)
                     if dev is not None or words is None or isinstance(v, DevVar):
-                        init = I.addi(r, arg, 0, comment=f"{what} (argument)")
+                        init = [I.addi(r, arg, b - ka, comment=f"{what} (argument)",
+                                       aw=self.aw)]
                     elif v.name not in words:
                         raise CompileError(f"run-time value {v}: no TMEM word (run_words)")
                     else:
-                        init = I.rld(r, words[v.name], mul=int(c), comment=what)
+                        init = I.rld_mul(r, words[v.name], int(c), raw=v.raw,
+                                         bound=mul_bound(c, v.bound, self.aw), comment=what,
+                                         aw=self.aw)
+                        if b:
+                            init.append(I.addi(r, r, b, comment="+ base", aw=self.aw))
                     self._init_before_loops(key, init)
+                elif r is not None and bias is not None:      # it starts at the base
+                    self._init_before_loops(key, [I.li(r, bias, comment="address base",
+                                                       aw=self.aw)])
                 elif r in self.dirty or r in self.unset:      # it starts at 0
                     self._init_before_loops(key, I.li(r, 0, comment="released argument"
                                                       if r in self.dirty else "register reset"))
@@ -890,7 +1225,78 @@ class Builder:
                 raise CompileError("out of address registers")
             self.regs[key] = r
             self.used_regs.add(r)
-        return self.regs[key], a.const
+        return self.regs[key], const
+
+    def _bias(self, key, const: int) -> int:
+        """The base B of a loop's address at or above 4 GiB (or below 0) at AW > 32: one a live
+        or spare register of the same terms holds with 0 <= const - B < 2^32, else const rounded
+        down to BIAS_ALIGN."""
+        fits = lambda b: 0 <= const - b < 1 << 32                         # noqa: E731
+        for k in self.regs:
+            b = dict(k).get(BIAS)
+            if b is not None and fits(b) and k - {(BIAS, b)} == key:
+                return b
+        for terms, _, _ in self.spare_regs:
+            b = dict(terms).get(BIAS)
+            if b is not None and fits(b) and terms - {(BIAS, b)} <= key:
+                return b
+        return const - const % BIAS_ALIGN
+
+    def _window(self, const: int) -> tuple[int, int]:
+        """A static address at or above 4 GiB (AW > 32): the window register's base plus an
+        offset below 4 GiB. The base moves (an LI here: the address rounded down to BIAS_ALIGN)
+        when the address is outside the window, or after a loop's start or end since it was set
+        (the body runs again after its end: an LI inside it is the window at the body's start)."""
+        if const < 0 or const >= 1 << self.aw:
+            raise CompileError(f"address {const:#x} outside the {self.aw}-bit DRAM")
+        b = self.win_base
+        if b is None or not 0 <= const - b < 1 << 32:
+            if self.win_reg is None:
+                self.win_reg = self._take_reg("the window register")
+            b = self.win_base = const - const % BIAS_ALIGN
+            self.emit(I.li(self.win_reg, b, comment="window", aw=self.aw))
+        return self.win_reg, const - b
+
+    def _take_reg(self, what: str) -> int:
+        """A free register for good (the window register): any value it held before is not
+        needed (a released argument's is overwritten here, not zeroed at the start). One freed
+        while none of the live loops was, if any: a register freed inside a live loop's body
+        holds 0 where that body starts again for the address that used it there, so one set
+        here for good is zeroed at the end of those loops' bodies (end_zero)."""
+        if not self.free_regs:
+            raise CompileError(f"out of registers for {what}")
+        live = {id(lb.loop) for lb in self.loops}
+        i = next((i for i in builtins.range(len(self.free_regs) - 1, -1, -1)
+                  if not self.free_regs[i][1] & live), len(self.free_regs) - 1)
+        r, live_then = self.free_regs.pop(i)
+        for lid in live_then & live:
+            self.end_zero.setdefault(lid, set()).add(r)
+        if r in self.dirty:
+            self.dirty.discard(r)
+            self.late_zero.add(r)
+        self.unset.discard(r)
+        self.used_regs.add(r)
+        return r
+
+    def _arg_key(self, v: RunVar, c: int) -> tuple:
+        """The (variable, coefficient) of the argument that serves c * v (_host_arg)."""
+        if self.aw == 32 or c >= 0 or self.run_words is not None or isinstance(v, DevVar):
+            return v, c
+        return v.comp(), -c
+
+    def _host_arg(self, v: RunVar, c: int) -> tuple[int, int]:
+        """(register, K): the argument register that serves c * v, holding c * v + K. Above AW
+        32 the host's argument words are zero-extended (docs/isa.md "Address bits"), so c * v
+        with c < 0 is the argument -c * Comp(v) (v's bound - 1 - v), K = -c (bound - 1); the
+        program's own loads of its arguments (run_words: RLD MUL, isa.rld_mul) are AW bits and
+        take c * v as it is."""
+        var, k = self._arg_key(v, c)
+        if var is v:
+            return self.arg_reg(v, c), 0
+        if not v.bound:
+            raise CompileError(f"{c}*{v} at AW {self.aw}: a negative argument needs {v}'s "
+                               f"bound (argument words are zero-extended)")
+        return self.arg_reg(var, k), k * (v.bound - 1)
 
     def arg_reg(self, var: RunVar, c: int) -> int:
         """The argument register that holds c * var (allocated on first use; it leaves the
@@ -921,8 +1327,8 @@ class Builder:
                                f"needs it")
         last = self.release_at[q][0]
         i = 0 if last is None else next(j for j, x in enumerate(self.root) if x is last) + 1
-        self.root[i:i] = [I.addi(q, r, 0, comment=f"argument {k}"),
-                          I.li(r, 0, comment="address register")]
+        self.root[i:i] = [I.addi(q, r, 0, comment=f"argument {k}", aw=self.aw),
+                          I.li(r, 0, comment="address register", aw=self.aw)]
         for f, (x, taken) in self.release_at.items():      # releases there: after the copy
             if x is last:
                 self.release_at[f] = (self.root[i + 1], taken)
@@ -941,26 +1347,31 @@ class Builder:
         assert not self.loops, "release_arg inside a loop"
         at = (self.root[-1] if self.root else None, frozenset(self.used_regs))
         for k, (v, c) in enumerate(self.run_args):
-            if v is var and (v, c) not in self.released:
+            if (v is var or getattr(v, "var", None) is var) and (v, c) not in self.released:
                 r = self.moved.get(k, arg_reg(k))
                 self.released.add((v, c))
                 self.dirty.add(r)
                 self.release_at[r] = at
                 self.free_regs.insert(0, (r, frozenset()))
 
-    def _init_before_loops(self, key, ins: I.Instr) -> None:
-        """Put `ins` before the outermost live loop among key's terms (the register must hold
-        its run-time value when that loop starts; the loops step and reset it from there), or,
-        for c * var alone (run_words: the argument registers all taken), right here."""
+    def _init_before_loops(self, key, ins) -> None:
+        """Put `ins` (an instruction or a list of them) before the outermost live loop among
+        key's terms (the register must hold its run-time value when that loop starts; the loops
+        step and reset it from there), or, for c * var alone (run_words: the argument registers
+        all taken; or a host argument's with a base above 4 GiB, BIAS), right here."""
+        ins = [ins] if isinstance(ins, I.Instr) else list(ins)
         for d, lb in enumerate(self.loops):
             if (lb.loop, dict(key).get(lb.loop)) in key:
                 items = self.stack[d]
-                items.insert(next(i for i, x in enumerate(items) if x is lb), ins)
-                self._set(ins.rd, self.loops[:d])
+                i = next(i for i, x in enumerate(items) if x is lb)
+                items[i:i] = ins
+                self._set(ins[-1].rd, self.loops[:d])
                 return
-        if len(key) == 1 and self.run_words is not None:
-            self.stack[-1].append(ins)
-            self._set(ins.rd, self.loops)
+        bare = all(isinstance(l, RunVar) for l, _ in key)        # (BIAS is one)
+        if bare and (len(key) == 1 and self.run_words is not None or
+                     self.run_words is None and BIAS in dict(key)):
+            self.stack[-1].extend(ins)
+            self._set(ins[-1].rd, self.loops)
             return
         raise CompileError("a run-time address outside its loops")    # (a bare argument)
 
@@ -1033,22 +1444,38 @@ class Builder:
                     not (run and (live_then & live) - self.zero_head.get(r, set())):
                 del self.free_regs[i]
                 return r
+        # none: a spare that holds a base alone (its loops ended, BIAS), zeroed when taken
+        for i, (terms, live_then, r) in enumerate(self.spare_regs):
+            if all(l is BIAS for l, _ in terms) and \
+                    not any(id(l) in live_then for l, _ in key) and \
+                    not (run and (live_then & live)):
+                del self.spare_regs[i]
+                self.unset.add(r)
+                return r
         return None
 
     def begin_loop(self, n: int, rcount: int = 0) -> Loop:
         """A hardware loop of n iterations, or of R[rcount] (n = 0) read when it starts."""
+        self.emitted += 1                   # (a transient register's instruction is before it)
+        self._drain()
         if len(self.loops) >= 4:
             raise CompileError("loop nesting deeper than 4")
         lb = LoopBlock(Loop(n, rcount))
         self.stack[-1].append(lb)
         self.stack.append(lb.items)
         self.loops.append(lb)
+        self.win_base = None
         return lb.loop
 
     def end_loop(self, loop: Loop) -> None:
+        self.emitted += 1
+        self._drain()
+        for r in sorted(self.end_zero.pop(id(loop), ())):
+            self.emit(I.li(r, 0, comment="register reset (the next pass)"))
         lb = self.loops.pop()
         assert lb.loop is loop
         self.stack.pop()
+        self.win_base = None
         # Registers tracking this loop step at the end of its body and are reset after it; a
         # register is freed once every loop it depends on has ended (its value is 0 again).
         live = {id(l.loop) for l in self.loops}
@@ -1088,6 +1515,7 @@ class Builder:
     def scratch(self) -> int:
         """A free register (value 0) for a device-computed value; give it back with unscratch
         once its last use has been emitted."""
+        self._drain()
         if not self.free_regs:
             raise CompileError("out of registers for a device-computed value")
         r, _ = self.free_regs.pop()      # zeroed again before any later use of it
@@ -1103,6 +1531,40 @@ class Builder:
         self.used_regs.add(r)
         self.scratch_loops[r] = [lb.loop for lb in self.loops]
         return r
+
+    def borrow(self) -> tuple[int, tuple | None]:
+        """A register for the caller to set and step (a loop of a run-time count stepping its own:
+        attention.RunSpan), and how to give it back (give_back): a scratch register, or, none
+        being free, a spare whose terms another register holds too (that one's copy restores
+        it: equal terms, equal values)."""
+        self._drain()
+        if self.free_regs:
+            return self.scratch(), None
+        pinned = getattr(self, "pinned", set())
+        for i, (terms, live_then, r) in enumerate(self.spare_regs):
+            if r in self.unset or r in self.set_in or r in pinned:
+                continue
+            twin = next((q for k, q in self.regs.items() if k == terms and q not in self.unset),
+                        None)
+            if twin is None:
+                twin = next((q for t, _, q in self.spare_regs
+                             if t == terms and q != r and q not in self.unset), None)
+            if twin is not None:
+                del self.spare_regs[i]
+                self.pinned = pinned | {twin}
+                self.used_regs.add(r)
+                return r, (terms, live_then, twin)
+        raise CompileError("out of registers for a device-computed value")
+
+    def give_back(self, r: int, how: tuple | None) -> None:
+        """A borrowed register back (borrow): unscratched, or the spare its twin restores."""
+        if how is None:
+            self.unscratch(r)
+            return
+        terms, live_then, twin = how
+        self.emit(I.addi(r, twin, 0, comment="the spare register back", aw=self.aw))
+        self.spare_regs.append((terms, live_then, r))
+        self.pinned = self.pinned - {twin}
 
     def unscratch(self, r: int) -> None:
         """Zero a scratch register (free registers hold 0) and return it to the pool. Zeroed
@@ -1150,17 +1612,20 @@ class Builder:
         self.used_regs.add(r)
         what = f"{k.name} + {c}*{v}"
         if self.run_words is None:
-            init = I.addi(r, self.arg_reg(v, c), 0, comment=f"{what} (argument)")
+            arg, ka = self._host_arg(v, c)
+            init = [I.addi(r, arg, -ka, comment=f"{what} (argument)", aw=self.aw)]
         elif v.name not in self.run_words:
             raise CompileError(f"run-time value {v}: no TMEM word (run_words)")
         else:
-            bound = (0, int(c) * (int(v.bound) - 1)) if v.bound and c >= 0 else None
-            init = I.rld(r, self.run_words[v.name], mul=int(c), bound=bound, comment=what)
+            init = I.rld_mul(r, self.run_words[v.name], int(c), raw=v.raw,
+                             bound=mul_bound(c, v.bound, self.aw), comment=what, aw=self.aw)
         if len(self.loops) > k.depth:
             lb, items = self.loops[k.depth], self.stack[k.depth]
-            items.insert(next(j for j, x in enumerate(items) if x is lb), init)
+            j = next(j for j, x in enumerate(items) if x is lb)
+            items[j:j] = init
         else:
-            self.emit(init)
+            for x in init:
+                self.emit(x)
         k.derived[(v, c)] = r
         return r
 
@@ -1171,7 +1636,7 @@ class Builder:
         step (the loop resets it to its init)."""
         self._drop(c)
         for r in (c.reg, *c.derived.values()):
-            self.emit(I.addi(r, r, int(by), comment=f"{c.name} + {by}"))
+            self.emit(I.addi(r, r, self._wrap(int(by)), comment=f"{c.name} + {by}", aw=self.aw))
         c.steps += 1
 
     def end_counter(self, c: Counter) -> None:
@@ -1226,21 +1691,26 @@ class Builder:
         return out
 
     # ---- TMEM / ACT RAM allocation
-    def alloc(self, shape, rs: int | None = None, spare: int = 0) -> Tile:
+    def alloc(self, shape, rs: int | None = None, spare: int = 0, top: bool = False) -> Tile:
         """A new tile; `spare` extra words are reserved right after its last row (the MXU
-        writes RMAX row maxima there)."""
+        writes RMAX row maxima there). top: the highest free words instead (_tmem_top)."""
         shape = tuple(int(x) for x in shape)
         rs = shape[-1] if rs is None else rs
         n = (shape[0] - 1) * rs + shape[-1] if len(shape) == 2 else shape[0]
         if spare:
             n = max(n, shape[0] * rs + spare) if len(shape) == 2 else n + spare
-        base = self._tmem_fit(n)
+        base = self._tmem_top(n) if top else self._tmem_fit(n)
         t = Tile(self, base, shape, rs)
         t.spare = spare
         self.tmem_regions.append((base, base + n, weakref.ref(t.buf)))
         self.tmem_regions.sort(key=lambda r: r[0])
         self.tmem_peak = max(self.tmem_peak, sum(e - b for b, e, _ in self.tmem_regions))
         return t
+
+    def free_now(self, t: "Tile") -> None:
+        """t's words free now, while the caller still holds t, which is not read again."""
+        t.dead = True
+        self.tmem_regions = [r for r in self.tmem_regions if r[2]() is not t.buf]
 
     def _tmem_fit(self, n: int) -> int:
         """Next-fit: the first gap of n words at or after the cursor (wrapping once). Regions
@@ -1275,6 +1745,53 @@ class Builder:
         live = sum(e - b for b, e, _ in self.tmem_regions)
         raise CompileError(f"TMEM exhausted: a tile of {n} words, {live} of {W} in use "
                            f"(TMEM_WORDS {self.cfg.TMEM_WORDS})")
+
+    def diverge(self) -> "_Diverge":
+        """A slice-dependent region of the program (`with b.diverge():`): its allocations may
+        differ by slice, so as it ends the TMEM allocator is put back as it was (the cursor;
+        every region allocated in it must be free again, else CompileError), and the slices'
+        later allocations -- their GATHERs' destinations among them, which must agree --
+        come out as before it. What outlives the region is allocated before it."""
+        return _Diverge(self)
+
+    def args_ahead(self, a) -> None:
+        """Address a's run-time argument taken now, as its first use takes it (_addr: one
+        run-time value of the host's): a slice-dependent region (diverge) that uses a on some
+        slices only then leaves every slice's run_args alike."""
+        a = Affine.of(a)
+        run = [(v, c) for v, c in a.terms.items() if isinstance(v, RunVar)]
+        if len(run) != 1 or isinstance(run[0][0], (DevVar, Counter)):
+            raise CompileError(f"address {a}: args_ahead takes one run-time value of the host's")
+        v, c = run[0]
+        room = self._arg_key(v, c) in self.run_args or len(self.run_args) < 16 - ARG0
+        if self.run_words is None or (len(a.terms) == 1 and room):
+            self._host_arg(v, c)
+
+    def _tmem_top(self, n: int) -> int:
+        """The highest gap's last n words, the cursor left as it is: a small tile kept for the
+        whole program (attention's variant table) apart from next-fit's turn through TMEM, whose
+        gaps it would split (a decode loop's head then finds no gap for its logits' chunks)."""
+        W = self.cfg.TMEM_WORDS - (self.desc_area if self.cfg.TMEM_WORDS <= 1 << 16 else 0)
+        self.tmem_regions = [r for r in self.tmem_regions if r[2]() is not None]
+        e = W
+        for rb, re, _ in reversed(self.tmem_regions):
+            if e - re >= n:
+                return e - n
+            e = min(e, rb)
+        if e >= n:
+            return e - n
+        live = sum(re - rb for rb, re, _ in self.tmem_regions)
+        raise CompileError(f"TMEM exhausted: a tile of {n} words, {live} of {W} in use "
+                           f"(TMEM_WORDS {self.cfg.TMEM_WORDS})")
+
+    def skip(self, n: int) -> None:
+        """The next-fit cursor as alloc of n words and the tile's death would leave it, no
+        region held (Tile.add's temp that is not allocated); unchanged where n words do not
+        fit."""
+        try:
+            self._tmem_fit(n)
+        except CompileError:
+            pass
 
     def act_alloc(self, KB: int) -> tuple[int, object]:
         """KB contiguous ACT RAM blocks not held by a live Stationary, searched round-robin
@@ -1346,10 +1863,11 @@ class Builder:
             bmode, b_base, brs = I.B_FULL, b.base, (b.rs if len(b.shape) == 2 else 0)
         elif isinstance(b, Bcast):
             v = b.t
-            if b.kind == B_ROWVIEW:
-                if v.cols != rows:
-                    raise CompileError(f"row broadcast of length {v.cols} over {rows} rows")
-                bmode, b_base, brs = I.B_ROW, v.base, 1
+            if b.kind == B_ROWVIEW:             # (a 1-D tile, or a 2-D one's column)
+                n, brs = (v.rows, v.rs) if len(v.shape) == 2 else (v.cols, 1)
+                if n != rows:
+                    raise CompileError(f"row broadcast of length {n} over {rows} rows")
+                bmode, b_base = I.B_ROW, v.base
             else:
                 if v.cols != cols:
                     raise CompileError(f"column broadcast of length {v.cols} over {cols} cols")
@@ -1377,11 +1895,13 @@ class Builder:
         out.fresh = True
         return out
 
-    def unop(self, func: int, x, temp: bool = False) -> Tile:
+    def unop(self, func: int, x, temp: bool = False, rowsum: bool = False) -> Tile:
         x = self.materialize(x)
         self.check_live(x)
         if func == I.V_EXP2 and temp and self.fuse_exp2_sub(x):
-            out = Tile(self, x.base, x.shape, x.rs, x.buf)
+            out = self.fuse_exp2_rowsum(x) if rowsum else None
+            if out is None:
+                out = Tile(self, x.base, x.shape, x.rs, x.buf)
             out.fresh = True
             x.dead = True
             return out
@@ -1410,13 +1930,39 @@ class Builder:
         ins.comment = "exp2sub"
         return True
 
+    def fuse_exp2_rowsum(self, x: Tile) -> Tile | None:
+        """exp2(a - b, rowsum=True), just fused into EXP2SUB (x the temp it writes): on a machine
+        with FSUM (Config.FSUM, docs/isa.md VOP) and a shape it takes (2-D, rows <= 256, cols >=
+        64, B not a scalar), the EXP2SUB writes a new tile with a spare row instead of x, and
+        its flag FSUM the rows' isum_64 into that row (the RSUM's sums of the results, bit for
+        bit; the sequencer's hull of the two ranges is the tile's own): the tile, its `rowsum`
+        the sums, which the tile's sum(axis=1) takes (reduce: VOP RSUM FSUM where the RSUM
+        would be; nothing touches the row before). None where it does not apply (the caller's
+        sum is an RSUM)."""
+        ins = self._last_vop_writing(x)
+        if (not self.cfg.FSUM or ins is None or len(x.shape) != 2 or ins.ra or ins.rd
+                or x.rows > I.FSUM_MAX_ROWS or x.cols < I.FSUM_MIN_COLS
+                or (ins.w[5] >> 24) & 3 == I.B_SCALAR):
+            return None
+        out = self.alloc(x.shape, spare=x.rows)
+        ins.w[0] = out.base
+        ins.w[4] = (ins.w[4] & ~0xFFFF) | out.rs
+        ins.w[6] = out.base + x.rows * out.rs
+        ins.flags |= I.F_FSUM
+        ins.comment = "exp2sub fsum"
+        out.rowsum = Tile(self, ins.w[6], (x.rows,), None, out.buf)
+        return out
+
     def retarget(self, value: Tile, dst: Tile) -> bool:
         """`dst.set(value)`: if `value` is a fresh temp written by the last instruction, make
         that instruction write `dst` directly (no copy). The temp is then dead."""
         if not getattr(value, "fresh", False) or value.shape != dst.shape:
             return False
+        body = self.stack[-1]
+        if body and isinstance(body[-1], I.Instr) and body[-1].op == I.GATHER:
+            return self._retarget_gather(body[-1], value, dst)
         ins = self._last_vop_writing(value)
-        if ins is None or (ins.w[5] >> 16) & 0xFF in I.REDUCE:
+        if ins is None or (ins.w[5] >> 16) & 0xFF in I.REDUCE | {I.V_MAC}:   # (MAC reads dst)
             return False
         rows, cols = dst.rows, dst.cols
         drs = dst.rs if len(dst.shape) == 2 else 0
@@ -1444,6 +1990,22 @@ class Builder:
         value.dead = True
         return True
 
+    def _retarget_gather(self, ins: I.Instr, value: Tile, dst: Tile) -> bool:
+        """retarget's GATHER: `dst.set(all_gather(x))` gathers into dst (every slice's, the
+        program being the same) when the temp is the GATHER's whole destination and x's words
+        are not in dst."""
+        rows, cols, srs, seg = ins.w[2] & 0xFFFF, ins.w[2] >> 16, ins.w[3], ins.w[5]
+        if ins.ra or ins.rb or ins.w[1] != value.base or rows != value.rows or seg != cols \
+                or value.cols != cols * self.cfg.S:
+            return False
+        drs = dst.rs if len(dst.shape) == 2 else ins.w[4]
+        if ins.w[0] < dst.base + (rows - 1) * drs + dst.cols and \
+                dst.base < ins.w[0] + (rows - 1) * srs + cols:
+            return False
+        ins.w[1], ins.w[4] = dst.base, drs
+        value.dead = True
+        return True
+
     def check_live(self, *tiles) -> None:
         for t in tiles:
             if isinstance(t, Tile) and getattr(t, "dead", False):
@@ -1454,6 +2016,10 @@ class Builder:
         self.check_live(x)
         if axis not in (-1, len(x.shape) - 1):
             raise CompileError("reductions are along the last axis only")
+        if func == I.V_RSUM and x.rowsum is not None:     # FSUM's sums: their take
+            out, x.rowsum = x.rowsum, None
+            self.emit(I.fsum_take(out.base, x.base, x.rows, x.cols, x.rs))
+            return out
         if func == I.V_RSUM and temp:
             fused = self.fuse_sum_products(x)
             if fused is not None:
@@ -1472,6 +2038,8 @@ class Builder:
     def load(self, t: Tensor, out: Tile | None = None) -> Tile:
         if not t.shape:
             raise CompileError("cannot load a scalar")
+        if t.esize != 4:
+            raise CompileError("load: a 16-bit state (ST16) is DSTEP's and STREAM's alone")
         # into a tile whose rows have the source's stride (a padded score buffer and its mask
         # tile, attention.Additive): one LD, the pad words between the rows included
         strided = out is not None and len(t.shape) == 2 and t.shape[0] > 1 and \
@@ -1511,6 +2079,8 @@ class Builder:
         return out
 
     def store(self, t: Tensor, x) -> None:
+        if t.esize != 4:
+            raise CompileError("store: a 16-bit state (ST16) is DSTEP's and STREAM's alone")
         x = self.materialize(x, t.shape)
         self.check_live(x)
         if (x.rows, x.cols) != ((t.shape[0] if len(t.shape) == 2 else 1), t.shape[-1]):
@@ -1532,12 +2102,26 @@ class Builder:
                 self.stores.append((t.host, off, n))
 
     def quantize(self, x: Tile, temp: bool = False, free: bool = False,
-                 rscale: Tile | None = None, cscale: Tile | None = None) -> Stationary:
+                 rscale: Tile | None = None, cscale: Tile | None = None,
+                 lo: bool = False, hl: bool = False, store=None):
         """QACT x's rows into ACT RAM blocks. free: the stationary does not keep x (its TMEM is
         free once the QACTs have read it), only its shape: operands kept in ACT RAM while TMEM
         is reused (a tiled prefill's MLP activations). rscale [rows] / cscale [cols]: quantize
         (x * rscale[:, None]) * cscale[None, :] (QACT RSCALE / CSCALE), the instruction the
-        peephole makes of that expression, without its product tiles."""
+        peephole makes of that expression, without its product tiles. lo: the split's lo part
+        (QACT flag LO, Config.SPLITQ). hl: (hi, lo), two stationaries from one QACT a chunk
+        (flag HL, Config.QHL: lo in the KB blocks after hi's). store: (base, stride), each row's
+        ACT bytes and records also to DRAM, row r at the byte address base + r stride (QACT ST,
+        Config.QONCE: the operand act_load loads back, isa.qrow_bytes a row)."""
+        if store is not None and (not self.cfg.QONCE or hl):
+            raise CompileError("quantize(store=): the machine has no QONCE (QACT flag ST), or hl")
+        if store is not None and store[1] < I.qrow_bytes(-(-x.cols // self.cfg.D), self.cfg.D):
+            raise CompileError(f"quantize(store=): rows {store[1]} bytes apart, each "
+                               f"{I.qrow_bytes(-(-x.cols // self.cfg.D), self.cfg.D)}")
+        if lo and not self.cfg.SPLITQ:
+            raise CompileError("quantize(lo=True): the machine has no SPLITQ (QACT flag LO)")
+        if hl and not (self.cfg.QHL and self.cfg.SPLITQ) or hl and lo:
+            raise CompileError("quantize(hl=True): the machine has no QHL (QACT flag HL), or lo")
         x = self.materialize(x)
         self.check_live(x)
         D = self.cfg.D
@@ -1547,6 +2131,8 @@ class Builder:
         if KB > QACT_KB_MAX:
             raise CompileError(f"QACT of {KB} blocks: at most {QACT_KB_MAX} (its field); quantize "
                                f"the operand in ranges")
+        if hl and x.cols > I.QHL_ELEMS:
+            raise CompileError(f"quantize(hl=True) of {x.cols} columns: at most {I.QHL_ELEMS}")
         src, rs, cs, rsc = x.base, (x.rs if len(x.shape) == 2 else x.cols), None, None
         fused = self.fuse_cscale(x) if temp and rscale is None and cscale is None else None
         if fused is not None:
@@ -1563,24 +2149,39 @@ class Builder:
         # column reuse: a tile of at most MCOLS/2 rows is written twice (no extra cycles), so a
         # 4-bit MM can feed the odd K-blocks to the second half of the columns. A taller tile
         # (up to ACT_ROWS rows) replays the streamed chunks instead: PAIR would not be faster
-        pair = self.cfg.PAIR and 2 * x.rows <= self.cfg.MCOLS
+        pair = self.cfg.PAIR and 2 * x.rows <= self.cfg.MCOLS and not hl
         st = Stationary(x, chunks, KB, owners, pair)
+        sl = Stationary(x, [], KB, [], pair) if hl else None      # (hl: lo's, KB blocks on)
         for m0 in builtins.range(0, x.rows, self.cfg.act_rows):
             mc = min(self.cfg.act_rows, x.rows - m0)
-            ab, owner = self.act_alloc(KB)
+            ab, owner = self.act_alloc(2 * KB if hl else KB)
             for k in builtins.range(ab, ab + KB):   # live now: the next chunk must not take it
                 self.act_live[k] = weakref.ref(st)
+                if hl:
+                    self.act_live[k + KB] = weakref.ref(sl)
+            sto, rc = None, 0
+            if store is not None:                   # (QACT ST: the chunk's rows to DRAM)
+                rc, imm = self.addr(Affine.of(store[0]) + m0 * store[1])
+                sto = (imm, store[1])
             self.emit(I.qact(src + m0 * rs, mc, ab, KB, rs, cscale=cs,
-                             rscale=None if rsc is None else rsc + m0, dup=pair,
-                             comment="quantize -> ACT" + (" x col scale" if cs is not None else "")
+                             rscale=None if rsc is None else rsc + m0, dup=pair, lo=lo, hl=hl,
+                             store=sto, rc=rc,
+                             comment="quantize -> ACT" + (" lo" if lo else "")
+                             + (" + DRAM" if store is not None else "")
+                             + (" hi + lo" if hl else "")
+                             + (" x col scale" if cs is not None else "")
                              + (" x row scale" if rsc is not None else "")
                              + (" dup" if pair else "")))
             chunks.append((ab, mc))
             owners.append(owner)
-        st.loop = self.loops[-1].loop if self.loops else None     # created in this loop body
-        if free:
-            st.src = _Parts(self, x.rows, x.cols, x.shape)
-        return st
+            if hl:
+                sl.chunks.append((ab + KB, mc))
+                sl.owners.append(owner)
+        for s in (st, sl) if hl else (st,):
+            s.loop = self.loops[-1].loop if self.loops else None  # created in this loop body
+            if free:
+                s.src = _Parts(self, x.rows, x.cols, x.shape)
+        return (st, sl) if hl else st
 
     def stationary(self, rows: int, cols: int) -> Stationary:
         """ACT RAM blocks for a stationary operand of `rows` rows (at most ACT_ROWS) and `cols`
@@ -1605,14 +2206,15 @@ class Builder:
         return st
 
     def quantize_into(self, st: Stationary, x: Tile, col: int, cscale: Tile | None = None,
-                      at=None) -> None:
+                      at=None, rscale: Tile | None = None) -> None:
         """Quantize the rows of x into the blocks of `st` (from stationary()) from column
-        `col` on (QACT at the part's first block). cscale [cols]: x * cscale[None, :] (QACT
-        CSCALE, as quantize's). at: a TMEM word offset with loop terms added to x's address
-        (QACT's src = R[ra] + w1: x's rows in a buffer the loop walks, the looped attention's
-        query tiles, tiled._attend_loop); x is then those rows at offset 0."""
+        `col` on (QACT at the part's first block). cscale [cols] / rscale [rows]:
+        (x * rscale[:, None]) * cscale[None, :] (QACT CSCALE / RSCALE, as quantize's). at: a
+        TMEM word offset with loop terms added to x's address (QACT's src = R[ra] + w1: x's
+        rows in a buffer the loop walks, the looped attention's query tiles,
+        tiled._attend_loop); x is then those rows at offset 0."""
         x = self.materialize(x)
-        self.check_live(x, cscale)
+        self.check_live(x, cscale, rscale)
         D = self.cfg.D
         if not isinstance(st.src, _Parts):
             raise CompileError("quantize_into: a stationary from stationary()")
@@ -1621,6 +2223,8 @@ class Builder:
                                f"{st.src.shape} stationary")
         if cscale is not None and cscale.shape != (x.cols,):
             raise CompileError(f"quantize_into: a column scale of {cscale.shape} for {x.shape}")
+        if rscale is not None and rscale.shape != (x.rows,):
+            raise CompileError(f"quantize_into: a row scale of {rscale.shape} for {x.shape}")
         if not self.stationary_valid(st):
             raise CompileError("stationary operand was overwritten in ACT RAM")
         (ab, mc), = st.chunks
@@ -1628,9 +2232,36 @@ class Builder:
         ra, src = (0, x.base) if at is None else self.addr(Affine(x.base) + Affine.of(at))
         self.emit(I.qact(src, mc, ab + col // D, x.cols // D, rs, dup=st.pair, ra=ra,
                          cscale=None if cscale is None else cscale.base,
+                         rscale=None if rscale is None else rscale.base,
                          comment="quantize -> ACT (part)" + (" dup" if st.pair else "")
-                         + (" x col scale" if cscale is not None else "")))
+                         + (" x col scale" if cscale is not None else "")
+                         + (" x row scale" if rscale is not None else "")))
         st.add_qrange(col // D, (col + x.cols) // D)
+
+    def act_load(self, st: Stationary, row: int, src, rows: int = 1, stride: int = 0) -> None:
+        """Rows row .. row + rows - 1 of the stationary `st` (from stationary(), all its blocks)
+        from DRAM: what quantize(store=) wrote, its first row at the byte address src, the
+        others stride bytes on (LDA, Config.QONCE; with PAIR its rows' copies too). The
+        operand's bytes and scales are the stored QACT's: a dot over it gives that QACT's
+        operand's results bit for bit."""
+        D = self.cfg.D
+        if not self.cfg.QONCE:
+            raise CompileError("act_load: the machine has no QONCE (LDA)")
+        if not isinstance(st.src, _Parts) or len(st.chunks) != 1:
+            raise CompileError("act_load: a stationary from stationary()")
+        (ab, mc), = st.chunks
+        if not 0 <= row < row + rows <= mc:
+            raise CompileError(f"act_load: rows {row} .. {row + rows - 1} of a {mc}-row operand")
+        n = I.qrow_bytes(st.KB, D)
+        if rows > 1 and stride < n:
+            raise CompileError(f"act_load: rows {stride} bytes apart, each {n}")
+        if not self.stationary_valid(st):
+            raise CompileError("stationary operand was overwritten in ACT RAM")
+        ra, imm = self.addr(Affine.of(src))
+        for r0 in (row, row + mc) if st.pair else (row,):   # (PAIR: the copies QACT DUP writes)
+            self.emit(I.lda(imm, rows, ab, st.KB, stride or n, arow=r0, ra=ra,
+                            comment="DRAM -> ACT" + (" (dup)" if r0 != row else "")))
+        st.add_qrange(0, st.KB)
 
     def fuse_cscale(self, x: Tile):
         """quantize(a * v[None, :]) with the product an unnamed temp just computed: drop the
@@ -1713,6 +2344,23 @@ class Builder:
         value.dead = True
         return True
 
+    def mac(self, dst: Tile, a: Tile, b) -> Tile:
+        """dst += a * b in place (VOP MAC: dst read and written, b a column broadcast of at most
+        I.MAC_MAX_COLS columns or a float): the MUL then ADD of `dst.set(dst + a * b)`, bit for
+        bit, in one pass."""
+        if not self.cfg.VMAC:
+            raise CompileError("mac needs VOP MAC, which this configuration's VPU lacks "
+                               "(Config.VMAC off: a target built without it)")
+        if not isinstance(a, Tile) or len(dst.shape) != 2:
+            raise CompileError(f"mac: dst {dst!r} must be a 2-D tile and a a tile")
+        col = isinstance(b, Bcast) and b.kind != B_ROWVIEW
+        if not (col or isinstance(b, (int, float))) or (col and dst.cols > I.MAC_MAX_COLS):
+            raise CompileError(f"mac: b must be a column broadcast of at most "
+                               f"{I.MAC_MAX_COLS} columns (v[None, :]) or a float, not {b!r}")
+        self.vop(I.V_MAC, dst, a, float(b) if isinstance(b, (int, float)) else b)
+        self.bump_version(dst.buf)
+        return dst
+
     def outer(self, x, y, acc: Tile | None = None, decay: Tile | None = None) -> Tile:
         """x[:, None] * y[None, :] as one MUL (A = y repeated with row stride 0, B = x per row);
         with `acc`, the in-place OUTER acc = acc * decay + x[:, None] * y[None, :]."""
@@ -1730,6 +2378,11 @@ class Builder:
             return out
         if len(acc.shape) != 2 or acc.shape != (rows, cols):
             raise CompileError(f"outer: acc shape {acc.shape} != {(rows, cols)}")
+        if not (self.cfg.OUTER or self.cfg.OUTER1 and decay is None):
+            raise CompileError("outer(acc=...) needs VOP OUTER, which this configuration's VPU "
+                               "lacks (Config.OUTER off: a target built without it, e.g. "
+                               "bcu1525-wg, whose DeltaNet runs deltanet_step on DSTEP; "
+                               "Config.OUTER1: decay one only)")
         if cols > I.OUTER_MAX_COLS:
             raise CompileError(f"outer(acc=...) supports up to {I.OUTER_MAX_COLS} columns")
         lo, hi = acc.base, acc.base + (rows - 1) * acc.rs + cols
@@ -1771,9 +2424,19 @@ class Builder:
         DRAM, updated in place or written to `dst` (a tensor of its shape at a compile-time
         distance from `state`: both addresses take one register): column slots at vec, row
         scalars at x, constants at k + k_off (K_j at + j * ks), row outputs to o
-        (docs/stream.md). `zero`: the state reads as +0."""
+        (docs/stream.md). `zero`: the state reads as +0. A 16-bit state or dst (esize 2,
+        Config.ST16) takes the flag ST16 on its side, on the hardware's subset
+        (isa.stream_hw_cfg): both 16-bit ST16, one of them ST16R / ST16W (dst then apart from
+        the state; docs/isa.md "ST16")."""
         if not self.cfg.STREAM:
             raise CompileError("STREAM needs Config.STREAM (the stream engine)")
+        h16 = self._st16(state, "stream")
+        w16 = h16 if dst is None else self._st16(dst, "stream")
+        if h16 != w16 and not self.cfg.ST16S:
+            raise CompileError("stream: a 16-bit state into an fp32 one or back needs "
+                               "Config.ST16S (STREAM's ST16R / ST16W)")
+        if (h16 or w16) and I.stream_hw_cfg(d) is None:
+            raise CompileError("stream: a 16-bit state (ST16) needs the hardware's subset")
         if len(state.shape) != 2 or state.strides != (state.shape[1], 1):
             raise CompileError("stream: the state must be a row-major [rows, cols] tensor")
         if state.shape != (d.rows, d.cols):
@@ -1790,7 +2453,9 @@ class Builder:
                 raise CompileError("stream: dst must be the state's shape at a compile-time "
                                    "distance from it")
             gap = g.const
-            if gap and (gap % self.cfg.D or abs(gap) < 4 * d.rows * d.cols):
+            # (apart: the lower one's bytes; in place only with both ends' element size)
+            low = state.esize if gap > 0 else dst.esize
+            if (gap or h16 != w16) and (gap % self.cfg.D or abs(gap) < low * d.rows * d.cols):
                 raise CompileError("stream: dst must be chunk aligned and not overlap the state")
         at = self.stream_desc(d)
         ra, imm = self.addr(state.base)
@@ -1804,10 +2469,19 @@ class Builder:
             raise CompileError("stream: the constants' stride must be 1..65535")
         self.emit(I.stream(at, imm, imm + gap, vb, xb, kb + k_off,
                            0 if o is None else Affine.of(o.base).const, ks=ks,
-                           zero=zero, ra=ra, rb=rb, rc=rc, rd=rd,
+                           zero=zero, ra=ra, rb=rb, rc=rc, rd=rd, st16r=h16, st16w=w16,
                            comment=f"stream {d.rows}x{d.cols}"))
         if o is not None:
             self.bump_version(o.buf)
+
+    def _st16(self, state: Tensor, what: str) -> bool:
+        """A DSTEP's / STREAM's state in 16 bits (esize 2): the flag ST16, on a Config.ST16
+        machine (docs/isa.md "ST16")."""
+        if state.esize not in (2, 4):
+            raise CompileError(f"{what}: a state of {state.esize}-byte elements")
+        if state.esize == 2 and not self.cfg.ST16:
+            raise CompileError(f"{what}: a 16-bit state needs Config.ST16")
+        return state.esize == 2
 
     def deltanet_step(self, state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile,
                       o: Tile, zero: bool = False, dst: Tensor | None = None) -> None:
@@ -1816,7 +2490,8 @@ class Builder:
         (beta after decay), o [rows] written (docs/isa.md). `zero`: the state starts at +0.
         Without Config.DSTEP, a Config.STREAM machine runs it as STREAM with isa.gdn_desc
         (bit-identical). `dst`: the new state goes there instead and `state` keeps the old one
-        (a STREAM, which has a destination; Config.STREAM)."""
+        (a STREAM, which has a destination; Config.STREAM). A 16-bit state (esize 2): flag
+        ST16 (Config.ST16)."""
         if not (self.cfg.DSTEP or self.cfg.STREAM):
             raise CompileError("deltanet_step needs Config.DSTEP (the DMA's DSTEP) or "
                                "Config.STREAM (the stream engine)")
@@ -1842,7 +2517,45 @@ class Builder:
                                dst=dst)
         ra, imm = self.addr(state.base)
         self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
-                          ra=ra, comment="dstep"))
+                          ra=ra, st16=self._st16(state, "deltanet_step"), comment="dstep"))
+        self.bump_version(o.buf)
+
+    def deltanet_step2(self, state: Tensor, qk: Tile, v: Tile, decay: Tile, beta: Tile,
+                       o: Tile, zero: bool = False) -> None:
+        """Two Gated DeltaNet heads in one DSTEP (Config.DSTEP2: the PAIR flag): `state` [2 h,
+        cols] head a's rows, then head b's; qk [q | k] of one key head for both (2 cols) or
+        head a's then head b's (4 cols); v and o [2 h]; decay and beta [2] (head a's, b's; beta
+        after decay). Without DSTEP2, or off a pair's shape (cols 128, rows a multiple of 16),
+        deltanet_step for each head (the same words)."""
+        rows, cols = state.shape
+        if rows % 2 or not isinstance(qk, Tile) or qk.cols not in (2 * cols, 4 * cols) or \
+                any(not isinstance(t, Tile) or len(t.shape) != 1 for t in (v, o, decay, beta)):
+            raise CompileError("deltanet_step2: [2 h, cols] state, qk of 2 or 4 cols, 1-D tiles")
+        if decay.cols != 2 or beta.cols != 2 or v.cols != rows or o.cols != rows:
+            raise CompileError("deltanet_step2: decay and beta [2], v and o [2 h]")
+        h, qkb = rows // 2, qk.cols == 4 * cols
+        if not (self.cfg.DSTEP and self.cfg.DSTEP2) or cols != I.DSTEP_PAIR_COLS or \
+                rows % I.DSTEP_PAIR_ROWS:
+            for j in range(2):
+                self.deltanet_step(Tensor(Affine.of(state.base) + state.esize * j * h * cols,
+                                          (h, cols), (cols, 1), esize=state.esize),
+                                   qk[2 * j * cols:2 * (j + 1) * cols] if qkb else qk,
+                                   v[j * h:(j + 1) * h], decay[j:j + 1], beta[j:j + 1],
+                                   o[j * h:(j + 1) * h], zero)
+            return
+        if len(state.shape) != 2 or state.strides != (cols, 1) or \
+                not (0 < rows <= I.DSTEP_MAX_ROWS):
+            raise CompileError(f"deltanet_step2: a row-major state of <= {I.DSTEP_MAX_ROWS} rows")
+        gs = beta.base - decay.base
+        if not 1 < gs < 1 << 16:
+            raise CompileError("deltanet_step2: beta must follow decay in TMEM")
+        self.check_live(qk, v, decay, beta, o)
+        if Affine.of(state.base).is_static and Affine.of(state.base).const % self.cfg.D:
+            raise CompileError("deltanet_step2: the state must be DRAM-chunk aligned")
+        ra, imm = self.addr(state.base)
+        self.emit(I.dstep(imm, qk.base, v.base, rows, cols, decay.base, gs, o.base, zero=zero,
+                          pair=True, qkb=qkb, ra=ra, st16=self._st16(state, "deltanet_step2"),
+                          comment="dstep pair"))
         self.bump_version(o.buf)
 
     def fuse_mm_rmax(self, x: Tile):
@@ -1854,12 +2567,62 @@ class Builder:
         ins, version, M, ors = src
         if self.versions.get(x.buf, 0) != version or not any(ins is i for i in self.stack[-1]):
             return None
+        if ins.rd and not self.cfg.GALL:         # a grouped matrix's MM takes no RMAX
+            return None
         ins.flags |= I.F_RMAX
         ins.comment += " +rowmax"
         return Tile(self, x.base + M * ors, (M,), None, x.buf)
 
+    def dot_split(self, a: tuple, w: tuple, acc: Tile | None = None,
+                  out: Tile | None = None) -> Tile:
+        """A split product (Config.SPLITQ's operands): a = (hi, lo) stationaries and w = (hi, lo)
+        streamed matrices, hi.hi + hi.lo + lo.hi; a = (hi, None): hi.hi + hi.lo (the transposes'
+        identity against split rows). With Config.SPLMM one MM where the operands sit as SPL
+        takes them (docs/isa.md "Split terms": lo's stationary the block after hi's, QACT HL;
+        w's lo rows a constant HLD after hi's, Scratch's layout; one K-block of int8 RSC
+        groups); otherwise the dots, hi.hi first (overwrite or acc=), then hi.lo, then lo.hi."""
+        (ah, al), (wh, wl) = a, w
+        hld = self._spl(ah, al, wh, wl)
+        if hld:
+            return self.dot(ah, wh, acc=acc, out=out, spl=(al, hld))
+        if acc is None:
+            acc = self.dot(ah, wh, out=out)
+        else:
+            self.dot(ah, wh, acc=acc)
+        self.dot(ah, wl, acc=acc)
+        if al is not None:
+            self.dot(al, wh, acc=acc)
+        return acc
+
+    def _spl(self, ah, al, wh: QTensor, wl: QTensor) -> int:
+        """dot_split's HLD, wl's rows after wh's (0: not one MM SPL)."""
+        cfg = self.cfg
+        if not (cfg.SPLMM and cfg.GALL and cfg.WG > 1 and isinstance(ah, Stationary)
+                and (al is None or isinstance(al, Stationary))
+                and isinstance(wh, QTensor) and isinstance(wl, QTensor)):
+            return 0
+        d = Affine.of(wl.data) - Affine.of(wh.data)
+        hld = d.const
+        if (d.terms or hld <= 0 or hld % 1024 or hld % (cfg.WG * cfg.D)
+                or hld >> 10 >= 1 << (31 - I.MM_HLD)):
+            return 0
+        if any(x.wf != I.W8 or not x.rsc or x.grp != cfg.WG or x.kt or x.k0 or x.scale is None
+               or x.shape != wh.shape or x.rs != wh.rs or x.srs != wh.srs for x in (wh, wl)):
+            return 0
+        if wh.shape[1] != cfg.D or wh.srs >= 1 << I.MM_HLD:
+            return 0
+        for st in (ah,) if al is None else (ah, al):
+            if st.KB != 1 or st.pair or st.ranges() != [(0, 1)]:
+                return 0
+        if al is not None and (al.src.rows != ah.src.rows
+                               or list(al.chunks) != [(ab + 1, mc) for ab, mc in ah.chunks]):
+            return 0
+        return hld
+
     def dot(self, a, w: QTensor, acc: Tile | None = None, out: Tile | None = None,
-            temp: bool = False, rowmax: bool = False, acc_scale: Tile | None = None) -> Tile:
+            temp: bool = False, rowmax: bool = False, acc_scale: Tile | None = None,
+            spl: tuple | None = None) -> Tile:
+        """(spl: dot_split's one MM, (lo's stationary or None, HLD).)"""
         if not isinstance(w, QTensor):
             raise CompileError("dot(a, w): w must be a streamed QTensor descriptor")
         if acc is not None and out is not None:
@@ -1869,12 +2632,14 @@ class Builder:
                 raise CompileError("dot(acc_scale=...) needs acc= and an unscaled stream (V^T)")
             self.check_live(acc_scale)
         st = a if isinstance(a, Stationary) else self.quantize(a, temp)
-        if not self.stationary_valid(st):
+        sts = (st,) if spl is None or spl[0] is None else (st, spl[0])
+        if not all(self.stationary_valid(x) for x in sts):
             raise CompileError("stationary operand was overwritten in ACT RAM")
         # an operand from outside the innermost loop must survive every iteration: keep it (and
         # its blocks) until the loop ends; one created in the same body is rebuilt per iteration
-        if self.loops and getattr(st, "loop", None) is not self.loops[-1].loop:
-            self.loop_uses.append((len(self.loops), st))
+        for x in sts:
+            if self.loops and getattr(x, "loop", None) is not self.loops[-1].loop:
+                self.loop_uses.append((len(self.loops), x))
         N, K = w.shape
         if K != st.KB * self.cfg.D:
             raise CompileError(f"dot: K mismatch {K} vs {st.KB * self.cfg.D}")
@@ -1903,11 +2668,18 @@ class Builder:
                        or getattr(out, "spare", 0) < M or out.rs < N):
             raise CompileError("dot(rowmax=True) needs M <= MCOLS and an output tile from "
                                "ol.empty/zeros/full (they reserve the row-max area)")
+        g = w.grp
+        wg = self.cfg.WG if w.wf == I.W8 or self.cfg.WG == 1 else 2 * self.cfg.WG
+        if g > 1 and g != wg:
+            raise CompileError(f"dot: a matrix in groups of {g} rows on a machine of WG "
+                               f"{self.cfg.WG} (its groups of this format: {wg} rows)")
+        if g > 1 and (rowmax or acc_scale is not None) and not self.cfg.GALL:
+            raise CompileError("dot: rowmax / acc_scale need a matrix of rows (not grouped)")
         unit = w.scale is None
-        # PAIR reads a chunk's two blocks' scales at once: 8-byte (nvfp4: 16-byte) aligned rows
-        # and an even first block
+        # PAIR (rows of one: a group takes a K-block a step at any M) reads a chunk's two
+        # blocks' scales at once: 8-byte (nvfp4: 16-byte) aligned rows and an even first block
         al = 16 if w.wf == I.WNV else 8
-        pair = st.pair and w.wf != I.W8 and (unit or w.rsc or (
+        pair = st.pair and g == 1 and w.wf != I.W8 and (unit or w.rsc or (
             w.k0 % 2 == 0 and w.srs % al == 0 and Affine.of(w.scale).const % al == 0
             and all(c * getattr(v, "align", 1) % al == 0
                     for v, c in Affine.of(w.scale).terms.items())))
@@ -1916,8 +2688,13 @@ class Builder:
         # RMAX on the last, whose written values are the sums
         bpb = self.cfg.D if w.wf == I.W8 else self.cfg.D // 2   # streamed bytes per block
         parts = st.ranges()
+        if w.kt and (not self.cfg.KT or g == 1 or w.k0 or
+                     [tuple(r) for r in parts] != [(0, st.KB)]):
+            raise CompileError(f"dot: a matrix in KT's pairs (docs/isa.md \"K tail\") on a "
+                               f"machine with KT, grouped, its whole K one MM (the operand one "
+                               f"QACT range: {parts}, k0 {w.k0}, KT {self.cfg.KT}, groups {g})")
         for i, (k0, k1) in enumerate(parts):
-            if (k0 * bpb) % self.cfg.D:
+            if g == 1 and (k0 * bpb) % self.cfg.D:
                 raise CompileError(f"dot: a QACT range starting at block {k0} of 4-bit weights "
                                    f"(their D-byte chunks hold two blocks): split the operand "
                                    f"at even blocks")
@@ -1926,36 +2703,62 @@ class Builder:
             ppair = pair and kp % 2 == 0
             m0 = 0
             for ab, mc in st.chunks:
-                ins = I.mm(sa + k0 * bpb, ssa, out.base + m0 * ors, N, k1 - k0, w.rs, ors, mc,
-                           ab + k0, w.srs, unit=unit, acc=acc is not None or not first,
-                           rmax=rowmax and last, wf=w.wf, pair=ppair, k0=kp, rsc=w.rsc,
+                # block k0's chunk: k0 bpb / D chunks in (a group's: k0 chunks of g bpb bytes)
+                ins = I.mm(sa + k0 * bpb * g, ssa, out.base + m0 * ors, N,
+                           k1 - k0 if spl is None else 2 + (spl[0] is not None), w.rs, ors,
+                           mc, ab + k0, w.srs, unit=unit, acc=acc is not None or not first,
+                           rmax=rowmax and last, wf=w.wf, pair=ppair, k0=kp, rsc=w.rsc, grp=g,
+                           kt=w.kt, hld=0 if spl is None else spl[1],
                            ascale=acc_scale.base if acc_scale is not None and first else None,
                            ra=ra, rb=rb,
                            comment=f"mm {M}x{K} . {N}x{K}^T"
                            + (f" part {k0}:{k1}" if len(parts) > 1 else "")
+                           + (" kt" if w.kt else "")
+                           + ("" if spl is None else " split" if spl[0] is not None else " hi + lo")
                            + (" pair" if ppair else "") + (" +rowmax" if rowmax and last else "")
                            + (" acc*=scale" if acc_scale is not None and first else ""))
                 self.emit(ins)
                 m0 += mc
         self.bump_version(out.buf)
-        if (acc is None and len(st.chunks) == 1 and M <= self.cfg.MCOLS and len(out.shape) == 2
-                and getattr(out, "spare", 0) >= M and out.rs >= N):
+        if (acc is None and spl is None and len(st.chunks) == 1 and M <= self.cfg.MCOLS
+                and len(out.shape) == 2 and getattr(out, "spare", 0) >= M and out.rs >= N):
             out.mm_src = (ins, self.versions.get(out.buf, 0), M, ors)
         return out
 
     def store_quantized(self, x: Tile, dst: Affine, sdst: Affine, drs: int, es: int,
-                        row_scale: bool, half: bool = False) -> None:
+                        row_scale: bool, half: bool = False, row=None, col: bool = False,
+                        lo: bool = False, hld: int = 0) -> None:
+        """QST of x's rows (row stride drs, element stride es); `row` (GALL): into a grouped
+        matrix at dst (QST GRP), its rows row .. (col: its columns, es its group stride; else es
+        the scale areas' group stride), `row` an index expression (R[rd] + drs). lo: the
+        split's lo bytes and scale (QST flag LO, Config.SPLITQ). hld > 0 (QST HL, Config.QSTHL;
+        GRP ROW rows): the hi part and, from the same read, the lo part hld bytes (a multiple of
+        1 KiB and of the group chunk P = WG x D) after it, its bytes and scales."""
+        if lo and not self.cfg.SPLITQ:
+            raise CompileError("store_quantized(lo=True): the machine has no SPLITQ (QST flag LO)")
+        if hld and not (self.cfg.QSTHL and self.cfg.SPLITQ and row is not None and row_scale
+                        and not (col or half or lo) and x.cols <= I.QHL_ELEMS
+                        and hld % 1024 == 0 and hld % (self.cfg.WG * self.cfg.D) == 0):
+            raise CompileError(f"store_quantized(hld={hld}): QST HL needs Config.QSTHL, GRP ROW "
+                               f"rows (not COL, HALF or LO) of at most {I.QHL_ELEMS} elements "
+                               f"and lo's part a multiple of 1 KiB and of P after hi's")
         self.check_live(x)
         D = self.cfg.D
         if x.cols % D:
             raise CompileError("quantized stores need a multiple of D elements per row")
         rb, dimm = self.addr(dst)
         rc, simm = self.addr(sdst)
+        rd = 0
+        if row is not None:
+            rd, drs = self.addr(row)
         rs = x.rs if len(x.shape) == 2 else x.cols
         if not row_scale and x.cols // D > QST_KB_MAX:
             raise CompileError(f"QST of {x.cols // D} blocks without ROW: at most {QST_KB_MAX}")
         self.emit(I.qst(x.base, dimm, simm, x.rows, x.cols // D, rs, drs, es, row=row_scale,
-                        half=half, rb=rb, rc=rc, comment="quantized store"))
+                        half=half, rb=rb, rc=rc, grp=self.cfg.WG if row is not None else 1,
+                        col=col, rd=rd, lo=lo, hld=hld,
+                        comment="quantized store" + (" lo" if lo else " hi + lo" if hld else "")
+                        + (" (grouped)" if row is not None else "")))
 
     def all_gather(self, x: Tile, S: int) -> Tile:
         x = self.materialize(x)
@@ -1968,12 +2771,32 @@ class Builder:
             out = self.alloc((x.rows, x.cols * S))
             self.emit(I.gather(x.base, out.base, x.rows, x.cols, x.rs, out.rs, x.cols,
                                comment="all-gather"))
+        out.fresh = True                # dst.set(all_gather(x)): retarget
+        return out
+
+    def all_gather_rows(self, x: Tile, S: int, out: Tile | None = None) -> Tile:
+        """language.all_gather_rows: one GATHER, slice s's rows at rows s R .. of the result."""
+        x = self.materialize(x)
+        self.check_live(x)
+        R, C = x.rows, x.cols
+        fresh = out is None             # (a given destination stays where it is: no retarget)
+        if fresh:
+            out = self.alloc((S * R, C))
+        elif out.shape != (S * R, C):
+            raise CompileError(f"all_gather_rows into {out.shape}: {S * R} rows of {C}")
+        else:
+            self.check_live(out)
+        self.emit(I.gather(x.base, out.base, R, C, x.rs, out.rs, R * out.rs,
+                           comment="all-gather rows"))
+        out.fresh = fresh
         return out
 
     # ---- finalize
     def finish(self) -> list[I.Instr]:
         if self.loops:
             raise CompileError("unterminated loop")
+        self.emitted += 1
+        self._drain()
         prog = [I.li(r, 0, comment="address register")
                 for r in sorted(self.used_regs - self.late_zero)]
         prog += self._flatten(self.root)
@@ -1990,15 +2813,22 @@ class Builder:
             if loop.rcount and it.steps:
                 raise CompileError("a loop with a device-computed count cannot step registers")
             body = self._flatten(it.items)
-            body += [I.addi(r, r, c, comment=f"{loop} step") for r, c in it.steps]
+            body += [I.addi(r, r, self._wrap(c), comment=f"{loop} step", aw=self.aw)
+                     for r, c in it.steps]
             if not body or self._ends_inner(it.items, it.steps) or self._ends_loop(body):
                 body.append(I.nop("loop end"))
             out.append(I.loop(len(body), loop.count, rcount=loop.rcount,
                               comment=f"{loop} x" + (f"R{loop.rcount}" if loop.rcount
                                                       else f"{loop.count}")))
             out += body
-            out += [I.addi(r, r, -c * loop.count, comment=f"{loop} reset") for r, c in it.steps]
+            out += [I.addi(r, r, self._wrap(-c * loop.count), comment=f"{loop} reset", aw=self.aw)
+                    for r, c in it.steps]
         return out
+
+    def _wrap(self, v: int) -> int:
+        """An increment as ADDI takes it (isa.wrap: mod 2^AW, registers are AW bits), so a
+        reset of a stride times a count of 4 GiB or more encodes."""
+        return I.wrap(v, self.aw)
 
     @staticmethod
     def _ends_inner(items: list, mine: list) -> bool:
@@ -2091,15 +2921,19 @@ def slow_drains(prog, cfg, lanes: int | None = None) -> list:
     multiple of the banks, that is one a cycle. An MM is slow when its drain takes more steps a
     group than its array takes advances: W_down at KB 2 into a [16, 1152] tile loaded from DRAM
     (MiniCPM-V's tower: 40% of its pops). A fresh output and ol.empty / zeros / full give an odd
-    row stride, which spreads the rows over the banks."""
+    row stride, which spreads the rows over the banks. A grouped matrix's MM (docs/isa.md
+    "Weight groups") drains a group's rows, consecutive words, once per activation row, against
+    the group's KB advances (a chunk a K-block: 2 WG rows of 4-bit, WG of int8)."""
     lanes = lanes or cfg.MCOLS
     out = []
     for pc, ins in enumerate(prog):
         if ins.op != I.MM:
             continue
         ors, M, KB = ins.w[5] & 0xFFFF, (ins.w[5] >> 16) & 0xFF, (ins.w[3] >> 16) & 0xFF
-        adv = -(-KB // 2) if ins.flags & I.F_PAIR else KB
-        steps, j, rows = 0, 0, min(M, cfg.MCOLS)
+        adv = -(-KB // 2) if ins.flags & I.F_PAIR and not ins.rd else KB
+        if ins.rd:
+            M, ors = 1 << ins.rd, 1
+        steps, j, rows = 0, 0, M if ins.rd else min(M, cfg.MCOLS)
         while j < rows:
             banks = set()
             while j < rows and len(banks) < lanes and (j * ors) % cfg.LANES not in banks:

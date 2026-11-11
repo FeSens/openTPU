@@ -86,8 +86,8 @@ def warm(image, layout, N: int) -> bool:
     keys = []
     for p, ra in P.values():
         w = Words.of(assemble(p), ra)
-        WC.entries(w, cfg.D, cfg.S, ra, prog=p)
-        keys.append(WC.entries_key(w, cfg.D, cfg.S, ra))
+        WC.entries(w, cfg.D, cfg.S, ra, prog=p, aw=cfg.AW, win=cfg.WC_WIN)
+        keys.append(WC.entries_key(w, cfg.D, cfg.S, ra, cfg.AW, cfg.WC_WIN))
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_name(f".{f.stem}.{os.getpid()}.json")
     tmp.write_text(json.dumps(keys))

@@ -5,8 +5,7 @@
 # interaction, the timing exceptions (each set_max_delay applied once) and whether every query of
 # the XDC found its objects; with ROUTE=1 also place and route, the timing summary, the bus skew
 # and the CDC and methodology reports again. Last, every source of a path between the clocks is
-# checked against the crossings the XDC constrains. Non-project mode, on omarchy (never on the
-# Mac):
+# checked against the crossings the XDC constrains. Non-project mode, on the build host:
 #
 #   vivado -mode batch -nojournal -source tools/memch_ooc.tcl -tclargs <outdir> [ROUTE]
 #

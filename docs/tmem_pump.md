@@ -15,7 +15,7 @@ Questions:
 3. Can one copy pumped at 3x or 4x replace the three (section 2, "One copy at 3x or 4x?")?
 4. What would 2x, 4x or 6x the words buy (prefill rows a run, batched rows, MoE), and which board
    can afford it?
-5. Which TMEM for each board (YPCB, BCU1525, F2, ASIC), and what does it do to decode, prefill,
+5. Which TMEM for each board (YPCB, BCU1525, ASIC), and what does it do to decode, prefill,
    batched decode and MoE?
 
 ## TMEM today
@@ -53,7 +53,7 @@ which sets RPB 1 for it; default 0, the card's build unchanged.)
 ### As the ASIC has it: does not close
 
 The full YPCB build at production settings (`BUILD_ID=0924a7e1 CORE_MHZ=133.33 JOBS=2
-TMEM_IMPL=1 make -C boards/ypcb-00338 bit DDR=1066`, omarchy, 2026-10-11, 2 h 53 min) against
+TMEM_IMPL=1 make -C boards/ypcb-00338 bit DDR=1066`, the build host, 2026-10-11, 2 h 53 min) against
 production (91a9c2d3, the same settings, 49 min), *measured*:
 
 | | production (6 copies) | `TMEM_IMPL 1` (3 copies) |
@@ -89,7 +89,7 @@ run, `--check`); the testbench of section 2 checks `RQ` against `otpu_tmem` with
 grants.
 
 In the full build (`BUILD_ID=b383c919 CORE_MHZ=133.33 JOBS=2 TMEM_IMPL=1 TMEM_RQ=1 make -C
-boards/ypcb-00338 bit DDR=1066`, omarchy, 2026-10-12, 1 h 30 min) *measured*:
+boards/ypcb-00338 bit DDR=1066`, the build host, 2026-10-12, 1 h 30 min) *measured*:
 
 | | production (6 copies) | `TMEM_IMPL 1`, grants | `TMEM_IMPL 1`, `TMEM_RQ` |
 |---|---|---|---|
@@ -218,7 +218,7 @@ section 1). The testbench catches broken pumping: with the write data taken from
 wrong register it fails at cycle 8, with the phase inverted (writes at the core edge, reads in
 the middle) at cycle 13; with the bypass multiplexer removed it passes (20,000 cycles, 255,800
 lane reads, 92,484 lane writes), which is the check that the bypass is redundant here. On
-2026-10-12 (44ed40d2, hwe-bench) the same eleven configurations pass with the fast-domain write
+2026-10-12 (44ed40d2, the simulation host) the same eleven configurations pass with the fast-domain write
 stage (`FW`) and the one-copy 3x and 4x variants (`K`, compared with `otpu_tmem` a cycle
 earlier, grant and `RQ` addresses, 4K and 64K words): 200,000 cycles each, 1.9-2.6 million lane
 reads, no mismatch.
@@ -229,7 +229,7 @@ reads, no mismatch.
 MXU's lanes generic, QUANT 3 and COLL as guests) and both clocks from one MMCME2; `ooc.tcl` runs
 synthesis, placement, phys_opt and routing out of context on xc7k480tffg1156-2 (the YPCB's part),
 core 133.33 MHz, pumped copies 266.67 MHz, with the contract's multicycle paths. *Measured*
-(Vivado 2026.1, opentpu, 2026-10-11 for the first build, FW 0; 2026-10-12 for the fast-domain
+(Vivado 2026.1, the card host, 2026-10-11 for the first build, FW 0; 2026-10-12 for the fast-domain
 write stage and phase, FW, c34116bc):
 
 | run | RAMB36 | TMEM LUT | TMEM FF | slices | WNS, FW 0 | its path | WNS, FW |
@@ -273,12 +273,12 @@ and a BUFG.
 
 ### UltraScale+: out of context
 
-omarchy's license has no Virtex UltraScale+ part, so these runs use the free xcku5p-ffvb676-2-e
-(MMCME4, BUFGCE). It has the BCU1525's and F2's block RAM and UltraRAM primitives (RAMB36E2,
+the build host's license has no Virtex UltraScale+ part, so these runs use the free xcku5p-ffvb676-2-e
+(MMCME4, BUFGCE). It has the BCU1525's block RAM and UltraRAM primitives (RAMB36E2,
 URAM288), and it is a -2 speed grade at VCCINT 0.85 V. The BCU1525's VU9P is -2L: from the data
 sheet (DS923), -2L at 0.85 V has -2 timing and is slower at 0.72 V; which voltage the card runs
-is to be checked. F2's VU47P is -2. Not modelled: the larger dies, the SLR crossings, and the
-slices around the TMEM. *Measured* (Vivado 2026.1, omarchy, 2026-10-12):
+is to be checked. Not modelled: the larger dies, the SLR crossings, and the
+slices around the TMEM. *Measured* (Vivado 2026.1, the build host, 2026-10-12):
 
 | run | clocks (core / copies) | RAM | WNS | what limits it |
 |---|---|---|---|---|
@@ -368,7 +368,7 @@ than four in at most 0.23%.
 
 **Cycles.** RTL co-simulation, bit-exact (`--check`, the perf_qwen runs; the MoE runs as in
 section 1), the banked arbiter with request-priority addresses (`OTPU_TARGET=nangate45
-OTPU_TMEM_RQ=1`, hwe-bench, 2026-10-12). P1 at 2x is `OTPU_TMEM_NCP=2`. QUANT 3 sits on a third
+OTPU_TMEM_RQ=1`, the simulation host, 2026-10-12). P1 at 2x is `OTPU_TMEM_NCP=2`. QUANT 3 sits on a third
 slot of its own there, as if the quantizer kept the row factor in a register, which is the change
 P1 needs. That change's own cost is one more cycle per row the quantizer scales. The 2-cycle
 read's column is an *estimate*, one cycle per instruction (the run's instruction count over its
@@ -413,7 +413,7 @@ fast edge ahead (a 2:1 multiplexer before the RAM), each read's word taken at th
 edge, and all words presented at the core edge. The testbench checks it against `otpu_tmem` a
 cycle later (`run_tb.sh` `k3n5`, `k4n7` and their `RQ` cases). It fails with the bypass removed,
 with a word taken at the wrong edge, or with the slots read in the wrong order. Out of context,
-*measured* (Vivado 2026.1; Kintex-7 on opentpu, xcku5p on omarchy, 2026-10-12):
+*measured* (Vivado 2026.1; Kintex-7 on the card host, xcku5p on the build host, 2026-10-12):
 
 | part | core / copy clock | RAM | WNS | what limits it |
 |---|---|---|---|---|
@@ -579,14 +579,14 @@ The workloads scoreboard (`tools/scoreboard.py` on the workloads branch, an anal
 calibrated on the card and the co-sim; *estimate*), prefill of a 1,024-token prompt, geometric
 mean over nine dense models, against the board as it is:
 
-| what-if | YPCB | BCU1525 | F2 |
-|---|---|---|---|
-| TMEM 128K | +4.4% | +6.0% | +9.5% |
-| TMEM 256K | +5.6% | +8.0% | +13.4% |
-| TMEM 384K | +9.2% | +14.3% | +26.5% |
-| MCOLS 8 | +35.9% | +30.0% | +23.6% |
-| MCOLS 8, TMEM 128K | +52.5% | +45.7% | +39.7% |
-| MCOLS 8, TMEM 256K | +60.7% | +53.7% | +48.2% |
+| what-if | YPCB | BCU1525 |
+|---|---|---|
+| TMEM 128K | +4.4% | +6.0% |
+| TMEM 256K | +5.6% | +8.0% |
+| TMEM 384K | +9.2% | +14.3% |
+| MCOLS 8 | +35.9% | +30.0% |
+| MCOLS 8, TMEM 128K | +52.5% | +45.7% |
+| MCOLS 8, TMEM 256K | +60.7% | +53.7% |
 
 TMEM changes neither single-user decode (a decode step needs well under 64K) nor, in that model,
 batched decode (it runs users in blocks of a pass); one 8-row batched run instead of two 4-row
@@ -680,10 +680,6 @@ without pumping, 128K in Vivado's. UltraRAM pumps at 2x only: URAM288's minimum 
 2.000 ns at -2 (500 MHz, measured above), so P3 in UltraRAM needs the core at or below 250 MHz;
 it meets 200 / 400 MHz.
 
-**F2 (VU47P: 2,016 RAMB36 and 960 URAM288 in three SLRs, 672 and 320 each, from the data
-sheet; not built).** The scoreboard's F2 runs S = 4 slices, so one SLR holds two: 160 URAM288 a
-slice. Six copies fit 128K (96 a slice in yosys' packing), three fit 256K (96) and 384K (144).
-
 **ASIC.** The TMEM is banked already (`TMEM_IMPL 1`, three copies of 1R1W macros). Pumping is an
 FPGA trick: an SRAM macro at twice the core clock would cap the core at half the macro's speed.
 Capacity is macro area: in the card's arch on nangate45 the TMEM is 4.05 mm2 (48 macros of
@@ -711,7 +707,7 @@ over the scoreboard's models):
 
 The batched column is 4-16 users in runs of a pass (MCOLS rows); "8 rows a run" is one run of 8
 users at MCOLS 4. The same what-ifs on the BCU1525 give prefill 1.057 (128K), 1.300 (MCOLS 8) and
-1.457 (both), on the F2 1.095, 1.236 and 1.397. The RTL co-sims of section 3 agree in kind:
+1.457 (both). The RTL co-sims of section 3 agree in kind:
 128K at MCOLS 4 is +10-11% for a large model's prompt rows and nothing for a small one; at MCOLS
 8 it is +18-29%.
 
@@ -723,7 +719,6 @@ users at MCOLS 4. The same what-ifs on the BCU1525 give prefill 1.057 (128K), 1.
 |---|---|---|
 | YPCB (xc7k480t-2, 133.33 MHz) | **3, pumped at 2x (P3)**: the card's behaviour cycle for cycle; +0.267 ns out of context at 133.33 / 266.67 | Two copies or one at 2x are banked: 0.0-2.4% in cycles (measured), but the banked arbiter misses 133.33 MHz by 1.06 ns in the full build (b2). One copy at 3x misses by 27 ps out of context (the block RAM's 1.800 ns clock-to-out) and needs the 2-cycle read. 4x misses by 0.66 ns. |
 | BCU1525 (VU9P -2L; measured on xcku5p-2) | **3 (P3)** at a 200 MHz core, in block RAM (+0.195 ns) or UltraRAM (+0.180 ns) at 200 / 400 | One copy at 3x and 200 MHz meets by 2 ps in uncascaded block RAM (no margin), needs the 2-cycle read, and needs block RAM, while the board's TMEM is in UltraRAM, which stops at 500 MHz. |
-| F2 (VU47P -2) | **3 (P3)**, as the BCU1525; one copy at 4x only with a 133.33 MHz core | One copy at 4x meets 133.33 / 533.33 (+0.097 ns, uncascaded block RAM), but only with the 2-cycle read (estimate +0.02-1.2% in cycles, a change to every unit). |
 | ASIC | **3 banked 1R1W copies** (as today); 2 with QUANT 3 off the ports | Pumping does not apply: an SRAM macro at K times the core clock caps the core at 1/K of the macro's speed. |
 
 So the question "pump TMEM by 3x or 4x so it needs one copy instead of 3?" has these answers:
@@ -766,7 +761,7 @@ What P3 still needs to be production-worthy:
    Not done.
 3. Tests: `run_tb.sh` in the RTL gate (P3 against `otpu_tmem`; its eleven configurations pass,
    200,000 cycles each); a `tb_top` with the second clock for a bit-exact co-simulation smoke
-   (its cycles must equal `TMEM_IMPL 0`'s); the RTL gate on omarchy.
+   (its cycles must equal `TMEM_IMPL 0`'s); the RTL gate on the build host.
 4. A full YPCB build at production settings that closes 133.33 MHz (not run: out of context
    only).
 5. A card qualification: BIST, token-exact against production, and decode and prefill speed
@@ -789,9 +784,6 @@ not bind until 256K. UltraRAM pumps at 2x only (500 MHz at -2), with the core at
 At a 200 MHz core P3 in UltraRAM meets 400 MHz (+0.180 ns) and halves the URAM. Take P3 when the
 TMEM grows to 256K (with MCOLS 8: +54% prefill on the board, scoreboard). One copy at 3x would
 have to move the TMEM back to block RAM and take the 2-cycle read.
-
-**F2.** Two slices an SLR: 160 URAM288 a slice. Six copies hold 128K; 256K and 384K need P3 in
-UltraRAM (a core at or below 250 MHz), or block RAM.
 
 **ASIC.** Keep the banked TMEM (three copies of 1R1W macros; the measured cycle cost is
 0.1-3%). Its listed critical paths are elsewhere (`docs/asic.md`: dispatch, and the grant into
@@ -827,13 +819,13 @@ From the tree's root, `PYTHONPATH=.`:
 ```sh
 # the pumped TMEM against otpu_tmem (Verilator; seconds to minutes each)
 rtl/exp/tmem_pump/run_tb.sh /tmp/tmem_tb [cycles]
-# out-of-context Vivado runs (omarchy or opentpu, through ~/otpu-build/slot.sh; one at a time)
+# out-of-context Vivado runs (the build host or the card host, through ~/otpu-build/slot.sh; one at a time)
 rtl/exp/tmem_pump/run_ooc.sh <outdir> k7-v0 k7-v2 k7-v3 k7-v4 k7-v1 k7-v2x2 ku-v2b ku-v2u ku-v1b \
   ku-v2u300 ku-v2b-200 ku-v2u-200
 # one copy at 3x / 4x (VAR 5): Kintex-7 at 133.33, xcku5p at 200 and 133.33, block RAM / UltraRAM
 rtl/exp/tmem_pump/run_ooc.sh <outdir> k7-p1x3 k7-p1x4 ku-p1x3b-200 ku-p1x3u-200 ku-p1x4b-200 \
   ku-p1x4u-200 ku-p1x3b-133 ku-p1x3u-133 ku-p1x4b-133 ku-p1x4u-133 ku-p1x3c-200 ku-p1x3c-133
-# the YPCB build with the banked TMEM (omarchy)
+# the YPCB build with the banked TMEM (the build host)
 make -C boards/ypcb-00338 bit DDR=1066 CORE_MHZ=133.33 TMEM_IMPL=1 TMEM_RQ=1
 # cycles: the banked TMEM in the co-sim (OTPU_TARGET=nangate45 is the card's arch with
 # TMEM_IMPL 1); OTPU_TMEM_RQ=1 the request-priority addresses, OTPU_TMEM_NCP=4 four slots (P2)

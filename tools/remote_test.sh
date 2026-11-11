@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Run pytest for this script's worktree on the omarchy box instead of this machine.
+# Run pytest for this script's worktree on the build host instead of this machine.
 #
-#   tools/omarchy_test.sh [pytest args...]        e.g. tools/omarchy_test.sh -q tests/test_rtl.py -k fuzz
-#   tools/omarchy_test.sh --exec CMD [args...]    any command in the tree instead of pytest (with
+#   tools/remote_test.sh [pytest args...]        e.g. tools/remote_test.sh -q tests/test_rtl.py -k fuzz
+#   tools/remote_test.sh --exec CMD [args...]    any command in the tree instead of pytest (with
 #                                                 the venv and Verilator on PATH), e.g.
 #                                                 --exec env OTPU_AXI=1 python -m pytest -q tests/test_board.py
 #
@@ -11,17 +11,17 @@
 # (the Verilator cache, keyed by source hash) to a shared directory, so fresh trees reuse it.
 #
 # Ships the worktree the script is in (not the current directory's: `bash /path/to/tree/tools/
-# omarchy_test.sh` tests that tree), its tracked files with their uncommitted edits, to
-# ~/otpu-test/<name> on omarchy and says which tree and commit on stderr; files there that the
+# remote_test.sh` tests that tree), its tracked files with their uncommitted edits, to
+# ~/otpu-test/<name> on the build host and says which tree and commit on stderr; files there that the
 # worktree no longer tracks are deleted (build/, models and __pycache__ stay), so a module
 # removed here is gone there too. Links the model checkpoints and runs pytest there with
 # ~/.local/bin/verilator and ~/otpu-venv.
-# At most OTPU_REMOTE_JOBS (default 2) test runs share omarchy at once; a run waits for a free
+# At most OTPU_REMOTE_JOBS (default 2) test runs share the build host at once; a run waits for a free
 # slot, so Vivado builds keep most of the CPU and memory (two builds plus three test runs
-# thrashed 32 GB). The Verilator cache (build/) stays per tree on omarchy between runs of the
+# thrashed 32 GB). The Verilator cache (build/) stays per tree on the build host between runs of the
 # same worktree. Exit status is pytest's.
 set -euo pipefail
-HOST=${OTPU_REMOTE:-omarchy.tail5bd214.ts.net}
+HOST=${OTPU_REMOTE:-otpu-build}
 JOBS=${OTPU_REMOTE_JOBS:-2}
 EXTRA_KB=${OTPU_REMOTE_EXTRA_KB:-16000000}   # the extra slot's MemAvailable floor (16 GB)
 mode=pytest
@@ -33,7 +33,7 @@ build=${OTPU_REMOTE_BUILD:-}
 mark=${OTPU_REMOTE_SLOT_MARK:-}   # set: say on stderr when the run holds its slot (the tournament's
                                  # gate timeouts count from there)
 edits=$(git -C "$top" status --porcelain --untracked-files=no | wc -l | tr -d ' ')
-echo "omarchy_test: $top at $(git -C "$top" rev-parse --short HEAD)$([[ $edits == 0 ]] ||
+echo "remote_test: $top at $(git -C "$top" rev-parse --short HEAD)$([[ $edits == 0 ]] ||
   echo " + $edits uncommitted") -> $HOST:~/$dir" >&2
 
 # the tree as it is now: tracked files, including uncommitted edits; then the files it no longer
@@ -63,7 +63,7 @@ set -e
 cd ~/$dir
 ln -sfn ~/openTPU/models models
 if [[ -n "$build" ]]; then mkdir -p ~/$build; rm -rf build; ln -sfn ~/$build build; fi
-# one of JOBS slots (flock on per-slot lock files), plus one more while omarchy has memory to spare
+# one of JOBS slots (flock on per-slot lock files), plus one more while the build host has memory to spare
 # (MemAvailable above EXTRA_KB, i.e. no second full build placing)
 mkdir -p ~/otpu-test/.slots
 for i in \$(seq 1 3600); do
@@ -72,7 +72,7 @@ for i in \$(seq 1 3600); do
   for s in \$(seq 1 \$n); do
     exec 9>~/otpu-test/.slots/\$s
     if flock -n 9; then
-      if [[ -n "$mark" ]]; then echo "omarchy_test: slot \$s" >&2; fi
+      if [[ -n "$mark" ]]; then echo "remote_test: slot \$s" >&2; fi
       export PATH=\$HOME/.local/bin:\$PATH
       if [[ $mode == exec ]]; then
         export PATH=\$HOME/otpu-venv/bin:\$PATH PYTHONPATH=\$PWD

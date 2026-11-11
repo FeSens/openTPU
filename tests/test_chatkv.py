@@ -67,6 +67,8 @@ def _model(case, request=None):
         spec = dataclasses.replace(spec, pair_loop=True)
     if case == "qwen35-design":         # two slices
         return W, spec, device_config(spec, 512, rows=PREFILL_ROWS, lookup=True, S=2)
+    if case == "qwen35-st16":           # the DeltaNet states in 16 bits (Config.ST16)
+        return W, spec, dataclasses.replace(CFG, ST16="e6m9")
     return W, spec, CFG
 
 
@@ -113,7 +115,8 @@ TURNS = [(0, 30, 21, 6), (21, 7, 26, 5), (30, 12, 35, 4)]
 
 @pytest.mark.parametrize("case, resident", [
     ("qwen3", False), ("qwen3", True), ("smollm3", True), ("lfm2", False), ("lfm2", True),
-    ("qwen35", False), ("qwen35", True), ("qwen35-grouped", True), ("qwen35-design", False)])
+    ("qwen35", False), ("qwen35", True), ("qwen35-grouped", True), ("qwen35-design", False),
+    ("qwen35-st16", False), ("qwen35-st16", True)])
 def test_rollback_then_feed_is_a_fresh_prefill(case, resident, request):
     """A context rolled back (to the common prefix, or a stateful model's snapshot at or
     before it) and fed the rest gives a fresh engine's logits, next greedy tokens and state
@@ -252,7 +255,7 @@ def test_gemma4_rollback_inside_and_beyond_the_slack(gemma):
 
 
 # --------------------------------------------------------------------------------- MTP
-@pytest.mark.parametrize("where", ["device", "host"])
+@pytest.mark.parametrize("where", ["device", "host", "device-st16"])
 def test_mtp_rollback_is_plain_greedy(where, monkeypatch):
     """MTPDecoder.rollback / snapshot (the committed slot; one token before the change, so that
     the MTP layer's row there takes the new token) with its prefill in two parts (follow: the
@@ -260,9 +263,12 @@ def test_mtp_rollback_is_plain_greedy(where, monkeypatch):
     all right (each iteration commits the other slot: a turn's restore goes to the slot its
     snapshot did not come from): each turn's first token and draft, the MTP layer's KV cache
     and the committed states and windows equal a fresh MTP prefill's of the turn's rendering,
-    and its tokens plain greedy decode's; the snapshots on the device and on the host."""
+    and its tokens plain greedy decode's; the snapshots on the device and on the host;
+    device-st16: the states in 16 bits (Config.ST16 e6m9)."""
     if where == "host":
         monkeypatch.setattr(SN.Snapshots, "area", staticmethod(lambda image, cfg, n: None))
+    CFG = dataclasses.replace(globals()["CFG"], ST16="e6m9" if where == "device-st16" else "")
+    where = where.partition("-")[0]
     _, W, spec = _tiny_model(8, init=0.2)
     W = _mtp_weights(W, spec)
     eng = mtp_engine(spec, W, cap=512, cfg=CFG, snapshots=1)

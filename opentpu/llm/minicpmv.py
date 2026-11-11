@@ -577,7 +577,12 @@ class VisionImage:
     laid out after each layer's vectors, the table holding their addresses, written at build)
     or staged into expert slots by the host (resident False: the pieces' bytes are the pool's
     entries, the table written per image). table False: static addresses, the resident
-    pieces' (the reference the table runs are checked against, bit for bit)."""
+    pieces' (the reference the table runs are checked against, bit for bit).
+
+    Under GALL (compiler.gall_wg: every MM in groups) the pieces are grouped (kernels/pieces.py
+    wg; with the channel hash the resident ones hashed at their addresses), a head's q / k / v
+    rows padded to whole groups (dq rows a head, zero rows past the head's), and the KV
+    scratch in groups (kernels.vit.VitKV wg)."""
 
     CHUNK = 256         # the MLPs' F chunk (a 4-bit W2's column slices: whole 2D)
     WCHUNK = 512        # the window merger's (17216 -> 17408)
@@ -590,9 +595,11 @@ class VisionImage:
     def __init__(self, vs: VisionSpec, cfg, b, nmax: int = 2048, out_rows: int = 2048,
                  fmt: str = "int8", max_piece: int | None = None, resident: bool = True,
                  table: bool = True):
+        from ..compiler import gall_wg
         from ..kernels import pieces as PC
         D = cfg.D
         self.vs, self.cfg = vs, cfg
+        self.wg = wg = gall_wg(cfg)
         self.tables = {}                # the host's tables (build: "pos", the position table)
         self.fmts = self.formats(fmt)
         F_ = self.fmts
@@ -611,12 +618,14 @@ class VisionImage:
         HP = H * self.dp
 
         def mat(n, k, f, unit, parts=False):
-            return PC.plan(n, k, f, D, unit, mp, parts)
+            return PC.plan(n, k, f, D, unit, mp, parts, wg)
         dh = vs.head_dim
+        # a head's q / k / v rows (in groups: padded to whole groups)
+        self.dq = dq = _up(dh, Q.grp_r(F_["attn"], wg))
         # the matrices in pieces of whole units: a head's rows (q, k, v), D rows (out, the
         # embedding: a piece's output columns an MM), MLP chunks of rows (W1), column parts (W2)
-        self.lmats = dict(wq=mat(C, C, F_["attn"], dh), wk=mat(C, C, F_["attn"], dh),
-                          wv=mat(C, C, F_["attn"], dh), wo=mat(C, C, F_["attn"], D),
+        self.lmats = dict(wq=mat(H * dq, C, F_["attn"], dq), wk=mat(H * dq, C, F_["attn"], dq),
+                          wv=mat(H * dq, C, F_["attn"], dq), wo=mat(C, C, F_["attn"], D),
                           w1=mat(self.F, C, F_["mlp"], self.CHUNK),
                           w2=mat(C, self.F, F_["mlp"], self.CHUNK, parts=True))
         self.mmats = {"wm": dict(w1=mat(self.FW, 4 * C, F_["wm"], self.WUNIT),
@@ -646,7 +655,8 @@ class VisionImage:
             lb.next = _up(lb.next, 4096)
             for n in self.LMATS:
                 for i in range(len(self.lmats[n].groups)):
-                    self.lpiece[n, i] = lb.alloc(_up(self.lmats[n].piece_bytes(i), 128))
+                    lay = self.lmats[n]
+                    self.lpiece[n, i] = lb.alloc(_up(lay.piece_bytes(i), lay.unit))
         self.lstride = _up(lb.next, 4096)
         self.layer0 = _up(b.next, 4096)
         b.next = self.layer0 + (vs.layers + 1) * self.lstride
@@ -663,11 +673,13 @@ class VisionImage:
             b.next = _up(b.next, 4096)
             for m in ("wm", "proj"):
                 for n in ("w1", "w2"):
-                    for i in range(len(self.mmats[m][n].groups)):
-                        self.mpiece[m, n, i] = b.alloc(_up(self.mmats[m][n].piece_bytes(i),
-                                                           128))
+                    lay = self.mmats[m][n]
+                    for i in range(len(lay.groups)):
+                        b.next = _up(b.next, lay.unit)
+                        self.mpiece[m, n, i] = b.alloc(_up(lay.piece_bytes(i), lay.unit))
             for i in range(len(self.emat.groups)):
-                self.mpiece["emb", i] = b.alloc(_up(self.emat.piece_bytes(i), 128))
+                b.next = _up(b.next, self.emat.unit)
+                self.mpiece["emb", i] = b.alloc(_up(self.emat.piece_bytes(i), self.emat.unit))
         self.weights_end = b.next
         # the RLD bound of a piece's address: the resident pieces' span (set_bound: the slots')
         self.bound = (self.layer0, max(self.weights_end - 1, self.layer0))
@@ -794,12 +806,12 @@ class VisionImage:
         from .qwen3 import _tdesc as t
         w, n, C = self.work, self.nmax, self.C
         return SimpleNamespace(
-            C=C, heads=self.heads, dp=self.dp, dv=self.dv,
+            C=C, heads=self.heads, dp=self.dp, dv=self.dv, dq=self.dq,
             P=t(w["P"], (n, self.KP)), E=t(w["E"], (n, C)), X=t(w["X"], (n, C)),
             X2=t(w["X2"], (n // 4, C)),
             Q=[t(w["Q"] + 4 * h * n * self.dp, (n, self.dp)) for h in range(self.heads)],
             O=t(w["O"], (n, C)), vis=t(w["vis"], (self.out_rows, self.vs.out)),
-            kv=VitKV(self.kvh, n, self.dp, self.cfg.D, 1, 0, dv=self.dv),
+            kv=VitKV(self.kvh, n, self.dp, self.cfg.D, 1, 0, dv=self.dv, wg=self.wg),
             emb=SimpleNamespace(wp=self._mat("emb", None, self.emat),
                                 bp=self._v(0, self.emb["bp"], C)),
             post=(self._v(0, self.post[0], C), self._v(0, self.post[1], C)))
@@ -820,7 +832,12 @@ class VisionImage:
             _, li, n = key
             p = f"{TOWER}vit_merger." if li == vs.layers else f"{TOWER}encoder.layers.{li}."
             if n in ("wq", "wk", "wv"):
-                return W[p + f"self_attn.{n[1]}_proj.weight"]
+                w = np.asarray(W[p + f"self_attn.{n[1]}_proj.weight"], f32)
+                if self.dq == vs.head_dim:
+                    return w
+                out = np.zeros((self.heads, self.dq, C), f32)   # (a head's rows: whole groups)
+                out[:, :vs.head_dim] = w.reshape(self.heads, vs.head_dim, C)
+                return out.reshape(-1, C)
             if n == "wo":
                 return W[p + "self_attn.out_proj.weight"]
             shape = (self.F, C) if n == "w1" else (C, self.F)
@@ -911,8 +928,11 @@ class VisionImage:
         for addr, v in self._vectors(W):
             put(addr, np.asarray(v, np.float32))
         if self.resident:
-            for a, p in zip(self.resident_addresses(), self.piece_bytes(W)):
-                put(int(a), p)
+            from ..kernels import pieces as PC
+            chash = self.wg > 1 and self.cfg.CHASH
+            for (_, lay, i), a, p in zip(self.pieces(), self.resident_addresses(),
+                                         self.piece_bytes(W)):
+                put(int(a), PC.hash_piece(lay, i, p, int(a)) if chash else p)
             put(self.table, self.resident_addresses())
         self.tables["pos"] = np.asarray(W[TOWER + "embeddings.position_embedding.weight"],
                                         np.float32)
@@ -1058,9 +1078,11 @@ class Spec(QW.Spec):
     def image(self, cfg, cap: int, batch: int = 1, rows: int = 1, wformat: str = "int8",
               head_format: str | None = None, lookup: bool | str = False,
               experts: int | None = None, embed_host: bool | None = None,
-              formats: str | None = None, prefill_rows: int | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, experts,
-                     embed_host, formats, prefill_rows)
+              formats: str | None = None, prefill_rows: int | None = None,
+              high: bool | None = None) -> "Image":
+        return QW.fit_high(lambda h: Image(self, cfg, cap, batch, rows, wformat, head_format,
+                                           lookup, experts, embed_host, formats, prefill_rows,
+                                           h), cfg, high)
 
 
 class Image(QW.Image):
@@ -1081,6 +1103,9 @@ class Image(QW.Image):
                 raise ValueError(f"vision pieces of up to {max(v.piece_sizes())} bytes, slots "
                                  f"of {L.slot_bytes}")
             v.set_bound(*L.slot_bounds)
+            if v.wg > 1 and self.cfg.CHASH:     # (the server hashes a piece's data in a slot)
+                G, pcs = L.layers * L.E, v.pieces()
+                self.entry_lanes = lambda g: pcs[g - G][1].data_regions(pcs[g - G][2])
 
     def check_room(self) -> None:
         """Staged vision's pieces against the expert slots past k a layer (ExpertServer.place's
@@ -1102,8 +1127,10 @@ class Image(QW.Image):
         staged = sp.vision is not None and sp.vision_staged and sp.moe is not None
         if staged:
             from . import moe as MO
+            from ..compiler import gall_wg
             mp = min(VisionImage.MAX_PIECE,
-                     MO.ExpertFormat(sp.hidden, sp.moe.ffn, self.cfg.D, self.wformat).nbytes)
+                     MO.ExpertFormat(sp.hidden, sp.moe.ffn, self.cfg.D, self.wformat,
+                                     gall_wg(self.cfg)).nbytes)
         self.vision = None if sp.vision is None else \
             VisionImage(sp.vision, self.cfg, b, nmax=sp.vision_patches, out_rows=sp.vision_rows,
                         fmt=sp.vision_fmt, resident=not staged, max_piece=mp)

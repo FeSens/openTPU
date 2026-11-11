@@ -186,7 +186,7 @@ is 63% of the cycles with the longest MXU gap (0.61M cycles) after the attention
 
 ## Measured: the full build at MCOLS 4 (se-sys `2f80230`, 2026-09-29)
 
-`make bit DDR=1066 AXI_BL=32 MCOLS=4 SE=v2`, CORE_MHZ 120.755, Vivado 2026.1 on omarchy (the
+`make bit DDR=1066 AXI_BL=32 MCOLS=4 SE=v2`, CORE_MHZ 120.755, Vivado 2026.1 on the build host (the
 stream engine v2 with its timing fixes, `202856d`, and `MXU_IMPL=2`). Timing not met: WNS
 -0.381 ns (fmax 115.4 MHz), TNS -312 ns on 2,320 endpoints, WHS +0.016 ns.
 

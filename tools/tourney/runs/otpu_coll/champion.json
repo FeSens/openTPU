@@ -9,7 +9,7 @@
  "logic_ns": 8.055,
  "fmax": 74.69375560203167,
  "backend": "yosys",
- "log": "/Users/bonetto/bonetto/openTPU/.claude/worktrees/agent-af485a5594cc0730a/build/tourney/otpu_coll/champ-9a8e6b170/otpu_coll/yosys.log",
+ "log": "/Users/user/openTPU/.claude/worktrees/agent-af485a5594cc0730a/build/tourney/otpu_coll/champ-9a8e6b170/otpu_coll/yosys.log",
  "area_eq": 1816.0,
  "parts": {
   "otpu_coll": {

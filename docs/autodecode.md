@@ -23,7 +23,7 @@ eng.generate_card(tok, n, stop_ids=None, on_token=None, stop=None,     # opentpu
 
 ## The gap it removes
 
-Production image `0f3a0000` at 133.33 MHz, measured on opentpu with `tools/decode_profile.py`
+Production image `0f3a0000` at 133.33 MHz, measured on the card host with `tools/decode_profile.py`
 (96 greedy tokens, 4-bit weights, streamed logits). "Host path" is the host's critical path
 per token: from HALTED seen to RUN written, while the card idles.
 
@@ -152,7 +152,12 @@ ARGMAX and RLD. No new unit is needed.
   and l·R for l < 0, as Hugging Face computes it. The card marks each token it generates
   itself.
 - **Store and block maxima.** The chunk's logits go to DRAM (`lg`), and the maxima of its
-  64-wide blocks go to TMEM.
+  64-wide blocks go to TMEM. A chunk starts on a block boundary, so each maximum is over the
+  64 logits its block's gather reads: `qwen3.head_rows_chunk` sizes the chunks in whole
+  blocks, and the sampler refuses a chunk that starts elsewhere. (x2's batched step of three
+  rows had chunks of 5,456 logits, 85 blocks and 16. Its maxima from the second chunk on were
+  of other logits, and its sampled rows picked from the wrong top k: the B = 4 card window,
+  2026-11-05.)
 
 **Then the token:**
 
@@ -293,11 +298,11 @@ process lets the card go (docs/host.md, "Ending a run").
 
   About 0.6% of the device's LUTs. otpu_slice's RLD reader and CHAIN FSM (about 100 FF,
   3 DSPs) are not in a part.
-- **Dev build** (waitw be824d5: this and WAITW, FAST=1 at 100 MHz, omarchy 2026-09-30,
+- **Dev build** (waitw be824d5: this and WAITW, FAST=1 at 100 MHz, the build host 2026-09-30,
   `~/otpu-build/deploy_adw100_be824d5`): timing met, WNS +0.091 ns, WHS +0.016 ns (core
   +0.096, LiteDRAM +0.091); LUT 162,441 (54.4%), FF 132,924, slices 71.9%, BRAM 607.5, DSP
   716.
-- **Card** (the dev build on opentpu, 2026-09-30, `tools/qual/qual.sh fast`, identity
+- **Card** (the dev build on the card host, 2026-09-30, `tools/qual/qual.sh fast`, identity
   BUILD_ID be824d57, 100 MHz, CAPS bits 30 and 31): 42 PASS, 0 FAIL in 61 min. The decode
   loop on the card gave the ISA simulator's tokens in 6/6 runs (Qwen3, LFM2 and Qwen3.5, int8
   and fp4). WAITW on the host's writes: 200 rounds, 16..32768 words, 30,927..2,124,512 cycles;
@@ -312,7 +317,7 @@ process lets the card go (docs/host.md, "Ending a run").
   | Qwen3.5-0.8B | 21.30 / 21.49 (-0.9%) | 21.03 / 21.70 (-3.1%) | 21.03 / 21.58 (-2.6%) |
 
   The card loop's wall counts from the host's pick of the first token, so it includes the
-  run's start once per reply: the bucket's compile (on the Mac, bucket 1: 17-27 ms for Qwen3,
+  run's start once per reply: the bucket's compile (on a laptop, bucket 1: 17-27 ms for Qwen3,
   35-53 ms for LFM2, 54-101 ms for Qwen3.5), the program's upload and the sampler's inputs.
   The differences above are 47-140 ms per reply, the same order. decode_profile now also
   prints the rate from the card's first token to its last, and the start with its compile, to

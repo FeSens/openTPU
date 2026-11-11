@@ -9,7 +9,7 @@
  "logic_ns": 4.394,
  "fmax": 132.7950706469776,
  "backend": "yosys",
- "log": "/Users/bonetto/bonetto/openTPU/build/tourney/otpu_quant/champ-f763376f8/otpu_quant/yosys.log",
+ "log": "/Users/user/openTPU/build/tourney/otpu_quant/champ-f763376f8/otpu_quant/yosys.log",
  "area_eq": 14091.0,
  "parts": {
   "otpu_quant": {

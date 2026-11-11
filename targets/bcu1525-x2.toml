@@ -1,0 +1,209 @@
+# Two BCU1525 cards of bcu1525-s2's (a slice a die, two DDR4-2400 DIMMs a slice), linked by QSFP28
+# (Aurora 64B/66B, 4 lanes a cable): four slices tensor-parallel, global slices 2 c and 2 c + 1 on
+# card c, each slice exactly bcu1525-s2's (WIN 32, SEXACT, KT, BHW 33, 8 channels on its two DIMMs:
+# 38.4 GB/s a slice, 153.6 the system). Each card runs the two-slice design with the link port
+# (docs/x2.md): its CFG_SLICES 2, the host's X2_CARD register its
+# CARD_ID and NCARDS (opentpu.host.cards). The compiler sees S = 4: one compile, card c loading
+# slices 2 c and 2 c + 1's programs and DRAM shards ([platform] cards). Built at 150 MHz and
+# run on two cards (docs/x2.md section 6); the board model's projection (x2-proj: one hub for the
+# two cards, +coll_xlat) and the two-board co-simulation run it too.
+[target]
+name = "bcu1525-x2"
+kind = "fpga"
+platform_id = 7
+description = "Two BCU1525 at WG 8, two slices each over QSFP28: 2 x xcvu9p, 8 x DDR4-2400 UDIMM (MIG), XDMA; 4 slices x 8 channels, 2 DIMMs a slice, 2 slices a card"
+
+[arch]
+S = 4                           # two cards of two slices, a slice a die, two DIMMs each
+D = 128
+MCOLS = 8                       # 8 physical MXU columns, 8 weight rows a step (WG 8)
+WG = 8
+ACT_BLOCKS = 128
+ACT_ROWS = 16
+TMEM_WORDS = 131072
+IMEM_WORDS = 32768
+AW = 36                         # DRAM addresses of 36 bits (Phase A,
+#                                 docs/bcu1525_wg.md): 64 GB later at the same AW
+DRAM_BYTES = 17179869184        # 16 GiB a slice: its 8 channels' 2 GiB, all of its two 8 GB DIMMs
+#                                 (64 GB DIMMs: 34359738368, channel_bytes 4294967296)
+BHW = 33                        # the bank-half window (otpu_mig_pair BHW 30 at four channels a
+#                                 DIMM): the slice's first 8 GiB, what a decode writes in its lower
+#                                 4 GiB on the banks with the DIMMs' bank-high bit 0, the DeltaNet
+#                                 mixers' weights in its upper 4 on the others, every other weight
+#                                 and a resident pool from 8 GiB (bcu1525-wg:bhw's; one bitstream
+#                                 for every model: no S = 2 build without it)
+LANES = 8
+PAIR = false                    # WG > 1: every MM in groups (GALL)
+DSTEP = true
+STREAM = true
+SEQ_WC = true
+OUTER = false                   # DeltaNet runs DSTEP, no VOP OUTER
+DSTEP2 = true
+SEXACT = true                   # S = 1's DeltaNet head groups and dense MLP chunks over the slices:
+#                                 the S = 2 programs give S = 1's results bit for bit, one reference
+#                                 set (qwen35.s_exact_on; a compile choice, not in the CFG_HASH)
+KT = true                       # MM's K tail (CAPS2 bit5, docs/isa.md "K tail"): GPT-OSS's
+#                                 2880-wide K at S = 2 too; one bitstream for every model (the
+#                                 other models' programs are KT off's word for word)
+
+[uarch]
+MXU_IMPL = 2
+MXU_CL = 16
+MXU_E = 8
+VPU_CL = 2
+ULANES = 8
+TMEM_IMPL = 3                   # one copy, the card m8's pick too
+TMEM_NSB = 2
+TMEM_RPL = true
+TMEM_TDP = true
+TMEM_GST = true
+TMEM_PMP = 1                    # pumped at 2x (core_clk2x: 300 MHz at 150, the bridges' aclk)
+TMEM_STYLE = "ultra"
+IMEM_STYLE = "block"
+IMEM_WC_STYLE = "ultra"
+ACT_UCOLS = 0
+MXU_RF_STYLE = "distributed"
+RPB = 0
+WPB = 1
+WIN = 32                        # (SEQ_WC: Config.WC_WIN 32, the entries' counts saturate at 15)
+FIFO_DEPTH = 2048               # the MXU's chunk FIFO, its lanes in UltraRAM
+MXU_FIFO_STYLE = "ultra"
+MXU_QD = 4
+QUANT_R1 = true
+QUANT_PW = 2
+TRACE_DEPTH = 16384             # the VU9P has room for the trace buffer
+PQ_WIN = 1024
+CHASH = true
+NAT_APF = 8
+NAT_AD = 16
+NAT_RD = 16
+NAT_WPOST = true
+NAT_SWG = true
+NAT_FILL = false                # the MIG takes WSTRB (DM_NO_DBI: the DIMMs' DM pins)
+NAT_XPOST = true
+NAT_RHB = true
+NAT_XSTG = 2                    # the adapters beside the slice (SLR1); the channels' AXI halves
+NAT_XSTG_P = 2                  #   go to their DIMMs' SLRs inside the bridges (otpu_hbm_ch N)
+SE_R = 2                        # two row groups on the stream engine (f150s2, f150s2d on the card)
+DMA_DEPTH = 512                 # a DSTEP's read-ahead: 29 BRAM18 at any depth up to 512 (f150s2d)
+COLL_PIPE = true                # the collective hub's reads in flight, the round trip's (otpu_coll_hub
+#                                 NR: a GATHER at LANES words a cycle, where one read in flight
+#                                 took 16 + 1.125 cycles a word on a two-slice build, 2026-10-24)
+XRS = 2                         # register stages each way between a slice and the control block / the
+#                                 hub: one each side of the crossing (each slice a die from them)
+
+[tech]
+family = "xilinxus"
+part = "xcvu9p-fsgd2104-2L-e"
+vendor = "xilinx"
+
+[platform]
+board = "bcu1525-wg"
+core_mhz = 100.0                # development builds first
+mem = "ddr4"
+mem_mts = 2400
+mem_ctrl = "mig"                # AMD's DDR4 IP, AXI4 512 bits at 300 MHz a DIMM
+hostcal = false
+channels_per_slice = 8
+channel_bytes = 2147483648      # a virtual channel, a quarter DIMM: the host's DMA reaches board
+                                # channel g = 8 s + j at g x this; DIMM slot g >> 2's DIMM at its
+                                # byte {off[30:12], g & 3, off[11:0]}
+beat_bytes = 128
+host = "pcie"
+pcie_gen = 3
+pcie_lanes = 16                 # (a card's best: a card in a chipset slot runs Gen2 x4)
+cards = 2                       # global slices 2 c and 2 c + 1 on card c (opentpu.target.cards)
+# The co-simulation's channel model per virtual channel: a quarter DIMM's 19.2 GB/s at 95% (page
+# misses, turnarounds), DDR4 8 Gb refresh (tRFC 350 ns every tREFI 7.8 us) on top, ~250 ns from
+# the bridge's command to its data (the MIG, the crossings). Estimates (the board model,
+# tb_bcuwg at S 2, is the judge).
+sim_ch_gbps = 4.56
+sim_lat_ns = 250
+sim_refi_ns = 7800
+sim_rfc_ns = 350
+
+# MM's K tail (docs/weight_groups.md): otpu_mxu KT, the compiler's paired
+# operands where K ends in the middle of a block (GPT-OSS's hidden 2880; at S = 2 W_gate's and
+# W_up's K, W_down's last part's 64 of 128, as at S = 1). The target's default; kt is its alias
+# (bcu1525-s2:kt, the name today's runs used)
+[variants.kt]
+KT = true
+
+# The DeltaNet states in 16 bits (e6m9), bcu1525-s2:st16's: the fused two-slice build each card runs
+# (s2r150)
+[variants.st16]
+ST16 = "e6m9"
+
+# wmx: st16 with the wider MXU and the instruction cache (docs/wide_mxu.md):
+# the MXU's array pumped on core_clk2x (otpu_mxu PUMP: two activation rows a pass, a prefill's MMs
+# and a long context's attention at half the passes), the VPU's composites in two passes (VPU_CNS
+# 5: EXP2 / EXP2SUB / RSQRT / LOG2 at 4 columns a cycle), IMEM an instruction cache over the
+# program in DRAM (bcu1525-wg:ic's: 64 lines, programs to 16384 instructions). Bit-exact with st16
+[variants.wmx]
+ST16 = "e6m9"
+ICACHE = true
+IMEM_WORDS = 131072
+IMEM_WC_STYLE = "block"
+IC_LINES = 64
+VPU_CNS = 5
+MXU_PUMP = true
+SPLITQ = true                   # chunked DeltaNet's (docs/deltanet_chunk.md):
+#                                 QACT / QST flag LO, the split's lo byte (otpu_quant SPLIT);
+#                                 yosys +1,164 LUT / +129 FF a slice
+QUANT_SWW = 4                   # QST pass 1 at 16 bytes a cycle in rows mode (otpu_quant SWW 4);
+#                                 +279 LUT / +21 FF / +266 SRL quant, +430 FF xstg / native / SW
+ST16S = true                    # STREAM's ST16R / ST16W: the state's fp32 <-> e6m9 copies (otpu_dma
+#                                 ST16S); +25 LUT / +12 FF
+QHL = true                      # QACT flag HL: a split stationary's hi and lo from one QACT
+#                                 (otpu_quant QHL): the chunked core's Q ledger 6,020 -> 5,060
+#                                 a row at R 512 (C 64); yosys +87 LUT / +38 FF quant
+WPB = 2                         # TMEM's second write a bank (port B at the odd fast edge)
+FSUM = true                     # EXP2SUB's fused row sums (otpu_vpu FSUM: the take an empty VOP)
+VSIG = true                     # VOP SIGMOID / SILU (otpu_se_comp SIG: four passes, not 6 / 7)
+VMAC = true                     # VOP MAC (otpu_vpu MAC: the DeltaNet's convolution a pass a tap)
+DMA_LDQ = 2                     # the DMA's second command (otpu_dma LDQ 2: an LD's DRAM reads under
+#                                 the LD or ST before it; docs/dma_ldq.md)
+KVSPLIT = 12                    # decode buckets of 12 attention blocks or more (position 2816 on)
+#                                 split a KV head copied on two slices (n_kv 2: Qwen3.6-35B-A3B's)
+#                                 by block over its copies (qwen3.kv_split; a compile choice, not
+#                                 in the CFG_HASH): q36-4 x2 co-sim r31000 263,983 -> 254,777
+#                                 cycles, r4000 191,549 -> 190,944, r1000 182,713 -> 183,560
+#                                 (break-even about 2,750 positions); r60 unchanged. wmx's alone:
+#                                 st16's programs (and their refs) stay as they are
+
+# b2: B2, the build after B1 (x2:wmx, docs/bcu1525_wg.md): wmx's MXU, IMEM and
+# chunked DeltaNet's quantizer, with the VPU's composites back at three stages (VPU_CNS 3, option C:
+# FSUM stays with CNS 5, VSIG kept at CNS 3 on otpu_se_comp's path, vsigc; -8.6K LUT a slice SLR);
+# quantize-once (QONCE: QACT flag ST and LDA, the expert run's rows quantized once, qonce-lda);
+# the DMA's second command (DMA_LDQ 2: an LD's DRAM reads under the command before it, ldq2-ss);
+# MM SPL (SPLMM: the chunked core's split terms one MM each, mxufold); QST rows through the row
+# buffer (QUANT_QSTB) and QST HL
+# (QSTHL: a split operand's hi and lo from one read, 64 x 128 ROW 34.9 -> 19.8 cycles a row);
+# VOP OUTER of decay one on MAC's datapath (OUTER1: the chunked core's T loop a VOP a step, yosys
+# ~0); one more register stage each way between a slice and its adapter (NAT_XSTG 3: the adapter
+# beside the slice's die moves into SLR1, umem; q36-4 decode -0.26 % r60, -0.06 % r31000). wmx
+# stays B1's (its programs run on B1's card: no QSTB, QSTHL or OUTER1 there)
+[variants.b2]
+ST16 = "e6m9"
+ICACHE = true
+IMEM_WORDS = 131072
+IMEM_WC_STYLE = "block"
+IC_LINES = 64
+VPU_CNS = 3                     # option C: the composites in three stages, VSIG on the SE path
+MXU_PUMP = true
+SPLITQ = true
+QUANT_SWW = 4                   # (QUANT_QSTB's: 4 x SWW = ULANES x QUANT_PW)
+QUANT_QSTB = 1
+ST16S = true
+QHL = true
+QSTHL = true
+WPB = 2
+VSIG = true                     # VOP SIGMOID / SILU at CNS 3 (option C, vsigc)
+VMAC = true
+OUTER1 = true
+QONCE = true                    # LDA: QACT flag ST and LDA, the expert run's rows quantized once
+DMA_LDQ = 2                     # LDQ2: the DMA's second command (otpu_dma LDQ 2)
+SPLMM = true                    # MM SPL: the chunked DeltaNet core's split triples and pairs one MM
+#                                 each (otpu_mxu SPL; docs/deltanet_chunk.md)
+NAT_XSTG = 3
+KVSPLIT = 12

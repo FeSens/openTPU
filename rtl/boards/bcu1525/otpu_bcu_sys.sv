@@ -44,7 +44,7 @@ module otpu_bcu_sys #(
   parameter bit DSTEP      = 1'b1,
   parameter int CORE_KHZ   = 100000,
   parameter logic [31:0] BUILD_ID = 32'h0,
-  parameter int DDR_MTS    = 1600,
+  parameter int DDR_MTS    = 1200,
   parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait entries (WAITC, docs/seq_vpu.md; CFG_UARCH bit24)
   parameter int PLATFORM   = 2,
   parameter logic [31:0] ARCH_HASH = 32'h0,
@@ -54,13 +54,14 @@ module otpu_bcu_sys #(
   parameter logic [3:0] SLL = 4'b1010,
   parameter int NC         = 2 * S          // memory channels (two per slice)
 ) (
-  // core clock and reset (synchronous, high), XDMA's clock and reset
+  // core clock and reset (synchronous, high), XDMA's clock and its reset per channel (the top's:
+  // XDMA's, or the channel's DIMM off)
   input  logic                    clk,
   input  logic                    clk_f,        // TMEM_PMP 1: 2 x clk, rising with it (otpu_board)
   input  logic                    rst,
   input  logic                    ctl_mrst,     // the control master's reset, in clk (otpu_board)
   input  logic                    xclk,
-  input  logic                    xrst,
+  input  logic [NC-1:0]           xrst,
   // board status and pins (otpu_board)
   input  logic [NC-1:0]           calib,
   input  logic [NC-1:0]           ded,
@@ -173,7 +174,7 @@ module otpu_bcu_sys #(
       .n_wvalid(n_wvalid[j]), .n_wready(n_wready[j]), .n_wdata(n_wdata[j]),
       .n_wmask(n_wmask[j]), .n_rvalid(n_rvalid[j]), .n_rdata(n_rdata[j]),
       .n_wdone(n_wdone[j]), .n_err(n_err[j]),
-      .xclk, .xrst,
+      .xclk, .xrst(xrst[j]),
       .x_awvalid(x_awvalid[j]), .x_awready(x_awready[j]), .x_awid(1'b0),
       .x_awaddr({1'b0, x_awaddr[j]}), .x_awlen(x_awlen[j]),
       .x_wvalid(x_wvalid[j]), .x_wready(x_wready[j]), .x_wdata(x_wdata[j]),
@@ -192,13 +193,14 @@ module otpu_bcu_sys #(
   end
 
   // HAS_I2C 0: the board's I2C bus (through its mux) is wired to bus 0's pins, but CAPS bit2 stays
-  // clear (the host's I2C tools expect the YPCB's LM73 and PCIe SMBus there)
+  // clear (the host's I2C tools expect the YPCB's LM73 and PCIe SMBus there). HAS_BMC: CAPS2 bit4,
+  // the top's UART bridge to the board management controller (otpu_bmc_uart)
   otpu_board #(.S(S), .D(D), .MCOLS(MCOLS), .ACT_ROWS(ACT_ROWS), .ACT_BLOCKS(ACT_BLOCKS),
                .TMEM_WORDS(TMEM_WORDS), .IMEM_WORDS(IMEM_WORDS), .FIFO_DEPTH(FIFO_DEPTH),
                .LANES(LANES), .WIN(WIN), .RPB(RPB), .WPB(WPB), .MXU_IMPL(MXU_IMPL),
                .MXU_CL(MXU_CL), .VPU_CL(VPU_CL), .ULANES(ULANES), .CORE_KHZ(CORE_KHZ),
                .BUILD_ID(BUILD_ID), .DDR_MTS(DDR_MTS), .TRACE_DEPTH(TRACE_DEPTH),
-               .PQ_WIN(PQ_WIN), .HAS_I2C(1'b0), .CHASH(CHASH), .DSTEP(DSTEP),
+               .PQ_WIN(PQ_WIN), .HAS_I2C(1'b0), .HAS_BMC(1'b1), .CHASH(CHASH), .DSTEP(DSTEP),
                .HOSTCAL(1'b0), .SEQ_WC(SEQ_WC), .PLATFORM(PLATFORM), .ARCH_HASH(ARCH_HASH),
                .TMEM_IMPL(TMEM_IMPL), .TMEM_RQ(TMEM_RQ),
                .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH), .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP),
@@ -209,5 +211,7 @@ module otpu_bcu_sys #(
     .s_ctl_arready, .s_ctl_rdata, .s_ctl_rresp, .s_ctl_rvalid, .s_ctl_rready,
     .n_cvalid(b_cvalid), .n_cready(b_cready), .n_cwe(b_cwe), .n_caddr(b_caddr),
     .n_wvalid(b_wvalid), .n_wready(b_wready), .n_wdata(b_wdata), .n_wmask(b_wmask),
-    .n_rvalid(b_rvalid), .n_rdata(b_rdata), .n_wdone(b_wdone), .n_err(b_err));
+    .n_rvalid(b_rvalid), .n_rdata(b_rdata), .n_wdone(b_wdone), .n_wfree('0),   // (NAT_WPOST only)
+    .n_err(b_err), .n_csrc(), .n_cslot(), .p_clk(clk), .p_we('0), .p_q('0), .p_slot('0),
+    .p_d('0), .p_cntg('0));                                  // (NAT_XPOST only)
 endmodule

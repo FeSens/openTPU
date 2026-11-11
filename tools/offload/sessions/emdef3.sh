@@ -22,7 +22,7 @@
 #    tokens must equal the warm-up's, and its first two turns the ISA references';
 # 5. selftest; the summary: per model and turn the arms' TTFT, N - P and X - P per pair, the calls, and each arm's
 #    layer-major calls' host time a miss (serve_s / misses: a gap the host's, not the card's).
-# The swap's rule (the lead's): N no worse than P at every turn and faster on the long ones, token-exact.
+# The swap's rule : N no worse than P at every turn and faster on the long ones, token-exact.
 # A build other than EXPECT, a failed selftest, another configuration, a FAIL, a failed or timed-out run or a mismatch
 # stops it (then the final selftest). About 40 min.
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash $T/tools/offload/sessions/emdef3.sh

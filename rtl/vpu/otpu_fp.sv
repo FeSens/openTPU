@@ -419,6 +419,73 @@ package otpu_fp;
     return q8_s2(q8_s1(x_in));
   endfunction
 
+  // The split's lo byte (QACT / QST flag LO, otpu_quant SPLIT; fp32.q8lo): lo = sat127(rint(256 x)
+  // - 256 q8(x)), NaN 0. Stage 1: floor(256 |x|) in 16 bits for e 118 .. 133 (below: 0, above:
+  // saturated) and its guard and sticky bits, the shift decoded from e by a table (otpu_quant's
+  // qq8_s1 does the same for q8); stage 2: lo, or q8 from the same (qlo_q8). No ftz: a denormal's
+  // e is 0 (zero).
+  typedef struct packed {
+    logic        zero, sat, s;
+    logic [15:0] ip;
+    logic        g, st;
+  } lo_mid_t;
+  function automatic lo_mid_t qlo_s1(input f32_t x);
+    lo_mid_t q;
+    logic [7:0]  e;
+    logic [23:0] m;
+    logic [4:0]  sh, k;
+    e = x[30:23];
+    m = {1'b1, x[22:0]};
+    q = '0;
+    q.s = x[31];
+    q.zero = (e < 8'd118) || is_nan(x);
+    q.sat = (e >= 8'd134);
+    sh = 5'd24; k = 5'd23;                      // zero or sat
+    for (int c = 118; c < 134; c++)
+      if (e == 8'(c)) begin sh = 5'(142 - c); k = 5'(141 - c); end
+    q.ip = 16'(m >> sh);
+    q.g = m[k];
+    q.st = |(m & ~(24'hFF_FFFF << k));
+    return q;
+  endfunction
+  // lo = sat127(rint(256 |p|) - 256 rint(|p|)), signed as p: the rounded low byte (0 .. 256),
+  // less 256 when |p| rounds up to an integer below 127 (at 127 q8 saturates: lo = the byte)
+  function automatic logic [7:0] qlo_s2(input lo_mid_t q);
+    logic [8:0] f;
+    logic       up;
+    logic signed [9:0] v;
+    if (q.zero) return 8'd0;
+    if (q.sat) return q.s ? 8'h81 : 8'h7F;
+    f = 9'(q.ip[7:0]) + 9'(q.g && (q.st || q.ip[0]));
+    up = q.ip[7] && ((|q.ip[6:0]) || q.g || q.st || q.ip[8]);
+    v = (up && q.ip[15:8] != 8'd127) ? $signed(10'(f)) - 10'sd256 : $signed(10'(f));
+    if (v > 10'sd127) v = 10'sd127;
+    if (v < -10'sd127) v = -10'sd127;
+    return q.s ? 8'(-v) : 8'(v);
+  endfunction
+  // q8 from the same: |p|'s integer ip[15:8], its guard ip[7], the rest sticky
+  function automatic logic [7:0] qlo_q8(input lo_mid_t q);
+    logic [7:0] ip;
+    if (q.zero) return 8'd0;
+    if (q.sat) return q.s ? 8'h81 : 8'h7F;
+    ip = q.ip[15:8];
+    if (q.ip[7] && ((|q.ip[6:0]) || q.g || q.st || ip[0])) ip = ip + 8'd1;
+    if (ip > 8'd127) ip = 8'd127;
+    return q.s ? 8'(-ip) : ip;
+  endfunction
+  // The lo part's scale S * 2^-8 (fp_mul's: flushed below the normals after rounding, a NaN
+  // canonical, inf kept). At exponent 8 only the all-ones mantissa rounds up to the smallest normal
+  function automatic f32_t sc_lo(input f32_t s);
+    if (s[30:23] == 8'hFF) return (s[22:0] != 0) ? F_NAN : s;
+    if (s[30:23] == 8'd8 && (&s[22:0])) return {s[31], 8'd1, 23'd0};
+    if (s[30:23] <= 8'd8) return {s[31], 31'd0};
+    return {s[31], s[30:23] - 8'd8, s[22:0]};
+  endfunction
+
+  function automatic logic [7:0] q8lo(input f32_t x_in);
+    return qlo_s2(qlo_s1(x_in));
+  endfunction
+
   // floor() of x in [-126, 128) as an integer.
   function automatic int ffloor(input f32_t x_in);
     f32_t x;

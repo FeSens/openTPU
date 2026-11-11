@@ -126,8 +126,8 @@ default picks int8 whenever the image fits 4 GiB. The build
 quantizes the matrices in worker processes (`OTPU_BUILD_JOBS`; by default, since 2026-10-08,
 the host's CPUs, as many as the free memory holds at 1.5 GiB a worker; 4 before), the 4-bit
 ones through the image caches' disk cache (`opentpu/qcache.py`, [board.md](board.md); int8
-matrices and the PLE records are quantized at each build): 324 s cold on omarchy with 4
-workers. On 2026-10-08 (omarchy shared with other jobs) the default E2B image took 192 s cold
+matrices and the PLE records are quantized at each build): 324 s cold on the build host with 4
+workers. On 2026-10-08 (the build host shared with other jobs) the default E2B image took 192 s cold
 with main's 4 workers and 68 s with 8 and the 4-bit search on row pieces (`qcache.quantize_rows`),
 the same image byte for byte; the build's processes peaked at 7.9 and 10.1 GiB of anonymous
 memory. A built image is kept whole in the image cache (`opentpu/imgcache.py`, with its PLE
@@ -369,7 +369,7 @@ gemma-4-26B-A4B is the family's mixture of experts: 30 layers ((5 sliding + 1 gl
 hidden 2816, a dense GeGLU MLP (2112 wide) beside 128 routed experts (704 wide, top 8) in every
 layer, global layers with K = V and 2 KV heads of 512, no per-layer embeddings. Its experts
 stream from the host into slots on the card ([offload.md](offload.md), section 11). Numbers here
-are the base checkpoint's (gemma-4-26B-A4B), from omarchy, 2026-10-01; otpu-chat runs the
+are the base checkpoint's (gemma-4-26B-A4B), from the build host, 2026-10-01; otpu-chat runs the
 instruct checkpoint, gemma-4-26B-A4B-it (same architecture, formats and pool layout).
 
 **The reference.** `reference_logits` against Hugging Face in fp32 on a truncation of the
@@ -549,7 +549,7 @@ turn continued or rolled back to the reply's start through the sliding rings' sn
 logits a fresh engine's bit for bit) and `test_gemma4_instruct_templates` (the real tokenizers
 and templates, where models/ has them).
 
-On omarchy (transformers 5.17, PAIR / DSTEP / STREAM, with models/gemma-4-E2B-it and
+On the build host (transformers 5.17, PAIR / DSTEP / STREAM, with models/gemma-4-E2B-it and
 E4B-it, 2026-10-09, f4cdfffc): test_gemma4, test_chatkv, test_autodecode, test_validate,
 test_chatmoe, test_host and test_formats, the RTL tests included, 328 passed and 37 skipped (3
 need `--runslow`), in 2 h 2 min.

@@ -24,6 +24,13 @@
 // a load before, is taken for one of its rows; a LOAD restarts it. A HALT CHAIN reload that rst
 // interrupts (the host stopped the run) stops.
 //
+// ICACHE (otpu_seq; docs/icache.md): IMEM is an instruction cache over the program in DRAM. A
+// LOAD (and a HALT CHAIN's reload) copies nothing: once the DRAM has no read of the slice's in
+// flight and no line fill is under way, it gives the sequencer the program's address and length
+// and empties the cache (ic_inv). The sequencer's line fills are port B reads ahead of the DMA's
+// and the MXU's, with the DMA's tag; the memory returns port B's reads in order, so a fill's
+// chunks are told from the DMA's by their place in that order (ic_rv).
+//
 // HALT CHAIN (docs/isa.md): when the sequencer halts with CHAIN and the DRAM has no write
 // pending (wr_idle), the slice holds the sequencer and the units in reset (c_rst), loads the
 // chained program with the loader and releases them: the run goes on with the run's arguments
@@ -49,7 +56,17 @@ module otpu_slice
   parameter int MXU_IMPL   = 2,       // MXU dot product: 2 systolic, the only one (docs/mxu_systolic.md)
   parameter int MXU_CL     = 16,      // cascade chain length
   parameter int MXU_E      = 0,       // MXU epilogue lanes (0: MCOLS / 2; otpu_mxu E)
+  parameter int MXU_QD     = 2,       // MXU commands queued (otpu_mxu QD; 2..7)
+  parameter int WG         = 1,       // weight rows a group (otpu_mxu WG; docs/isa.md "Weight groups")
   parameter int QUANT_XD   = 1024,    // quantizer row buffer chunks (0: two passes over TMEM; otpu_quant XD)
+  parameter bit QUANT_R1   = 1'b0,    // RSCALE's row factor read once a row (otpu_quant R1; timing only)
+  parameter int QUANT_PW   = 1,       // a buffered QACT pass 1's chunks a cycle (otpu_quant PW; timing only)
+  parameter bit QUANT_SPLIT = 1'b0,   // QACT / QST flag LO: the split's lo part (otpu_quant SPLIT; Config.SPLITQ)
+  parameter bit QUANT_HL    = 1'b0,   // QACT flag HL: q and lo from one read (otpu_quant HL; Config.QHL)
+  parameter int QUANT_SWW  = 1,       // the SW port's words: QST pass 1's 4 x QUANT_SWW bytes a cycle (otpu_quant SWW; timing only)
+  parameter bit QUANT_QSTB  = 1'b0,   // QST rows through the row buffer (otpu_quant QSTB; timing only)
+  parameter bit QUANT_QSTHL = 1'b0,   // QST HL: a GRP ROW QST's hi and lo from one read (otpu_quant QSTHL; Config.QSTHL)
+  parameter bit QONCE      = 1'b0,    // QACT flag ST and LDA (otpu_quant, otpu_dma, otpu_actram DPORT, otpu_seq; Config.QONCE)
   parameter int VPU_CL     = (LANES >= 8) ? LANES / 4 : 1,  // VPU lanes with the composite functions
   parameter int ULANES     = LANES,   // TMEM lanes of the MXU and the quantizer (<= LANES)
   parameter int PQ_WIN     = 64,      // cycles per P/Q counter window (+bucket= in simulation)
@@ -76,14 +93,55 @@ module otpu_slice
   parameter int TMEM_PMP   = 0,       // TMEM_TDP: 1 the RAMs pumped at 2x on clk_f (otpu_tmem
                                       //   PMP: a write takes no read port), 2 their model at the
                                       //   core clock (simulation)
+  parameter string TMEM_STYLE = "block", // TMEM_PMP 1: the pumped RAMs' (otpu_tmem STYLE: "ultra")
+  parameter string IMEM_STYLE = "auto",  // IMEM's RAMs (otpu_seq STYLE: "ultra")
+  parameter string IMEM_WC_STYLE = "",   // its wait entries', if not IMEM_STYLE's (otpu_seq WSTYLE)
+  parameter string MXU_RF_STYLE = "block", // the MXU's result FIFO (otpu_mxu RF_STYLE:
+                                          //   "distributed")
+  parameter string MXU_FIFO_STYLE = "block", // the MXU's chunk FIFO lanes (otpu_mxu FIFO_STYLE:
+                                          //   "ultra")
+  parameter bit MXU_WASK   = 1'b1,    // XPOST, UltraRAM lanes: read stage by stage (otpu_mxu WASK)
+  parameter int MXU_RF_ROWS = 0,      // the MXU's result FIFO rows (otpu_mxu RF_ROWS; 0: its rule)
+  parameter bit MXU_BRAW   = 1'b1,    // WG > 1: column ends' B from raw scale (otpu_mxu BRAW)
+  parameter bit MXU_AASK   = 1'b1,    // WG > 1: ACT RAM read by chain stage (otpu_mxu AASK)
+  parameter int ACT_UCOLS  = 0,       // the ACT RAM's columns in UltraRAM (otpu_actram UCOLS)
   parameter int TMEM_PRK   = 0,       // TMEM_IMPL 3: the read ports' ranks (3 bits a port, port p
                                       //   at bit 3p; 0: PRANK3, below)
   parameter int TMEM_SDM   = -1,      // TMEM_TDP: the read ports' RAM sides (bit p: port p on
                                       //   port A; -1: TM_SIDED, below)
-  parameter bit SEQ_WC     = 1'b0     // EXPERIMENTAL: otpu_seq's wait counts (WAITC, docs/seq_vpu.md)
+  parameter bit SEQ_WC     = 1'b0,    // EXPERIMENTAL: otpu_seq's wait counts (WAITC, docs/seq_vpu.md)
+  parameter int NCH        = 2,       // the DRAM's channels and their beat bytes (otpu_native_dram:
+  parameter int CB         = 64,      //   port B's channel hash, port W's wide chunks of NCH x CB)
+  parameter int QB         = 6,       // a QST's footprint in beats of 2^QB bytes (otpu_seq QB): the
+                                      //   DRAM adapter's fill beat (otpu_board / otpu_top: CB where
+                                      //   it fills partial SW beats and CB > 64; else 64 bytes)
+  parameter int SE_R       = 0,       // streams on an engine of their own, SE_R rows a cycle
+                                      //   (otpu_se_eng; 0: the VPU's engine; docs/se_engine.md)
+  parameter int DMA_DEPTH  = 128,     // otpu_dma DEPTH: the LD chunk buffer, a DSTEP's read-ahead
+  parameter int DMA_LDQ    = 1,       // otpu_dma LDQ: 2, an LD's DRAM reads under the command before it
+  parameter int MXU_PUMP   = 0,       // the MXU's array pumped on clk_f (otpu_mxu PUMP)
+  parameter int VPU_FSUM   = 0,       // otpu_vpu FSUM: EXP2SUB's fused row sums (Config.FSUM)
+  parameter int VPU_SIG    = 0,       // otpu_vpu VSIG: VOP SIGMOID / SILU (Config.VSIG)
+  parameter int VPU_MAC    = 0,       // otpu_vpu MAC: VOP MAC (Config.VMAC)
+  parameter int VPU_OUTER1 = 0,       // otpu_vpu OUTER1: VOP OUTER decay one on MAC's (Config.OUTER1)
+  parameter int VPU_CNS    = 3,       // otpu_vpu CNS: the composites' stages per lane (3, or 5: two passes)
+  parameter bit OUTER      = 1'b1,    // VOP OUTER (otpu_vpu; 0: a VPU without it, Config.OUTER)
+  parameter bit XPOST      = 1'b0,    // WG > 1: port W's beats posted into the MXU's chunk FIFO by
+  parameter int XQB        = 0,       //   the channels (otpu_mxu XPOST, QB: 2^XQB writes a beat;
+  parameter bit CHASH      = 1'b1,    //   CHASH, the channels' hash: QST GRP's lanes, otpu_quant)
+  parameter bit DSTEP2     = 1'b0,    // DSTEP's pair (otpu_dma, otpu_se_tail; Config.DSTEP2)
+  parameter int ST16       = 0,       // a stream's DRAM state in 16 bits: 1 e6m9, 2 bf16 (otpu_dma; Config.ST16)
+  parameter bit ST16S      = 1'b0,    // with ST16: STREAM's flags ST16R / ST16W, one side alone (otpu_dma; Config.ST16S)
+  parameter bit KT         = 1'b0,    // WG > 1: MM's K tail (otpu_mxu KT; Config.KT)
+  parameter int MXU_SPL    = 0,       // WG > 1: MM SPL, a split's terms as one MM (otpu_mxu SPL; Config.SPLMM)
+  parameter int AW         = 32,      // DRAM byte address bits (otpu_seq AW; 36 the BCU1525's)
+  parameter bit ICACHE     = 1'b0,    // IMEM an instruction cache over the program (otpu_seq)
+  parameter int IC_LINES   = 16,      // ICACHE: its lines (otpu_seq IC_LINES)
+  parameter int IC_PF      = 2,       // ICACHE: the lines prefetched ahead (otpu_seq IC_PF)
+  parameter int WA         = waw(AW)  // the ports' word address bits (derived: 32 at AW 32)
 ) (
   input  logic          clk,
-  input  logic          clk_f,      // TMEM_PMP 1: 2 x clk, rising with it (the MMCM's); else unused
+  input  logic          clk_f,      // TMEM_PMP 1, MXU_PUMP: 2 x clk, rising with it (the MMCM's)
   input  logic          sys_rst,
   input  logic          rst,
   input  logic [31:0]   rinit [8],  // the run's arguments: R8..R15 at the start (otpu_seq)
@@ -100,25 +158,46 @@ module otpu_slice
   input  logic          rd_idle,    // no read in flight (the loader waits for it)
   output logic          a_req,
   output logic          a_we,
-  output logic [31:0]   a_addr,
+  output logic [WA-1:0] a_addr,
   output logic [31:0]   a_wdata,
   output logic [3:0]    a_be,
   output logic          sw_req,     // scalar (QST) writes: one byte-enabled word per cycle
-  output logic [31:0]   sw_addr,
-  output logic [31:0]   sw_wdata,
-  output logic [3:0]    sw_be,
+  output logic [WA-1:0] sw_addr,    //   (QUANT_SWW > 1: the aligned 4 QUANT_SWW bytes holding the
+  output logic [32*QUANT_SWW-1:0] sw_wdata,  // word sw_addr, sw_be's)
+  output logic [4*QUANT_SWW-1:0]  sw_be,
   input  logic          a_rvalid,
-  input  logic [255:0]  a_rdata,    // the aligned 32 bytes holding the word read (MM scale lines)
+  input  logic [((WG > 1) ? CB : 32)*8-1:0] a_rdata,  // the aligned 32 bytes (WG > 1: the CB-byte
+                                      //   beat) holding the word read (MM scale lines)
   output logic          b_req,
   output logic          b_tag,
   output logic          b_we,
   output logic [D/4-1:0] b_wmask,
   output logic [D*8-1:0] b_wdata,
-  output logic [31:0]   b_addr,
-  output logic          b_par,      // ^b_addr[31:5] (the memory's channel hash; see the port mux)
+  output logic [WA-1:0] b_addr,
+  output logic [$clog2(NCH)-1:0] b_par,  // the fold of b_addr's wide chunk (chash: the channel
+                                    //   hash, ^b_addr[WA-1:5] on the card; see the port mux)
   input  logic          b_rvalid,
   input  logic          b_rtag,
   input  logic [D*8-1:0] b_rdata,
+  // port W (otpu_native_dram: P-byte reads, a wide chunk each, its beats lane by lane: lane c
+  // channel c's, in its requests' order, the chunk's row c; the MXU's weight streams at WG > 1,
+  // weight groups)
+  input  logic          pw_rdy,
+  output logic          pw_req,
+  output logic [WA-1:0] pw_addr,    // word address (P aligned)
+  input  logic [NCH-1:0] pw_bv,
+  input  logic [NCH*CB*8-1:0] pw_bd,
+  // XPOST (otpu_mxu, otpu_native_dram): each W read's chunk FIFO entry, one beat (a natural
+  // chunk); the channels' posted beats into lane c of entry p_slot on p_clk, and the adapter's
+  // counts of them (clk's)
+  output logic [$clog2(FIFO_DEPTH)-1:0] pw_slot,
+  output logic          pw_one,
+  input  logic          p_clk,
+  input  logic [NCH-1:0] p_we,
+  input  logic [NCH-1:0][1:0][((XQB > 0) ? (1 << XQB) : 1)-1:0] p_q,     // (otpu_mxu's copies)
+  input  logic [NCH-1:0][4:0][$clog2(FIFO_DEPTH)-1:0] p_slot,
+  input  logic [NCH-1:0][(D*8 >> XQB)-1:0] p_d,
+  input  logic [NCH-1:0][$clog2(FIFO_DEPTH)+1:0] p_cnt,
   // collective
   output logic                    coll_req,
   output cmd_t                    coll_cmd,
@@ -129,6 +208,7 @@ module otpu_slice
   input  logic [LANES-1:0]        coll_wen,
   input  logic [LANES-1:0][31:0]  coll_waddr,
   input  logic [LANES-1:0][31:0]  coll_wdata,
+  input  logic                    coll_wtop,   // FOLLOW: a local write advances f_top (1 at NC 1)
   output logic                    coll_gnt_local,
   input  logic                    coll_gnt,
   // status
@@ -141,6 +221,15 @@ module otpu_slice
   input  logic          dump
 );
   localparam int BW = $clog2(LANES);
+  localparam int CL = $clog2(NCH), P = NCH * CB;    // port W's wide chunk: P bytes (P > D: the port)
+  // the memory's channel hash of a word address (otpu_native_dram fold): the XOR fold of its wide
+  // chunk's index (bits WA - 1 .. log2(P / 4)) into log2(NCH) bits; at NCH 2 the parity
+  function automatic logic [CL-1:0] chash(input logic [WA-1:0] word_addr);
+    logic [CL-1:0] h;
+    h = '0;
+    for (int i = $clog2(P / 4); i < WA; i++) h[(i - $clog2(P / 4)) % CL] ^= word_addr[i];
+    return h;
+  endfunction
   // the DRAM's SW ready and write idle as the units and the arbiters see them: with the SW port's
   // output register (see there)
   logic sw_rdy_i, wr_idle_i;
@@ -155,12 +244,17 @@ module otpu_slice
   // the VPU; streams need 8 lanes on both sides (otpu_dma W = 8: D >= 32). Without it DSTEP and
   // STREAM are illegal instructions (otpu_seq STREAMS: the slice stops with ERROR)
   localparam bit HAS_SS = HAS_DSTEP && LANES == 8 && D >= 32;
+  // SE_R > 0: the streams on otpu_se_eng beside the VPU (the VPU keeps running VOPs during a
+  // stream; SE_R rows of the state a cycle: otpu_dma SR), the VPU's engine never requested (its
+  // tail still runs the composites). Timing only: every result is the VPU engine's bit for bit
+  localparam bit SE_OWN = HAS_SS && SE_R > 0;
+  localparam int SR = SE_OWN ? SE_R : 1;
   localparam int P_MXU = 0, P_DMA = 1, P_Q = 2, P_VA = 3, P_VB = 4, P_Q3 = 5, P_Q2 = 6, P_COLL = 7, NRP = 8;
   // the board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
-  // WPB = 1): the arbiter only masks write banks (see the arbiter), and the VPU's grant only
-  // takes its buffered writes (otpu_vpu WBUF)
+  // WPB = 1, or the pumped one copy's 2): the arbiter only masks write banks (see the arbiter),
+  // and the VPU's grant only takes its buffered writes (otpu_vpu WBUF)
   localparam bit ARB_MASK = (TMEM_IMPL == 0 || (TMEM_IMPL == 3 && TMEM_RPL)) &&
-                            (RPB >= NRP * LANES) && (WPB == 1);
+                            (RPB >= NRP * LANES) && (WPB == 1 || (TMEM_IMPL == 3 && WPB == 2));
   // TMEM_IMPL 1 (banked TMEM): three copies, each bank one read per cycle; the ports of one
   // group on different copies (the quantizer's three, the VPU's two), so a group alone always
   // fits: copy 0 MXU, QUANT, VPU A; copy 1 VPU B, QUANT 2; copy 2 DMA, QUANT 3, COLL. The arbiter
@@ -192,6 +286,9 @@ module otpu_slice
     $fatal(1, "otpu_slice: TMEM_IMPL 1 needs RPB = 1 and WPB = 1 (RPB %0d WPB %0d)", RPB, WPB);
 `ifdef SYNTHESIS
   initial if (TMEM_IMPL == 2) $fatal(1, "otpu_slice: TMEM_IMPL 2 is a simulation model");
+  initial if (WG > 1 && (WG != NCH || D != CB))
+    $fatal(1, "otpu_slice: WG %0d x D %0d is not port W's NCH %0d x CB %0d (a column's part a lane)",
+           WG, D, NCH, CB);
 `endif
   initial if (TMEM_IMPL == 2 && WPB != 1)
     $fatal(1, "otpu_slice: TMEM_IMPL 2 needs WPB = 1 (WPB %0d)", WPB);
@@ -221,8 +318,9 @@ module otpu_slice
   // what it asks and replays a lost read, as the VPU's), the grant takes its writes from a queue,
   // and its epilogue advances on flip-flops instead of the grant
   localparam bit MXU_TQ = TMEM_IMPL == 3 && TMEM_RPL;
-  initial if (TMEM_IMPL == 3 && (WPB != 1 || ARB_MASK != TMEM_RPL))
-    $fatal(1, "otpu_slice: TMEM_IMPL 3 needs WPB = 1 (WPB %0d), and RPB >= %0d with TMEM_RPL",
+  initial if (TMEM_IMPL == 3 && (!(WPB == 1 || (WPB == 2 && TMEM_PMP != 0 && TMEM_RPL)) ||
+                                 ARB_MASK != TMEM_RPL))
+    $fatal(1, "otpu_slice: TMEM_IMPL 3 needs WPB = 1 (WPB %0d; 2 pumped with TMEM_RPL), and RPB >= %0d with TMEM_RPL",
            WPB, NRP * LANES);
 
   // ---- sequencer
@@ -233,6 +331,11 @@ module otpu_slice
   cmd_t ucmd_s [NUNITS];
   logic [NUNITS-1:0] ustart_s, urdy_s, udone_s;
   logic urel;
+  // FOLLOW (docs/isa.md "Wait counts"): wait entries across slices; the VPU's start follows a
+  // running GATHER (ufol), the top of that GATHER's writes into this TMEM (f_top)
+  localparam bit FOL = SEQ_WC && S > 1;
+  logic ufol, ufol_s;
+  logic [31:0] f_top;
   logic im_we;
   logic [31:0] im_row;
   logic sc_we;                    // SEQ_WC: the loader's sidecar row (wait entries)
@@ -243,14 +346,24 @@ module otpu_slice
                                   //   a WAITW timeout (to_err)
   logic        sq_halted, sq_ch, sq_err, rl_v;
   logic        dma_err;           // a WAITW timed out: the slice stops with an error (to_err)
-  logic [31:0] sq_icount, sq_cha, sq_chn, rl_val;
+  logic [31:0] sq_icount, sq_cha, sq_chn;
+  logic [AW-1:0] rl_val;
+  // ICACHE: the program (pg_addr, pg_n; the cache emptied while ic_inv), the line fills' port B
+  // reads (ic_req, ic_addr) and their chunks (ic_rv_i, a cycle after the memory's b_rvalid)
+  logic        ic_inv, ic_req, ic_rv_i, ic_busy;
+  logic [31:0] pg_addr, pg_n, ic_addr;
   otpu_seq #(.IMEM_WORDS(IMEM_WORDS), .TMEM_WORDS(TMEM_WORDS), .SID(SID), .S(S), .D(D),
-             .WIN(WIN), .STREAMS(HAS_SS), .WAITC(SEQ_WC)) u_seq (
-    .clk, .rst(srst), .ucmd(ucmd_s), .ustart(ustart_s), .urel, .urdy(urdy_s), .udone(udone_s),
+             .WIN(WIN), .STREAMS(HAS_SS), .WG(WG), .WAITC(SEQ_WC), .STYLE(IMEM_STYLE),
+             .WSTYLE(IMEM_WC_STYLE),
+             .DSTEP2(DSTEP2 && HAS_SS), .FOLLOW(FOL), .QB(QB), .AW(AW),
+             .ICACHE(ICACHE), .IC_LINES(IC_LINES), .IC_PF(IC_PF), .QONCE(QONCE)) u_seq (
+    .clk, .rst(srst), .ucmd(ucmd_s), .ustart(ustart_s), .urel, .ufol(ufol_s), .urdy(urdy_s),
+    .udone(udone_s),
     .halted(sq_halted), .error(sq_err),
     .icount(sq_icount), .ev(sq_ev), .rinit, .rl_v, .rl_val, .ch_req(sq_ch), .ch_addr(sq_cha),
     .ch_n(sq_chn), .im_we, .im_row, .im_data(b_rdata_i),
-    .sc_we, .sc_row, .sc_data);
+    .sc_we, .sc_row, .sc_data,
+    .ic_inv, .ic_base(pg_addr), .ic_n(pg_n), .ic_req, .ic_addr, .ic_gnt(b_rdy_i), .ic_rv(ic_rv_i), .ic_busy);
 
   // The units' handshake. In simulation, +tm_sdly=N starts every DMA, QUANT, VPU and collective
   // instruction N cycles after the sequencer issues it (+tm_sidle=1: only when its unit has
@@ -260,6 +373,7 @@ module otpu_slice
   // issued (its stream and release, urel, are in order with its start). 0: wires.
 `ifdef SYNTHESIS
   assign ustart = ustart_s;
+  assign ufol = ufol_s;
   assign urdy_s = urdy;
   assign udone_s = udone;
   for (genvar u = 0; u < NUNITS; u++) begin : g_hs
@@ -277,6 +391,7 @@ module otpu_slice
   logic [NUNITS-1:0] hs_pend, hs_fire, hs_dly;
   int                hs_cnt [NUNITS], hs_busy [NUNITS];
   cmd_t              hs_cmd [NUNITS];
+  logic              hs_fol;
   logic [NUNITS-1:0] hs_dq [16];
   always_comb
     for (int u = 0; u < NUNITS; u++) begin
@@ -287,6 +402,7 @@ module otpu_slice
       urdy_s[u] = urdy[u] && !hs_pend[u];
       udone_s[u] = (hs_dd == 0) ? udone[u] : hs_dq[hs_dd - 1][u];
     end
+  assign ufol = hs_fire[U_VPU] ? hs_fol : ufol_s;
   always_ff @(posedge clk) begin
     if (srst) begin
       hs_pend <= '0;
@@ -295,6 +411,7 @@ module otpu_slice
       for (int u = 0; u < NUNITS; u++) begin
         if (ustart_s[u] && hs_dly[u]) begin
           hs_pend[u] <= 1'b1; hs_cnt[u] <= hs_sd; hs_cmd[u] <= ucmd_s[u];
+          if (u == U_VPU) hs_fol <= ufol_s;
         end else if (hs_pend[u]) begin
           hs_cnt[u] <= hs_cnt[u] - 1;
           if (hs_cnt[u] == 1) hs_pend[u] <= 1'b0;
@@ -343,16 +460,19 @@ module otpu_slice
   // DRAM (from the next chunk on, 64 bits per instruction), and the loader reads them into the
   // sequencer's sidecar RAM after the instructions, 4 entries a row: each chunk is read D / 32
   // times, each read writing one row (its 256-bit part), so no chunk is held
+  // ICACHE: no copy: the loader waits as before (and for the cache's fills), then empties the
+  // cache with the program's address and length (ic_inv, the cycle it ends)
   localparam int IPR = D / 32;
   logic [31:0] ld_rows, ld_tot, ld_iss, ld_cmp, ld_a;
   logic        ld_go, ld_ch;
-  wire ld_req = ld_busy && ld_go && ld_iss < ld_tot;
+  wire ld_req = !ICACHE && ld_busy && ld_go && ld_iss < ld_tot;
+  assign ic_inv = ICACHE && (sys_rst || (ld_busy && ld_go));
   wire [31:0] ld_n_s = ld_start ? ld_n : c_n;
   wire        ld_wt = SEQ_WC && ld_cmp >= ld_rows;     // this read is a row of wait words
   wire [31:0] ld_sr = ld_cmp - ld_rows;                 // its sidecar row
-  assign im_we  = ld_busy && ld_go && b_rvalid_i && !ld_wt;
+  assign im_we  = !ICACHE && ld_busy && ld_go && b_rvalid_i && !ld_wt;
   assign im_row = ld_cmp;
-  assign sc_we  = ld_busy && ld_go && b_rvalid_i && ld_wt;
+  assign sc_we  = !ICACHE && ld_busy && ld_go && b_rvalid_i && ld_wt;
   assign sc_row = ld_sr;
   assign sc_data = b_rdata_i[256 * (ld_sr % IPR) +: 256];
   always_ff @(posedge clk) begin
@@ -366,9 +486,12 @@ module otpu_slice
       ld_busy <= (ld_n_s != 0);
       ld_go <= 1'b0;
       ld_ch <= !ld_start;
+      pg_addr <= ld_start ? ld_addr : c_addr;
+      pg_n <= ld_n_s;
     end else if (ld_busy) begin
       if (rst && ld_ch) ld_busy <= 1'b0;
-      else if (!ld_go) ld_go <= rd_idle_i;
+      else if (!ld_go) ld_go <= rd_idle_i && !ic_busy;
+      else if (ICACHE) ld_busy <= 1'b0;
       else begin
         if (ld_req && b_rdy_i) begin
           ld_iss <= ld_iss + 1;
@@ -401,14 +524,33 @@ module otpu_slice
   logic [NWP-1:0][LANES-1:0][31:0] w_addr, w_data;
   logic [NWP-1:0]                  w_gnt;   // each write port's grant (the DMA always writes)
   // the MXU's ports keep the crossbar (its drain writes scattered rows); the others are rotators.
+  // WG > 1 (GALL): every MXU write is a run from lane 0 (a result row's consecutive words, pg's
+  // halves, RMAX's mxo + mx_i + k), so its write port is a rotator too (yosys otpu_tmem at
+  // bcu1525-x2:wmx's parameters -1,452 LUT); its read port keeps the crossbar (PBR)
   // The quantizer's row-factor port (one word) and the collective's read port, rarely busy,
   // share the DMA's copy (ST reads): 6 copies of the memory instead of 8.
   // (TMEM_IMPL 2, simulation: IMPL 0 with a copy per read port, so any grant reads the right
   // words; otpu_tmem_model decides the grants). IQ: TMEM's input stage (release r2,
   // docs/tmem_nocopy.md 7): the granted writes registered in TMEM, the units' read requests in
   // the units (each a cycle after it forms), so both move a cycle and the order holds.
+  // rst_mem: the memories' control state (TMEM's write valids, replays and their ages, the
+  // pumped RAMs' phase; the ACT RAM's write enables) resets with the slice's power-on reset, not
+  // the run's (a run's reset leaves the memories' writes landing); its own register, replicated
+  // by its loads (as the units' below).
+  // OTPU_FPGA_INIT (the FPGA flows' create_project*.tcl): no such reset. Configuration loads every
+  // flip-flop's INIT 0, the reset's state (the pumped RAMs' tq, reset 1, samples tog and aligns
+  // at the first fast edges); afterwards that state is a pipeline of the units' requests, and
+  // every reset of the units (a run's, and sys_rst's: core_rst follows it) drains it with no
+  // request coming, as a run's reset always has (docs/asic.md "Power-up state"). The ASIC and
+  // the simulations keep it: their flip-flops start unknown
+  (* max_fanout = 64 *) logic rst_mem;
+`ifdef OTPU_FPGA_INIT
+  assign rst_mem = 1'b0;
+`else
+  always_ff @(posedge clk) rst_mem <= sys_rst;
+`endif
   otpu_tmem #(.WORDS(TMEM_WORDS), .LANES(LANES), .NRP(NRP), .NWP(NWP), .WPB(WPB),
-              .GEN_R(NRP'(1) << P_MXU), .GEN_W(NWP'(1) << W_MXU),
+              .GEN_R(NRP'(1) << P_MXU), .GEN_W((WG > 1) ? NWP'(0) : NWP'(1) << W_MXU),
               .PBR(PBR),
               .SH_HOST(P_DMA),
               .SH_MASK((TMEM_IMPL == 2) ? '0 : (NRP'(1) << P_Q3) | (NRP'(1) << P_COLL)),
@@ -416,9 +558,10 @@ module otpu_slice
               .PRANK((TMEM_IMPL == 3) ? PRANK3 : PRANK), .NSB(TMEM_NSB), .SBP(TMEM_SBP),
               .GRP(RGRP), .SBH(TMEM_SBH), .RPL(TMEM_RPL), .RPLM(~(NRP'(1) << P_COLL)),
               .TOPP(P_DMA), .TDP(TMEM_TDP), .SIDE(TM_SIDE), .GST(TMEM_GST),
-              .PMP(TMEM_PMP), .IQ(1'b1)) u_tmem (
-    .clk, .clk_f, .r_en, .r_req(rq_t), .r_addr, .r_ben, .r_bad, .r_data, .w_en, .w_req(wq_en),
-    .w_gnt, .w_addr, .w_data, .blk_x(tm_bx), .blk_s(tm_bs), .lost(tm_lost), .frz(tm_frz), .dump);
+              .PMP(TMEM_PMP), .IQ(1'b1), .STYLE(TMEM_STYLE)) u_tmem (
+    .clk, .clk_f, .rst(rst_mem), .r_en, .r_req(rq_t), .r_addr, .r_ben, .r_bad, .r_data, .w_en,
+    .w_req(wq_en), .w_gnt, .w_addr, .w_data, .blk_x(tm_bx), .blk_s(tm_bs), .lost(tm_lost),
+    .frz(tm_frz), .dump);
   assign coll_rdata = r_data[P_COLL];
   // the units' TMEM requests
   logic [LANES-1:0]        dma_ren, dma_wen, va_ren, vb_ren, v_wen;
@@ -428,8 +571,8 @@ module otpu_slice
   logic [ULANES-1:0][31:0] mxu_raddr, mxu_waddr, mxu_wdata, q_raddr, q_raddr2;
 
   // ---- ACT RAM
-  logic [ULANES-1:0]      act_we;
-  logic [ULANES-1:0][7:0] act_data;
+  logic [ULANES*QUANT_PW-1:0]      act_we;     // (the quantizer's writer: ULANES x QUANT_PW lanes)
+  logic [ULANES*QUANT_PW-1:0][7:0] act_data;
   logic                   asc_we;
   logic [7:0]             act_row, asc_row, act_off;
   logic                   act_dup;
@@ -442,10 +585,25 @@ module otpu_slice
   logic                   mxu_pop;       // the MXU consumes a block this cycle (its ACT read)
   logic [MCOLS*D*8-1:0]   act_rdata;
   logic [MCOLS*64-1:0]    act_rscale;
-  otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES)) u_act (
-    .clk, .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data), .w_dup(act_dup),
-    .w_off(act_off), .swe(asc_we),
-    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data), .ren(act_ren), .r_use(mxu_pop), .r_blk(act_rblk),
+  // QONCE: the DMA's LDA writes (otpu_actram DPORT), taken while the quantizer has no write at its
+  // write stage (q_actwv)
+  logic [ULANES*QUANT_PW-1:0]      la_we;
+  logic [ULANES*QUANT_PW-1:0][7:0] la_data;
+  logic [7:0]             la_row, la_srow;
+  logic [31:0]            la_idx;
+  logic                   la_swe, q_actwv;
+  logic [15:0]            la_sblk;
+  logic [63:0]            la_sdata;
+  // AASK: the ACT RAM reads by the MXU's chain stages (otpu_actram ASK: its CLS)
+  localparam int ACT_ASK = (MXU_AASK && WG > 1 && MXU_PUMP == 0) ? ((D / 8 < MXU_CL) ? D / 8 : MXU_CL)
+                                                                  : 0;   // (PUMP: no AASK)
+  otpu_actram #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .BLOCKS(ACT_BLOCKS), .LANES(ULANES * QUANT_PW),
+                .UCOLS(ACT_UCOLS), .ASK(ACT_ASK), .DPORT(QONCE)) u_act (
+    .clk, .rst(rst_mem), .we(act_we), .w_row(act_row), .w_idx(act_idx), .w_data(act_data),
+    .w_dup(act_dup), .w_off(act_off), .swe(asc_we),
+    .s_row(asc_row), .s_blk(asc_blk), .s_data(asc_data),
+    .d_we(la_we), .d_row(la_row), .d_idx(la_idx), .d_data(la_data), .d_swe(la_swe),
+    .d_srow(la_srow), .d_sblk(la_sblk), .d_sdata(la_sdata), .ren(act_ren), .r_use(mxu_pop), .r_blk(act_rblk),
     .r_blk2(act_rblk2), .r_hi(act_rhi), .r_grp(act_rgrp),
     .r_data(act_rdata), .r_scale(act_rscale));
 
@@ -455,12 +613,18 @@ module otpu_slice
   logic [31:0] q3_addr;
   logic d_dma, d_mxu, d_q, d_vpu, r_dma, r_mxu, r_q, r_vpu;
   logic mxu_areq, q_areq, q_awant, q_awe, mxu_agnt, mxu_bgnt;
-  logic [31:0] mxu_aaddr, q_aaddr, q_awdata;
-  logic [3:0] q_abe;
+  logic q_ahold;                            // QONCE: the quantizer's writer held for a record
+  // the quantizer's grant waits while the SW port cannot take its write, or for a_hold
+  wire  q_blk = (q_awant && !sw_rdy_i) || q_ahold;
+  logic [WA-1:0] mxu_aaddr, q_aaddr;
+  logic [32*QUANT_SWW-1:0] q_awdata;
+  logic [4*QUANT_SWW-1:0] q_abe;
   logic dma_breq, dma_bwe, mxu_breq;
   logic [D/4-1:0] dma_bwmask;
   logic [D*8-1:0] dma_bwdata;
-  logic [31:0] dma_baddr, mxu_baddr;
+  logic [WA-1:0] dma_baddr, mxu_baddr;
+  logic        mxu_pwreq;                   // the MXU's port W (WG > 1)
+  logic [WA-1:0] mxu_pwaddr;
   localparam int FW = $clog2(FIFO_DEPTH) + 1;
   logic [FW-1:0] mxu_level;
   logic mxu_starve, mxu_block, mxu_u, q_u, v_u;
@@ -483,40 +647,88 @@ module otpu_slice
     rst_mxu <= rst_m0; rst_q <= rst_q0; rst_vpu <= rst_v0;
   end
 `ifndef SYNTHESIS
+  // the check starts once the reset has held two edges (registers start arbitrary, the units'
+  // reset registers above among them)
+  bit rst_p, rst_seen;
+  initial begin rst_p = 1'b0; rst_seen = 1'b0; end
+  always @(posedge clk) begin rst_p <= srst; if (srst && rst_p) rst_seen <= 1'b1; end
   always_ff @(posedge clk)
-    if ((ustart[U_DMA] && rst_dma) || (ustart[U_MXU] && rst_mxu) || (ustart[U_Q] && rst_q) ||
-        (ustart[U_VPU] && rst_vpu))
+    if (rst_seen && ((ustart[U_DMA] && rst_dma) || (ustart[U_MXU] && rst_mxu) || (ustart[U_Q] && rst_q) ||
+                     (ustart[U_VPU] && rst_vpu)))
       $fatal(1, "otpu_slice: a unit started while in reset (ustart %b)", ustart);
 `endif
 
-  // the stream engine (HAS_SS, above)
+  // the stream engine (HAS_SS, SE_OWN above): the DMA's side (ss_*) and the VPU's (vs_*: the
+  // same nets, or with SE_OWN tied off)
   logic        ss_req, ss_gnt, ss_pe, ss_in_v, ss_y_v, ss_o_v;
   ss_cfg_t     ss_cfg;
   logic [2:0]  ss_fk;
   logic [4:0]  ss_fi;
-  logic [31:0] ss_in_d [LANES], ss_fd [LANES], ss_y_d [LANES];
-  logic [31:0] ss_o_d;
+  logic [31:0] ss_in_d [SR*LANES], ss_fd [LANES], ss_y_d [SR*LANES];
+  logic [SR-1:0][31:0] ss_o_d;
+  logic        vs_req, vs_gnt, vs_pe, vs_in_v, vs_y_v, vs_o_v;
+  logic [2:0]  vs_fk;
+  logic [31:0] vs_in_d [LANES], vs_y_d [LANES];
+  logic [31:0] vs_o_d;
+  if (SE_OWN) begin : g_se
+    otpu_se_eng #(.LANES(LANES), .R(SE_R), .DSTEP2(DSTEP2)) u_se (
+      .clk, .rst(rst_dma), .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi,
+      .ss_fd, .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
+    assign vs_req = 1'b0;
+    assign vs_pe = 1'b0;
+    assign vs_in_v = 1'b0;
+    assign vs_fk = SF_NONE;
+    for (genvar l = 0; l < LANES; l++) begin : g_l
+      assign vs_in_d[l] = '0;
+    end
+  end else begin : g_vse
+    assign vs_req = ss_req;
+    assign ss_gnt = vs_gnt;
+    assign vs_pe = ss_pe;
+    assign vs_in_v = ss_in_v;
+    assign vs_fk = ss_fk;
+    assign vs_in_d = ss_in_d;
+    assign ss_y_v = vs_y_v;
+    assign ss_y_d = vs_y_d;
+    assign ss_o_v = vs_o_v;
+    assign ss_o_d = vs_o_d;
+  end
 
-  otpu_dma #(.D(D), .LANES(LANES), .HAS_DSTEP(HAS_SS)) u_dma (
+  otpu_dma #(.D(D), .LANES(LANES), .DEPTH(DMA_DEPTH), .LDQ(DMA_LDQ), .HAS_DSTEP(HAS_SS), .SR(SR),
+             .DSTEP2(DSTEP2 && HAS_SS), .ST16(HAS_SS ? ST16 : 0), .ST16S(ST16S), .AW(AW),
+             .LDA(QONCE), .ALANES(ULANES * QUANT_PW)) u_dma (
     .clk, .rst(rst_dma), .start(ustart[U_DMA]), .cmd(ucmd[U_DMA]), .rdy(r_dma), .done(d_dma),
     .err(dma_err), .ww_held(a_inval),
-    .b_req(dma_breq), .b_gnt(b_rdy_i), .b_we(dma_bwe), .b_wmask(dma_bwmask), .b_wdata(dma_bwdata),
-    .b_addr(dma_baddr), .b_rvalid(b_rvalid_i && b_rtag_i), .b_rdata(b_rdata_i), .wr_idle(wr_idle_i),
+    .b_req(dma_breq), .b_gnt(b_rdy_i && !ic_req), .b_we(dma_bwe), .b_wmask(dma_bwmask),
+    .b_wdata(dma_bwdata), .b_addr(dma_baddr), .b_rvalid(b_rvalid_i && b_rtag_i && !ic_rv_i),
+    .b_rdata(b_rdata_i), .wr_idle(wr_idle_i),
     .t_ren(dma_ren), .t_raddr(dma_raddr), .t_rben(rq_b[P_DMA]), .t_rbad(r_bad[P_DMA]),
     .t_rdata(r_data[P_DMA]),
     .t_wen(dma_wen), .t_waddr(dma_waddr), .t_wdata(dma_wdata),
     .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd,
-    .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
+    .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d,
+    .act_busy(q_actwv), .act_we(la_we), .act_row(la_row), .act_idx(la_idx), .act_data(la_data),
+    .asc_we(la_swe), .asc_row(la_srow), .asc_blk(la_sblk), .asc_data(la_sdata));
 
   otpu_mxu #(.D(D), .MCOLS(MCOLS), .ROWS(ACT_ROWS), .DEPTH(FIFO_DEPTH), .LANES(ULANES), .IMPL(MXU_IMPL),
-             .CL(MXU_CL), .E(MXU_E), .TQ(MXU_TQ), .SID(SID), .TLANES(LANES)) u_mxu (
-    .clk, .rst(rst_mxu), .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
+             .CL(MXU_CL), .E(MXU_E), .QD(MXU_QD), .WG(WG), .AB((WG > 1) ? CB : 32), .TQ(MXU_TQ), .SID(SID),
+             .RF_STYLE(MXU_RF_STYLE), .FIFO_STYLE(MXU_FIFO_STYLE), .WASK(MXU_WASK),
+             .RF_ROWS(MXU_RF_ROWS), .BRAW(MXU_BRAW), .AASK(MXU_AASK), .PUMP(MXU_PUMP != 0),
+             .XPOST(XPOST), .QB(XQB),
+             .CHASH(CHASH), .KT(KT), .SPL(MXU_SPL != 0),
+             .TLANES(LANES), .DAW(AW)) u_mxu (
+    .clk, .clk_f, .rst(rst_mxu), .start(ustart[U_MXU]), .go(urel), .cmd(ucmd[U_MXU]), .rdy(r_mxu), .done(d_mxu),
     .computing(mxu_pop), .pf_level(mxu_level), .pf_starve(mxu_starve), .pf_block(mxu_block),
     .pf_u(mxu_u), .pf_uv(mxu_uv),
     .act_blk(act_rblk), .act_blk2(act_rblk2), .act_hi(act_rhi), .act_grp(act_rgrp), .act_ren, .act_data(act_rdata), .act_scale(act_rscale),
     .a_req(mxu_areq), .a_addr(mxu_aaddr), .a_gnt(mxu_agnt), .a_rvalid, .a_rdata,
     .b_req(mxu_breq), .b_addr(mxu_baddr), .b_gnt(mxu_bgnt), .b_rvalid(b_rvalid_i && !b_rtag_i),
     .b_rdata(b_rdata_i),
+    .w_req(mxu_pwreq), .w_addr(mxu_pwaddr), .w_gnt(WG > 1 && pw_rdy),
+    .w_bv((WG > 1) ? pw_bv[WG-1:0] : '0),
+    .w_bd(pw_bd[WG*D*8-1:0]),
+    .w_slot(pw_slot), .w_one(pw_one), .p_clk, .p_we(p_we[WG-1:0]), .p_q(p_q[WG-1:0]),
+    .p_slot(p_slot[WG-1:0]), .p_d(p_d[WG-1:0]), .p_cnt(p_cnt[WG-1:0]),
     .t_ren(mxu_ren), .t_raddr(mxu_raddr), .t_rdata(r_data[P_MXU][ULANES-1:0]),
     .t_wen(mxu_wen), .t_waddr(mxu_waddr), .t_wdata(mxu_wdata), .t_gnt(gnt[G_MXU]),
     .t_lost(tm_lost[P_MXU]), .t_rben(rq_b[P_MXU]), .t_rbad(r_bad[P_MXU]));
@@ -526,26 +738,50 @@ module otpu_slice
   // every QACT and QST the ISA's bounds allow fits (the card: 512)
   localparam int QG = (4 * ACT_BLOCKS > TMEM_WORDS / D) ? 4 * ACT_BLOCKS : TMEM_WORDS / D;
   localparam int Q_GR = (QG <= 8) ? 8 : (1 << $clog2(QG));
-  otpu_quant #(.D(D), .LANES(ULANES), .TLANES(LANES), .GR(Q_GR), .XD(QUANT_XD), .SID(SID)) u_quant (
+  otpu_quant #(.D(D), .LANES(ULANES), .TLANES(LANES), .GR(Q_GR), .XD(QUANT_XD), .R1(QUANT_R1),
+               .PW(QUANT_PW), .SPLIT(QUANT_SPLIT), .QHL(QUANT_HL), .SWW(QUANT_SWW), .QSTB(QUANT_QSTB), .QSTHL(QUANT_QSTHL), .QONCE(QONCE), .WG(WG), .CHASH(CHASH), .SID(SID), .AW(AW)) u_quant (
     .clk, .rst(rst_q), .start(ustart[U_Q]), .cmd(ucmd[U_Q]), .rdy(r_q), .done(d_q), .gnt(gnt[G_Q]),
     .t_ren(q_ren), .t_raddr(q_raddr), .t_rdata(r_data[P_Q][ULANES-1:0]),
     .t_ren2(q_ren2), .t_raddr2(q_raddr2), .t_rdata2(r_data[P_Q2][ULANES-1:0]),
     .t_rben(rq_b[P_Q]), .t_rbad(r_bad[P_Q]), .t_rben2(rq_b[P_Q2]), .t_rbad2(r_bad[P_Q2]),
     .t_ren3(q3_en), .t_raddr3(q3_addr), .t_rdata3(r_data[P_Q3][0]),
     .act_we, .act_row, .act_idx, .act_data, .act_dup, .act_off, .asc_we, .asc_row, .asc_blk, .asc_data,
-    .a_want(q_awant), .wr_idle(wr_idle_i),
+    .a_want(q_awant), .a_hold(q_ahold), .a_rdy(sw_rdy_i), .act_wv(q_actwv), .wr_idle(wr_idle_i),
     .a_req(q_areq), .a_we(q_awe), .a_addr(q_aaddr), .a_wdata(q_awdata), .a_be(q_abe),
     .pf_u(q_u), .pf_frz(q_frz));
 
-  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK), .HAS_SE(HAS_SS)) u_vpu (
+  otpu_vpu #(.LANES(LANES), .CL(VPU_CL), .SID(SID), .WBUF(ARB_MASK), .HAS_SE(HAS_SS),
+             .SE_SS(!SE_OWN), .OUTER(OUTER), .DSTEP2(DSTEP2), .FOLLOW(FOL), .CNS(VPU_CNS),
+             .FSUM(VPU_FSUM != 0 && HAS_SS), .VSIG(VPU_SIG != 0 && HAS_SS),
+             .MAC(VPU_MAC != 0), .OUTER1(VPU_OUTER1 != 0)) u_vpu (
     .clk, .rst(rst_vpu), .start(ustart[U_VPU]), .cmd(ucmd[U_VPU]), .rdy(r_vpu), .done(d_vpu),
+    .fol(ufol), .fol_top(f_top), .fol_done(coll_ack),
     .gnt(gnt[G_VPU]), .ren(v_ren), .rhold(tm_lost[P_VA] || tm_lost[P_VB]),
     .ta_en(va_ren), .ta_addr(va_raddr), .ta_data(r_data[P_VA]),
     .tb_en(vb_ren), .tb_addr(vb_raddr), .tb_data(r_data[P_VB]),
     .ta_ben(rq_b[P_VA]), .ta_bad(r_bad[P_VA]), .tb_ben(rq_b[P_VB]), .tb_bad(r_bad[P_VB]),
     .tw_en(v_wen), .tw_addr(v_waddr), .tw_data(v_wdata), .pf_u(v_u), .pf_frz(v_frz),
-    .ss_req, .ss_gnt, .ss_cfg, .ss_pe, .ss_in_v, .ss_in_d, .ss_fk, .ss_fi, .ss_fd,
-    .ss_y_v, .ss_y_d, .ss_o_v, .ss_o_d);
+    .ss_req(vs_req), .ss_gnt(vs_gnt), .ss_cfg, .ss_pe(vs_pe), .ss_in_v(vs_in_v),
+    .ss_in_d(vs_in_d), .ss_fk(vs_fk), .ss_fi, .ss_fd, .ss_y_v(vs_y_v), .ss_y_d(vs_y_d),
+    .ss_o_v(vs_o_v), .ss_o_d(vs_o_d));
+
+  // FOL: the top of the running GATHER's writes into this TMEM: its dst at the sequencer's start
+  // (before any of its writes lands, after every write of the collective before it), then each
+  // granted collective write's end (a GATHER a VOP follows writes one run upwards from dst, its
+  // lanes low first); across cards only local writes advance it (coll_wtop), so phase 1
+  // followers must read the local half only. Only a follower
+  // reads it (otpu_vpu FOLLOW)
+  if (FOL) begin : g_ftop
+    always_ff @(posedge clk) begin
+      logic [$clog2(LANES + 1)-1:0] n;
+      n = '0;
+      for (int l = 0; l < LANES; l++) n = n + $bits(n)'(coll_wen[l]);
+      if (ustart_s[U_COLL] && ucmd_s[U_COLL].op == OP_GATHER) f_top <= ucmd_s[U_COLL].w2;
+      else if (|coll_wen && coll_gnt && coll_wtop) f_top <= coll_waddr[0] + 32'(n);
+    end
+  end else begin : g_nftop
+    assign f_top = '0;
+  end
 
   // collective: request from start until acknowledged (an RLD is not a collective)
   wire rl_start = ustart[U_COLL] && ucmd[U_COLL].op == OP_RLD;
@@ -554,18 +790,27 @@ module otpu_slice
     else if (ustart[U_COLL] && !rl_start) coll_req <= 1'b1;
     else if (coll_ack) coll_req <= 1'b0;
   end
-  assign coll_cmd = ucmd[U_COLL];
+  always_comb begin                   // (no DRAM address there: w1h .. w3h 0)
+    coll_cmd = ucmd[U_COLL];
+    coll_cmd.w1h = '0; coll_cmd.w2h = '0; coll_cmd.w3h = '0;
+  end
   // RLD: the word through the collective's read port (lane 0) once granted; the lane has it
   // the next cycle (rl_got), registered (rl_cv), converted (rl_c1), times the multiplier
-  // (1 without MUL) as two partial products (rl_c2: the low 32 bits of x * m[15:0] and the
-  // low 16 of x[15:0] * m[31:16]), summed and handed to the sequencer (rl_v). The read is asked
-  // from rl_pend's second cycle (rl_pq): TMEM's input stage puts every unit's read a cycle after
-  // it forms, and the writes a cycle after their grant, so RLD's read moves with them
+  // (1 without MUL; AW bits, {w2h, w2}) as partial products (rl_c2: the low AW bits of
+  // x * m[15:0], the low AW - 16 of x * m[31:16] and, at AW > 32, the low AW - 32 of
+  // x * m[AW-1:32]), summed mod 2^AW and handed to the sequencer (rl_v). Without MUL the
+  // multiplier is 1 and the sum is the converted word: rl_val takes it as rl_x does, from rl_w
+  // at rl_cv, and rl_v follows, two cycles sooner; rl_c1 and rl_c2 run for MUL alone (an RLD's
+  // latency is the bucketing's chain, docs/pf500.md). The read is
+  // asked from rl_pend's second cycle (rl_pq): TMEM's input stage puts every unit's read a cycle
+  // after it forms, and the writes a cycle after their grant, so RLD's read moves with them
   // (release r2, docs/tmem_nocopy.md 7)
-  logic        rl_pend, rl_pq, rl_got, rl_cv, rl_c1, rl_c2, rl_raw;
-  logic [31:0] rl_a, rl_w, rl_m, rl_x, rl_pl;
-  logic [15:0] rl_ph;
+  logic        rl_pend, rl_pq, rl_got, rl_cv, rl_c1, rl_c2, rl_raw, rl_mul;
+  logic [31:0] rl_a, rl_w, rl_x;
+  logic [AW-1:0] rl_m, rl_pl, rl_pt;
+  logic [AW-17:0] rl_ph;
   wire         rl_busy = rl_pend || rl_got || rl_cv || rl_c1 || rl_c2 || rl_v;
+  wire [31:0]  rl_xc = rl_raw ? rl_w : rld_f2i(rl_w);   // the word converted, valid at rl_cv
   always_ff @(posedge clk) begin
     if (srst) begin
       rl_pend <= 1'b0; rl_pq <= 1'b0; rl_got <= 1'b0; rl_cv <= 1'b0; rl_c1 <= 1'b0; rl_c2 <= 1'b0;
@@ -577,20 +822,29 @@ module otpu_slice
         rl_pend <= 1'b1;
         rl_a <= ucmd[U_COLL].w1;
         rl_raw <= ucmd[U_COLL].flags[RF_RAW];
-        rl_m <= ucmd[U_COLL].flags[RF_MUL] ? ucmd[U_COLL].w2 : 32'd1;
+        rl_mul <= ucmd[U_COLL].flags[RF_MUL];
+        rl_m <= ucmd[U_COLL].flags[RF_MUL] ? AW'(cmd_a(ucmd[U_COLL], 2)) : AW'(1);
       end else if (rl_pq && r_en[P_COLL][0]) rl_pend <= 1'b0;
       rl_cv <= rl_got;
       if (rl_got) rl_w <= r_data[P_COLL][0];
-      rl_c1 <= rl_cv;
-      if (rl_cv) rl_x <= rl_raw ? rl_w : rld_f2i(rl_w);
+      rl_c1 <= rl_cv && rl_mul;
+      if (rl_cv) rl_x <= rl_xc;
       rl_c2 <= rl_c1;
       if (rl_c1) begin
         rl_pl <= rl_x * rl_m[15:0];
-        rl_ph <= rl_x[15:0] * rl_m[31:16];
+        rl_ph <= rl_x[AW-17:0] * rl_m[31:16];
       end
-      rl_v <= rl_c2;
-      if (rl_c2) rl_val <= rl_pl + {rl_ph, 16'd0};
+      rl_v <= rl_c2 || rl_cv && !rl_mul;
+      if (rl_c2) rl_val <= (AW > 32) ? rl_pl + {rl_ph, 16'd0} + rl_pt : rl_pl + {rl_ph, 16'd0};
+      else if (rl_cv && !rl_mul) rl_val <= AW'(rl_xc);
     end
+  end
+  if (AW > 32) begin : g_rlt
+    logic [AW-33:0] t;
+    always_ff @(posedge clk) if (rl_c1) t <= rl_x[AW-33:0] * rl_m[AW-1:32];
+    assign rl_pt = {t, 32'd0};
+  end else begin : g_nrlt
+    assign rl_pt = '0;
   end
   // the TMEM request arrays, each assembled in one process from the units' ports
   always_comb begin
@@ -638,7 +892,8 @@ module otpu_slice
   // The board build (TMEM replicated per read port, RPB >= NRP * LANES: reads never conflict;
   // WPB = 1; ARB_MASK) only needs write-bank masks: a unit is granted when no bank it writes was taken by
   // a higher-priority unit this cycle (a unit's own lanes write distinct banks). Shallow logic,
-  // no counters. Other configurations count reads and writes per bank.
+  // no counters. WPB 2 (the pumped one copy): when no bank it writes was taken by two of them
+  // (acf2, the groups' triples). Other configurations count reads and writes per bank.
   logic [NG-1:0] gnt_m, gnt_c;
   logic          cgl_m, cgl_c;
   // Each group's write-bank mask, the pairwise conflicts between groups (in parallel), then
@@ -647,6 +902,7 @@ module otpu_slice
   // the per-bank reductions out of the priority chain)
   logic [NG-1:0][LANES-1:0] amk;
   logic [NG-1:0][NG-1:0]    acf;
+  logic [NG-1:0][NG-1:0][NG-1:0] acf2;   // WPB 2: [g][h][i] (i < h < g) the three write a bank
   logic [NG-1:0]            aok;
   always_comb begin
     logic [NWP-1:0] wp;
@@ -659,8 +915,12 @@ module otpu_slice
             if (wq_en[p][l]) amk[g][w_addr[p][l][BW-1:0]] = 1'b1;
     end
     acf = '0;
+    acf2 = '0;
     for (int g = 0; g < NG; g++)
-      for (int h = 0; h < g; h++) acf[g][h] = (amk[g] & amk[h]) != '0;
+      for (int h = 0; h < g; h++) begin
+        acf[g][h] = (amk[g] & amk[h]) != '0;
+        for (int i = 0; i < h; i++) acf2[g][h][i] = (amk[g] & amk[h] & amk[i]) != '0;
+      end
   end
   // the guests on the DMA's TMEM copy read only when no port before them there asks (from the
   // requests: the copy's block RAM address does not wait for the grants)
@@ -679,8 +939,12 @@ module otpu_slice
   always_comb begin
     for (int g = 0; g < NG; g++) begin
       aok[g] = !rpl_hold[g];
-      for (int h = 0; h < g; h++) if (aok[h] && acf[g][h]) aok[g] = 1'b0;
-      if (g == G_Q && q_awant && !sw_rdy_i) aok[g] = 1'b0;   // QST write the DRAM cannot take
+      if (WPB == 1) begin
+        for (int h = 0; h < g; h++) if (aok[h] && acf[g][h]) aok[g] = 1'b0;
+      end else
+        for (int h = 0; h < g; h++)
+          for (int i = 0; i < h; i++) if (aok[h] && aok[i] && acf2[g][h][i]) aok[g] = 1'b0;
+      if (g == G_Q && q_blk) aok[g] = 1'b0;   // QST write the DRAM cannot take (q_blk)
       if ((g == G_Q && q3_blk) || (g == G_COLL && coll_blk)) aok[g] = 1'b0;
     end
     gnt_m = aok;
@@ -758,7 +1022,7 @@ module otpu_slice
       self = (tm_bs & rp & ask) != '0;
       gs[g] = rd_ok && !self;
       for (int h = 0; h < g; h++) if (gs[h] && acf[g][h]) gs[g] = 1'b0;
-      if (g == G_Q && q_awant && !sw_rdy_i) gs[g] = 1'b0;    // QST write the DRAM cannot take
+      if (g == G_Q && q_blk) gs[g] = 1'b0;    // QST write the DRAM cannot take (q_blk)
       if (rd_ok && self) tm_pre = tm_pre | (rp & ask & ~tm_bs);
     end
     gs3 = gs;
@@ -799,7 +1063,7 @@ module otpu_slice
       ok = 1'b1;
       for (int b = 0; b < LANES; b++)
         if (rc[b] + ur[b] > RPB || wc[b] + uw[b] > WPB) ok = 1'b0;
-      if (g == G_Q && q_awant && !sw_rdy_i) ok = 1'b0;    // QST write the DRAM cannot take
+      if (g == G_Q && q_blk) ok = 1'b0;    // QST write the DRAM cannot take (q_blk)
       if ((g == G_Q && q3_blk) || (g == G_COLL && coll_blk)) ok = 1'b0;
       if (g == G_COLL) begin
         cgl_c = ok;
@@ -823,7 +1087,7 @@ module otpu_slice
                       .WGRP({3'(G_VPU), 3'(G_COLL), 3'(G_MXU), 3'(G_DMA)}),
                       .GCOLL(G_COLL), .SID(SID)) u_model (
       .clk, .rst(srst), .run(!srst && !halted), .rq_en, .r_addr, .wq_en, .w_addr,
-      .r_take(r_en), .w_take(w_en), .blk(NG'(q_awant && !sw_rdy_i) << G_Q), .coll_gnt,
+      .r_take(r_en), .w_take(w_en), .blk(NG'(q_blk) << G_Q), .coll_gnt,
       .gnt(gnt_x), .cgl(cgl_x));
   end else begin : g_nomodel
     assign gnt_x = '0;
@@ -859,7 +1123,7 @@ module otpu_slice
           for (int l = 0; l < LANES; l++)
             if (wq_en[p][l]) vk[w_addr[p][l][BW-1:0]] = 1'b1;
       if ((rk & uk) != '0 || (wk & vk) != '0) ok = 1'b0;
-      if (g == G_Q && q_awant && !sw_rdy_i) ok = 1'b0;    // QST write the DRAM cannot take
+      if (g == G_Q && q_blk) ok = 1'b0;    // QST write the DRAM cannot take (q_blk)
       if (g == G_COLL) begin
         cgl_k = ok;
         gnt_k[g] = coll_gnt;      // every slice must grant the collective
@@ -897,7 +1161,7 @@ module otpu_slice
     for (int g = 0; g < NG; g++) begin
       ok[g] = !qblk[g];
       for (int h = 0; h < g; h++) if (ok[h] && acf[g][h]) ok[g] = 1'b0;
-      if (g == G_Q && q_awant && !sw_rdy_i) ok[g] = 1'b0;    // QST write the DRAM cannot take
+      if (g == G_Q && q_blk) ok[g] = 1'b0;    // QST write the DRAM cannot take (q_blk)
     end
     gnt_q = ok;
     gnt_q[G_COLL] = coll_gnt;      // every slice must grant the collective
@@ -937,11 +1201,12 @@ module otpu_slice
 
   // ---- DRAM ports: the MXU's port A reads, and port B's requests (b_*_c), into their output
   // registers (below)
-  logic           b_req_c, b_tag_c, b_we_c, b_par_c;
+  logic           b_req_c, b_tag_c, b_we_c;
+  logic [CL-1:0]  b_par_c;
   logic [D/4-1:0] b_wmask_c;
   logic [D*8-1:0] b_wdata_c;
-  logic [31:0]    b_addr_c;
-  assign mxu_bgnt = !dma_breq && b_rdy_i;
+  logic [WA-1:0]  b_addr_c;
+  assign mxu_bgnt = !dma_breq && b_rdy_i && !ic_req;
   assign mxu_agnt = a_rdy_i;
   assign a_we    = 1'b0;               // port A carries the MXU's scale reads only
   assign a_wdata = '0;
@@ -957,11 +1222,19 @@ module otpu_slice
     // the parity of the muxed address ran on from the DMA's request and the MXU's grant into
     // every write of otpu_native_dram's queues (DMA occ -> qbm, 11 levels, the 959b425 build's
     // worst DMA -> memory paths, -0.390 ns at 133.33 MHz); it now ends at the output register
-    b_par_c   = dma_breq ? ^dma_baddr[31:5] : ^mxu_baddr[31:5];
-    if (ld_busy) begin                // the units are held in reset
-      b_req_c = ld_req; b_tag_c = 1'b1; b_we_c = 1'b0; b_addr_c = ld_a; b_par_c = ^ld_a[31:5];
+    b_par_c   = dma_breq ? chash(dma_baddr) : chash(mxu_baddr);
+    if (ld_busy && !ICACHE) begin     // the units are held in reset
+      b_req_c = ld_req; b_tag_c = 1'b1; b_we_c = 1'b0;
+      b_addr_c = WA'(ld_a); b_par_c = chash(WA'(ld_a));      // (a program below 4 GiB)
+    end
+    if (ic_req) begin                 // ICACHE: a line fill's read, ahead of the units'
+      b_req_c = 1'b1; b_tag_c = 1'b1; b_we_c = 1'b0;
+      b_addr_c = WA'(ic_addr); b_par_c = chash(WA'(ic_addr));
     end
   end
+  // port W: the MXU's grouped operands (weight groups, WG > 1; otpu_mxu)
+  assign pw_req  = WG > 1 && mxu_pwreq;
+  assign pw_addr = mxu_pwaddr;
 
   // ---- port B's registers (docs/asic.md "The ports"): the requests (b_req ... b_par) leave the
   // slice from flip-flops and the read data (b_rvalid, b_rtag, b_rdata) enters through
@@ -981,6 +1254,42 @@ module otpu_slice
   // within +-0.07% at m4 on decode, a tiled prompt run and a MoE step, signs mixed)
   assign b_rdy_i   = !b_req || b_rdy;
   assign rd_idle_i = rd_idle && !a_req && !(b_req && !b_we) && !b_rvalid_i;
+
+  // ---- ICACHE: the fills' chunks among port B's reads. The memory returns port B's reads in
+  // order, whatever their tag: rd_n counts the reads into port B's output register, ifq keeps the
+  // place of each fill's first read (a fill's IC_NB reads go in one after the other: ahead of the
+  // units'), rt_n counts the reads back, so the next one back is a fill's chunk (ic_in, from
+  // flip-flops) while it is one of the IC_NB from the oldest fill's first. Its data and ic_rv_i
+  // come through the input register together (it is part of it: the memory's raw returns, as
+  // pb_reg's). ic_inv starts them over: no read in flight then
+  localparam int IC_NB = 1024 / D + (SEQ_WC ? 256 / D : 0);
+  if (ICACHE) begin : g_icrd
+    logic [15:0] rd_n, rt_n;
+    logic [15:0] ifq [4];
+    logic [1:0]  ifq_h, ifq_t;
+    logic [5:0]  ic_k;                // the fill's reads taken
+    logic [2:0]  ifq_c;               // fills with a read in and a chunk to come
+    wire  [15:0] rk = rt_n - ifq[ifq_h];
+    wire         ic_in = ifq_c != '0 && rk < 16'(IC_NB);
+    wire         push = ic_req && b_rdy_i && ic_k == '0;
+    wire         pop = b_rvalid && ic_in && 32'(rk) == IC_NB - 1;
+    always_ff @(posedge clk) begin
+      ic_rv_i <= !sys_rst && b_rvalid && ic_in;
+      if (ic_inv) begin
+        rd_n <= '0; rt_n <= '0; ifq_h <= '0; ifq_t <= '0; ifq_c <= '0; ic_k <= '0;
+      end else begin
+        if (b_rdy_i && b_req_c && !b_we_c) rd_n <= rd_n + 1'b1;
+        if (ic_req && b_rdy_i) ic_k <= (32'(ic_k) == IC_NB - 1) ? '0 : ic_k + 1'b1;
+        if (push) begin ifq[ifq_t] <= rd_n; ifq_t <= ifq_t + 1'b1; end
+        if (b_rvalid) rt_n <= rt_n + 1'b1;
+        if (pop) ifq_h <= ifq_h + 1'b1;
+        ifq_c <= ifq_c + 3'(push) - 3'(pop);
+      end
+    end
+  end else begin : g_noicrd
+    assign ic_rv_i = 1'b0;
+  end
+
   always_ff @(posedge clk) begin : pb_reg
     if (sys_rst) b_req <= 1'b0;
     else if (b_rdy_i) b_req <= b_req_c;

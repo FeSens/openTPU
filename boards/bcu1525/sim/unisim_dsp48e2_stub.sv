@@ -10,7 +10,7 @@ module DSP48E2 #(
   parameter CARRYINSELREG = 1,
   parameter USE_PATTERN_DETECT = "NO_PATDET", AUTORESET_PATDET = "NO_RESET",
   parameter logic [47:0] MASK = 48'h3fffffffffff, PATTERN = 48'h0,
-  parameter SEL_MASK = "MASK", SEL_PATTERN = "PATTERN"
+  parameter SEL_MASK = "MASK", SEL_PATTERN = "PATTERN", parameter logic [47:0] RND = 48'h0
 ) (
   input  logic        CLK,
   input  logic [29:0] A, ACIN,

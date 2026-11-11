@@ -189,6 +189,41 @@ def test_a_run_word_read_only_through_a_loop_register():
     assert all(np.array_equal(x, y) for x, y in zip(_drams(a, 67), _drams(b, 67)))
 
 
+@pytest.mark.parametrize("case", ["kh8", "qwen3-emb8"])
+def test_prompt_runs_bound_their_registers(case, monkeypatch):
+    """A prompt run's RLD MULs carry their bounds (compiler.mul_bound): the arguments from the
+    state's words (c * tpos below the rows' RunRows bound) and each token's embedding row (the
+    int8 table's scales too) below the table's rows, so the waits pass takes the addresses they
+    form as theirs and not all of DRAM: fewer waits than with the bounds stripped (the 27B's
+    T 8 run: 285 entries looser); under OTPU_WAITS_CHECK the prompt's runs give the
+    compile-time runs' logits."""
+    from dataclasses import replace
+
+    from opentpu import isa as I
+    from opentpu import waits as WT
+    monkeypatch.setenv("OTPU_WAITS_CHECK", "1")
+    W, spec, cfg, kw = _model(case)
+    p1 = [int(t) for t in np.random.default_rng(3).integers(0, 1000, 37)]
+    a = Engine(spec, W, cap=512, cfg=cfg, resident=True, prompt_runs=True, **kw)
+    got = a.prefill(p1)
+    R_max = lambda blocks: a._prompt_rmax[blocks][0]       # noqa: E731
+    b = Engine(spec, W, cap=512, cfg=cfg, resident=True, **kw)
+    assert np.array_equal(got, _static(b, p1, R_max))
+    prog = list(PF.programs(a, 40, R_max(1), "P")[0][0])
+    muls = [(i, x) for i, x in enumerate(prog) if x.op == I.RLD and x.flags & I.F_MUL]
+    kinds = {"argument" if x.comment.startswith("argument") else x.comment for _, x in muls}
+    assert {"argument", "the token's row"} <= kinds
+    assert all(x.flags & I.F_BOUND for _, x in muls)
+    loose = list(prog)
+    for i, x in muls:
+        loose[i] = replace(x, flags=x.flags & ~I.F_BOUND, w=[*x.w[:2], 0, 0, 0, 0, x.w[6]])
+
+    def waits(p):
+        return sum(sum(map(bool, WT.counts(c))) + bin(WT.vmask(c)).count("1")
+                   for c in WT.wait_counts(p, a.cfg.D, a.cfg.S, aw=a.cfg.AW))
+    assert waits(prog) < waits(loose)
+
+
 def test_todays_route_where_it_fits_more_rows(monkeypatch):
     """prefill.covers: where today's prefill (compile_rows) fits more rows in a bucket than its
     prompt run (here bucket 2's prompt programs held to 2 rows), a prompt that reaches the

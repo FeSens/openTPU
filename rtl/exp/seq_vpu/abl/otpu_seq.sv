@@ -298,6 +298,7 @@ module otpu_seq
   wire  rel3 = !(op == OP_QACT || op == OP_LD || op == OP_ST || op == OP_GATHER);
   always_comb begin
     dcmd.op = op; dcmd.flags = flags;
+    dcmd.lg = 4'd0;
     dcmd.w1 = iw[1] + (is_str ? 32'd0 : rv(ra));
     dcmd.w2 = iw[2] + (is_str ? rv(ra) : rel2 ? rv(rb) : 32'd0);
     dcmd.w3 = iw[3] + (is_str ? rv(ra) : rel3 ? rv(rc) : 32'd0);

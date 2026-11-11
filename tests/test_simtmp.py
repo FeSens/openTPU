@@ -115,3 +115,20 @@ def test_sigkilled_runs_directory_goes_at_the_next_run(tmp_path, monkeypatch):
         assert not d.exists()
         assert all(k.is_dir() for k in keep)
     assert not mine.exists()
+
+
+def test_dram_file_is_sparse_and_unlinked(monkeypatch, tmp_path):
+    """An ISA simulator slice's DRAM above 4 GiB (isasim.dram_zeros): a file under OTPU_SIM_TMP,
+    gone from the directory as it is made, its blocks the pages written."""
+    import numpy as np
+    from opentpu import isasim
+    monkeypatch.setenv(simtmp.ENV, str(tmp_path / "sim"))
+    assert type(isasim.dram_zeros(1 << 20)) is np.ndarray
+    d = isasim.dram_zeros(1 << 33)
+    assert isinstance(d, np.memmap) and d.shape == (1 << 33,) and not d[::1 << 26].any()
+    assert list((tmp_path / "sim").iterdir()) == []
+    d[(1 << 33) - 4:] = 9
+    src = np.zeros(1 << 28, np.uint8)
+    src[3 << 26] = 7                          # one chunk of four not zero: the only one copied
+    isasim.dram_copy(d, src)
+    assert d[3 << 26] == 7 and d[-1] == 9 and int(d[: 1 << 28].sum()) == 7

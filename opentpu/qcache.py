@@ -24,7 +24,7 @@ temporary name, then renamed. The least recently used ones go when the cache pas
 
 The quantizer runs on PIECE elements' rows at a time (quantize_rows): its float64 temporaries
 then stay in a core's caches, twice as fast on one core and nearly linear in the cores, where
-whole matrices left every core waiting on the memory bus (omarchy: 240 -> 110 ns an element on
+whole matrices left every core waiting on the memory bus (the build host: 240 -> 110 ns an element on
 one core; 16 processes 86 -> 17). Rows are quantized on their own, so the result is the same,
 bit for bit. A build quantizes its matrices with a Batch: in build_jobs() worker processes
 (OTPU_BUILD_JOBS, default the host's CPUs), the cache looked up and written in the build's

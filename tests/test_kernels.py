@@ -84,6 +84,58 @@ def test_attention_layer(S, pos):
     assert rel(K[:, pos], knew) < 0.02 and rel(V[:, pos], vnew) < 0.02
 
 
+# FSUM (Config.FSUM): attention's sum(p) is the EXP2SUB's row sums where the block has 64
+# columns or more (ol.exp2(..., rowsum=True)); RSUM's sums of the same words, so the outputs are
+# bit for bit those without it. Blocks of 32 keep their RSUM (the programs unchanged).
+def _fsum_takes(progs):
+    """Each EXP2SUB FSUM's sums taken by an RSUM FSUM of the same words after it, in order (the
+    ISA simulator's NaNs in them until the take keep any read before it out of the outputs).
+    The FSUMs' count."""
+    from opentpu import isa as I
+    n = 0
+    for p in progs:
+        pend = []
+        for ins in p:
+            if ins.op != I.VOP or not ins.flags & I.F_FSUM:
+                continue
+            rows = ins.w[3] & 0xFFFF
+            if (ins.w[5] >> 16) & 0xFF == I.V_EXP2SUB:
+                pend.append((ins.w[6], rows))
+                n += 1
+            else:
+                assert (ins.w[5] >> 16) & 0xFF == I.V_RSUM and pend.pop(0) == (ins.w[0], rows)
+        assert not pend
+    return n
+
+
+@pytest.mark.parametrize("T,block,d", [(31, 32, 32), (100, 64, 32), (300, 128, 128),
+                                       (700, 256, 128)])
+def test_attention_decode_fsum_bit_exact(T, block, d):
+    from opentpu import isa as I
+    from opentpu.runtime import compile_kernel
+    big = dict(D=128, ACT_BLOCKS=16) if d == 128 else {}
+    args, want = attn_args(np.random.default_rng(T), Hq=4, Hkv=2, d=d, T=T, cap=-(-T // 256) * 256,
+                           block=block)
+    cfg, fcfg = Config(S=1, **big), Config(S=1, FSUM=True, **big)
+    progs = {c.FSUM: compile_kernel(attention_decode, c, **args)[0].programs for c in (cfg, fcfg)}
+    assert (_fsum_takes(progs[True]) > 0) == (block >= 64)
+    assert not any(i.flags & I.F_FSUM for p in progs[False] for i in p if i.op == I.VOP)
+    if block < 64:
+        assert [[i.encode() for i in p] for p in progs[True]] == \
+            [[i.encode() for i in p] for p in progs[False]]
+    got = launch(attention_decode, fcfg, **args).outputs["out"]
+    assert np.array_equal(got, launch(attention_decode, cfg, **args).outputs["out"])
+    assert rel(got, want) < 0.03
+
+
+def test_attention_layer_fsum_bit_exact():
+    args, (want, _, _) = layer_args(np.random.default_rng(3), 1, pos=200, cap=256)
+    args["block"] = 64
+    got = launch(attention_layer, Config(S=1, FSUM=True), **args).outputs["out"]
+    assert np.array_equal(got, launch(attention_layer, Config(S=1), **args).outputs["out"])
+    assert rel(got, want) < 0.0125
+
+
 def test_design_size_block_128():
     """The design configuration: D = 128 (= head dim), 128-token blocks."""
     args, want = attn_args(np.random.default_rng(5), Hq=6, Hkv=1, d=128, T=300, cap=384,

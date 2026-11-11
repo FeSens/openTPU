@@ -5,11 +5,11 @@ Order: sandbox -> lint -> fast (bit-exact subset) -> board (the same on the boar
 and micro-architecture) -> perf (Qwen3 proxy cycles) -> synth (area, fmax). The fmax objective
 (--objective fmax) adds a last gate, full: the whole board built in Vivado on the build host.
 
-Where lint and the test gates run: EXEC=remote (default) ships the slot's tree to omarchy (the
-test host, remote.TEST_HOST; Vivado runs on remote.HOST) with tools/omarchy_test.sh and runs them
-there (Verilator 5.046 and the venv on omarchy);
+Where lint and the test gates run: EXEC=remote (default) ships the slot's tree to the build host (the
+test host, remote.TEST_HOST; Vivado runs on remote.HOST) with tools/remote_test.sh and runs them
+there (Verilator 5.046 and the venv on the build host);
 EXEC=local runs them on this machine. Either way they go through test_slot(): at most
-TEST_SLOTS["remote"] = 2 at a time from the tournament on omarchy (its CPU is shared with
+TEST_SLOTS["remote"] = 2 at a time from the tournament on the build host (its CPU is shared with
 up to 2 Vivado jobs of other streams), TEST_SLOTS["local"] = 1 here.
 """
 from __future__ import annotations
@@ -62,10 +62,10 @@ def _tail(s: str, n: int = 1200) -> str:
 
 # ------------------------------------------------------------------------------ where tests run
 TEST_LOCK = Path(os.environ.get("OTPU_TOURNEY_LOCKDIR", "/tmp")) / "otpu-tourney-tests.lock"
-# remote: OTPU_REMOTE_JOBS, the same cap as tools/omarchy_test.sh (omarchy runs out of memory with
+# remote: OTPU_REMOTE_JOBS, the same cap as tools/remote_test.sh (the build host runs out of memory with
 # builds, tests and card sessions together: set it to 1 on busy days)
 TEST_SLOTS = {"remote": int(os.environ.get("OTPU_REMOTE_JOBS", "2")), "local": 1}
-REMOTE_SCRIPT = "tools/omarchy_test.sh"
+REMOTE_SCRIPT = "tools/remote_test.sh"
 # the Verilator cache on the build host, shared by the tournament's trees (keyed by source hash)
 REMOTE_BUILD = "otpu-test/.tourney-build"
 
@@ -124,17 +124,17 @@ def command(wt: Path, cmd: list[str], env_extra: dict | None = None,
     return ["bash", REMOTE_SCRIPT, "--exec", "env", *kv, *cmd], env
 
 
-# tools/omarchy_test.sh prints this on stderr once it holds one of omarchy's test slots
+# tools/remote_test.sh prints this on stderr once it holds one of the build host's test slots
 # (OTPU_REMOTE_SLOT_MARK set): a gate's timeout counts from there, not from the queue before it
-SLOT_MARK = "omarchy_test: slot "
+SLOT_MARK = "remote_test: slot "
 # the script gives up after 2 h without a slot ("no free test slot", exit 2): a gate queues again
-# this many times before it fails (a congested omarchy is no broken candidate)
+# this many times before it fails (a congested build host is no broken candidate)
 NO_SLOT, QUEUE_RETRIES = "no free test slot", 2
 
 
 def run_remote(argv: list[str], cwd: Path, env: dict, timeout: int, poll: float = 1.0):
-    """subprocess.run for tools/omarchy_test.sh, with the timeout counted from the moment the
-    script holds its omarchy test slot (SLOT_MARK on stderr), not from the start."""
+    """subprocess.run for tools/remote_test.sh, with the timeout counted from the moment the
+    script holds its test slot on the build host (SLOT_MARK on stderr), not from the start."""
     # its own process group: a timeout kills the script's ssh too, so the remote run goes
     p = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, start_new_session=True)
@@ -169,7 +169,7 @@ def run_remote(argv: list[str], cwd: Path, env: dict, timeout: int, poll: float 
 
 def execute(wt: Path, cmd: list[str], gate: str, timeout: int, env_extra: dict | None = None):
     """Runs one gate command in a test slot; returns the CompletedProcess (stdout + stderr text).
-    On the build host the timeout counts from when omarchy's test slot is held (run_remote), and
+    On the build host the timeout counts from when the build host's test slot is held (run_remote), and
     a run that found no slot there queues again (QUEUE_RETRIES); a timeout kills the script and
     its ssh session, and the remote run then dies at its next output (SIGPIPE), which frees its
     test slot."""
@@ -183,7 +183,7 @@ def execute(wt: Path, cmd: list[str], gate: str, timeout: int, env_extra: dict |
                 r = run_remote(argv, wt, env, timeout)
                 if not (r.returncode == 2 and NO_SLOT in r.stderr):
                     return r
-            raise GateFailure(gate, f"{NO_SLOT} on omarchy after {QUEUE_RETRIES + 1} waits of 2 h")
+            raise GateFailure(gate, f"{NO_SLOT} on the test host after {QUEUE_RETRIES + 1} waits of 2 h")
         except subprocess.TimeoutExpired:
             raise GateFailure(gate, f"timeout after {timeout}s")
 
@@ -201,7 +201,7 @@ def remote_prune() -> None:
     R.ssh(PRUNE_CMD, timeout=300, check=False, host=R.TEST_HOST)
 
 
-# the Mac's Verilator builds in a tournament checkout's build/ (the agents' quick tests, every slot
+# a laptop's Verilator builds in a tournament checkout's build/ (the agents' quick tests, every slot
 # its own source hash): dropped after LOCAL_PRUNE_MIN minutes unused
 LOCAL_PRUNE_MIN = int(os.environ.get("OTPU_TOURNEY_LOCAL_PRUNE_MIN", "360"))
 

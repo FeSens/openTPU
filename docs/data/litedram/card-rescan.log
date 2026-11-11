@@ -1,6 +1,6 @@
 --- test image attempt 1 01:26:28
 [1m== rescan[0m
-   note  removing 0000:01:00.0
+   note  removing 0000:BB:00.0
    note  no card after the rescan
    note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
    note  0000:00:01.0: retrain the link (Link Control: Retrain Link)
@@ -111,7 +111,7 @@
 [31mERROR: no openTPU card after the rescan and the link retrain: is the bitstream loaded? A JTAG load needs the card powered by this PC; if it still does not appear, warm-reboot (the FPGA keeps its configuration while the slot stays powered)[0m
 --- production attempt 1 01:54:29
 [1m== rescan[0m
-   note  removing 0000:01:00.0
+   note  removing 0000:BB:00.0
    note  no card after the rescan
    note  0000:00:01.0: LnkSta 0x1081: width x8, training 0, data link state not reported by the port
    note  0000:00:01.0: retrain the link (Link Control: Retrain Link)

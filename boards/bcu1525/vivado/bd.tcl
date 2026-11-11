@@ -6,14 +6,35 @@
 #   M_AXI_CTL       AXI4-Lite master -> the accelerator's control registers (BAR0 0x00000, core_clk)
 #   M_AXI_MEMCAL<d> AXI4-Lite masters -> DIMM d's LiteDRAM core's CSRs (BAR0 0x40000 + d * 0x10000,
 #                   64 KB each, core_clk)
+#   M_AXI_BMC       AXI4-Lite master -> the board management controller's UART bridge
+#                   (otpu_bmc_uart, BAR0 0x20000, 64 KB, core_clk)
+#   M_AXI_GOV       AXI4-Lite master -> the thermal governor (otpu_bcu_gov, BAR0 0x10000, 64 KB,
+#                   core_clk; docs/bcu1525.md section 14)
 #   M_AXI_DMA<j>    AXI4 masters, 128 bits, no IDs, xdma_aclk -> board channel j = 2s + c's bridge
 #                   (otpu_mem_ch): XDMA's DMA (512 bits at x16, 256 at x8) through the SmartConnect
 #                   sc_dma, which decodes card address bits 32:31 (channel j at j * 2 GiB: what
 #                   slice s addresses of its channel c; opentpu.host.board.channel_map) and
 #                   converts the width
-# and device_temp (the SYSMON's die temperature, 10 bits, core_clk; BAR0 0x30000: its registers).
-# The BAR0 layout keeps the YPCB's (control at 0x0, the system monitor at 0x30000, 1 MB), so the
-# host's register access is the same; 0x10000 (the YPCB core's CSRs, R_MEMCAL) is left unmapped.
+# Two JTAG-to-AXI masters beside XDMA's, the host's way in over the board's FT4232H without the
+# PCIe link enumerated (a bitstream loaded over JTAG; opentpu/host/jtagaxi.py): jtag_axi_0
+# (AXI4-Lite, core_clk) into sc_ctl at BAR0's offsets, as the memory-test image's (bd_mem.tcl), and
+# jtag_axi_1 (AXI4, 32 bits, xdma_aclk) into sc_dma at the card's DMA addresses. sc_ctl's reset is
+# the core's (core_rstn), not XDMA's, so the first works with the link down; the second needs
+# XDMA's clock and reset (the link up).
+# and device_temp (the SYSMON's die temperature, 10 bits, core_clk; BAR0 0x30000: its registers),
+# temp_alarm and ot_alarm (the SYSMON's two temperature alarms, core_clk). The BAR0 layout keeps
+# the YPCB's (control at 0x0, the system monitor at 0x30000, 1 MB), so the host's register access
+# is the same; 0x10000 (the YPCB core's CSRs, R_MEMCAL) is the governor's here.
+# A passive card without airflow reached 112 C under the first openTPU image (2026-10-21;
+# docs/bcu1525.md section 13); this one runs under the governor (section 14): the SYSMON's
+# temperature alarm up at 80 C and down at 70 C (Continuous sequencer: the Default one fixes it at
+# 85 / 60), its over-temperature alarm (OT) at 84 C and released at 65 C, which with the
+# bitstream's OVERTEMPSHUTDOWN (constraints/bcu1525_pins.xdc) shuts the FPGA down about 10 ms later
+# (as the memory-test image's bd_mem.tcl).
+#
+# The accelerator's clock: acc_clk, the MMCM's second output at core_clk's frequency and phase
+# behind a clock-enable buffer (acc_clk_ce, from the top's sequencer in core_clk), so the governor
+# stops the accelerator's clock tree and not only its logic.
 #
 # Clocks: the core clock's MMCM (the clock wizard) runs from clk300_in, a 300 MHz board clock already
 # on a global buffer (the top: DDR4 channel C1's, SLR1, which also feeds that channel's core).
@@ -42,23 +63,24 @@ set CORE_MHZ_ACT [format %.3f [expr {double($VCO) / $CORE_DIV}]]
 set CORE_HZ [expr {int(floor($VCO * 1.0e6 / $CORE_DIV))}]
 puts "core_clk: $CORE_MHZ_ACT MHz (MMCM divide $CORE_DIV)"
 # CLK2X (set before sourcing, default 0; create_project.tcl: 1 with the TMEM's pumped RAMs,
-# TMEM_PMP 1): core_clk2x, the MMCM's second output at twice core_clk from the same VCO, both
-# dividers integers and no phase shift, so its edges rise with core_clk's (core_clk's divider must
-# then be even). With CLK2X 0 the port is core_clk itself: the wrapper keeps one form, and the RTL
-# leaves it unused (otpu_fpga_top_*: clk_f). constraints/otpu_clk2x.tcl times the paths between them.
+# TMEM_PMP 1) is refused here: the accelerator's clock is gated (acc_clk) and a pumped TMEM would
+# need its 2x clock gated with it (bd_native.tcl has the YPCB's form). The port core_clk2x is
+# core_clk itself: the wrapper keeps one form, and the RTL leaves it unused (clk_f).
 if {![info exists CLK2X]} { set CLK2X 0 }
-if {$CLK2X && ($CORE_DIV != floor($CORE_DIV) || int($CORE_DIV) % 2)} {
-  error "bd.tcl: CLK2X needs an even MMCM divide for core_clk, not $CORE_DIV ($CORE_MHZ_ACT MHz; 100: 12, 150: 8)"
+if {$CLK2X} {
+  error "bd.tcl: CLK2X with the governor's gated accelerator clock is not supported yet (TMEM_PMP 0)"
 }
-set CLK2X_HZ [expr {$CLK2X ? int(floor($VCO * 1.0e6 / ($CORE_DIV / 2))) : $CORE_HZ}]
-if {$CLK2X} { puts "core_clk2x: [expr {$CLK2X_HZ / 1.0e6}] MHz (MMCM divide [expr {int($CORE_DIV) / 2}])" }
+if {$CORE_DIV != floor($CORE_DIV)} {
+  error "bd.tcl: acc_clk needs an integer MMCM divide for core_clk, not $CORE_DIV ($CORE_MHZ_ACT MHz)"
+}
+set CLK2X_HZ $CORE_HZ
 set PCIE_LANES [expr {[info exists ::env(PCIE_LANES)] && $::env(PCIE_LANES) ne "" ? $::env(PCIE_LANES) : 16}]
 if {$PCIE_LANES ni {8 16}} { error "bd.tcl: PCIE_LANES $PCIE_LANES (8 or 16)" }
 set AXI_BITS [expr {$PCIE_LANES == 16 ? 512 : 256}]
 set XDMA_MHZ 250
 set XDMA_HZ [expr {$XDMA_MHZ * 1000000}]
-set VU9P [string match -nocase xcvu9p* [get_property PART [current_project]]]
-puts "PCIe: Gen3 x$PCIE_LANES, $AXI_BITS-bit AXI, xdma_aclk $XDMA_MHZ MHz (VU9P: $VU9P)"
+set bd_vu9p [string match -nocase xcvu9p* [get_property PART [current_project]]]
+puts "PCIe: Gen3 x$PCIE_LANES, $AXI_BITS-bit AXI, xdma_aclk $XDMA_MHZ MHz (VU9P: $bd_vu9p)"
 
 # ------------------------------------------------------------------ external ports
 create_bd_port -dir I -type clk -freq_hz 300000000 clk300_in
@@ -68,13 +90,17 @@ create_bd_port -dir I -type rst pcie_perstn
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_ports pcie_perstn]
 create_bd_port -dir O -type clk core_clk
 create_bd_port -dir O -type clk core_clk2x
+create_bd_port -dir O -type clk acc_clk
+create_bd_port -dir I acc_clk_ce
+create_bd_port -dir O temp_alarm
+create_bd_port -dir O ot_alarm
 create_bd_port -dir O -type rst core_rstn
 create_bd_port -dir O -type clk xdma_aclk
 create_bd_port -dir O -type rst xdma_aresetn
 create_bd_port -dir O -from 9 -to 0 device_temp
 create_bd_port -dir O pcie_link_up
 
-set lites {M_AXI_CTL M_AXI_MEMCAL0 M_AXI_MEMCAL1 M_AXI_MEMCAL2 M_AXI_MEMCAL3}
+set lites {M_AXI_CTL M_AXI_MEMCAL0 M_AXI_MEMCAL1 M_AXI_MEMCAL2 M_AXI_MEMCAL3 M_AXI_BMC M_AXI_GOV}
 foreach p $lites {
   set m [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
   set_property -dict [list CONFIG.PROTOCOL AXI4LITE CONFIG.DATA_WIDTH 32 CONFIG.ADDR_WIDTH 32 \
@@ -85,6 +111,7 @@ set_property CONFIG.ASSOCIATED_BUSIF [join $lites :] [get_bd_ports core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_rstn} [get_bd_ports core_clk]
 set_property CONFIG.FREQ_HZ $CORE_HZ [get_bd_ports core_clk]
 set_property CONFIG.FREQ_HZ $CLK2X_HZ [get_bd_ports core_clk2x]
+set_property CONFIG.FREQ_HZ $CORE_HZ [get_bd_ports acc_clk]
 
 # ------------------------------------------------------------------ clocks and resets
 set clk [create_bd_cell -type ip -vlnv [ip_vlnv clk_wiz] clk_wiz_0]
@@ -96,29 +123,29 @@ set_property -dict [list \
 ] $clk
 connect_bd_net [get_bd_ports clk300_in] [get_bd_pins clk_wiz_0/clk_in1]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk]
-# CLK2X: the second output, as bd_native.tcl's (VCO 1200 MHz)
-if {$CLK2X} {
-  set_property -dict [list CONFIG.NUM_OUT_CLKS {2} CONFIG.CLKOUT2_USED {true} \
-    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ [format %.3f [expr {$CLK2X_HZ / 1.0e6}]] \
-    CONFIG.CLKOUT2_REQUESTED_PHASE {0.000} CONFIG.CLK_OUT2_PORT {core_clk2x}] $clk
-  set_property -dict [list CONFIG.OVERRIDE_MMCM {true} CONFIG.MMCM_DIVCLK_DIVIDE {1} \
-    CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 300.0}]] \
-    CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.MMCM_CLKOUT1_DIVIDE [expr {int($CORE_DIV) / 2}]] $clk
-  connect_bd_net [get_bd_pins clk_wiz_0/core_clk2x] [get_bd_ports core_clk2x]
-  set f2 [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/core_clk2x]]
-  if {$f2 != $CLK2X_HZ} { error "bd.tcl: the clock wizard makes core_clk2x at $f2 Hz, not $CLK2X_HZ" }
-} else {
-  connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk2x]
-}
+# core_clk2x is core_clk itself (CLK2X 0: the RTL leaves it unused)
+connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_ports core_clk2x]
+# acc_clk: the second output, core_clk's divide, behind a BUFGCE (its CE in core_clk)
+set_property -dict [list CONFIG.NUM_OUT_CLKS {2} CONFIG.CLKOUT2_USED {true} \
+  CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $CORE_MHZ_ACT CONFIG.CLKOUT2_REQUESTED_PHASE {0.000} \
+  CONFIG.CLK_OUT2_PORT {acc_clk} CONFIG.CLKOUT2_DRIVES {Buffer_with_CE}] $clk
 # the wizard's own M / D / O unless they miss CORE_HZ: then VCO / CORE_DIV, as bd_native.tcl
-if {[get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/core_clk]] != $CORE_HZ} {
+if {[get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/core_clk]] != $CORE_HZ ||
+    [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/acc_clk]] != $CORE_HZ} {
   set_property -dict [list CONFIG.OVERRIDE_MMCM {true} CONFIG.MMCM_DIVCLK_DIVIDE {1} \
     CONFIG.MMCM_CLKFBOUT_MULT_F [format %.3f [expr {$VCO / 300.0}]] \
-    CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV] $clk
+    CONFIG.MMCM_CLKOUT0_DIVIDE_F $CORE_DIV CONFIG.MMCM_CLKOUT1_DIVIDE [expr {int($CORE_DIV)}]] $clk
 }
-set f [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/core_clk]]
-if {$f != $CORE_HZ} { error "bd.tcl: the clock wizard makes core_clk at $f Hz, not $CORE_HZ" }
-puts "core_clk: $f Hz"
+foreach p {core_clk acc_clk} {
+  set f [get_property CONFIG.FREQ_HZ [get_bd_pins clk_wiz_0/$p]]
+  if {$f != $CORE_HZ} { error "bd.tcl: the clock wizard makes $p at $f Hz, not $CORE_HZ" }
+}
+if {[get_property CONFIG.CLKOUT2_DRIVES $clk] ne "Buffer_with_CE" || [get_bd_pins -quiet clk_wiz_0/acc_clk_ce] eq ""} {
+  error "bd.tcl: acc_clk has no clock enable ([get_property CONFIG.CLKOUT2_DRIVES $clk])"
+}
+connect_bd_net [get_bd_pins clk_wiz_0/acc_clk] [get_bd_ports acc_clk]
+connect_bd_net [get_bd_ports acc_clk_ce] [get_bd_pins clk_wiz_0/acc_clk_ce]
+puts "core_clk, acc_clk: $f Hz"
 
 # core reset: until the MMCM locks, and while the host asserts PCIe PERST#
 set rst_core [create_bd_cell -type ip -vlnv [ip_vlnv proc_sys_reset] rst_core]
@@ -156,7 +183,7 @@ set cfg [list \
   CONFIG.xdma_axi_intf_mm {AXI_Memory_Mapped} \
   CONFIG.plltype {QPLL1} \
 ]
-if {$VU9P} { lappend cfg CONFIG.en_gt_selection {true} CONFIG.select_quad {GTY_Quad_227} }
+if {$bd_vu9p} { lappend cfg CONFIG.en_gt_selection {true} CONFIG.select_quad {GTY_Quad_227} }
 set_property -dict $cfg $xdma
 connect_bd_net [get_bd_pins refclk_buf/IBUF_DS_ODIV2] [get_bd_pins xdma_0/sys_clk]
 connect_bd_net [get_bd_pins refclk_buf/IBUF_OUT] [get_bd_pins xdma_0/sys_clk_gt]
@@ -172,10 +199,16 @@ connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_ports xdma_aresetn]
 # order per master (no IDs: otpu_mem_ch answers in order)
 set dmas {M_AXI_DMA0 M_AXI_DMA1 M_AXI_DMA2 M_AXI_DMA3}
 set scd [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_dma]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {4} CONFIG.NUM_CLKS {1}] $scd
+set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {4} CONFIG.NUM_CLKS {1}] $scd
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_dma/aclk]
 connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins sc_dma/aresetn]
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI] [get_bd_intf_pins sc_dma/S00_AXI]
+set jtd [create_bd_cell -type ip -vlnv [ip_vlnv jtag_axi] jtag_axi_1]
+set_property -dict [list CONFIG.PROTOCOL {0} CONFIG.M_AXI_ADDR_WIDTH {64} \
+  CONFIG.M_AXI_DATA_WIDTH {32}] $jtd
+connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins jtag_axi_1/aclk]
+connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins jtag_axi_1/aresetn]
+connect_bd_intf_net [get_bd_intf_pins jtag_axi_1/M_AXI] [get_bd_intf_pins sc_dma/S01_AXI]
 foreach p $dmas {
   set m [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 $p]
   set_property -dict [list CONFIG.PROTOCOL AXI4 CONFIG.DATA_WIDTH 128 CONFIG.ADDR_WIDTH 33 \
@@ -192,43 +225,77 @@ set_property CONFIG.FREQ_HZ $XDMA_HZ [get_bd_ports xdma_aclk]
 # code (UG580: T = code * 509.3140064 / 1024 - 280.23087870 with the internal reference), not the
 # XADC's 12-bit one: the host takes the formula from the platform (CFG_PLATFORM).
 set sysmon [create_bd_cell -type ip -vlnv [ip_vlnv system_management_wiz] sysmon]
+set OT_UP 84.0
+set OT_DOWN 65.0
+set ALM_UP 80.0
+set ALM_DOWN 70.0
 set_property -dict [list CONFIG.INTERFACE_SELECTION {Enable_AXI} \
   CONFIG.DCLK_FREQUENCY [expr {int(ceil($CORE_HZ / 1.0e6))}] \
-  CONFIG.SEQUENCER_MODE {Default} CONFIG.CHANNEL_ENABLE_VP_VN {false} \
-  CONFIG.ENABLE_TEMP_BUS {true} CONFIG.OT_ALARM {false} CONFIG.USER_TEMP_ALARM {false} \
+  CONFIG.SEQUENCER_MODE {Continuous} CONFIG.CHANNEL_ENABLE_VP_VN {false} \
+  CONFIG.ENABLE_TEMP_BUS {true} \
+  CONFIG.OT_ALARM {true} CONFIG.TEMPERATURE_ALARM_OT_TRIGGER $OT_UP \
+  CONFIG.TEMPERATURE_ALARM_OT_RESET $OT_DOWN \
+  CONFIG.USER_TEMP_ALARM {true} CONFIG.TEMPERATURE_ALARM_TRIGGER $ALM_UP \
+  CONFIG.TEMPERATURE_ALARM_RESET $ALM_DOWN \
   CONFIG.VCCINT_ALARM {false} CONFIG.VCCAUX_ALARM {false}] $sysmon
+foreach {k want} [list OT_ALARM true TEMPERATURE_ALARM_OT_TRIGGER $OT_UP \
+                       TEMPERATURE_ALARM_OT_RESET $OT_DOWN USER_TEMP_ALARM true \
+                       TEMPERATURE_ALARM_TRIGGER $ALM_UP TEMPERATURE_ALARM_RESET $ALM_DOWN] {
+  set got [get_property CONFIG.$k $sysmon]
+  if {$got != $want} { error "sysmon: $k is $got, expected $want" }
+}
+foreach {pin port} {ot_out ot_alarm user_temp_alarm_out temp_alarm} {
+  if {[get_bd_pins -quiet sysmon/$pin] eq ""} {
+    error "sysmon: no pin $pin (its pins: [get_bd_pins -of [get_bd_cells sysmon]])"
+  }
+  connect_bd_net [get_bd_pins sysmon/$pin] [get_bd_ports $port]
+}
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_pins sysmon/s_axi_aclk]
 connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_pins sysmon/s_axi_aresetn]
 connect_bd_net [get_bd_pins sysmon/temp_out] [get_bd_ports device_temp]
 
 # ------------------------------------------------------------------ control interconnect
 set scl [create_bd_cell -type ip -vlnv [ip_vlnv smartconnect] sc_ctl]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {6} CONFIG.NUM_CLKS {2}] $scl
+set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {8} CONFIG.NUM_CLKS {2}] $scl
 connect_bd_net [get_bd_pins xdma_0/axi_aclk] [get_bd_pins sc_ctl/aclk]
 connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_pins sc_ctl/aclk1]
-connect_bd_net [get_bd_pins xdma_0/axi_aresetn] [get_bd_pins sc_ctl/aresetn]
+connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_pins sc_ctl/aresetn]
 connect_bd_intf_net [get_bd_intf_pins xdma_0/M_AXI_LITE] [get_bd_intf_pins sc_ctl/S00_AXI]
+set jtl [create_bd_cell -type ip -vlnv [ip_vlnv jtag_axi] jtag_axi_0]
+set_property -dict [list CONFIG.PROTOCOL {2} CONFIG.M_AXI_ADDR_WIDTH {32} \
+  CONFIG.M_AXI_DATA_WIDTH {32}] $jtl
+connect_bd_net [get_bd_pins clk_wiz_0/core_clk] [get_bd_pins jtag_axi_0/aclk]
+connect_bd_net [get_bd_pins rst_core/peripheral_aresetn] [get_bd_pins jtag_axi_0/aresetn]
+connect_bd_intf_net [get_bd_intf_pins jtag_axi_0/M_AXI] [get_bd_intf_pins sc_ctl/S01_AXI]
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M00_AXI] [get_bd_intf_ports M_AXI_CTL]
 connect_bd_intf_net [get_bd_intf_pins sc_ctl/M01_AXI] [get_bd_intf_pins sysmon/S_AXI_LITE]
 foreach d {0 1 2 3} {
   connect_bd_intf_net [get_bd_intf_pins sc_ctl/M0[expr {$d + 2}]_AXI] [get_bd_intf_ports M_AXI_MEMCAL$d]
 }
+connect_bd_intf_net [get_bd_intf_pins sc_ctl/M06_AXI] [get_bd_intf_ports M_AXI_BMC]
+connect_bd_intf_net [get_bd_intf_pins sc_ctl/M07_AXI] [get_bd_intf_ports M_AXI_GOV]
 
 # ------------------------------------------------------------------ address map
-# BAR0: 0x00000 the control registers (64 KB), 0x30000 the SYSMON, 0x40000-0x7FFFF the LiteDRAM
-# cores' CSRs (DIMM d at 0x40000 + d * 0x10000). XDMA's DMA: 8 GiB, M_AXI_DMA<j> at j * 2 GiB (the
-# 2 GiB of each channel the slices address; address bits 32:31)
-set lite [get_bd_addr_spaces xdma_0/M_AXI_LITE]
-assign_bd_address -offset 0x00000000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_CTL/Reg] -force
-assign_bd_address -offset 0x00030000 -range 64K -target_address_space $lite \
-  [get_bd_addr_segs -of [get_bd_intf_pins sysmon/S_AXI_LITE]] -force
-foreach d {0 1 2 3} {
-  assign_bd_address -offset [format 0x%08X [expr {0x40000 + $d * 0x10000}]] -range 64K \
-    -target_address_space $lite [get_bd_addr_segs M_AXI_MEMCAL$d/Reg] -force
+# BAR0: 0x00000 the control registers (64 KB), 0x10000 the governor, 0x20000 the BMC's UART
+# bridge, 0x30000 the SYSMON,
+# 0x40000-0x7FFFF the LiteDRAM cores' CSRs (DIMM d at 0x40000 + d * 0x10000). XDMA's DMA: 8 GiB,
+# M_AXI_DMA<j> at j * 2 GiB (the 2 GiB of each channel the slices address; address bits 32:31)
+foreach lite [list [get_bd_addr_spaces xdma_0/M_AXI_LITE] [get_bd_addr_spaces jtag_axi_0/Data]] {
+  assign_bd_address -offset 0x00000000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_CTL/Reg] -force
+  assign_bd_address -offset 0x00010000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_GOV/Reg] -force
+  assign_bd_address -offset 0x00020000 -range 64K -target_address_space $lite [get_bd_addr_segs M_AXI_BMC/Reg] -force
+  assign_bd_address -offset 0x00030000 -range 64K -target_address_space $lite \
+    [get_bd_addr_segs -of [get_bd_intf_pins sysmon/S_AXI_LITE]] -force
+  foreach d {0 1 2 3} {
+    assign_bd_address -offset [format 0x%08X [expr {0x40000 + $d * 0x10000}]] -range 64K \
+      -target_address_space $lite [get_bd_addr_segs M_AXI_MEMCAL$d/Reg] -force
+  }
 }
-foreach j {0 1 2 3} {
-  assign_bd_address -offset [format 0x%09X [expr {$j * 0x80000000}]] -range 2G \
-    -target_address_space [get_bd_addr_spaces xdma_0/M_AXI] [get_bd_addr_segs M_AXI_DMA$j/Reg] -force
+foreach sp [list [get_bd_addr_spaces xdma_0/M_AXI] [get_bd_addr_spaces jtag_axi_1/Data]] {
+  foreach j {0 1 2 3} {
+    assign_bd_address -offset [format 0x%09X [expr {$j * 0x80000000}]] -range 2G \
+      -target_address_space $sp [get_bd_addr_segs M_AXI_DMA$j/Reg] -force
+  }
 }
 
 validate_bd_design

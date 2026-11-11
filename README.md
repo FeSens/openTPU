@@ -55,7 +55,7 @@ at 91-94% of the DRAM peak instead of 82-87%. Qwen3.5-4B's int8 image is over 4 
   controllers calibrated by a small CPU inside the memory core, a four-column systolic matrix
   unit and the stream engine ([docs/stream.md](docs/stream.md)). DDR3-1066, with a 17.1 GB/s
   peak.*
-- *The host: the card sits in opentpu (Intel Core i7-4790).*
+- *The host: the card sits in a desktop PC (Intel Core i7-4790).*
 - *Method, `tools/qual/perf.py`: decode is 64 greedy tokens after a 512-token prompt, with the
   host's argmax in the loop (not streamed). "Device" counts only the cycles the accelerator runs;
   "wall" adds the host. Prefill is the 512-token prompt, on the device.*
@@ -120,9 +120,46 @@ perplexity that docs/quant.md reports per model.
 The host is nearly out of the way. For LFM2 and Qwen3 the card runs one decode program compiled
 once, which reads the position from a register and looks up its own embedding and RoPE rows, and
 the logits stream back while the card is still running: the host adds 0.17 to 0.30 ms per
-token on omarchy (0.45 to 1.3 ms on opentpu).
+token on the build host (0.45 to 1.3 ms on the card host).
 Qwen3.5 runs the same way for decode; its prefill still compiles each chunk's program on the host,
 ahead of the card.
+
+### On a BCU1525 (Virtex UltraScale+ VU9P)
+
+The same design builds for the BCU1525: a VU9P with four DDR4-2400 DIMMs (76.8 GB/s at peak) and
+PCIe Gen3 x16. Here the large models run with all of their weights on the card, and the host
+stores, moves data and tokenizes. One slice at 150 MHz on AMD's DDR4 controller (target
+`bcu1525-wg:bhw16`), real weights, eight tokens and their logits equal to the simulator's bit
+for bit:
+
+| Model | Decode, device | DRAM while decoding |
+|:--|--:|--:|
+| Qwen3.6-35B-A3B | 34.7 tok/s | 88.5% of peak |
+| Qwen3.8-27B | 4.77 tok/s | 90.6% of peak |
+| GPT-OSS-20B | 27.1 tok/s (zero-weight image) | about 88% of peak |
+
+As a chat, the 35B keeps its whole 262,144-token context on the card and decodes at 33.3 tok/s,
+with a first token after 1.1 to 1.6 s on short prompts
+([docs/bcu1525_wg.md](docs/bcu1525_wg.md)).
+
+**Two cards as one machine.** Two BCU1525s joined by QSFP28 cables at 25 Gb/s run four slices
+tensor-parallel from one compile and one bitstream (target `bcu1525-x2:st16`,
+[docs/x2.md](docs/x2.md), [docs/x2_link.md](docs/x2_link.md)). Every qualification run ends with
+instruction counts, logits and DRAM bytes equal to the simulator's. The 35B's chat decodes at
+65.1 tok/s (1.96x one card) and reads a 2,689-token paste at 97.6 prompt tokens a second
+(2.27x). One difference is open: at a 30,870-token context the reply on two cards departs from
+one card's (docs/x2.md, section 8).
+
+**Several requests at once.** With four sequence slots on two cards, the device steps four
+requests at about 103 tok/s in all; by the wall clock four 256-token requests summed to 81.3
+tok/s ([docs/batch35.md](docs/batch35.md), [docs/serve.md](docs/serve.md)).
+
+What it took is written up beside the code: weights read in groups of eight columns
+([docs/weight_groups.md](docs/weight_groups.md)), memory channels native to the matrix unit
+([docs/native_channels.md](docs/native_channels.md)), a stream engine of its own for recurrent
+state ([docs/se_engine.md](docs/se_engine.md)), an instruction cache
+([docs/icache.md](docs/icache.md)), and the studies that did not pay
+([docs/pf500.md](docs/pf500.md), [docs/wide_mxu.md](docs/wide_mxu.md)).
 
 ## How it works
 
@@ -218,6 +255,13 @@ With a card, build the bitstream (`make bit` in [`boards/ypcb-00338`](boards/ypc
 it over JTAG, then run `sudo otpu-setup` and `otpu-chat --backend board`.
 [docs/board.md](docs/board.md) walks through the bring-up.
 
+On a BCU1525: `make wg` in [`boards/bcu1525`](boards/bcu1525) builds the one-card image and
+`make x2` the two-card one ([boards/bcu1525/README.md](boards/bcu1525/README.md),
+[docs/bcu1525.md](docs/bcu1525.md)). With more than one card in a host, `otpu-chat`,
+`otpu-serve` and `otpu-smi` take `--dev` or `OTPU_DEV`; without it they use the only card that
+answers as openTPU. The 35B's front ends for one card or both are in
+[`boards/bcu1525/chat35`](boards/bcu1525/chat35).
+
 | Command | What it does |
 |:--|:--|
 | `otpu-chat` | chat with Qwen3-0.6B, LFM2.5-230M (`--model lfm2`), Qwen3.5-0.8B (`--model qwen35`), LFM2-2.6B (`lfm2-2.6b`), SmolLM3-3B (`smollm3`), Phi-4-mini (`phi4-mini`) or Qwen3.5-2B / 4B (`qwen35-2b`, `qwen35-4b`), Gemma 4 E2B / E4B (`gemma4`, `gemma4-e4b`: the instruct checkpoints, gemma-4-E2B-it / E4B-it); MoE models bigger than the card with their experts streamed: LFM2.5-8B-A1B (`lfm2-8b`), Qwen3.5-35B-A3B (`qwen35-35b`), gemma-4-26B-A4B-it (`gemma4-26b`); a checkpoint without a chat template (a base model) only with `--raw` |
@@ -292,7 +336,7 @@ the eight default prompts and 16 tokens each:
 KL is the mean KL(golden || device) in nats per token. The device's KL from the quantized
 golden is 0.70 to 1.16 times the floor's, and its distance from fp32 is what the quantization
 alone predicts. A run takes 2 to 14 minutes on a 16-core host (Gemma 4 E2B: 16 and 26, the
-host shared with other jobs; E2B-it 8 to 14 on omarchy alone) and peaks at 2.5 GB (LFM2) to
+host shared with other jobs; E2B-it 8 to 14 on the build host alone) and peaks at 2.5 GB (LFM2) to
 16 GB (Gemma 4 E2B). Gemma 4 E2B-it, the instruct checkpoint otpu-chat runs (2026-10-09, tree
 aa2166b1), answers most prompts in a few tokens and stops at its end of turn (`<turn|>`): its
 rows have 71 to 81 positions against the base's 128, so one position weighs more. The mix's
@@ -350,6 +394,9 @@ the card went from 0.052 (build 84989047, before K smoothing) to 0.012.
 6. [docs/board.md](docs/board.md): the physical card, from clocks to PCIe.
 7. [docs/targets.md](docs/targets.md): how one design builds for several boards and chips (a
    target file per build: `targets/*.toml`).
+8. [docs/bcu1525.md](docs/bcu1525.md), [docs/bcu1525_wg.md](docs/bcu1525_wg.md) and
+   [docs/bcu1525_s2.md](docs/bcu1525_s2.md): the VU9P card, its memory path at 88 to 91% of the
+   DIMMs, and two slices. [docs/x2.md](docs/x2.md): two cards as one machine.
 
 ## What's next
 
@@ -362,9 +409,13 @@ the card went from 0.052 (build 84989047, before K smoothing) to 0.012.
   still limited by the matrix unit's multiply rate.
 
 - **More targets.** The design builds from target files (`targets/*.toml`,
-  [docs/targets.md](docs/targets.md)): the YPCB-00338 in production, the BCU1525 (Virtex
-  UltraScale+ VU9P, four DDR4 DIMMs) being brought up, and ASICs, starting with NanGate45 and
-  OpenROAD for area, clock and power numbers.
+  [docs/targets.md](docs/targets.md)): the YPCB-00338 and the BCU1525 on cards, and
+  ASICs, starting with NanGate45 and OpenROAD for area, clock and power numbers.
+- **The BCU1525's open items.** Decode slows with context on the 35B (attention's KV, not the
+  weight stream), the two-card reply at a 31k context differs from one card's, and the wider
+  matrix unit for prefill is staged but has no bitstream yet
+  ([docs/bcu1525_wg.md](docs/bcu1525_wg.md), [docs/x2.md](docs/x2.md),
+  [docs/wide_mxu.md](docs/wide_mxu.md)).
 
 ## Contributing
 

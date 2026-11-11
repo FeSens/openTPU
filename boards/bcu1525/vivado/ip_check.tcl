@@ -4,8 +4,9 @@
 #   vivado -mode batch -source ip_check.tcl -tclargs PART OUT_DIR [STEPS]
 # STEPS (comma separated, default bd): bd = source bd.tcl (validate_bd_design and its checks) and
 # generate the IP output products; bdsynth = also synthesize the block design's IP out of context;
-# ld4 = synthesize the LiteDRAM DDR4 core (boards/bcu1525/litedram/otpu_ld4.v) out of context and
-# report its utilization (its primitives: MMCME4, IDELAYCTRL, I/ODELAYE3, I/OSERDESE3, the CPU).
+# ld4 = synthesize the LiteDRAM DDR4 core (boards/bcu1525/litedram_udimm/otpu_ld4.v; OTPU_DIMM
+# rdimm: litedram/otpu_ld4.v) out of context and report its utilization (its primitives: MMCME4,
+# IDELAYCTRL, I/ODELAYE3, I/OSERDESE3, the CPU).
 set here [file normalize [file dirname [info script]]]
 set root [file normalize $here/../../..]
 set part [lindex $argv 0]
@@ -34,7 +35,7 @@ if {"bd" in $steps || "bdsynth" in $steps} {
   }
 }
 if {"ld4" in $steps} {
-  set d $root/boards/bcu1525/litedram
+  set d $root/boards/bcu1525/[expr {[info exists ::env(OTPU_DIMM)] && $::env(OTPU_DIMM) eq "rdimm" ? "litedram" : "litedram_udimm"}]
   read_verilog $d/otpu_ld4.v
   foreach f [glob $d/otpu_ld4_*.init] { add_files -norecurse $f }
   set_property FILE_TYPE {Memory Initialization Files} [get_files *.init]

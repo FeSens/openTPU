@@ -34,7 +34,9 @@ class RtlBackend:
         w = np.asarray(I.assemble(prog), np.uint32)
         if not {**rtlsim.UARCH, **(self.uarch or {})}.get("SEQ_WC"):
             return w
-        return W.loadable(w, W.entries(w, self.cfg.D, self.cfg.S, prog=prog), self.cfg.D)
+        return W.loadable(w, W.entries(w, self.cfg.D, self.cfg.S, prog=prog, aw=self.cfg.AW,
+                                         win=self.cfg.WC_WIN),
+                          self.cfg.D)
 
     def run(self, programs: list, args=None) -> dict:
         drams, _, stats = rtlsim.run(self.cfg, programs, self.drams, self.dram_lat,

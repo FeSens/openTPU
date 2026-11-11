@@ -17,7 +17,12 @@
 // 0 levels, 4.4 ns of route and a 2.4 ns setup, +0.174 ns). WREG registers the weights too (A
 // and D registers, loaded with en: wlo and whi are their next values). rtl/tech/generic holds the
 // equivalent behavioural model.
-module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0, parameter bit WREG = 1'b0) (
+// PK (otpu_mxu at WG > 1, docs/weight_groups.md): D = whi * 2^16 and sel 1 adds it to A
+// in the pre-adder (INMODE: A never gated), the product act * (wlo + whi * 2^16), the chain's sum
+// 32 bits wide (p); under sel a chain's FIRST position adds RND = 2^15 (OPMODE's W, its register
+// loaded with INMODE's), so the column end splits a sum by its bits.
+module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0, parameter bit WREG = 1'b0,
+                 parameter bit PK = 1'b0) (
   input  logic               clk,
   input  logic               en,
   input  logic [7:0]         act,
@@ -26,7 +31,7 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0, paramete
   input  logic               sel,               // the select from the next cycle on
   input  logic [47:0]        pcin,
   output logic [47:0]        pcout,
-  output logic signed [23:0] p
+  output logic signed [(PK ? 32 : 24)-1:0] p
 );
   logic [47:0] pf;
   DSP48E2 #(
@@ -34,30 +39,33 @@ module otpu_pe #(parameter bit FIRST = 1'b0, parameter bit LAST = 1'b0, paramete
       .PREADDINSEL("A"), .USE_MULT("MULTIPLY"), .USE_WIDEXOR("FALSE"),
     .USE_SIMD("ONE48"), .AREG(WREG ? 1 : 0), .ACASCREG(WREG ? 1 : 0), .BREG(1), .BCASCREG(1),
     .CREG(0), .DREG(WREG ? 1 : 0),
-    .ADREG(0), .MREG(1), .PREG(LAST ? 0 : 1), .INMODEREG(1), .OPMODEREG(0), .ALUMODEREG(0),
-    .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
+    .ADREG(0), .MREG(1), .PREG(LAST ? 0 : 1), .INMODEREG(1), .OPMODEREG((FIRST && PK) ? 1 : 0),
+    .ALUMODEREG(0), .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
     .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
-    .SEL_MASK("MASK"), .SEL_PATTERN("PATTERN")
+    .RND((FIRST && PK) ? 48'h8000 : 48'h0), .SEL_MASK("MASK"), .SEL_PATTERN("PATTERN")
   ) u_dsp (
     .CLK(clk),
-    .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D({{19{whi[7]}}, whi}),
-    .INMODE({2'b00, sel, sel, 1'b0}), .OPMODE(FIRST ? 9'b00_000_01_01 : 9'b00_001_01_01),
+    .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D(PK ? {{3{whi[7]}}, whi, 16'd0} : {{19{whi[7]}}, whi}),
+    .INMODE({2'b00, sel, PK ? 1'b0 : sel, 1'b0}),
+    .OPMODE(FIRST ? {(PK && sel) ? 2'b10 : 2'b00, 7'b000_01_01} : 9'b00_001_01_01),
     .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
     .CEA1(1'b0), .CEA2(WREG ? en : 1'b0), .CEB1(en), .CEB2(en), .CEC(1'b0),
     .CED(WREG ? en : 1'b0), .CEAD(1'b0),
-    .CEM(en), .CEP(LAST ? 1'b0 : en), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0),
+    .CEM(en), .CEP(LAST ? 1'b0 : en), .CEALUMODE(1'b0), .CECTRL((FIRST && PK) ? en : 1'b0),
+    .CECARRYIN(1'b0),
     .CEINMODE(en),
     .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
     .RSTALLCARRYIN(1'b0), .RSTALUMODE(1'b0), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
     .ACIN(30'd0), .BCIN(18'd0), .PCIN(pcin), .CARRYCASCIN(1'b0), .MULTSIGNIN(1'b0),
     .ACOUT(), .BCOUT(), .PCOUT(pcout), .P(pf), .CARRYCASCOUT(), .MULTSIGNOUT(), .CARRYOUT(),
     .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT(), .XOROUT());
-  assign p = pf[23:0];
+  assign p = pf[(PK ? 32 : 24)-1:0];
 endmodule
 
 
 // The MX column end (otpu_mxu, docs/mx_mxu.md): nine DSP48E2s, as rtl/tech/xilinx7's DSP48E1s. DSP g (g < 8) takes group g's
-// chain end on A (and, at two chains a group, the second on D: the pre-adder sums them) and its
+// chain end on A (and, at two chains a group, the second on D: the pre-adder sums them; den 0
+// gates D off, INMODE) and its
 // B = m << sh on B (unsigned, < 2^17), all registered at E, and multiplies into M. Groups 0..3:
 // M at E+1, their sum down a cascade in the same cycle (P = PCIN + M, DSP 0: P = M), registered
 // by DSP 3 at E+2 (p3: the production column end's four cascaded post-adders, which close at
@@ -70,7 +78,9 @@ endmodule
 module otpu_mxce #(parameter int CPG = 1) (
   input  logic                clk,
   input  logic [7:0][23:0]    a,        // group g's chain end: the pre-adder's A ...
-  input  logic [7:0][23:0]    d,        // ... and D (CPG 2: the group's second chain; else unused)
+  input  logic [7:0][23:0]    d,        // ... and D (CPG 2: the group's second chain, or
+                                        // otpu_mxu's packed int8 high halves; else unused)
+  input  logic                den,      // D into the pre-adder (CPG 2; constant while it streams)
   input  logic [7:0][16:0]    bm,       // B = m << sh, with a / d
   input  logic                first,    // the row's first block (two cycles after a / d / bm)
   output logic [47:0]         acc
@@ -94,7 +104,8 @@ module otpu_mxce #(parameter int CPG = 1) (
       .CLK(clk),
       .A({{6{a[g][23]}}, a[g]}), .B({1'b0, bm[g]}), .C(48'd0),
       .D((CPG == 2) ? {{3{d[g][23]}}, d[g]} : 27'd0),
-      .INMODE((CPG == 2) ? 5'b00100 : 5'b00000), .OPMODE(g == 0 ? 9'b00_000_01_01 : 9'b00_001_01_01),
+      .INMODE((CPG == 2) ? {2'b00, den, 2'b00} : 5'b00000),
+      .OPMODE(g == 0 ? 9'b00_000_01_01 : 9'b00_001_01_01),
       .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
       .CEA1(AR == 2 ? 1'b1 : 1'b0), .CEA2(1'b1), .CEB1(LATE ? 1'b1 : 1'b0), .CEB2(1'b1),
       .CEC(1'b0), .CED(CPG == 2 ? 1'b1 : 1'b0), .CEAD((LATE && CPG == 2) ? 1'b1 : 1'b0),
@@ -130,4 +141,47 @@ module otpu_mxce #(parameter int CPG = 1) (
     .ACOUT(), .BCOUT(), .PCOUT(pc[8]), .P(pf[8]), .CARRYCASCOUT(), .MULTSIGNOUT(),
     .CARRYOUT(), .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT(), .XOROUT());
   assign acc = pf[8];
+endmodule
+
+
+// A position of the pumped packed column (otpu_mxu PUMP, otpu_mxpc): one DSP48E2 at clk_f = 2 x
+// clk. A2 = wlo, D = whi * 2^16 (loaded with ce_w, the slow edges), AD = A2 + D (loaded with
+// ce_ad: held two fast cycles), B = the activation (BF: from the fabric's b_f, BREG 1; else B1
+// and B2, BREG 2), M = B * AD and P = PCIN + M (FIRST: P = M + RND, RND = 2^15): every register
+// on, INMODE and OPMODE constant. The out-of-context test of the column (rtl/exp/pump_us,
+// otpu_ppk_pe) is this cell.
+module otpu_ppe #(parameter bit FIRST = 1'b0, parameter bit BF = 1'b1) (
+  input  logic        clk_f,
+  input  logic        ce_w,
+  input  logic        ce_ad,
+  input  logic [7:0]  wlo,
+  input  logic [7:0]  whi,
+  input  logic [7:0]  act,
+  input  logic [47:0] pcin,
+  output logic [47:0] pcout,
+  output logic [31:0] p
+);
+  logic [47:0] pf;
+  DSP48E2 #(
+    .A_INPUT("DIRECT"), .B_INPUT("DIRECT"), .AMULTSEL("AD"), .BMULTSEL("B"),
+    .PREADDINSEL("A"), .USE_MULT("MULTIPLY"), .USE_WIDEXOR("FALSE"),
+    .USE_SIMD("ONE48"), .AREG(1), .ACASCREG(1), .BREG(BF ? 1 : 2), .BCASCREG(BF ? 1 : 2),
+    .CREG(0), .DREG(1), .ADREG(1), .MREG(1), .PREG(1), .INMODEREG(0), .OPMODEREG(0),
+    .ALUMODEREG(0), .CARRYINREG(0), .CARRYINSELREG(0), .USE_PATTERN_DETECT("NO_PATDET"),
+    .AUTORESET_PATDET("NO_RESET"), .MASK(48'h3fffffffffff), .PATTERN(48'h0),
+    .RND(FIRST ? 48'h8000 : 48'h0), .SEL_MASK("MASK"), .SEL_PATTERN("PATTERN")
+  ) u_dsp (
+    .CLK(clk_f),
+    .A({{22{wlo[7]}}, wlo}), .B({{10{act[7]}}, act}), .C(48'd0), .D({{3{whi[7]}}, whi, 16'd0}),
+    .INMODE(5'b00100), .OPMODE(FIRST ? 9'b10_000_01_01 : 9'b00_001_01_01),
+    .ALUMODE(4'b0000), .CARRYIN(1'b0), .CARRYINSEL(3'b000),
+    .CEA1(1'b0), .CEA2(ce_w), .CEB1(BF ? 1'b0 : 1'b1), .CEB2(1'b1), .CEC(1'b0), .CED(ce_w),
+    .CEAD(ce_ad), .CEM(1'b1), .CEP(1'b1), .CEALUMODE(1'b0), .CECTRL(1'b0), .CECARRYIN(1'b0),
+    .CEINMODE(1'b0),
+    .RSTA(1'b0), .RSTB(1'b0), .RSTC(1'b0), .RSTD(1'b0), .RSTM(1'b0), .RSTP(1'b0),
+    .RSTALLCARRYIN(1'b0), .RSTALUMODE(1'b0), .RSTCTRL(1'b0), .RSTINMODE(1'b0),
+    .ACIN(30'd0), .BCIN(18'd0), .PCIN(pcin), .CARRYCASCIN(1'b0), .MULTSIGNIN(1'b0),
+    .ACOUT(), .BCOUT(), .PCOUT(pcout), .P(pf), .CARRYCASCOUT(), .MULTSIGNOUT(), .CARRYOUT(),
+    .OVERFLOW(), .UNDERFLOW(), .PATTERNDETECT(), .PATTERNBDETECT(), .XOROUT());
+  assign p = pf[31:0];
 endmodule

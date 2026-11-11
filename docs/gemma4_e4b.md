@@ -297,7 +297,7 @@ The row reaches the slot in one of two ways.
 
 Build B (`deploy_fused133c_79c5707a`, 133.33 MHz, DDR3-1066), 2026-10-01. The default formats
 (int8 layers; the head and down 0-23 in fp4), the PLE table on the host as int8 records, cap
-2048: a 3.958 GiB image, the Engine built in 158 s on opentpu.
+2048: a 3.958 GiB image, the Engine built in 158 s on the card host.
 
 - **Token-exact** against the ISA simulator. After prefill runs of the 11-token prompt `The
   lighthouse keeper climbed the stairs at dusk, and`: its first token, then 24 tokens each by
@@ -326,7 +326,7 @@ Build B (`deploy_fused133c_79c5707a`, 133.33 MHz, DDR3-1066), 2026-10-01. The de
 3. **E4B on the ISA simulator against Hugging Face in the default formats.** Greedy, 3
    prompts x 24 tokens as for E2B, then the 900-token text (done, above). The HF reference needs 12-13 GB if
    its PLE rows are read on demand (hf_lean.py with a lazy per-layer embedding), so it runs on
-   omarchy.
+   the build host.
 4. **RTL cycles** (done, above), on the DDR3-1066 bank model and the LiteDRAM co-simulation.
 5. **The generate loop's wait** (done): the post, the `RowServer` and the wait, on the ISA
    simulator's host hook and on a fake card that the host serves during its runs. On the RTL,

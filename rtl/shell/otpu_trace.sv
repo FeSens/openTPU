@@ -22,7 +22,8 @@ module otpu_trace
 #(
   parameter int DEPTH = 16384,        // records (a power of two)
   parameter int QD    = 32,           // bundles in the capture queue (a power of two)
-  parameter int WIN   = 16            // the sequencer's window slots (<= 16: 4-bit slot fields)
+  parameter int WIN   = 16            // the sequencer's window slots (<= 16: 4-bit slot fields;
+                                      //   32: 5-bit, the bit above them, and an E item a slot)
 ) (
   input  logic        clk,
   input  logic        rst,
@@ -39,9 +40,11 @@ module otpu_trace
 );
   localparam int LD = $clog2(DEPTH);
   localparam int QW = $clog2(QD);
+  localparam int NE = (WIN > 16) ? 32 : 16;           // window slots the records name
+  localparam int SW = (WIN > 16) ? 5 : 4;             // a slot field's bits ([55:52], 32: [56:52])
   initial begin
     if (DEPTH != (1 << LD) || QD != (1 << QW)) $fatal(1, "otpu_trace: DEPTH, QD: powers of two");
-    if (WIN > 16) $fatal(1, "otpu_trace: slot fields are 4 bits (WIN <= 16)");
+    if (WIN > 32) $fatal(1, "otpu_trace: slot fields are 5 bits at most (WIN <= 32)");
   end
 `ifndef SYNTHESIS
   // +trace_count0=<hex> (tests/test_observability.py): a clear starts count (and the write slot)
@@ -89,15 +92,15 @@ module otpu_trace
   typedef struct packed {
     logic [31:0]              cyc;
     logic                     g;
-    logic [3:0]               g_slot;
-    logic [15:0]              e;
+    logic [SW-1:0]            g_slot;
+    logic [NE-1:0]            e;
     logic [NUNITS-1:0]        s;
-    logic [NUNITS-1:0][3:0]   s_slot;
+    logic [NUNITS-1:0][SW-1:0] s_slot;
     logic [NUNITS-1:0][15:0]  s_dt;        // cycle - ready; 16'hFFFF: s_x, an R record follows
     logic [NUNITS-1:0]        s_x;
     logic [NUNITS-1:0][31:0]  s_rdy;
     logic                     d;
-    logic [3:0]               d_slot;
+    logic [SW-1:0]            d_slot;
     logic [15:0]              d_pc;
     logic [103:0]             d_ow;        // {op, w3, w2, w1}
     logic                     u_mxu;
@@ -118,19 +121,19 @@ module otpu_trace
   always_comb begin
     nb.cyc = ev.sq.cyc;
     nb.g = ev.sq.g;
-    nb.g_slot = ev.sq.g_slot[3:0];
-    nb.e = ev.sq.e[15:0];
+    nb.g_slot = ev.sq.g_slot[SW-1:0];
+    nb.e = ev.sq.e[NE-1:0];
     nb.s = ev.sq.s;
     for (int u = 0; u < NUNITS; u++) begin
       logic [31:0] dt;
       dt = ev.sq.cyc - ev.sq.s_rdy[u];
-      nb.s_slot[u] = ev.sq.s_slot[u][3:0];
+      nb.s_slot[u] = ev.sq.s_slot[u][SW-1:0];
       nb.s_x[u] = dt >= 32'hFFFF;
       nb.s_dt[u] = nb.s_x[u] ? 16'hFFFF : dt[15:0];
       nb.s_rdy[u] = ev.sq.s_rdy[u];
     end
     nb.d = ev.sq.d;
-    nb.d_slot = ev.sq.d_slot[3:0];
+    nb.d_slot = ev.sq.d_slot[SW-1:0];
     nb.d_pc = ev.sq.d_pc[15:0];
     nb.d_ow = {ev.sq.d_op, ev.sq.d_w3, ev.sq.d_w2, ev.sq.d_w1};
     nb.u_mxu = ev.u_mxu;
@@ -157,13 +160,15 @@ module otpu_trace
 
   // ------------------------------------------------------------------ U: unpacker
   // a bundle's items, in record order
-  localparam int I_G = 0, I_E = 1, I_S = 17, I_D = 27, I_U1 = 30, I_U2 = 35, I_U3 = 37,
-                 I_H = 39, I_P = 44, I_Q = 54, NI = 61;
+  // (NE 16: I_S 17, I_D 27, I_U1 30, I_U2 35, I_U3 37, I_H 39, I_P 44, I_Q 54, NI 61)
+  localparam int I_G = 0, I_E = 1, I_S = I_E + NE, I_D = I_S + 2 * NUNITS, I_U1 = I_D + 3,
+                 I_U2 = I_U1 + 5, I_U3 = I_U2 + 2, I_H = I_U3 + 2, I_P = I_H + 1 + NH,
+                 I_Q = I_P + 1 + NP, NI = I_Q + 1 + NQ;
   function automatic logic [NI-1:0] items(input bnd_t b);
     logic [NI-1:0] m;
     m = '0;
     m[I_G] = b.g;
-    for (int i = 0; i < 16; i++) m[I_E + i] = b.e[i];
+    for (int i = 0; i < NE; i++) m[I_E + i] = b.e[i];
     for (int u = 0; u < NUNITS; u++) begin
       m[I_S + 2 * u] = b.s[u];
       m[I_S + 2 * u + 1] = b.s[u] && b.s_x[u];
@@ -192,13 +197,13 @@ module otpu_trace
   wire   load = last && q_n != 0;
   always_comb begin
     for (int i = 0; i < NI; i++) irec[i] = '0;
-    irec[I_G] = {T_G, 4'd0, cur.g_slot, 20'd0, cur.cyc};
-    for (int i = 0; i < 16; i++) irec[I_E + i] = {T_E, 4'd0, 4'(i), 20'd0, cur.cyc};
+    irec[I_G] = {T_G, (8 - SW)'(0), cur.g_slot, 20'd0, cur.cyc};
+    for (int i = 0; i < NE; i++) irec[I_E + i] = {T_E, (8 - SW)'(0), SW'(i), 20'd0, cur.cyc};
     for (int u = 0; u < NUNITS; u++) begin
-      irec[I_S + 2 * u] = {T_S, 4'd0, cur.s_slot[u], 4'(u), cur.s_dt[u], cur.cyc};
+      irec[I_S + 2 * u] = {T_S, (8 - SW)'(0), cur.s_slot[u], 4'(u), cur.s_dt[u], cur.cyc};
       irec[I_S + 2 * u + 1] = {T_R, 28'd0, cur.s_rdy[u]};
     end
-    irec[I_D] = {T_D, 4'd0, cur.d_slot, 4'd0, cur.d_pc, cur.cyc};
+    irec[I_D] = {T_D, (8 - SW)'(0), cur.d_slot, 4'd0, cur.d_pc, cur.cyc};
     irec[I_D + 1] = {T_O, 7'd0, 1'b0, cur.d_ow[51:0]};
     irec[I_D + 2] = {T_O, 7'd0, 1'b1, cur.d_ow[103:52]};
     irec[I_U1] = {T_U, 8'd0, 4'd1, 16'd0, cur.cyc};

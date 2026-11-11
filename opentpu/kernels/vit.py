@@ -43,25 +43,39 @@ from .lib import gelu_tanh
 
 class VitKV(KVDesc):
     """A crop's K / V scratch: KVDesc's layout with V^T untiled (rows `cap` tokens wide), so an
-    append at a loop-dependent token is an address (vit_append)."""
+    append at a loop-dependent token is an address (vit_append). In groups (wg > 1, GALL) K's
+    groups of wg tokens (KVDesc's) and V^T's rows in groups of wg dimensions, chunk c its
+    tokens c D .. (one tile of cap tokens)."""
 
     def vt(self, h: int) -> QTensor:
         e = self._h(h)
+        if self.wg > 1:
+            return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), self.cap * self.wg, 0,
+                           self.D, grp=self.wg)
         return QTensor(Affine.of(e["vt"]), None, (self.dv, self.cap), self.cap, 0, self.D)
 
     def vt_column(self, h: int, t) -> Affine:
         return Affine.of(self._h(h)["vt"]) + Affine.of(t)
 
+    def vt_place(self, h: int, t) -> tuple:
+        return Affine.of(self._h(h)["vt"]), Affine.of(t)
+
 
 def vit_append(kv: VitKV, h: int, t, k, v) -> None:
     """Append rows k, v ([n, d], d the padded head) at token t (static, loop-dependent or a
     run-time value) of head h: K token-major with its fp32 row scale (QST ROW), V transposed
-    with a scale per token (kv_append's quantization)."""
+    with a scale per token (kv_append's quantization); in groups rows t .. of the grouped K and
+    columns t .. of the grouped V^T (QST GRP, GRP COL)."""
     b = current()
     t = Affine.of(t)
     kd = kv.k(h)
-    b.store_quantized(k, kd.data + t * kd.rs, kd.scale + t * kd.srs, kd.rs, 1, row_scale=kd.rsc)
     e = kv._h(h)
+    if kv.wg > 1:
+        b.store_quantized(k, kd.data, kd.scale, 0, kd.srs, row_scale=kd.rsc, row=t)
+        b.store_quantized(v, Affine.of(e["vt"]), Affine.of(e["vs"]) + t * 4, 0, kv.vt(h).rs,
+                          row_scale=True, row=t, col=True)
+        return
+    b.store_quantized(k, kd.data + t * kd.rs, kd.scale + t * kd.srs, kd.rs, 1, row_scale=kd.rsc)
     b.store_quantized(v, kv.vt_column(h, t), Affine.of(e["vs"]) + t * 4, 1, kv.cap,
                       row_scale=True)
 
@@ -175,10 +189,11 @@ def vit_embed(v, N: int, R: int):
 def vit_qkv(v, lw, src, N: int, R: int, eps: float):
     """LayerNorm (ln1) of src's N rows, then per head q -> v.Q[h] (head-major: one store a
     head), k and v -> the KV scratch. The weights are the checkpoint's [C, C] (a head's dv
-    rows); each head's q, k, v land in the first dv columns of [R, dp] tiles whose other
+    rows; in groups dq rows a head, those past dv zero: minicpmv.VisionImage); each head's
+    q, k, v land in the first dv columns of [R, dp] tiles whose other
     columns stay 0 (two heads' sets, alternating): the MXU streams no padding rows, the cache
     and Q get D-wide rows. Each starts as its bias (a fill) and the MM accumulates into it."""
-    H, dp, dh = v.heads, v.dp, v.dv
+    H, dp, dh, dq = v.heads, v.dp, v.dv, v.dq
     lw = PC.bind(lw)
     w = ol.load(lw.ln1w)
     bs = ol.load(lw.bq), ol.load(lw.bk), ol.load(lw.bv)
@@ -193,7 +208,7 @@ def vit_qkv(v, lw, src, N: int, R: int, eps: float):
             q, k, vv = (t[0:n, :] for t in tiles[h % 2])
             for t, wt, b in zip((q, k, vv), ws, bs):
                 t[:, 0:dh].set(b[h * dh:(h + 1) * dh][None, :])
-                ol.dot(xs, wt[h * dh:(h + 1) * dh, :], acc=t[:, 0:dh])
+                ol.dot(xs, wt[h * dq:h * dq + dh, :], acc=t[:, 0:dh])
             ol.store(v.Q[h][r0:r0 + n, :], q)
             vit_append(v.kv, h, r0, k, vv)
     row_groups(N, R, body)

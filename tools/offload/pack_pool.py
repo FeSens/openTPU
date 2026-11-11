@@ -17,8 +17,8 @@ the whole checkpoint: in parallel workers on its host, or streamed into a pool o
 
 The card's host keeps a checkpoint without the experts (strip_experts.py), so its pool must be
 whole before a run warms more slots than the experts it packed itself: session 5 filled the 35B's
-(10240 experts) with four `send | ssh HOST ... recv` pipelines from omarchy in 52 min, and the
-26B's (3840) was packed on omarchy by four workers, then copied. An expert is marked packed only
+(10240 experts) with four `send | ssh HOST ... recv` pipelines from the build host in 52 min, and the
+26B's (3840) was packed on the build host by four workers, then copied. An expert is marked packed only
 after its bytes. The bytes are the image's (Image.expert, the card's slot format, split as
 offload.to_split): the pool MO.serve packs on demand. The expert format follows the spec's
 formats (OTPU_FORMATS, e.g. experts=fp4) and --wformat; recv needs MODEL only for the slot size

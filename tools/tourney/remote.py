@@ -1,18 +1,18 @@
 """Vivado on the build host for the tournament: EVAL=vivado-remote.
 
-Vivado never runs on the Mac. A candidate's working tree (committed state plus its uncommitted
+Vivado never runs on a laptop. A candidate's working tree (committed state plus its uncommitted
 edits, without the build/ and models/ links) is sent with `git archive | ssh tar -x` to
 `~/otpu-build/tv-<name>` on the host and built there, the same way `make bit` runs it.
 
 Build hosts (OTPU_BUILD_HOSTS, comma-separated, in priority order; default
-"opentpu,omarchy.tail5bd214.ts.net"): a job goes to the first host with room.
-- opentpu: native Vivado 2026.1 (~/.local/bin/vivado), no card. Only ~/otpu-build/ is ours there.
-- omarchy: native Vivado 2026.1 (~/.local/bin/vivado) too; second, as it also runs the test gates
+a comma-separated list): a job goes to the first host with room.
+- the first host: native Vivado 2026.1 (~/.local/bin/vivado), no card. Only ~/otpu-build/ is ours there.
+- the build host: native Vivado 2026.1 (~/.local/bin/vivado) too; second, as it also runs the test gates
   and the card.
 Native commands put ~/.local/bin first on PATH (a non-interactive ssh may not have it). Hosts in
 VIVADO_DOCKER_HOSTS use the vivado:2026.1 Docker image instead (VIVADO_AS_USER, the license
 node-locked to VIVADO_MAC, the install mounted read-only). The test gates' host (TEST_HOST,
-OTPU_REMOTE: omarchy) is separate: see gates.py.
+OTPU_REMOTE: the build host) is separate: see gates.py.
 
 Two kinds of job:
 - ooc(): one component out of context: synth_design -mode out_of_context, place, phys_opt, route
@@ -38,13 +38,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 HOSTS = [h.strip() for h in os.environ.get(
-    "OTPU_BUILD_HOSTS", os.environ.get("OTPU_BUILD_HOST", "opentpu,omarchy.tail5bd214.ts.net")
+    "OTPU_BUILD_HOSTS", os.environ.get("OTPU_BUILD_HOST", "otpu-card,otpu-build")
 ).split(",") if h.strip()]
 HOST = HOSTS[0]                                   # the default for ssh() without a host
 DOCKER_HOSTS = {h.strip() for h in os.environ.get("VIVADO_DOCKER_HOSTS", "").split(",")
                 if h.strip()}
-# where tools/omarchy_test.sh runs the test gates (the same variable as the script's)
-TEST_HOST = os.environ.get("OTPU_REMOTE", "omarchy.tail5bd214.ts.net")
+# where tools/remote_test.sh runs the test gates (the same variable as the script's)
+TEST_HOST = os.environ.get("OTPU_REMOTE", "otpu-build")
 NATIVE_PATH = "export PATH=$HOME/.local/bin:$PATH; "
 
 
@@ -53,7 +53,7 @@ def native(host: str | None = None) -> bool:
 REMOTE_DIR = os.environ.get("OTPU_BUILD_DIR", "otpu-build")        # relative to the remote $HOME
 KEEP_DCPS = int(os.environ.get("OTPU_KEEP_DCPS", "4"))  # full builds' routed checkpoints kept (full())
 MAX_JOBS = int(os.environ.get("OTPU_MAX_VIVADO", "2"))
-# per-host caps (host=n,...): opentpu takes one full build at a time. Two builds' IP synthesis
+# per-host caps (host=n,...): the first host takes one full build at a time. Two builds' IP synthesis
 # phases (JOBS=2 each) filled its 31 GB and pushed 11 GB to swap (2026-09-28 00:07)
 HOST_JOBS = {k.strip(): int(v) for k, v in (kv.split("=") for kv in os.environ.get(
     "OTPU_HOST_JOBS", "opentpu=1").split(",") if "=" in kv)}

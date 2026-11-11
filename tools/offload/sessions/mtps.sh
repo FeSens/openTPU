@@ -20,9 +20,9 @@
 # A build other than EXPECT, a failed selftest, a server that does not come up, a failed check or a run past its timeout
 # stops it (then the final selftest). About 70 min at MAXTOK 128 (6 runs of the 35B, ~8-10 min each with the pool reads;
 # the add-on ~20 min more).
-# Stage (from the Mac; no host work while a session runs):
-#   git archive <serve-mtp sha> | ssh opentpu 'D=~/otpu-build/les/mtps/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <serve-mtp sha, full> > ~/otpu-build/les/mtps/host/COMMIT; mkdir -p ~/otpu-build/les/mtps/runs'
+# Stage (from a laptop; no host work while a session runs):
+#   git archive <serve-mtp sha> | ssh CARD_HOST 'D=~/otpu-build/les/mtps/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <serve-mtp sha, full> > ~/otpu-build/les/mtps/host/COMMIT; mkdir -p ~/otpu-build/les/mtps/runs'
 # Run (no pipe), inside a held session (OTPU_LOCK_HELD set) directly, else under otpu-lock:
 #   EXPECT=<build> setsid -f ~/.local/bin/otpu-lock --wait 600 -- bash ~/otpu-build/les/mtps/host/tools/offload/\
 #     sessions/mtps.sh > ~/otpu-build/les/mtps.launch.log 2>&1 < /dev/null

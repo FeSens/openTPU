@@ -3,10 +3,14 @@ behind the server, clients over HTTP. Chat and text completions (plain and strea
 streamed text the plain one's), SGLang's /generate, greedy replies equal to a fresh engine's on the rendered
 prompt, several clients' conversations at once (their second turns continuing the first's
 context: cached tokens), stop strings, n choices, usage, the models and stats routes, errors
-(a prompt over the context, a bad body, an API key), and the reasoning split."""
+(a prompt over the context, a bad body, an API key), the reasoning split, and a client that goes
+away while its prompt is fed (cancelled) against one that half-closes (its reply whole)."""
 import http.client
 import json
+import socket
+import struct
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -150,6 +154,29 @@ def test_chat_is_the_engines_greedy_reply(server):
     assert ev[-2]["usage"]["prompt_tokens_details"]["cached_tokens"] == len(ids) - 1
 
 
+def test_tokenize_and_detokenize(server):
+    """vLLM's /tokenize: the messages rendered as the chat route renders them (its usage's
+    prompt_tokens), with add_generation_prompt false the history alone, a prompt encoded as the
+    completions route does; /detokenize the text back."""
+    srv, port, _ = server
+    msgs = [{"role": "system", "content": "be brief"}, {"role": "user", "content": "hi there"}]
+    tok = _Tok()
+    st, k = _call(port, "POST", "/tokenize", {"model": "tiny-qwen3", "messages": msgs})
+    assert st == 200 and k["tokens"] == tok.apply_chat_template(msgs, True, False, True)
+    assert k["count"] == len(k["tokens"]) and k["max_model_len"] == CAP
+    st, r = _call(port, "POST", "/v1/chat/completions",
+                  {"model": "tiny-qwen3", "messages": msgs, "max_tokens": 2, "temperature": 0})
+    assert st == 200 and r["usage"]["prompt_tokens"] == k["count"]
+    st, k2 = _call(port, "POST", "/tokenize", {"messages": msgs, "add_generation_prompt": False})
+    assert k2["tokens"] == tok.apply_chat_template(msgs, False, False, True)
+    st, k3 = _call(port, "POST", "/tokenize", {"prompt": "abc"})
+    assert st == 200 and k3["tokens"] == tok("abc")["input_ids"]
+    st, d = _call(port, "POST", "/detokenize", {"tokens": k3["tokens"]})
+    assert st == 200 and d["prompt"] == tok.decode(k3["tokens"])
+    assert _call(port, "POST", "/tokenize", {"prompt": 5})[0] == 400
+    assert _call(port, "POST", "/detokenize", {"tokens": "x"})[0] == 400
+
+
 def test_clients_at_once_and_their_next_turns(server):
     """Four clients' two-turn conversations at once: every reply is the engine's greedy reply on
     its rendering; each second turn continues its first's context (cached tokens)."""
@@ -236,6 +263,43 @@ def test_sglang_generate(server):
     texts = [e["text"] for e in ev[:-1]]
     assert all(b.startswith(a) for a, b in zip(texts, texts[1:]))
     assert _call(port, "POST", "/generate", {"sampling_params": {}})[0] == 400
+
+
+def test_lfm_check_on_this_server(server, monkeypatch, tmp_path, capsys):
+    """boards/bcu1525/chat35/lfm_check.py's four commands: a server's replies are its own
+    references, the perf and replay requests go through, a changed reply is a failure."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "boards" / "bcu1525" / "chat35"))
+    import lfm_check as LC
+    url = f"http://127.0.0.1:{server[1]}"
+    monkeypatch.setattr(LC, "MAX_NEW", 4)
+    monkeypatch.setattr(LC, "LONG_N", 60)
+    monkeypatch.setattr(LC, "PERF", (20, 6, (60, 90), 5))
+    refs = tmp_path / "refs.json"
+    assert LC.main(["refs", url, str(refs)]) == 0
+    want = json.loads(refs.read_text())
+    assert len(want) == 8 and all(len(c["output_ids"]) == 4 for c in want)
+    assert LC.main(["check", url, str(refs)]) == 0
+    assert "8 of 8 replies equal" in capsys.readouterr().out
+    want[0]["output_ids"][1] += 1
+    refs.write_text(json.dumps(want))
+    assert LC.main(["check", url, str(refs)]) == 1
+    assert "DIFF at 1" in capsys.readouterr().out
+    assert LC.main(["perf", url]) == 0
+    out = capsys.readouterr().out
+    assert "tok/s over 6 tokens" in out and "again 90 + 5" in out
+    cap = tmp_path / "cap.jsonl"
+    common = {"model": "another-model", "stream": True, "stream_options": {"include_usage": True}}
+    bodies = [dict(common, max_completion_tokens=5, messages=[
+                  {"role": "system", "content": "s" * 80}, {"role": "user", "content": "hello"}]),
+              dict(common, reasoning_effort="low", max_tokens=3,
+                   messages=[{"role": "user", "content": "a title"}])]
+    cap.write_text("".join(json.dumps({"body": b}) + "\n" for b in bodies))
+    assert LC.main(["replay", url, str(cap)]) == 0
+    out = capsys.readouterr().out
+    assert "main: first delta" in out and "title: first delta" in out and "next: first delta" in out
+    assert "model field 'tiny-qwen3'" in out
 
 
 def test_errors(server):
@@ -435,3 +499,132 @@ def test_serve_bench_waits_for_a_warming_server(capsys):
     for never in (ConnectionRefusedError(), (503, {"status": "busy"}), ValueError("not JSON")):
         with pytest.raises(SystemExit, match="did not come up"):
             SB.wait_up(Seq(never), -1, nop)
+
+
+# ---- a client that goes away while its prompt is fed
+ROUTES = [("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}], "max_tokens": 3}),
+          ("/v1/completions", {"prompt": "hi", "max_tokens": 3}),
+          ("/generate", {"text": "hi", "sampling_params": {"max_new_tokens": 3}})]
+
+
+@pytest.fixture
+def held(server, monkeypatch):
+    """The API with its requests kept from the worker (as a prompt being fed: no event for as long
+    as the test likes), the client looked at often."""
+    srv, port, _ = server
+    got = []
+
+    def submit(r):
+        got.append(r)
+        return r
+    monkeypatch.setattr(srv.w, "submit", submit)
+    monkeypatch.setattr(API, "CLIENT_POLL_S", 0.02)
+    return port, got
+
+
+def _raw(port, path, body):
+    """A client's socket with its request sent, to do with what the test says."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=30)
+    b = json.dumps(body).encode()
+    s.sendall(f"POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+              f"Content-Length: {len(b)}\r\n\r\n".encode() + b)
+    return s
+
+
+def _reply(r, text="ok"):
+    """The request ends with `text`, as the worker ends it."""
+    r.text, r.finish = text, "stop"
+    r.events.put(("delta", text))
+    r.events.put(("done", "stop"))
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("route", range(len(ROUTES)))
+@pytest.mark.parametrize("how", ["close", "reset"])
+def test_a_client_gone_cancels_its_request(held, route, stream, how):
+    """A client that closes while no token has come: its request is cancelled, on each route,
+    streamed or not, closed with a FIN or a reset."""
+    port, got = held
+    path, body = ROUTES[route]
+    s = _raw(port, path, {**body, "stream": stream})
+    _until(lambda: got)
+    time.sleep(0.1)                     # (several looks at a client that is there)
+    assert not got[0].cancelled.is_set()
+    if how == "reset":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    s.close()
+    _until(got[0].cancelled.is_set, 10.0)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("route", range(len(ROUTES)))
+def test_a_half_closed_client_gets_its_reply(held, route, stream):
+    """A client that shuts its sending side after the request and reads on (what ssh -L's sshd does
+    towards the server too) is not cancelled: it takes the looks' SSE comments, or before a plain
+    reply interim 100s, and then its reply whole."""
+    port, got = held
+    path, body = ROUTES[route]
+    s = _raw(port, path, {**body, "stream": stream})
+    s.shutdown(socket.SHUT_WR)
+    _until(lambda: got)
+    time.sleep(0.2)
+    assert not got[0].cancelled.is_set()
+    _reply(got[0])
+    r = http.client.HTTPResponse(s)     # (begin() skips the 100s)
+    r.begin()
+    data = r.read()
+    s.close()
+    assert r.status == 200
+    assert not got[0].cancelled.is_set()
+    if stream:
+        assert data.count(b": keepalive\n\n") >= 2, data
+        events = [ln for ln in data.decode().split("\n") if ln and not ln.startswith(":")]
+        assert all(ln.startswith("data: ") for ln in events), data
+        assert "ok" in data.decode()
+        if path != "/generate":
+            assert events[-1] == "data: [DONE]"
+    else:
+        assert b"ok" in data and json.loads(data)
+
+
+def test_a_client_that_stays_sees_nothing_of_the_looks(held):
+    """No FIN: nothing is written (a plain reply's client gets no 100, a stream's no comment)."""
+    port, got = held
+    path, body = ROUTES[0]
+    s = _raw(port, path, body)
+    _until(lambda: got)
+    time.sleep(0.2)
+    s.setblocking(False)
+    with pytest.raises(BlockingIOError):
+        s.recv(1)
+    s.settimeout(30)
+    _reply(got[0])
+    r = http.client.HTTPResponse(s)
+    r.begin()
+    assert r.status == 200 and json.loads(r.read())["choices"][0]["message"]["content"] == "ok"
+    s.close()
+    s = _raw(port, path, {**body, "stream": True})
+    _until(lambda: len(got) == 2)
+    time.sleep(0.2)
+    _reply(got[1])
+    r = http.client.HTTPResponse(s)
+    r.begin()
+    assert b": keepalive" not in r.read()
+    s.close()
+
+
+def test_the_connection_has_keepalive(server, monkeypatch):
+    """Each handler's socket: SO_KEEPALIVE and, where the kernel has them, a minute to a failure."""
+    _, port, _ = server
+    seen = []
+    real = API._keepalive
+
+    def keep(sock):
+        real(sock)
+        seen.append({"on": sock.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE)} | {
+            k: sock.getsockopt(socket.IPPROTO_TCP, getattr(socket, k))
+            for k in API.KEEPALIVE if hasattr(socket, k)})
+    monkeypatch.setattr(API, "_keepalive", keep)
+    assert _call(port, "GET", "/health")[0] == 200
+    assert seen and seen[0].pop("on") == 1
+    assert seen[0] == {k: v for k, v in API.KEEPALIVE.items() if hasattr(socket, k)}

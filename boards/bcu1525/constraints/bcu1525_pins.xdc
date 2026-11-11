@@ -4,7 +4,7 @@
 # I/O standards: the VCU1525 board file's and the DDR4 MIG's for UltraScale+ (POD12_DCI data,
 # SSTL12_DCI address / command, DIFF_SSTL12_DCI clock, LVCMOS12 reset), drive settings as LiteX's
 # sqrl_xcu1525 platform (BSD-2-Clause).
-# Clocks, PCIe, LEDs, UART, I2C.
+# Clocks, PCIe, LEDs, UART, I2C, the BMC's UART.
 
 set_property PACKAGE_PIN AY37 [get_ports clk300_0_p]
 set_property IOSTANDARD LVDS [get_ports clk300_0_p]
@@ -58,12 +58,27 @@ set_property PACKAGE_PIN BF18 [get_ports uart_rx]
 set_property IOSTANDARD LVCMOS12 [get_ports uart_rx]
 set_property PACKAGE_PIN BB20 [get_ports uart_tx]
 set_property IOSTANDARD LVCMOS12 [get_ports uart_tx]
+set_property DRIVE 8 [get_ports uart_tx]
 set_property PACKAGE_PIN BF20 [get_ports i2c_scl]
 set_property IOSTANDARD LVCMOS12 [get_ports i2c_scl]
+set_property DRIVE 8 [get_ports i2c_scl]
 set_property PACKAGE_PIN BF17 [get_ports i2c_sda]
 set_property IOSTANDARD LVCMOS12 [get_ports i2c_sda]
+set_property DRIVE 8 [get_ports i2c_sda]
 set_property PACKAGE_PIN BF19 [get_ports i2c_mux_rst_n]
 set_property IOSTANDARD LVCMOS12 [get_ports i2c_mux_rst_n]
+set_property DRIVE 8 [get_ports i2c_mux_rst_n]
+
+# the board management controller's UART, 115200 8E1 (otpu_bmc_uart; docs/bcu1525.md
+# section 13): BB19 the BMC's RX, BA19 its TX (the VCU1525 master XDC)
+set_property PACKAGE_PIN BB19 [get_ports bmc_tx]
+set_property IOSTANDARD LVCMOS12 [get_ports bmc_tx]
+set_property PACKAGE_PIN BA19 [get_ports bmc_rx]
+set_property IOSTANDARD LVCMOS12 [get_ports bmc_rx]
+set_property DRIVE 4 [get_ports bmc_tx]
+set_property SLEW SLOW [get_ports bmc_tx]
+set_false_path -to [get_ports bmc_tx]
+set_false_path -from [get_ports bmc_rx]
 
 # configuration: Master SPI x4 from the MT25QU01G (1.8 V), as the VCU1525 (UG1268);
 # the over-temperature shutdown, as LiteX's platform (actively cooled boards still

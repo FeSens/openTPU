@@ -4,7 +4,8 @@
 // random gaps and random `en` stalls. EXT = 1 puts the stage units outside, built the way SE's
 // owners build them: stage 0 the VPU's slot 0 (otpu_fmma, e = 1), stage 1 the tail's U (the
 // same), stage 2 the tail's Q (fmul, and the adder's other operand through the partial loop's
-// feedback register), further stages as stage 1.
+// feedback register), further stages as stage 1; NX < NS: stages NX .. NS-1 the module's own
+// (the VPU's CNS 5, NX 3).
 // Input (+in=, hex): "n issue_pct en_pct seed", then n lines "func x0..x(L-1) y0..y(L-1)".
 // Output (+out=): per chunk, in the order they finish, "tag d0 .. d(L-1)"; then "E cycles n",
 // n the lanes that differ from the RTL's own definitions of the functions (otpu_fp: fp_exp2,
@@ -16,6 +17,7 @@ module tb_se_comp;
   parameter int NS    = 3;
   parameter int EXT   = 0;
   parameter int HA    = 2;
+  parameter int NX    = NS;
   localparam int L = LANES, MW = 16, LM = 2, LA = 4;
 
   logic clk = 1'b0, rst = 1'b1, en = 1'b0;
@@ -29,14 +31,16 @@ module tb_se_comp;
   logic [NS-1:0] st_sel;
   f32_t          st_a [NS][L], st_b [NS][L], st_c [NS][L], st_e [NS][L], st_y [NS][L];
 
-  otpu_se_comp #(.LANES(L), .NS(NS), .MW(MW), .HA(HA), .EXT(EXT)) dut (
+  otpu_se_comp #(.LANES(L), .NS(NS), .MW(MW), .HA(HA), .EXT(EXT), .NX(NX)) dut (
     .clk, .rst, .en, .en_l({L{en}}), .in_v, .in_c, .in_a, .in_b, .in_m, .in_meta, .hold, .hold_n(), .st_sel, .st_a, .st_b,
     .st_c, .st_e, .st_y, .out_v, .out_d, .out_m, .out_meta);
 
   if (EXT) begin : g_units
     for (genvar s = 0; s < NS; s++) begin : g_s
       for (genvar l = 0; l < L; l++) begin : g_l
-        if (s == 2) begin : g_q
+        if (s >= NX) begin : g_own
+          assign st_y[s][l] = '0;               // (the module's own unit)
+        end else if (s == 2) begin : g_q
           // Q: fmul on registered operands; the adder's other operand is the partial loop's
           // feedback register, loaded with c LM cycles after the operands
           f32_t ra, rb, rc, cd, fbq, tq;

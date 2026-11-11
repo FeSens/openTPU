@@ -100,15 +100,6 @@ C = {
                "tests/test_rtl.py::test_fuzz_two_slices[0]",
                "tests/test_rtl.py::test_scoreboard_stress_two_slices[0]",
                "tests/test_rtl.py::test_attention_decode_rtl[2-8-2-100]"]),
-    "512-bit AXI4 channels, 64-byte interleave, per-channel queues and response FIFOs, "
-             "A-beat reuse, write acknowledges (wr_idle).",
-        extra=[],
-        board_extra=["tests/test_rtl.py::test_board_memory_path_stress[0-0]",
-                     "tests/test_rtl.py::test_board_memory_path_stress[2-60]",
-                     "tests/test_rtl.py::test_board_memory_path_stress[3-30]",
-                     "tests/test_rtl.py::test_board_memory_path_stress[5-50]",
-                     "tests/test_rtl.py::test_board_memory_path_fuzz[1-70]",
-                     "tests/test_board.py"]),
     "otpu_native_dram": dict(
         files=["rtl/mem/otpu_native_dram.sv"], top="otpu_native_dram",
         params=dict(D=128),

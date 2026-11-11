@@ -60,6 +60,31 @@ def test_the_key_holds_flags_version_and_names(fake, monkeypatch, tmp_path):
     assert rtlsim.build_dir("a", [other], {"N": 1}) != d0        # another file, same text
 
 
+def test_random_power_up_flags(fake, monkeypatch, tmp_path):
+    """OTPU_X_INITIAL=unique (docs/asic.md "Power-up state"): Verilator's --x-initial unique and
+    --no-assert-case, a build of its own, and a Verilator binary's run with +verilator+rand+reset+2
+    and the seed (OTPU_X_SEED); unset, the flags, key and runs are as before."""
+    src, _ = fake
+    monkeypatch.delenv("OTPU_X_INITIAL", raising=False)
+    assert rtlsim.vflags() == rtlsim.VFLAGS and rtlsim.x_plusargs() == []
+    d0 = rtlsim.build_dir("a", [src])
+    monkeypatch.setenv("OTPU_X_INITIAL", "unique")
+    monkeypatch.setenv("OTPU_X_SEED", "7")
+    f = rtlsim.vflags()
+    assert f[f.index("--x-initial") + 1] == "unique" and f[-1] == "--no-assert-case"
+    assert len(f) == len(rtlsim.VFLAGS) + 1
+    assert rtlsim.build_dir("a", [src]) != d0
+    assert rtlsim.x_plusargs() == ["+verilator+rand+reset+2", "+verilator+seed+7"]
+    sim = tmp_path / "Vtb"
+    sim.write_text("#!/bin/sh\necho \"$@\"\n")
+    sim.chmod(0o755)
+    assert rtlsim.run_sim([sim, "+a"]).stdout.split() == ["+a", *rtlsim.x_plusargs()]
+    assert rtlsim.run_sim(["echo", "+a"]).stdout.split() == ["+a"]      # not a Verilator binary
+    monkeypatch.setenv("OTPU_X_INITIAL", "1")
+    with pytest.raises(ValueError):
+        rtlsim.vflags()
+
+
 def test_concurrent_builds_run_verilator_once(fake, monkeypatch):
     src, builds = fake
     monkeypatch.setenv("FAKE_SLEEP", "1")

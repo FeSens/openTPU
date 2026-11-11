@@ -19,7 +19,7 @@ import numpy as np
 from . import fp32 as F
 from . import quant as Q
 from .compiler import (Affine, Compiled, KVDesc, Kernel, QTensor, Tensor, k_scale_bytes,
-                       vt_tiled, vt_untiled)
+                       gall_wg, kv_bytes, kv_rows)
 from .isasim import Config, Machine
 
 ALIGN = 128                  # DRAM allocations: whole MXU chunks (D <= 128)
@@ -77,15 +77,26 @@ def quantize_rows(a: np.ndarray, D: int, row: bool = False) -> tuple[np.ndarray,
 
 
 class _Dram:
-    def __init__(self, S: int, size: int):
+    """The slices' images (np.zeros: a page's memory once it is written) and their bump
+    allocation from 0; with `high` the weights' from there (AW > 32: above 4 GiB)."""
+
+    def __init__(self, S: int, size: int, high: int | None = None):
         self.size = size
         self.next = 0
+        self.high = self.high_next = high
         self.images = [np.zeros(size, dtype=np.uint8) for _ in range(S)]
 
-    def alloc(self, nbytes: int) -> int:
-        a = self.next
+    def alloc(self, nbytes: int, align: int = ALIGN, high: bool = False) -> int:
+        """nbytes at a multiple of align (a multiple of ALIGN); high: in the high area."""
+        if high and self.high is not None:
+            a = -(-self.high_next // align) * align
+            self.high_next = (a + nbytes + ALIGN - 1) // ALIGN * ALIGN
+            if self.high_next > self.size:
+                raise MemoryError("DRAM image does not fit")
+            return a
+        a = -(-self.next // align) * align
         self.next = (a + nbytes + ALIGN - 1) // ALIGN * ALIGN
-        if self.next > self.size:
+        if self.next > self.size or self.high is not None and self.next > self.high:
             raise MemoryError("DRAM image does not fit")
         return a
 
@@ -99,10 +110,12 @@ class Layout:
     params: dict = field(default_factory=dict)       # name -> (host arg, placement info)
 
 
-def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
-    """Lay out host args in DRAM. Returns images, layout and per-slice bound kernel arguments."""
+def place(cfg: Config, args: dict, weights_at: int | None = None) -> tuple[_Dram, Layout, list]:
+    """Lay out host args in DRAM. Returns images, layout and per-slice bound kernel arguments.
+    weights_at: the Weights from that byte address on (an image's weights above 4 GiB, AW >
+    32), the rest from 0."""
     S, D = cfg.S, cfg.D
-    dram = _Dram(S, cfg.DRAM_BYTES)
+    dram = _Dram(S, cfg.DRAM_BYTES, weights_at)
     layout = Layout()
     bound = [dict() for _ in range(S)]
     for name, a in args.items():
@@ -134,15 +147,19 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
                 parts = [a.array[:, s * K:(s + 1) * K] for s in range(S)]
             else:
                 n_loc, parts = N, [a.array] * S
-            rs, srs = Q.row_bytes(K, a.fmt, D), Q.scale_bytes(K, a.fmt, D)
-            daddr = dram.alloc(n_loc * rs)
-            saddr = dram.alloc(n_loc * srs)
+            # in groups of R rows (docs/isa.md "Weight groups": WG int8, 2 WG 4-bit; WG 1: rows)
+            wg = cfg.WG
+            R = Q.grp_r(a.fmt, wg)
+            G = -(-n_loc // R)
+            rs, srs = Q.grp_row_bytes(K, a.fmt, D, wg), Q.grp_scale_bytes(K, a.fmt, D, wg)
+            daddr = dram.alloc(G * rs, max(ALIGN, wg * D), high=True)
+            saddr = dram.alloc(G * srs, max(ALIGN, Q.swp(a.fmt, R)), high=True)
             for s, p in enumerate(parts):
-                q, sc = Q.quantize_mxu(p, a.fmt, D)
+                q, sc = Q.quantize_grouped(p, a.fmt, wg, D, at=daddr if cfg.CHASH else None)
                 dram.put(s, daddr, q)
                 dram.put(s, saddr, sc)
             layout.params[name] = (a, (daddr, saddr))
-            desc = QTensor.weight(daddr, saddr, n_loc, K, a.fmt, D)
+            desc = QTensor.weight(daddr, saddr, n_loc, K, a.fmt, D, grp=wg)
             for s in range(S):
                 bound[s][name] = desc
         elif isinstance(a, KVCache):
@@ -155,10 +172,12 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
             nloc = max(len(p) for p in per_slice)
             regions = []
             ksb = k_scale_bytes(d, D)
+            al = max(ALIGN, gall_wg(cfg) * D)       # (in groups: whole group chunks)
             for _ in range(nloc):
-                regions.append({"k": dram.alloc(cap * d), "ks": dram.alloc(cap * ksb),
-                                "vt": dram.alloc(d * cap), "vs": dram.alloc(4 * cap)})
+                regions.append({"k": dram.alloc(cap * d, al), "ks": dram.alloc(cap * ksb),
+                                "vt": dram.alloc(d * cap, al), "vs": dram.alloc(4 * cap)})
             heads = [dict() for _ in range(S)]
+            wg = gall_wg(cfg)
             for s in range(S):
                 for j, h in enumerate(per_slice[s]):
                     r = regions[j]
@@ -173,13 +192,13 @@ def place(cfg: Config, args: dict) -> tuple[_Dram, Layout, list]:
                     vt[:, :a.T] = vq.T
                     vsf = np.zeros(cap, np.float32)
                     vsf[:a.T] = vs
-                    dram.put(s, r["k"], kfull)
-                    dram.put(s, r["ks"], ksf)
-                    dram.put(s, r["vt"], vt_tiled(vt))
+                    for key, b in zip(("k", "ks", "vt"),
+                                      kv_bytes(kfull, ksf, vt, D, wg, cfg.CHASH, r["k"], r["vt"])):
+                        dram.put(s, r[key], b)
                     dram.put(s, r["vs"], vsf)
             layout.params[name] = (a, heads)
             for s in range(S):
-                bound[s][name] = KVDesc(heads[s], cap, d, D, S, s)
+                bound[s][name] = KVDesc(heads[s], cap, d, D, S, s, wg=wg)
         else:
             for s in range(S):
                 bound[s][name] = a
@@ -221,17 +240,19 @@ class Result:
     def kv(self, name: str):
         """Dequantized K and V ([Hkv, cap, d]) as stored in the slices' DRAM."""
         a, heads = self.compiled.layout.params[name]
-        D = self.compiled.cfg.D
+        cfg = self.compiled.cfg
+        D, wg = cfg.D, gall_wg(cfg)
         K = np.zeros((a.H, a.cap, a.d), np.float32)
         V = np.zeros((a.H, a.cap, a.d), np.float32)
         ksb = k_scale_bytes(a.d, D)
         for s, hs in enumerate(heads):
             img = self.drams[s]
             for h, r in hs.items():
-                kq = img[r["k"]:r["k"] + a.cap * a.d].reshape(a.cap, a.d)
-                ks = img[r["ks"]:r["ks"] + a.cap * ksb].reshape(a.cap, ksb)
+                kq, ks, vt = kv_rows(img[r["k"]:r["k"] + a.cap * a.d],
+                                     img[r["ks"]:r["ks"] + a.cap * ksb],
+                                     img[r["vt"]:r["vt"] + a.d * a.cap], a.cap, a.d, D, wg,
+                                     cfg.CHASH, r["k"], r["vt"])
                 K[h] = Q.dequantize_mxu(kq, ks, "int8", a.d, D, rsc=a.d == D)
-                vt = vt_untiled(img[r["vt"]:r["vt"] + a.d * a.cap].view(np.int8), a.d, a.cap)
                 vs = img[r["vs"]:r["vs"] + 4 * a.cap].view(np.float32)
                 V[h] = vt.T.astype(np.float32) * vs[:, None]
         return K, V

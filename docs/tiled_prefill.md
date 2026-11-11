@@ -35,7 +35,7 @@ take it by default; this section is the prototype's.)
   - a Qwen3-4B shape: -1.1% at MCOLS 4 (its MLP is 69% of a row and at its floor; its G = 4
     heads already fill the columns), -10.7% at MCOLS 8; Qwen3.5-0.8B is 61-73% DeltaNet, which
     no tile touches (about -4% at MCOLS 8, estimated, not ported);
-  - a memory at the port's full rate (the BCU1525's DDR4 at 1600 or 2400, the F2's HBM)
+  - a memory at the port's full rate (the BCU1525's DDR4 at 1600 or 2400)
     changes these by 0-4%: prefill is MXU-bound on every board.
 - **It fits today's TMEM**: T = 16-24 on Qwen3-0.6B and 8-12 on a 4B shape in 64K words, with
   no DRAM spill; a bigger TMEM adds nothing to the tile (77.0K at 256K words against 76.4K).
@@ -47,7 +47,7 @@ take it by default; this section is the prototype's.)
   on Qwen3.5-35B (fp4, DeltaNet-bound). Expert passes: at MCOLS 4 a pair is the floor
   (measured), at MCOLS 8 four rows cost what two do. The dormant expert-major path's own
   predicted -1.7 / -1.9 s is the link side; its card A/B (pfB, staged) comes first and needs
-  card time, which the lead schedules.
+  card time, which the maintainer schedules.
 - **Many users**: one pass of 2 MCOLS users against two runs of MCOLS: -1% (fp4) to -6% (int8).
   Users' attention does not pack; the aggregate's lever is the MXU's rate (MCOLS 8: -36% a row
   for 8 users).
@@ -101,7 +101,7 @@ docs/dsp_pumping.md 2 on dsp-pump's branch):
 - the stream: 1 / eta, eta the chunks a cycle the memory delivers to the port (at most one: the
   port is 128 bytes a cycle). The card's DDR3-1066 through LiteDRAM: 0.82-0.85 while decoding
   (docs/board.md); the BCU1525's DDR4 (two channels a slice: 25.6 GB/s at 1600, 38.4 at 2400)
-  and the F2's HBM deliver more than one slice's port takes (12.8 GB/s at 100 MHz, 17.1 at
+  delivers more than one slice's port takes (12.8 GB/s at 100 MHz, 17.1 at
   133.33), so eta = 1 there;
 - the MXU: int8, ceil(T / MCOLS) cycles (replayed groups); 4-bit, two blocks a chunk: 1 cycle
   with PAIR (T <= MCOLS / 2), else 2 ceil(T / MCOLS).
@@ -261,8 +261,8 @@ the first 64K). Every TMEM-256K figure here is with the change.
 
 `tools/perf_tiled.py` (section 1's setup): "ldc" is the card's memory path (DDR3-1066 through
 LiteDRAM's controllers, the core at 133.33 MHz), "port" a memory that delivers a chunk every
-cycle with a 40-cycle latency, which stands in for the BCU1525's DDR4 at 1600 or 2400 and the
-F2's HBM (each delivers more than a slice's port takes, section 2: their cycles are the same).
+cycle with a 40-cycle latency, which stands in for the BCU1525's DDR4 at 1600 or 2400
+(each delivers more than a slice's port takes, section 2: their cycles are the same).
 MCOLS 8 is virtual (the RTL at MCOLS 8; the card's part does not fit it). Cycles a row for the
 first 2 layers, positions from 256, no logits; tokens/s are the whole model at that rate.
 
@@ -372,8 +372,8 @@ Qwen3-0.6B, fp4, prefill tokens a second of device time at positions ~256 (28 la
 | YPCB (MCOLS 4, DDR3-1066, 133.33 MHz) | 114 | 115 (R = 8, ACT_ROWS 8) | 120 (today's bitstream) | 125 (ACT_ROWS 16) |
 | the same at position 1024 | 86 | | | 103 |
 | MCOLS 8, DDR3-1066, 133.33 MHz | 165 | 180 (R = 16) | 194 | 214 |
-| BCU1525 / F2, one slice, MCOLS 4, 100 MHz | 86 | | 91 | 93 |
-| BCU1525 / F2, one slice, MCOLS 8, 100 MHz | 129 | 135 (R = 8) | 149 | 161 |
+| BCU1525, one slice, MCOLS 4, 100 MHz | 86 | | 91 | 93 |
+| BCU1525, one slice, MCOLS 8, 100 MHz | 129 | 135 (R = 8) | 149 | 161 |
 
 int8 weights (MCOLS 4 at 133.33 MHz): 107 today, 114 at R = 8, 125 with the tile at T = 8;
 at MCOLS 8: 107 / 175 (R = 16) / 214 (T = 16).
@@ -456,11 +456,11 @@ misses.
   without new RTL; for the 26B the tiled mixer is the larger half, and the two add (the tiled
   mixer runs shorten the phase that the need-streaming hides under, so the overlap shrinks:
   the sum is an upper bound).
-- **The card A/B of expert-major needs card time** (session pfB, staged on opentpu in
-  ~/otpu-build/offload/card2/pfB/README.md with its predicted column; the lead schedules it).
+- **The card A/B of expert-major needs card time** (session pfB, staged on the card host in
+  ~/otpu-build/offload/card2/pfB/README.md with its predicted column).
   Nothing in this note changes that session's arms.
 
-**BCU1525 / F2 (experts resident, no link).** Estimated per token and slice at the floor, MCOLS
+**BCU1525 (experts resident, no link).** Estimated per token and slice at the floor, MCOLS
 4, the port's rate (lower bounds: the tile ran Qwen3-0.6B at 1.25x its floor):
 
 | model | dense | experts | DeltaNet steps | today's R = 2 | tiled |
@@ -569,7 +569,7 @@ In order; each step stands on its own.
    against compile_rows on a real prompt, token for token; then the timing build): int8 layers
    reach their knee (Qwen3-0.6B int8 -14% with the tile at T = 8), batched decode a pass of 8
    (int8 -6%).
-4. **MoE**: the pfB A/B of expert-major first (card time, the lead schedules it), since the
+4. **MoE**: the pfB A/B of expert-major first (card time), since the
    tiled mixer goes on its path (5.2); then its mixer runs as tiles (Gemma 4 26B first:
    section 5.2's largest estimate), expert passes of MCOLS / 2 rows (2 at MCOLS 4, 4 at 8).
 5. **Later, measured first in co-simulation**: RMAX / ASCALE over replayed groups (fewer
@@ -577,11 +577,11 @@ In order; each step stands on its own.
    tile must outgrow TMEM (MCOLS 16).
 
 What it gives each workload, by board (YPCB: the card, MCOLS 4, DDR3-1066, 133.33 MHz; MCOLS 8:
-the faster MXU of dsp-pump's and mcols' work, same memory; BCU1525 and F2: one slice at the
+the faster MXU of dsp-pump's and mcols' work, same memory; BCU1525: one slice at the
 port's rate, 100 MHz; device tokens a second of prefill at positions ~256, fp4; measured = the
 co-simulations above, estimated = arithmetic on them):
 
-| workload | YPCB today | YPCB, tile on today's bitstream | YPCB, + ACT_ROWS 16 | MCOLS 8: today's kernel -> tile | BCU1525 / F2 (MCOLS 4 today -> tile; MCOLS 8 tile) |
+| workload | YPCB today | YPCB, tile on today's bitstream | YPCB, + ACT_ROWS 16 | MCOLS 8: today's kernel -> tile | BCU1525 (MCOLS 4 today -> tile; MCOLS 8 tile) |
 |---|---|---|---|---|---|
 | single-user decode | unchanged (the tile is a prefill kernel) | unchanged | unchanged | unchanged | unchanged |
 | prefill, Qwen3-0.6B | 114 | 120 (+5%) | 125 (+9%) | 165 -> 214 (+30%) | 86 -> 93; 161 |
@@ -599,7 +599,7 @@ Expert-major's -1.7 s (35B) / -1.9 s (26B) adds to the MoE rows once the pfB A/B
 
 - **No card measurement of a tile.** Every cycle count here is a co-simulation of the card's
   memory path (DDR3-1066 through LiteDRAM's controllers) or of a memory at the port's rate
-  standing in for the BCU1525's DDR4 and the F2's HBM. The co-simulation of today's kernel is
+  standing in for the BCU1525's DDR4. The co-simulation of today's kernel is
   ~6% below the card's prompt runs (section 1); a tile as a prompt run pays the same run-time
   position costs, so its gain is expected within a few points of section 4's.
 - **The 2-layer proxy at position 256** has two attention blocks a row; a short prompt's rows
@@ -625,7 +625,7 @@ Expert-major's -1.7 s (35B) / -1.9 s (26B) adds to the MoE rows once the pfB A/B
   wherever the compiler placed tiles past word 65,535; that includes this note's first runs (not
   used here) and any other branch's that did not carry the change.
 - **A user decision:** none needed for the software steps. An ACT_ROWS 16 bitstream and its card
-  qualification, and the pfB A/B, take card time, which the lead schedules.
+  qualification, and the pfB A/B, take card time, which the maintainer schedules.
 
 ## 10. In the engine (2026-10-12)
 
@@ -831,7 +831,7 @@ dsp-pump's MX column the same (+268 LUT, +72 FF). The MX build carries ACT_ROWS 
 
 ### 10.6 Next
 
-- **Card, today's bitstream (the lead schedules it; the tree before MX, bebf375f: after the MX
+- **Card, today's bitstream (the tree before MX, bebf375f: after the MX
   merge the host refuses a bitstream without the MX numerics):** an OTPU_TILE=1 qual of the
   dense models (prompt runs -9 to -10% a row on Phi-4-mini, LFM2-2.6B and Qwen3.5-4B, -6.6% on
   Qwen3-0.6B, -3% on LFM2.5-230M in co-simulation; the rest within +-0.4%) and the 26B's
@@ -872,7 +872,14 @@ two things the tile leaned on:
   rows (Qwen3.5's 16 rows were 12, E2B's 8 were 4) and time (Qwen3-0.6B's 16-row tile: 94.9K
   cycles a row against 86.5K in the range forms);
 - the MLP's activation is one QACT a down chunk (_mlp_tile: pieces of `sub` columns into a
-  [T, C] tile when sub < C, C the MX chunk of mlp._chunk; mlp_sub counts the tile);
+  [T, C] tile when sub < C, C the MX chunk of mlp._chunk; mlp_sub counts the tile). Where the
+  chunks' activations do not all fit ACT RAM beside the operand (Qwen3.5-27B on one slice: F
+  17408, 17 chunks of 8 blocks with the operand's 40, against ACT_BLOCKS 128) they go in
+  groups that do (tiled.act_groups: 9 and 8), each group's gate / up MMs and then its down MMs
+  into every part's sum, the sums in TMEM across the groups ([T, H] more: fresh MM outputs,
+  odd row strides, so their MM ACC has no bank conflict) and added to x after the last: each
+  element sums the chunks in today's order, the same bits (test_tiled_mlp_past_act_ram_in_
+  groups_is_todays: F 2560 at ACT_BLOCKS 18);
 - LFM2's gated product goes whole into out_proj's operand (_conv_tile);
 - each with quantize(free=True): a stationary otherwise keeps its source tile in TMEM (the [T,
   C] tiles of every chunk stayed until the down projection: Qwen3-0.6B 8 rows instead of 16).
@@ -1038,7 +1045,7 @@ default's; OTPU_TILE=0 and =1 have keys of their own.
 
 ### 11.4 Next
 
-- **Card, the MX build (ACT_ROWS 16; the lead schedules it):** the dense models' qual with the
+- **Card, the MX build (ACT_ROWS 16):** the dense models' qual with the
   default, token-exact against today's (the same bits), and the prompt runs' gain where 11.2
   shows it: Phi-4-mini, LFM2-2.6B and Qwen3.5-4B -10 to -11% a row, Qwen3-0.6B -8%, LFM2.5-230M
   -3%; then, with the expert-major switch, the 26B's expert-major prefill with tiled layer
@@ -1060,7 +1067,7 @@ whole model as otpu-chat makes it (resident, prompt runs, the image's rows grown
 model's formats: otpu-chat's auto) on the card's configuration (m4: MCOLS 4, ACT_ROWS 16, 64K
 TMEM words, 4K instructions of IMEM; PAIR, DSTEP, STREAM, SEQ_WC), bucket by bucket over a 2K
 context: the tile's T (_tile_fit), today's prompt runs' R and whether they cover the bucket
-(_fit), and the form prefill.tiled takes. Release r2's tree (hwe-bench); t: tiled, p: today's
+(_fit), and the form prefill.tiled takes. Release r2's tree (the simulation host); t: tiled, p: today's
 prompt runs, buckets 1-8:
 
 | model | rows a run |
@@ -1288,7 +1295,7 @@ The looped program grows by 33-58 instructions a bucket: each attention body gai
 is left is the layers' other work:
 
 - **E4B:** its MLP alone is 1,200 instructions. Its L program at 4 rows is 4,114 in bucket 8,
-  18 over IMEM, so that bucket takes 3 rows. Accepted (the lead, 2026-10-14): no Gemma layer
+  18 over IMEM, so that bucket takes 3 rows. Accepted (2026-10-14): no Gemma layer
   loops and no IMEM change for it.
 - **E2B:** at 8 rows it is over 4K in every bucket.
 - **LFM2-2.6B** (the stack's loops and the heads' loop): 677-753 instructions at 4 rows,
@@ -1312,7 +1319,7 @@ Phi-4-mini (2 layers; the card's memory path, otpu-chat's formats; tools/perf_pr
 - **The loop's cost.** From bucket 4 the loop is within 0.3% of the unrolled form. In bucket 1
   it is 1.0-1.25% slower, not yet explained. One block a tile leaves less to overlap: each
   tile's scores, softmax and PV, and each head's drain, sit between iterations. That has not
-  been measured apart. Accepted (the lead, 2026-10-14): a route special case for bucket 1 is
+  been measured apart. Accepted (2026-10-14): a route special case for bucket 1 is
   not worth it against the gain below.
 - **The phantom prime** costs 0.14-0.43%: its first blocks' scores, with 4.5-8.2 KB of K on
   port B a run. That is under the 0.5% bar, so the loop keeps the prime and does not peel; a
@@ -1348,7 +1355,7 @@ prefill_routes (as 12.1, the card's m4, a 2K context, the tie rule of 12.4), row
 
 ### 13.5 Next
 
-- **The card's qual** comes with the next host batch, which the lead schedules: token-exact
+- **The card's qual** comes with the next host batch, which the maintainer schedules: token-exact
   against today's runs. The prompt runs' gain on Phi-4-mini, SmolLM3, LFM2-2.6B, E4B and
   Qwen3-0.6B's later buckets is to be measured there.
 - **Qwen3.5's gated attention, looped.** The gates would be applied in the part's store after
@@ -1403,7 +1410,7 @@ T = 16 the attention layers fall to range forms, which are not today's bits and 
   subclassed: `tiled.layer_family` by the class's bases) with 20 image rows from vis among 31 text
   rows, tiles of 8 rows against today's runs: logits and three decode steps bit for bit.
 - Tokens against today's runs, on the ISA simulator with the card's configuration (b10245f5),
-  `chatmoe.py --check` (hwe-bench, 2026-10-14): qwen35-35b, a 260-token text prompt (its 256-row
+  `chatmoe.py --check` (the simulation host, 2026-10-14): qwen35-35b, a 260-token text prompt (its 256-row
   call expert-major in 1,418 runs) and 16 decoded tokens; MiniCPM-V's two image requests of session
   hostr21, thumb (88 rows expert-major in 548 runs, and a second turn of 23 rows layer-major; 16
   tokens each) and sliced (488 rows in 2,893 runs, against today's ~10,000; 32 tokens). The same
@@ -1470,7 +1477,7 @@ about 18.1 s: -5.1 s of its 90.4 s.
   - `tests/test_em_tile.py` test_a_tiles_moe_prologue_takes_its_rows_at_once: a tiny model at
     k = 4 (two need lines a tile): the router's and the shared expert's rows, the posts, and the
     prompt, blocks and decode steps against today's runs bit for bit, every need landed.
-  - On the card (session emprol, `tools/offload/sessions/emprol.sh`, 2026-10-14; opentpu
+  - On the card (session emprol, `tools/offload/sessions/emprol.sh`, 2026-10-14; the card host
     `~/otpu-build/emprol/run-1014-1320`): r2.1's m8 bitstream 039b34d5, production's host d57a3568
     as A against these commits as B, a warm-up run in each arm, then A B B A, every run's tokens
     the warm-up's (A's):
@@ -1504,7 +1511,7 @@ DSTEP's exposed part, a row's cycles with and without it (tools/vpu_hack.py's no
 STREAM a NOP): MiniCPM-V's from section 14.3's layers (T = 8, position 256; docs/dataflow.md
 4.9.1); the dense models' from tools/perf_tiled.py's run kernel (4 layers: 3 DeltaNet and the
 gated attention, position 256, fp4, runs of 4 rows; the 4B at MCOLS 4 in runs of 2, as its prompt
-runs go today; hwe-bench, `~/mcpv/emprol/K2-*.jsonl` and `K3-*.jsonl`):
+runs go today; the simulation host, `~/mcpv/emprol/K2-*.jsonl` and `K3-*.jsonl`):
 
 | | MCOLS 4: exposed (of DSTEP's cost) | MCOLS 8 |
 |---|---:|---:|

@@ -152,6 +152,51 @@ def test_column_parts_are_the_whole_rows(fmt):
             assert np.array_equal(Q.part_scales(srows, fmt, j * C // 128, C // 128), ps)
 
 
+@pytest.mark.parametrize("fmt", Q.MXU_FORMATS)
+def test_gathered_parts_are_the_rows_in_gather_order(fmt):
+    """W_down on S slices in the all-gather's order (quant.gathered_parts): part c holds chunk c
+    of every slice's F part, the whole rows' values (each row's Sw, the blocks' offsets and
+    multipliers moved with their columns); S = 1 the column parts of C."""
+    rng = np.random.default_rng(4)
+    K = 2048
+    W = _spread(rng, 8, K)
+    rows, srows = Q.quantize_mxu(W, fmt, 128)
+    whole = Q.dequantize_mxu(rows, srows, fmt, K, 128)
+    for S, C in ((1, 256), (2, 256), (4, 256), (2, 512)):
+        order = Q.gather_order(K, C, S)
+        assert sorted(order) == list(range(K))
+        assert list(order[:2 * C:C]) == [0, K // S if S > 1 else C]
+        parts = Q.gathered_parts(rows, srows, fmt, K, C, S, 128)
+        assert len(parts) == K // (S * C)
+        for j, (pr, ps) in enumerate(parts):
+            assert pr.shape[1] == Q.row_bytes(S * C, fmt, 128)
+            assert ps.shape[1] == Q.scale_bytes(S * C, fmt, 128)
+            assert np.array_equal(Q.dequantize_mxu(pr, ps, fmt, S * C, 128),
+                                  whole[:, order[j * S * C:(j + 1) * S * C]])
+        if S == 1:
+            assert all(np.array_equal(a, b) for p, q in
+                       zip(parts, Q.column_parts(rows, srows, fmt, K, C, 128))
+                       for a, b in zip(p, q))
+
+
+def test_fake_act_gathered_is_one_range_a_chunk():
+    """A down projection's input on S slices (quant.fake_act_gathered) is quantized as one QACT
+    over chunk c of every slice's F part: fake_act of those columns, values and offsets in
+    place; S = 1 fake_act's ranges of C."""
+    rng = np.random.default_rng(5)
+    x = _spread(rng, 3, 2048).astype(np.float64)
+    a = Q.fake_act_gathered(x, 128, 256, 1)
+    b = Q.fake_act(x, 128, 256)
+    assert np.array_equal(a, b) and np.array_equal(a.da, b.da)
+    for S in (2, 4):
+        order = Q.gather_order(2048, 256, S)
+        a = Q.fake_act_gathered(x, 128, 256, S)
+        b = Q.fake_act(x[:, order], 128, S * 256)
+        assert np.array_equal(np.asarray(a)[:, order], b)
+        assert np.array_equal(a.da[:, order[::16] // 16], b.da)
+        assert not np.array_equal(a, Q.fake_act(x, 128, 256))
+
+
 # ------------------------------------------------------------------------- MM on the ISA
 @ol.jit
 def k_dot(x, w, out):
@@ -243,26 +288,33 @@ def test_mlp_kernel_4bit(fmt):
 
 
 # ------------------------------------------------------------------------- gathers
-def _gather_run(D, M, fmt, rows, record):
-    cfg = Config(S=1, D=D, MCOLS=M, ACT_BLOCKS=64, TMEM_WORDS=1 << 16, DRAM_BYTES=1 << 22)
+def _gather_run(D, M, fmt, rows, record, wg=1):
+    """(gathered, the host's values) of rows [N, K] from a table (record: packed records) on the
+    ISA simulator; wg > 1: at WG wg under GALL with the channel hash (the gathers in groups)."""
+    cfg = Config(S=1, D=D, MCOLS=M, ACT_BLOCKS=64, TMEM_WORDS=1 << 16, DRAM_BYTES=1 << 22,
+                 **({"WG": wg, "CHASH": True, "GALL": True} if wg > 1 else {}))
     N, K = rows.shape
     img = np.zeros(cfg.DRAM_BYTES, np.uint8)
-    oh = GA.onehot(D, M, "int8" if fmt == "int8" else "fp4")
+    oh = GA.onehot(D, M, "int8" if fmt == "int8" else "fp4", wg)
     OH, TAB, OUT = 0, 1 << 18, 1 << 21
     img[OH:OH + oh.nbytes] = oh.view(np.uint8).reshape(-1)
     if record:
         S = GA.record_blocks(-(-K // D), fmt)
-        rec = GA.pack_records(rows, fmt, D, S)
-        img[TAB:TAB + rec.size] = rec.reshape(-1)
-        tab = GA.record_table(TAB, N, S, fmt, D)
-        want, width = GA.dequant_records(rec, fmt, D, S)[:, :K], S * D
+        rec = GA.pack_records(rows, fmt, D, S, wg)
+        put = GA.hash_records(rec, TAB, S, fmt, D, wg)
+        img[TAB:TAB + put.size] = put.reshape(-1)
+        tab = GA.record_table(TAB, N, S, fmt, D, wg)
+        want, width = GA.dequant_records(GA.pack_records(rows, fmt, D, S), fmt, D, S)[:, :K], S * D
+        assert np.array_equal(GA.dequant_records(rec, fmt, D, S, wg)[:, :K].view(np.uint32),
+                              want.view(np.uint32))
     else:
         q, s = Q.quantize_mxu(rows, fmt, D)
         g = Q.gather_scales(s, fmt, K, D)
-        img[TAB:TAB + q.size] = q.reshape(-1)
-        GS = -(-(TAB + q.size) // 4096) * 4096
-        img[GS:GS + g.nbytes] = np.ascontiguousarray(g).view(np.uint8).reshape(-1)
-        tab = GA.table(TAB, GS, N, K, fmt, D)
+        d, gs = GA.pack_table(q, g, fmt, D, wg, TAB) if wg > 1 else (q, g)
+        img[TAB:TAB + d.size] = np.ascontiguousarray(d).view(np.uint8).reshape(-1)
+        GS = -(-(TAB + d.size) // 4096) * 4096
+        img[GS:GS + gs.nbytes] = np.ascontiguousarray(gs).view(np.uint8).reshape(-1)
+        tab = GA.table(TAB, GS, N, K, fmt, D, wg)
         want, width = GA.dequant_gathered(q, g, fmt, K, D), K
     out = Tensor(Affine(OUT), (N, width), (width, 1))
 
@@ -295,6 +347,30 @@ def test_gathers_are_the_hosts_bit_for_bit(fmt, record, D):
     got, want = _gather_run(D, 4, fmt, rows, record)
     assert np.array_equal(got.view(np.uint32), want.view(np.uint32))
     assert rel(got, rows) < {"int8": 0.02, "int4": 0.15, "fp4": 0.12, "nvfp4": 0.12}[fmt]
+
+
+@pytest.mark.parametrize("fmt", Q.MXU_FORMATS)
+@pytest.mark.parametrize("record", [False, True], ids=["row", "record"])
+@pytest.mark.parametrize("D,KB", [(32, 6), (128, 6), (32, 18)])
+def test_gathers_in_groups_are_the_natural_ones(fmt, record, D, KB):
+    """Under GALL at WG 8 with the channel hash (docs/weight_groups.md) a table row or a
+    record is streamed as a grouped matrix of its blocks (int8 groups of 8, 4-bit of 16: lane l
+    blocks 2l and 2l + 1), every format with int8's one-hot operand: the natural gathers'
+    values bit for bit (dequant_gathered / dequant_records of the natural layout), and
+    dequant_records reads the grouped records the same. KB 18: several groups, a partial one."""
+    from opentpu import isasim
+    rng = np.random.default_rng(D + KB)
+    rows = _spread(rng, 5, KB * D, 3.0, 8) * 50
+    rows[1, :D] = 0
+    mm = isasim.Slice._mm
+    rds = []
+    isasim.Slice._mm = lambda s, ins: (rds.append(ins.rd), mm(s, ins))[1]
+    try:
+        got, want = _gather_run(D, 8, fmt, rows, record, wg=8)
+    finally:
+        isasim.Slice._mm = mm
+    assert np.array_equal(got.view(np.uint32), want.view(np.uint32))
+    assert set(rds) == {3 if fmt == "int8" else 4}        # every MM in groups (LG 3 / 4)
 
 
 # ------------------------------------------------------------------------- checkpoint imports

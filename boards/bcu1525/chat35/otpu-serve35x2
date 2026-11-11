@@ -1,0 +1,195 @@
+#!/bin/bash
+# otpu-serve35x2: serve Qwen3.6-35B-A3B on BOTH BCU1525s as one machine (bcu1525-x2:st16: four slices, two a card, in
+# tensor parallel over the QSFP28 link; BCU_ENV's card 0 and card 1) over the OpenAI-style API, with the live
+# dashboard (docs/dashboard.md). Both cards must hold the x2 image (wg_bringup.py load on each, then the warm
+# reboot). Brings both up as otpu-chat35x2 does (tools/x2_session/bringup.py up: the DIMMs, the accelerator; RUN
+# held; 80 C stops), each bring-up in a session of its own; prefetches the raw image's pages; loads the same engine
+# (cardimg/x2/serve35x2.py over chat35x2.py: the whole 262,144-token context, prompts layer by layer with CHAT35_LM)
+# and serves it until Ctrl-C or SIGTERM; then both cards go back to SAFE, each one's SAFE line from its wg.json. The
+# server stops when either bring-up's hold ends (SERVE35_HOLD minutes, default 30 days) or its guard trips.
+#   otpu-serve35x2                                  # http://127.0.0.1:8000/v1 and the dashboard at http://127.0.0.1:8000/
+#   SERVE35_API_KEY=KEY otpu-serve35x2 --port 8001  # a key (the dashboard: http://127.0.0.1:8001/#key=KEY)
+# otpu-serve35 (one card) stays the fallback. Run it in tmux: a hangup stops the server too (gracefully) and puts
+# both cards in SAFE. Options go to the server (otpu-serve35x2 --help). TREE and KEY are otpu-chat35x2's (its deploy).
+set -u
+# This host's cards and directories: the shell file BCU_ENV (default ~/.config/otpu/bcu.env) sets, for each card N
+# (0, 1), BCU_CARDN_SERIAL (its JTAG serial), BCU_CARDN_BDF (its PCI function, 0000:BB:DD.F) and, optionally,
+# BCU_CARDN_NAME (a short name for the messages, default cardN), BCU_BUILD (the build directory, default
+# ~/otpu-build), BCU_DATA (the images' and KV stores' disk, default $BCU_BUILD/data) and BCU_PY (the python3 with
+# the host's packages, default the PATH's) and BCU_RESUME (below); a BCU_* variable already in the environment wins
+# over the file's.
+_pre=(); for v in $(compgen -e | grep '^BCU_'); do _pre+=("$v=${!v}"); done
+[ -f "${BCU_ENV:=$HOME/.config/otpu/bcu.env}" ] && . "$BCU_ENV"
+for v in ${_pre[@]+"${_pre[@]}"}; do export "$v"; done        # (the environment's BCU_* win over the file's)
+# BCU_RESUME: the governor's RESUME for the bring-up's GOs (C, at most 69.9; unset: wg_bringup's 65). The die must
+# be at or under it for the card to start: fans that hold the die above it (their target) need it raised
+RES=(); [ -z "${BCU_RESUME:-}" ] || { export BCU_RESUME; RES=(--resume "$BCU_RESUME"); }
+waited=0
+waiting() {     # waiting LOG...: every BCU_WAIT_SAY (15) s of the wait, each bring-up's latest "waiting for GO" line
+  waited=$((waited + 1)); [ $((waited % ${BCU_WAIT_SAY:-15})) = 0 ] || return 0
+  local f l
+  for f in "$@"; do
+    l=$(grep "waiting for GO" "$f" 2>/dev/null | tail -1)
+    [ -z "$l" ] || echo "$(basename "$0"): $(basename "$f" .log): ${l#* }"
+  done
+}
+BB=${BCU_BUILD:-$HOME/otpu-build}; DATA=${BCU_DATA:-$BB/data}; export BCU_DATA=$DATA; PY=${BCU_PY:-$(command -v python3)}
+card() {        # card N: S, BDF and NAME of card N, from BCU_CARDN_*
+  local s=BCU_CARD${1}_SERIAL b=BCU_CARD${1}_BDF n=BCU_CARD${1}_NAME
+  S=${!s:-}; BDF=${!b:-}; NAME=${!n:-card$1}
+  [ -n "$S" ] && [ -n "$BDF" ] || { echo "$(basename "$0"): $s and $b are not set (BCU_ENV: $BCU_ENV)"; exit 2; }
+}
+card 0; S0=$S; F0=$BDF; N0=$NAME
+card 1; S1=$S; F1=$BDF; N1=$NAME
+B=$BB/cardimg/x2
+T=$B/tree-TREE
+ENTRY=KEY
+GRACE=${SERVE35_GRACE:-90}      # seconds the server has to stop (a prompt's run in flight ends first) before KILL
+# "$PY" -c "$SETSID" CMD ARGS: CMD in a session of its own (no fork: $! stays its PID), out of the terminal's process
+# group: neither its Ctrl-C nor its hangup reaches it
+SETSID='import os, sys
+try:
+    os.setsid()
+except OSError:                 # (a process group leader already: not in the foreground group)
+    pass
+os.execv(sys.argv[1], sys.argv[1:])'
+cd "$T" || exit 2
+# the image cache key covers every OTPU_* variable but the runtime ones: exactly the entry's (an OTPU_API_KEY becomes
+# SERVE35_API_KEY); an enclosing otpu-lock's OTPU_LOCK_* stay (a card window's hold of one card: the server borrows it,
+# locks the other; otpu-chat35x2's)
+export SERVE35_API_KEY=${SERVE35_API_KEY:-${OTPU_API_KEY-}}
+for v in $(env | grep -o '^OTPU_[A-Z0-9_]*'); do
+  case $v in OTPU_LOCK_HELD|OTPU_LOCK_PID|OTPU_LOCK_WAIT) ;; *) unset "$v" ;; esac
+done
+export PYTHONPATH=. OTPU_TARGET=bcu1525-x2:st16 OTPU_IMG_CACHE=${CHAT35_IMG:-$DATA/img35x2} OTPU_IMG_CACHE_GB=100 \
+  OTPU_PROG_CACHE=$B/qprog OTPU_PROG_CACHE_GB=8 CHAT35_ENTRY=$ENTRY CHAT35_RAW=${CHAT35_RAW:-$DATA/raw35x2} \
+  CHAT35_LM=${CHAT35_LM:-2}
+case " $* " in *" -h "*|*" --help "*) exec "$PY" "$B/serve35x2.py" --help ;; esac
+dev_of() {      # the XDMA device of the card at PCI function $1
+  local u
+  u=$(ls /sys/bus/pci/devices/"$1"/xdma/ 2>/dev/null | grep "_user$" | head -1)
+  [ -z "$u" ] || echo "/dev/${u%_user}"
+}
+d0=$(dev_of "$F0"); d1=$(dev_of "$F1")
+[ -n "$d0" ] && [ -n "$d1" ] || { echo "otpu-serve35x2: no XDMA device on $N0 ('$d0') or $N1 ('$d1'): is the x2 image on both?"; exit 1; }
+export CHAT35_DEV=$d0+$d1 CHAT35_NAMES=$N0,$N1
+jobs=$(pgrep -af "[w]g_bringup|[t]ools\.qual|[b]oard_perf|[x]2_card|[c]hat35\.py|[c]hat35x2\.py|[w]arm35|[s]erve35\.py|[s]erve35x2\.py")
+[ -z "$jobs" ] || { echo "otpu-serve35x2: a card job is running:"; echo "$jobs"; exit 1; }
+tmux has-session -t fan 2>/dev/null || { echo "otpu-serve35x2: the fans' PID loop (tmux fan) is not running (boards/bcu1525/scripts/fan_pid.py; docs/bcu1525.md 15)"; exit 1; }
+out=$B/runs/serve35x2-$(date +%m%d-%H%M%S)
+mkdir -p "$out"
+"$PY" - <<'PYEOF' || exit 1
+import os
+from opentpu.host.board import XdmaTransport
+from opentpu.host import gov as G
+for name, dev in zip(os.environ["CHAT35_NAMES"].split(","), os.environ["CHAT35_DEV"].split("+")):
+    g = G.Gov(XdmaTransport(dev, dma=False))
+    if not g.present():
+        raise SystemExit(f"otpu-serve35x2: no governor on {name} ({dev}: is the x2 image loaded?)")
+    t = g.status()["temp_c"]
+    print(f"otpu-serve35x2: {name} {dev} die {t:.1f} C")
+    r = float(os.environ.get("BCU_RESUME") or 65)      # (the RESUME the bring-up sets: wg_bringup's 65 without it)
+    if t > r:
+        print(f"otpu-serve35x2: {name}: the die is above RESUME ({r:g} C): the bring-up waits for it to cool, 30 minutes at most. "
+              f"If the fans hold it there (their target above RESUME), set BCU_RESUME (at most 69.9)")
+PYEOF
+# the raw image's data into the page cache meanwhile (its holes are zeros: not read)
+( exec nice -n 10 "$PY" - "$CHAT35_RAW/$ENTRY.raw" <<'PYEOF'
+import os, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY)
+except OSError:
+    sys.exit(0)
+end, pos, buf = os.fstat(fd).st_size, 0, memoryview(bytearray(16 << 20))
+while pos < end:
+    try:
+        a = os.lseek(fd, pos, os.SEEK_DATA)
+    except OSError:
+        break
+    b = os.lseek(fd, a, os.SEEK_HOLE)
+    while a < b:
+        n = os.preadv(fd, [buf[:min(len(buf), b - a)]], a)
+        if n <= 0:
+            break
+        a += n
+    pos = b
+PYEOF
+) > /dev/null 2>&1 &
+echo "otpu-serve35x2: bringing both cards up, $N0 on $d0 and $N1 on $d1 (about a minute; logs $out/up-*.log)"
+# each bring-up in a session of its own: it ends on this script's TERM (bye), after the server. (Ignoring SIGINT is not
+# enough: wg_bringup installs its own handler, and the terminal's Ctrl-C would end a hold under the running server.)
+up() {          # up NAME SERIAL DEV: one card's guarded bring-up, RUN held (otpu-chat35x2's)
+  mkdir -p "$out/up-$1"
+  ( exec env OTPU_TARGET=bcu1525-x2:st16 "$PY" -c "$SETSID" "$PY" -u tools/x2_session/bringup.py --tree "$T" up \
+      --out "$out/up-$1" --serial "$2" --dev "$3" --no-jtag --no-trips --mem none --no-selftest ${RES[@]+"${RES[@]}"} \
+      --hold "${SERVE35_HOLD:-43200}" ) > "$out/up-$1.log" 2>&1 &
+}
+up "$N0" "$S0" "$d0"; u0=$!
+up "$N1" "$S1" "$d1"; u1=$!
+srv=; tl=
+stop_server() {
+  [ -n "$srv" ] && kill -0 "$srv" 2>/dev/null || return 0
+  kill -TERM "$srv" 2>/dev/null
+  for _ in $(seq "$GRACE"); do kill -0 "$srv" 2>/dev/null || break; sleep 1; done
+  if kill -0 "$srv" 2>/dev/null; then
+    echo "otpu-serve35x2: the server did not stop in $GRACE s: killed"
+    kill -KILL "$srv" 2>/dev/null
+  fi
+  wait "$srv" 2>/dev/null
+}
+safe_line() {    # safe_line NAME: once its bring-up has exited, the governor's state after its SAFE (wg.json's status_safe)
+  if "$PY" - "$out/up-$1/wg.json" <<'PYEOF'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1])).get("status_safe") or {}
+except (OSError, ValueError):
+    s = {}
+sys.exit(0 if s and not s.get("run") and not s.get("acc_on") else 1)
+PYEOF
+  then echo "otpu-serve35x2: $1 back in SAFE ($out/up-$1)"
+  else echo "otpu-serve35x2: $1's bring-up has ended, but $out/up-$1/wg.json does not say SAFE: check the card (otpu-smi)"
+  fi
+}
+bye() {
+  trap '' INT TERM HUP
+  stop_server
+  [ -z "$tl" ] || kill "$tl" 2>/dev/null
+  kill -TERM "$u0" "$u1" 2>/dev/null
+  wait "$u0" 2>/dev/null
+  wait "$u1" 2>/dev/null
+  safe_line "$N0"
+  safe_line "$N1"
+}
+trap bye EXIT
+trap 'exit 130' INT TERM HUP
+held() {        # held NAME PID: its bring-up running and holding
+  kill -0 "$2" 2>/dev/null && [ -f "$out/up-$1/HOLDING" ]
+}
+until [ -f "$out/up-$N0/HOLDING" ] && [ -f "$out/up-$N1/HOLDING" ]; do
+  for c in "$N0" "$N1"; do
+    p=$u0; [ "$c" = "$N1" ] && p=$u1
+    if ! kill -0 "$p" 2>/dev/null; then echo "otpu-serve35x2: $c: the bring-up failed:"; tail -15 "$out/up-$c.log"; exit 1; fi
+  done
+  sleep 1; waiting "$out/up-$N0.log" "$out/up-$N1.log"
+done
+echo "otpu-serve35x2: both cards up; loading ${CHAT35_MODEL:-the 35B} (its image to both cards); the server's log $out/serve.log"
+# the server ignores SIGINT and SIGHUP (a background job's; it stops on bye's TERM) and writes its log, shown here
+( trap '' INT HUP; exec "$PY" -u "$B/serve35x2.py" "$@" ) > "$out/serve.log" 2>&1 &
+srv=$!
+tail -n +1 -f "$out/serve.log" --pid=$srv &
+tl=$!
+while kill -0 "$srv" 2>/dev/null; do
+  for c in "$N0" "$N1"; do
+    p=$u0; [ "$c" = "$N1" ] && p=$u1
+    if ! held "$c" "$p"; then
+      echo "otpu-serve35x2: $c: the bring-up's hold ended ($(grep -E 'hold:|TRIPPED' "$out/up-$c.log" | tail -1)): stopping the server"
+      stop_server
+      exit 1
+    fi
+  done
+  sleep 2 & wait $!
+done
+wait "$srv"
+rc=$?
+srv=
+exit $rc

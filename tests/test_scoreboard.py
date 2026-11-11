@@ -147,9 +147,9 @@ def test_moe_offload_and_residency():
         assert d["misses"] > 50 and d["tok_s"] < d["card_tok_s"]
         # a faster host link exposes less
         assert SB.moe_decode(name, YPCB.replace(pcie_gbps=8.0))["tok_s"] > d["tok_s"]
-    f2 = SB.board("f2")
-    assert SB.moe_fit("gemma4-26b", f2)["resident"]
-    assert SB.moe_decode("gemma4-26b", f2)["misses"] == 0
+    big = SB.board("bcu1525", S=4, fast_gb=8.0)         # (slices that hold the whole pool)
+    assert SB.moe_fit("gemma4-26b", big)["resident"]
+    assert SB.moe_decode("gemma4-26b", big)["misses"] == 0
     assert SB.moe_prefill("qwen35-35b", YPCB, P=256)["rows"] == 2      # R k <= 16
     assert SB.moe_prefill("qwen35-35b", YPCB.replace(rows=64), P=256)["rows"] == 2
 

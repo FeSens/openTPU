@@ -1,8 +1,8 @@
 """Build and run tb_memch (sim/verilator/tb_memch.sv: otpu_mem_ch in front of LiteDRAM native-port
 models) over its scenarios, its throughput runs and its mutation checks. Verilator builds are
-heavy: run it on omarchy, one at a time:
+heavy: run it on the build host, one at a time:
 
-    tools/omarchy_test.sh --exec python tools/memch_test.py [suite ...]
+    tools/remote_test.sh --exec python tools/memch_test.py [suite ...]
 
 suites: quick, func (default), perf, mut (or mut=I,J: those mutations), all. One line per run: the
 build (tb_memch's ARD), the scenario, PASS / FAIL / TIMEOUT / ABORT (a model's $fatal or an RTL

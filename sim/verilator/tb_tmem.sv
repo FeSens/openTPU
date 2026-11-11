@@ -27,7 +27,7 @@ module tb_tmem #(parameter int IMPL = 0, parameter int NSB = 4, parameter int SB
   localparam int NCP = 2;
   localparam logic [NRP-1:0][2:0] CPY = {3'd1, 3'd0, 3'd0};
 
-  logic clk = 0, clk_f = 0;
+  logic clk = 0, clk_f = 0, rst = 1;
   logic [NRP-1:0][LANES-1:0]       r_en, r_req;
   logic [NRP-1:0][LANES-1:0][31:0] r_addr, r_data;
   logic [NWP-1:0][LANES-1:0]       w_en, w_req;
@@ -40,7 +40,7 @@ module tb_tmem #(parameter int IMPL = 0, parameter int NSB = 4, parameter int SB
               .NCP(NCP), .CPY(CPY), .NSB(NSB), .SBP(SBP), .PRANK({3'd2, 3'd1, 3'd0}),
               .GRP(GRP), .SBH(SBH), .RPL(RPL), .TOPP(0), .TDP(TDP), .SIDE(3'b100), .GST(GST),
               .SH_HOST(0), .SH_MASK(GST ? 3'b100 : 3'b000), .PMP(PMP), .IQ(IQ)) dut (
-    .clk, .clk_f, .r_en, .r_req, .r_addr, .r_ben('0), .r_bad('0), .r_data, .w_en, .w_req, .w_gnt, .w_addr, .w_data,
+    .clk, .clk_f, .rst, .r_en, .r_req, .r_addr, .r_ben('0), .r_bad('0), .r_data, .w_en, .w_req, .w_gnt, .w_addr, .w_data,
     .blk_x, .blk_s, .lost, .frz, .dump(1'b0));
 
   logic [31:0] ref_mem [WORDS];
@@ -71,6 +71,11 @@ module tb_tmem #(parameter int IMPL = 0, parameter int NSB = 4, parameter int SB
     for (int i = 0; i < 8; i++) recent[i] = 0;
     for (int p = 0; p < NRP; p++) for (int l = 0; l < LANES; l++) valid_q[p][l] = 0;
     r_en = '0; r_req = '0; r_addr = '0; w_en = '0; w_req = '0; w_gnt = '0; w_addr = '0; w_data = '0;
+    // the reset, idle (TMEM's control state: no power-up value of it may matter); it falls just
+    // after a core edge, as a core-clock register's does (the slice's rst_mem), so the pumped
+    // RAMs' fast edge in the middle of that cycle sees it low
+    repeat (4) begin clk = 1; clk_f = 1; #1; clk_f = 0; #1; clk = 0; clk_f = 1; #1; clk_f = 0; #1; end
+    clk = 1; clk_f = 1; #1; rst = 0; clk_f = 0; #1; clk = 0; clk_f = 1; #1; clk_f = 0; #1;
 
     for (int cyc = 0; cyc < CYCLES; cyc++) begin
       logic [LANES-1:0] busy;

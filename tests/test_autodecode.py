@@ -405,6 +405,48 @@ def test_generate_matches_the_host_loop(tiny, S, split):
     assert a.pos == 248 + j + 1                      # the stop id is not fed
 
 
+def test_generate_through_a_ring_of_chain_slots(monkeypatch):
+    """Past G.RING buckets a chain area is a ring of slots (bucket k in (k - 1) mod RING): a
+    bucket written over another's takes its slot and its table entry (the other's absent),
+    and a call reaching past the ring's buckets runs in parts. At cap 1280 (5 buckets), a ring
+    of 3 against a slot a bucket: the same tokens across 256, 768 (bucket 4 in bucket 1's
+    slot) and 1024 (bucket 5 over bucket 2's), and a ring of 2 (a run a bucket) across 256."""
+    from opentpu.llm.qwen3 import PREFILL_ROWS, Engine, device_config
+    W, spec = _tiny("qwen3")
+    cfg = device_config(spec, 1280, rows=PREFILL_ROWS, lookup=True)
+    b = Engine(spec, W, cap=1280, cfg=cfg, resident=True)
+    assert "nslot" not in b.image.lookup["gen"]          # (5 buckets: a slot each)
+    monkeypatch.setattr(G, "RING", 3)
+    a = Engine(spec, W, cap=1280, cfg=cfg, resident=True)
+    monkeypatch.setattr(G, "RING", 2)
+    c = Engine(spec, W, cap=1280, cfg=cfg, resident=True)
+    ga, gb = a.image.lookup["gen"], b.image.lookup["gen"]
+    assert G.nslot(ga) == 3 and G.nslot(gb) == 5 and ga["nb"] == gb["nb"] == 5
+    assert G.prog_slot(ga, 4) == G.prog_slot(ga, 1) and G.prog_slot(ga, 5, 1) == \
+        G.prog_slot(ga, 2, 1)
+    rng = np.random.default_rng(1)
+    toks = [int(t) for t in rng.integers(0, 1000, 248)]
+    t0 = {int(np.argmax(e.prefill(toks))) for e in (a, b, c)}
+    assert len(t0) == 1
+    t0 = t0.pop()
+    want = b.generate_card(t0, 12, stop_ids=[])
+    assert a.generate_card(t0, 12, stop_ids=[]) == want and len(set(want)) > 4
+    runs = len(c.stats)
+    assert c.generate_card(t0, 12, stop_ids=[]) == want      # (8 tokens, then 4 in bucket 2)
+    assert len(c.stats) - runs == 2 and c.pos == a.pos == b.pos == 260
+    for n in (500, 248):                    # to 761 (then across 768), 1022 (across 1024)
+        more = [int(t) for t in rng.integers(0, 1000, n)]
+        t1 = {int(np.argmax(e.prefill([want[-1]] + more))) for e in (a, b)}
+        assert len(t1) == 1
+        t1 = t1.pop()
+        want = b.generate_card(t1, 12, stop_ids=[])
+        assert a.generate_card(t1, 12, stop_ids=[]) == want
+    have = a._chained[0][1]
+    assert have == {4, 5}                   # 2's slot is 5's now, 1 never chained to
+    tab = a.backend.read(0, G.ptab_addr(ga), 8 * (ga["nb"] + 2)).view(np.uint32)
+    assert tab[2 * 2] == tab[2 * 2 + 1] == 0 and tab[2 * 5] == G.prog_slot(ga, 5)
+
+
 def test_generate_at_a_partial_last_bucket(guarded, tiny):
     """A KV capacity of 384 (a multiple of D, not of the attention block): the decode loop on
     the device runs bucket 2 with its masked block over the cache's last 128 tokens and gives
@@ -713,9 +755,10 @@ def test_gemma4_generate_on_rtl(have_verilator, tiny_gemma4, split):
 def test_gemma4_e2b_generate_fits_imem():
     """Gemma 4 E2B on the board (fp4 layers with the int8 LM head and PLE, and int8, the
     chat's default, with the fp4 PLE; 4096 tokens, the generate area in the 4 GiB image): every
-    bucket's generate program, greedy and sampled, is one program under IMEM, except int8's
-    sampled loop: one program exhausts TMEM, so it takes the split form, two programs a token
-    (layout only, no weights)."""
+    bucket's generate program, greedy and sampled, is one program under IMEM (int8's sampled
+    loop took the split form, two programs a token, while the gathers' one-hot operand was
+    loaded whole: its 16,384 words exhausted TMEM; kernels/gather.py makes it in 3,128) (layout
+    only, no weights)."""
     from opentpu.isasim import board_config
     from opentpu.llm import gemma4
     spec = gemma4.Spec.from_hf(model_dir("gemma4"))
@@ -726,8 +769,8 @@ def test_gemma4_e2b_generate_fits_imem():
             for blocks in (1, 3, 8, 16):
                 progs = G.compile_bucket(img, blocks, (blocks - 1) * 256, 256, samp=samp)
                 split = isinstance(progs, tuple)
-                assert split == (wf == "int8" and samp is not None), (wf, blocks, samp)
-                assert all(G.fits(img, p) for p in (progs if split else (progs,)))
+                assert not split, (wf, blocks, samp)
+                assert G.fits(img, progs)
 
 
 class _Tok:
@@ -874,6 +917,51 @@ class _GenCard:
                 self.runs_gen += bool(len(land))
 
         return Card(*a, **kw)
+
+
+def test_generate_on_a_card_polls_little_while_a_token_is_far(tmp_path, monkeypatch):
+    """BoardBackend.run_generate at a 30 ms token (33 tokens/s, the pace known from the last run):
+    the host sleeps toward each token's due time, so it reads the card a few times a token (its
+    out[] beat and STATUS a wake-up; a 1 ms cap read it ~27 times), and the tokens are the
+    host's greedy loop's, each handed over as it lands."""
+    from opentpu import lens as L
+    from opentpu.host.board import BoardBackend, sim_config
+    from opentpu.llm.qwen3 import Engine
+    for k in ("OTPU_MCOLS", "OTPU_LANES", "OTPU_PAIR", "OTPU_DSTEP"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("OTPU_RUN_DIR", str(tmp_path / "otpu"))
+    spec, W = L._tiny_qwen()
+    cfg = sim_config(spec, 512, lookup=True)
+    ref = Engine(spec, W, cap=512, cfg=cfg, resident=True)
+    g = ref.image.lookup["gen"]
+    card = _GenCard(cfg, (g["out"], 513), g["state"], gap=0.03)
+    wakes = []
+    reg_read = card.reg_read
+    card.reg_read = lambda off: (wakes.append((off, time.perf_counter())), reg_read(off))[1]
+    eng = Engine(spec, W, cap=512, cfg=cfg, resident=True, pipeline=False,
+                 backend=lambda c, imgs: BoardBackend(c, imgs, transport=card, status=False))
+
+    class Pace(dict):                       # (the last run's seconds a token: the card's)
+        def get(self, k, d=None):
+            return card.gap
+    eng.backend._gen_gaps = Pace()
+    prompt = [3, 1, 4, 1, 5]
+    t0 = int(np.argmax(eng.prefill(prompt)))
+    want, t = [], int(np.argmax(ref.prefill(prompt)))
+    for _ in range(12):
+        t = int(np.argmax(ref.step(t)))
+        want.append(t)
+    del wakes[:]
+    seen = []
+    got = eng.generate_card(t0, 12, stop_ids=[], on_token=lambda x: seen.append(time.perf_counter()))
+    assert got == want and len(seen) == 12
+    from opentpu.host import regs as R
+    # (up to the last token: after it the run's end is Board.wait's poll)
+    polls = sum(off == R.R_STATUS and t <= seen[-1] for off, t in wakes) / len(got)
+    print(f"{polls:.1f} wake-ups a token")
+    assert polls < 16, polls
+    assert seen[-1] - seen[0] > 8 * card.gap    # as they land
+    eng.backend.close()
 
 
 def test_generate_on_a_card_streams_the_tokens(tmp_path, monkeypatch):

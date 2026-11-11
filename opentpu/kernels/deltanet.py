@@ -15,14 +15,42 @@ from .. import language as ol
 from .lib import softplus
 
 
-def gates(a, b, A_log, dt_bias):
+def gates(a, b, A_log, dt_bias, out=None, fold: bool = False):
     """The per-head decay a = e^g, g = -e^A_log * softplus(a + dt_bias), and beta = sigmoid(b)
-    (all [H] tiles)."""
+    (all [H] tiles); with `out` [2 H], decay into out[0:H] and beta into out[H:2 H], each by
+    its last VOP (no copy). fold: A_log holds -log2(e) e^A_log and b comes -log2(e) times (its
+    weights', qwen35's Image.dn_fold), so decay = 2^(softplus(a + dt_bias) A_log) and beta =
+    1 / (1 + 2^b): three VOPs fewer."""
+    if fold:
+        d = softplus(a + dt_bias) * A_log
+        if out is None:
+            return ol.exp2(d), ol.recip(ol.exp2(b) + 1.0)
+        H = a.cols
+        out[0:H].set(ol.exp2(d))
+        out[H:2 * H].set(ol.recip(ol.exp2(b) + 1.0))
+        return out[0:H], out[H:2 * H]
     g = softplus(a + dt_bias) * ol.exp2(A_log * ol.LOG2E)
-    decay = ol.exp2(g * -ol.LOG2E)
-    beta = ol.recip(ol.exp2(b * -ol.LOG2E) + 1.0)
-    return decay, beta
+    if out is None:
+        decay = ol.exp2(g * -ol.LOG2E)
+        beta = ol.recip(ol.exp2(b * -ol.LOG2E) + 1.0)
+        return decay, beta
+    H = a.cols
+    out[0:H].set(ol.exp2(g * -ol.LOG2E))
+    out[H:2 * H].set(ol.recip(ol.exp2(b * -ol.LOG2E) + 1.0))
+    return out[0:H], out[H:2 * H]
 
+
+
+def gate_logs(a, b, A_log, dt_bias, fold: bool = False):
+    """gates() of rows: a, b [n, H] (A_log, dt_bias [H] over every row) -> (lg, beta) [n, H],
+    lg the decay's exponent (decay = 2^lg: gates' EXP2 input, so exp2(lg) is gates' decay bit
+    for bit) and beta; per element gates' operations (the chunked DeltaNet's inputs: its
+    cumulative decays are sums of lg)."""
+    sp = softplus(a + dt_bias[None, :])
+    if fold:
+        return sp * A_log[None, :], ol.recip(ol.exp2(b) + 1.0)
+    return (sp * ol.exp2(A_log * ol.LOG2E)[None, :]) * -ol.LOG2E, \
+        ol.recip(ol.exp2(b * -ol.LOG2E) + 1.0)
 
 def l2norm_rows(x, scale: float = 1.0, eps: float = 1e-6):
     """x[h] * scale / sqrt(|x[h]|^2 + eps) for every row h of x [H, d]."""

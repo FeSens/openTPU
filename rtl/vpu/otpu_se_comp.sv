@@ -13,22 +13,54 @@
 // (range flags | floor | -i2f, three register stages, today's slot-1 pre-stages), applied on pass 0
 // only (op 0 is at S0); LOG2 takes i2f(e) there. T = NS*SL + 4 cycles from S0 to S0.
 //
-//   func      ops  passes (NS = 3)   columns per cycle (LANES = 8)
-//   EXP2       9   3                 2.67    (op 0 is v = x*1 + -0, then f, 7 Horner steps)
-//   EXP2SUB    9   3                 2.67    (op 0 is v = x*1 + -y)
-//   RECIP      6   2                 4
-//   RSQRT     10   4                 2
-//   LOG2      10   4                 2
+//   func      ops  passes (NS = 3)   columns per cycle (LANES = 8)   NS = 5
+//   EXP2       9   3                 2.67    (op 0 is v = x*1 + -0,   2 passes, 4
+//                                             then f, 7 Horner steps)
+//   EXP2SUB    9   3                 2.67    (op 0 is v = x*1 + -y)   2, 4
+//   RECIP      6   2                 4                                2, 4
+//   RSQRT     10   4                 2                                2, 4
+//   LOG2      10   4                 2                                2, 4
 //
 // Stage s of a lane is a unit y = add(mul(a, b), c) (an otpu_fmma with e = 1.0, or an
 // otpu_fmul then otpu_fadd) whose operands (st_a, st_b, st_c, st_e) are registered at the
 // cycle they are presented and whose result (st_y) comes back SL = 1 + LM + LA cycles later.
 // EXT = 1 leaves the units to their owners (in SE: VPU slot 0, the tail's U and Q), which take
-// st_* into their input registers when st_sel[s]; EXT = 0 instantiates generic ones here.
+// st_* into their input registers when st_sel[s]; EXT = 0 instantiates generic ones here. With
+// NX < NS the stages past the owners' (NX .. NS-1: the VPU's CNS 5, EXP2 in two passes) are
+// generic ones here, their st_y unused.
 // Everything this module computes besides the units is here: the per-lane setup (the seeds and
 // the LOG2 split), RR, the state carried along the stages (k1, k2, ii, f; v is the result of
 // the stage before, as in the chains), the operand muxes, the per-stage control (a ROM on the
 // chunk's function and pass, shared by the lanes) and the final fix-ups.
+//
+// SIG (NS 5 or 3; Config.VSIG, docs/isa.md VOP SIGMOID / SILU): SIGMOID's recip(exp2(A*B) + 1)
+// and SILU's A times it, the ops of VOP MUL, EXP2, ADD 1.0, RECIP (and MUL) in four passes at NS 5
+// and six at NS 3 (those VOPs take six and seven at NS 5), bit for bit. NS 5:
+//
+//   pass 0   S0 v = A*B + -0 (MUL; EXP2's op 0, v = x*1 + -0, is the identity on its result) |
+//            RR | S1..S4 EXP2's ops 1..4
+//   pass 1   S0..S3 EXP2's ops 5..8 | S4 v = xf(v) * 2^i + 1.0 (ADD 1.0: xf is v with EXP2's
+//            flags, +0 below its range and +inf above it, and the multiply steps v's exponent
+//            field by EXP2's i exactly as its finish adds it: 2^i is normal for every i in
+//            range, v in [1, 2]) | the loop register: RECIP's setup on v (seed, -a, its step)
+//   pass 2   S0..S4 RECIP's ops 0..4
+//   pass 3   S0 RECIP's op 5 | RR: RECIP's finish | S1 SILU: v = v*A + -0 (MUL; A from a ring of
+//            T entries, written at the chunk's entry and read at its last pass's S1: a chunk
+//            comes back to its own slot every T cycles) | S2..S4 identity
+//
+// NS 3, the same ops three to a pass:
+//
+//   pass 0   S0 MUL | RR | S1, S2 EXP2's ops 1, 2
+//   pass 1   S0..S2 EXP2's ops 3..5
+//   pass 2   S0..S2 EXP2's ops 6..8 | the loop register: xf on v, 2^i into k2 (fxup)
+//   pass 3   S0 v = v * k2 + 1.0 (ADD 1.0) | RR: RECIP's setup on v | S1, S2 RECIP's ops 0, 1
+//   pass 4   S0..S2 RECIP's ops 2..4
+//   pass 5   S0 RECIP's op 5 | RR: RECIP's finish | S1 SILU's MUL (the ring) | S2 identity
+//
+// The fix-ups sit on register boundaries (RR, the loop register) but NS 5's xf and 2^i, on S4's
+// operand muxes (2^i from the carried i and flags). SIG's chunk is the longest (four passes at
+// NS 5, six at NS 3: RSQRT and LOG2 take four), so the VPU's latency rule lets nothing shorter
+// start while one is in flight.
 //
 // Issue: a chunk enters at S0 (in_v, with A and B per lane) unless a chunk returns to S0 that
 // cycle. `hold` says so HA cycles ahead (it is a register tap: the loop is a fixed schedule),
@@ -45,18 +77,21 @@ module otpu_se_comp
   parameter int MW    = 64,       // the core's opaque chunk meta (out_meta = in_meta)
   parameter int NS    = 3,        // stages per lane
   parameter int HA    = 2,        // `hold` leads the S0 cycle it protects by HA cycles
-  parameter bit EXT   = 1'b1      // the stage units are outside (st_*); 0: generic ones inside
+  parameter bit EXT   = 1'b1,     // the stage units are outside (st_*); 0: generic ones inside
+  parameter int NX    = NS,       // EXT: stages 0 .. NX-1 outside, NX .. NS-1 generic ones inside
+  parameter bit SIG   = 1'b0      // SIGMOID and SILU (CC_SIG, CC_SLU; NS 5 or 3): see the header
 ) (
   input  logic             clk,
   input  logic             rst,
   input  logic             en,
   input  logic [LANES-1:0] en_l,       // en's copies, one per lane: the lanes' stages (g_lane)
-  // entry at S0: a chunk of class in_c (f_cc of V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2;
+  // entry at S0: a chunk of class in_c (f_cc of V_EXP2, V_EXP2SUB, V_RECIP, V_RSQRT, V_LOG2 (,
+  // V_SIGMOID, V_SILU);
   // the S0 selects and the setup start at it, so it should come from a flip-flop)
   input  logic             in_v,
   input  logic [2:0]       in_c,
   input  f32_t             in_a [LANES],     // operand A
-  input  f32_t             in_b [LANES],     // operand B (EXP2SUB)
+  input  f32_t             in_b [LANES],     // operand B (EXP2SUB, SIGMOID, SILU)
   input  logic [LANES-1:0] in_m,             // lane mask (carried)
   input  logic [MW-1:0]    in_meta,
   output logic             hold,             // an entry HA cycles from now would collide
@@ -80,8 +115,12 @@ module otpu_se_comp
   localparam int SL = 1 + LM + LA;         // a stage: input registers, multiply, add
   localparam int RRL = 3;                  // RR: clamp | floor | i2f
   localparam int T = NS * SL + RRL + 1;    // S0 to S0 (the loop register is the 1)
-  initial if (NS < 1 || HA < 1 || HA + 1 >= T)
-    $fatal(1, "otpu_se_comp: unsupported NS / HA");
+  initial if (NS < 1 || HA < 1 || HA + 1 >= T || NX < 1 || NX > NS || SIG && NS != 5 && NS != 3)
+    $fatal(1, "otpu_se_comp: unsupported NS / HA / NX / SIG");
+  localparam int NC = SIG ? 7 : 5;         // the classes decoded: CC_EXP .. CC_LOG (, CC_SIG, CC_SLU)
+  function automatic logic is_sig(input logic [2:0] c);
+    return SIG && (c == CC_SIG || c == CC_SLU);
+  endfunction
 
   localparam f32_t F_NZ = 32'h8000_0000;   // -0: (a*b) + -0 == a*b exactly
 
@@ -92,6 +131,8 @@ module otpu_se_comp
       CC_EXP, CC_EXS: return 9;
       CC_RCP:         return 6;
       CC_RSQ, CC_LOG: return 10;
+      CC_SIG:         return 16;
+      CC_SLU:         return 17;
       default:        return 1;
     endcase
   endfunction
@@ -101,6 +142,7 @@ module otpu_se_comp
       CC_EXP, CC_EXS: return 4'((9 + NS - 1) / NS);
       CC_RCP:         return 4'((6 + NS - 1) / NS);
       CC_RSQ, CC_LOG: return 4'((10 + NS - 1) / NS);
+      CC_SIG, CC_SLU: return SIG ? ((NS == 5) ? 4'd4 : 4'd6) : 4'd1;  // (the header's schedules)
       default:        return 4'd1;
     endcase
   endfunction
@@ -110,7 +152,8 @@ module otpu_se_comp
   // coefficient is written into v by the op before (kv: v when dst is not v), so a never
   // takes a constant. At S0 a also takes the input A and c the negated input B.
   localparam logic [1:0] A_V = 2'd0, A_K1 = 2'd1, A_K2 = 2'd2, A_X = 2'd3;
-  localparam logic [1:0] B_K1 = 2'd0, B_K2 = 2'd1, B_KB = 2'd2;
+  // B_X (SIG): B at S0, 2^i at S4, the ring's A at S1; A_X past S0 (SIG): xf(v) (see the header)
+  localparam logic [1:0] B_K1 = 2'd0, B_K2 = 2'd1, B_KB = 2'd2, B_X = 2'd3;
   localparam logic [1:0] C_KC = 2'd0, C_K2 = 2'd1, C_NY = 2'd2;
   localparam logic [1:0] D_NO = 2'd0, D_V = 2'd1, D_K1 = 2'd2, D_K2 = 2'd3;
   typedef struct packed {
@@ -138,30 +181,67 @@ module otpu_se_comp
     endcase
   endfunction
 
+  localparam uc_t U_ID = '{as: A_V, bs: B_KB, cs: C_KC, dst: D_V, neg: 1'b0, kb: F_ONE, kc: F_NZ,
+                           kv: F_ZERO};                              // v = v*1 + -0
+  // EXP2's op k >= 1 and RECIP's op k (theirs and SIG's)
+  function automatic uc_t uc_exp(input int k);
+    uc_t u;
+    u = U_ID;
+    if (k == 1) begin                                                // f = xf - i2f(i); v = C7
+      u.cs = C_K2; u.dst = D_K1; u.kv = EXP2_C7;
+    end else if (k <= 8) begin                                       // p*f + C6 .. C0
+      u.bs = B_K1; u.kc = exp2_c(8 - k);
+    end
+    return u;
+  endfunction
+  function automatic uc_t uc_rcp(input int k);
+    uc_t u;
+    u = U_ID;
+    if (k < 6) begin
+      if (k % 2 == 0) begin                                          // t = 2 - a y; e = 1 - a y
+        u.as = A_K1; u.bs = B_K2; u.kc = (k == 4) ? F_ONE : F_TWO;
+      end else if (k < 5) begin                                      // y = t y
+        u.bs = B_K2; u.dst = D_K2;
+      end else begin                                                 // y e + y, into v
+        u.bs = B_K2; u.cs = C_K2;
+      end
+    end
+    return u;
+  endfunction
+
   // op k of function c (the VPU chains' slot k, factors in either order); k past the last op:
   // v = v*1 + -0
   function automatic uc_t ucode(input logic [2:0] c, input int k);
     uc_t u;
-    u = '{as: A_V, bs: B_KB, cs: C_KC, dst: D_V, neg: 1'b0, kb: F_ONE, kc: F_NZ, kv: F_ZERO};
+    u = U_ID;
     case (c)
       CC_EXP, CC_EXS: begin
         if (k == 0) begin                                            // v = x (- y)
           u.as = A_X; u.cs = (c == CC_EXS) ? C_NY : C_KC;
-        end else if (k == 1) begin                                   // f = xf - i2f(i); v = C7
-          u.cs = C_K2; u.dst = D_K1; u.kv = EXP2_C7;
-        end else if (k <= 8) begin                                   // p*f + C6 .. C0
-          u.bs = B_K1; u.kc = exp2_c(8 - k);
+        end else begin
+          u = uc_exp(k);
         end
       end
       CC_RCP:
-        if (k < 6) begin
-          if (k % 2 == 0) begin                                      // t = 2 - a y; e = 1 - a y
-            u.as = A_K1; u.bs = B_K2; u.kc = (k == 4) ? F_ONE : F_TWO;
-          end else if (k < 5) begin                                  // y = t y
-            u.bs = B_K2; u.dst = D_K2;
-          end else begin                                             // y e + y, into v
-            u.bs = B_K2; u.cs = C_K2;
+        u = uc_rcp(k);
+      CC_SIG, CC_SLU:                                                // (SIG: the header's)
+        if (!SIG || NS != 5 && NS != 3) begin
+          u = U_ID;
+        end else if (k == 0) begin                                   // v = x B (MUL)
+          u.as = A_X; u.bs = B_X;
+        end else if (k <= 8) begin                                   // EXP2's ops 1..8
+          u = uc_exp(k);
+        end else if (k == 9) begin                                   // xf(v) 2^i + 1 (ADD 1.0)
+          if (NS == 5) begin                                         // (xf, 2^i on S4's muxes)
+            u.as = A_X; u.bs = B_X;
+          end else begin                                             // (NS 3: v, k2 at S0)
+            u.bs = B_K2;
           end
+          u.kc = F_ONE;
+        end else if (k < 16) begin                                   // RECIP's ops 0..5
+          u = uc_rcp(k - 10);
+        end else if (k == 16 && c == CC_SLU) begin                   // v x (MUL)
+          u.bs = B_X;
         end
       CC_RSQ:
         if (k == 0) begin                                            // -h = -(x 0.5)
@@ -197,7 +277,7 @@ module otpu_se_comp
     logic [3:0] m;
     uc_t u;
     m = '0;
-    for (int c = 1; c <= 5; c++)
+    for (int c = 1; c <= NC; c++)
       for (int p = 0; p < int'(n_pass(3'(c))); p++) begin
         u = ucode(3'(c), p * NS + s);
         case (w)
@@ -212,7 +292,7 @@ module otpu_se_comp
   // ... and whether one of them writes a constant into v (kv)
   function automatic logic kv_use(input int s);
     uc_t u;
-    for (int c = 1; c <= 5; c++)
+    for (int c = 1; c <= NC; c++)
       for (int p = 0; p < int'(n_pass(3'(c))); p++) begin
         u = ucode(3'(c), p * NS + s);
         if (u.dst != D_V && u.kv != F_ZERO) return 1'b1;
@@ -225,7 +305,7 @@ module otpu_se_comp
   function automatic uc_t uc_rom(input logic [2:0] c, input logic [3:0] p, input int s);
     uc_t u;
     u = ucode(CC_NONE, 0);
-    for (int ci = 1; ci <= 5; ci++)
+    for (int ci = 1; ci <= NC; ci++)
       for (int pi = 0; pi < 16; pi++)
         if (c == 3'(ci) && p == 4'(pi)) u = ucode(3'(ci), pi * NS + s);
     return u;
@@ -332,6 +412,7 @@ module otpu_se_comp
                              (t.f[2] ? fneg(ve) : ve);
       CC_RSQ:         return t.f[0] ? F_ZERO : ve;
       CC_LOG:         return t.f[0] ? F_NINF : t.f[2] ? F_NAN : t.f[1] ? F_INF : t.v;
+      CC_SIG, CC_SLU: return t.v;                    // (RECIP's finish is the last pass's RR's)
       default:        return F_ZERO;
     endcase
   endfunction
@@ -373,8 +454,13 @@ module otpu_se_comp
       cpos <= {cpos[T-2:0], p0 && (mi[0].pass + 4'd1 < n_pass(mi[0].cls))};
     end
 `ifndef SYNTHESIS
+  // the checks start once the reset has held two edges (registers start arbitrary, and so does a
+  // unit's reset register until the slice's reset pipeline fills: otpu_slice)
+  bit rst_p, rst_seen;
+  initial begin rst_p = 1'b0; rst_seen = 1'b0; end
+  always @(posedge clk) begin rst_p <= rst; if (rst && rst_p) rst_seen <= 1'b1; end
   always_ff @(posedge clk)
-    if (!rst && en && in_v && ret) $fatal(1, "otpu_se_comp: entry while a chunk returns");
+    if (!rst && rst_seen && en && in_v && ret) $fatal(1, "otpu_se_comp: entry while a chunk returns");
 `endif
 
   // stage presentation offsets from S0
@@ -398,6 +484,15 @@ module otpu_se_comp
     end
   end
   always_ff @(posedge clk) if (en) lp_m <= mp[NS - 1];
+  // SIG's pass 1 ends (NS 5): the loop register takes RECIP's setup on v (ADD 1.0's result), v kept
+  wire rs_v = SIG && NS == 5 && is_sig(mp[NS - 1].cls) && mp[NS - 1].pass == 4'd1;
+  wire fx_v = SIG && NS == 3 && is_sig(mp[NS - 1].cls) && mp[NS - 1].pass == 4'd2;
+  function automatic cst_t rsetup(input cst_t t);
+    cst_t r;
+    r = setup(CC_RCP, t.v);
+    r.v = t.v;
+    return r;
+  endfunction
   uc_t uc_rt;
   always_ff @(posedge clk)
     if (rst) ret_r <= 1'b0;
@@ -406,7 +501,7 @@ module otpu_se_comp
     if (en) uc_rt <= uc_rom(mp[NS - 1].cls, mp[NS - 1].pass + 4'd1, 0);
 `ifndef SYNTHESIS
   always_ff @(posedge clk)
-    if (!rst && ret != (lp_v && !fin)) $fatal(1, "otpu_se_comp: ret out of step");
+    if (!rst && rst_seen && ret != (lp_v && !fin)) $fatal(1, "otpu_se_comp: ret out of step");
 `endif
 
   // per-stage control: operand selects and constants at the input, destination at the output.
@@ -414,7 +509,7 @@ module otpu_se_comp
   // after the input, so the result's path to the next stage (y, the destination mux, RR)
   // starts at flip-flops, as does RR's flags' (pass 0 of EXP2 / LOG2)
   uc_t uci [NS], uco [NS];
-  logic rr_e, rr_g;
+  logic rr_e, rr_g, rr_f, rr_s;
   for (genvar s = 0; s < NS; s++) begin : g_uc
     if (s == 0) begin : g_u0
       assign uci[s] = ret ? uc_rt : uc_rom(in_c, 4'd0, 0);
@@ -426,24 +521,73 @@ module otpu_se_comp
     always_ff @(posedge clk) if (en) uco[s] <= uc_rom(cp[6:4], cp[3:0], s);
     if (s == 0) begin : g_rrf
       always_ff @(posedge clk) if (en) begin
-        rr_e <= (cp[3:0] == 0) && (cp[6:4] == CC_EXP || cp[6:4] == CC_EXS);
+        rr_e <= (cp[3:0] == 0) && (cp[6:4] == CC_EXP || cp[6:4] == CC_EXS || is_sig(cp[6:4]));
         rr_g <= (cp[3:0] == 0) && (cp[6:4] == CC_LOG);
+        rr_f <= (cp[3:0] == ((NS == 5) ? 4'd3 : 4'd5)) && is_sig(cp[6:4]);  // SIG: RECIP's finish
+        rr_s <= NS == 3 && (cp[3:0] == 4'd3) && is_sig(cp[6:4]);    // SIG (NS 3): its setup
       end
     end
   end
 `ifndef SYNTHESIS
   for (genvar s = 0; s < NS; s++) begin : g_ucchk
     always_ff @(posedge clk)
-      if (!rst && vpos[s_off(s) + SL - 1] && (uco[s] != uc_rom(mo[s].cls, mo[s].pass, s) ||
-          s == 0 && rr_e != (mo[0].pass == 0 && (mo[0].cls == CC_EXP || mo[0].cls == CC_EXS))))
+      if (!rst && rst_seen && vpos[s_off(s) + SL - 1] && (uco[s] != uc_rom(mo[s].cls, mo[s].pass, s) ||
+          s == 0 && rr_e != (mo[0].pass == 0 && (mo[0].cls == CC_EXP || mo[0].cls == CC_EXS ||
+                                                  is_sig(mo[0].cls))) ||
+          s == 0 && rr_f != (mo[0].pass == ((NS == 5) ? 3 : 5) && is_sig(mo[0].cls)) ||
+          s == 0 && rr_s != (NS == 3 && mo[0].pass == 3 && is_sig(mo[0].cls))))
         $fatal(1, "otpu_se_comp: output control out of step");
   end
 `endif
-  logic e1, e2, g1, g2;
+  logic e1, e2, g1, g2, f1, s1;
   always_ff @(posedge clk) if (en) begin
-    e1 <= rr_e; g1 <= rr_g;
+    e1 <= rr_e; g1 <= rr_g; f1 <= rr_f; s1 <= rr_s;
     e2 <= e1;   g2 <= g1;
   end
+
+  // SILU's A: a ring of T entries, a chunk's slot (its entry cycle mod T) written as it enters and
+  // read at its last pass's S1, s_off(1) cycles after that pass's S0 (3 T cycles after its entry at
+  // NS 5, 5 T at NS 3)
+  f32_t xr_q [LANES];
+  if (SIG) begin : g_xr
+    localparam int XW = $clog2(T);
+    logic [XW-1:0] xw, xq;                 // the write (S0's) and read (S1's) slots
+    f32_t xr [T][LANES];
+    always_ff @(posedge clk)
+      if (rst) begin
+        xw <= '0;
+        xq <= XW'((T - s_off(1)) % T);
+      end else if (en) begin
+        xw <= (xw == XW'(T - 1)) ? '0 : xw + 1'b1;
+        xq <= (xq == XW'(T - 1)) ? '0 : xq + 1'b1;
+      end
+    always_ff @(posedge clk) if (en && in_v) xr[xw] <= in_a;
+    for (genvar l = 0; l < LANES; l++) begin : g_l
+      assign xr_q[l] = xr[xq][l];
+    end
+  end else begin : g_nxr
+    for (genvar l = 0; l < LANES; l++) begin : g_l
+      assign xr_q[l] = F_ZERO;
+    end
+  end
+
+  // SIG's pass 1 S4 operands (NS 5; NS 3: fxup): EXP2's finish's flags on v (xf) and its step i as
+  // a factor (2^i; 1.0 with a flag, xf then +0 or +inf)
+  function automatic f32_t xf(input cst_t t);
+    return t.f[0] ? F_ZERO : t.f[1] ? F_INF : t.v;
+  endfunction
+  function automatic f32_t p2(input cst_t t);
+    return (t.f[0] || t.f[1]) ? F_ONE : {1'b0, 8'(t.ii + 9'd127), 23'd0};
+  endfunction
+
+  // NS 3: SIG's pass 2 ends: the loop register takes EXP2's finish on v (xf) and 2^i into k2
+  function automatic cst_t fxup(input cst_t t);
+    cst_t r;
+    r = t;
+    r.v = xf(t);
+    r.k2 = p2(t);
+    return r;
+  endfunction
 
   // ---------------------------------------------------------------- lanes
   for (genvar l = 0; l < LANES; l++) begin : g_lane
@@ -461,12 +605,14 @@ module otpu_se_comp
         case (uci[s].as)
           A_K1:    a = AU[A_K1] ? t.k1 : t.v;
           A_K2:    a = AU[A_K2] ? t.k2 : t.v;
-          A_X:     a = (s == 0 && AU[A_X]) ? in_a[l] : t.v;     // pass 0 is at S0
+          A_X:     a = !AU[A_X] ? t.v : (s == 0) ? in_a[l] : xf(t);  // pass 0 is at S0
           default: a = t.v;
         endcase
         case (uci[s].bs)
           B_K1:    b = BU[B_K1] ? t.k1 : uci[s].kb;
           B_K2:    b = BU[B_K2] ? t.k2 : uci[s].kb;
+          // SIG's: B at S0 (pass 0), the ring's A at S1 (last pass), 2^i at S4 (NS 5's pass 1)
+          B_X:     b = !BU[B_X] ? uci[s].kb : (s == 0) ? in_b[l] : (s == 1) ? xr_q[l] : p2(t);
           // RSQRT's op 0 (pass 0, at S0): h's factor per lane (rsq_h; the ROM's is 0.5)
           default: b = (s == 0 && !ret && in_c == CC_RSQ) ? rsq_h(in_a[l]) : uci[s].kb;
         endcase
@@ -480,7 +626,7 @@ module otpu_se_comp
       assign st_b[s][l] = b;
       assign st_c[s][l] = c;
       assign st_e[s][l] = F_ONE;
-      if (EXT) begin : g_ext
+      if (EXT && s < NX) begin : g_ext
         assign y = st_y[s][l];
       end else begin : g_int
         f32_t ra, rb, rc;
@@ -524,6 +670,8 @@ module otpu_se_comp
           q0 <= t;
           t = q0;
           if (e1) t.ii = rr_floor(q0.v);
+          if (SIG && f1) t.v = finish(CC_RCP, q0);              // SIG's last pass
+          if (SIG && NS == 3 && s1) t = rsetup(q0);             // SIG's pass 3 (NS 3)
           q1 <= t;
           t = q1;
           if (e2 || g2) begin
@@ -540,6 +688,7 @@ module otpu_se_comp
         assign sti[s + 1] = stp[s];
       end
     end
-    always_ff @(posedge clk) if (en_l[l]) lp_st[l] <= stp[NS - 1];
+    always_ff @(posedge clk) if (en_l[l]) lp_st[l] <= rs_v ? rsetup(stp[NS - 1]) :
+                                                      fx_v ? fxup(stp[NS - 1]) : stp[NS - 1];
   end
 endmodule

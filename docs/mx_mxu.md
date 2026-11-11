@@ -162,7 +162,7 @@ first 2000 tokens of docs/isa.md; the same head; dKL = mean KL(float || variant)
 percent, SE paired over the tokens) with a quantizer per variant for the weights, the head and the
 activations (every MM input: the layers', the head's, q, P and K as attention reads them; V stays
 int8 per token), and the window's drops emulated exactly per 16 elements (`XAct` / `WX`: the
-dropped sub-products are subtracted from the product). hwe-bench, 2026-10-12, 13-36 min a model.
+dropped sub-products are subtracted from the product). The simulation host, 2026-10-12, 13-36 min a model.
 Variants are weights / head / activations [/ flush: the drops on].
 
 ### 3.3 Results (2000 tokens)
@@ -257,7 +257,7 @@ The user decides (section 7).
 ### 3.6 The card models: NVFP4 per kind, and MX against today
 
 Every card model at 2000 tokens of docs/isa.md, the Gemma 4 -it models also of a chat (below)
-(`tools/exp/mx_formats.py run`, hwe-bench, 2026-10-12; the checkpoints at omarchy's Hugging Face
+(`tools/exp/mx_formats.py run`, the simulation host, 2026-10-12; the checkpoints at the build host's Hugging Face
 revisions, three shards' sha256 compared).
 Each run holds, besides float and int8 (today's int8 weights, head and a8: the dKL reference):
 
@@ -605,8 +605,8 @@ robustness to text far from the chat, at about +6.6% of decode time (estimated);
 perplexity 150, 98 and 682 for E2B-it, E4B-it and the 26B-it), on which even int8 moves the 26B
 far from float. [gemma4.md](gemma4.md) also scores them on a chat (`tools/chat_text.py`:
 E2B-it's own replies to 16 questions in one conversation, rendered by its template; the same
-file, omarchy's `gemma-it/chat-it.json`, the first 2000 of its 2637 tokens, `mx_formats.py run
---ids`), and so does this, every variant again. Decided (the lead, 2026-10-12): the Gemma -it
+file, the build host's `gemma-it/chat-it.json`, the first 2000 of its 2637 tokens, `mx_formats.py run
+--ids`), and so does this, every variant again. Decided (2026-10-12): the Gemma -it
 defaults follow the chat, docs/isa.md is the cross-check.
 
 | model | | docs/isa.md | the chat |
@@ -645,10 +645,10 @@ chat, at about +6.6% of decode time (estimated).
 with no 4-bit kind and at most 7.3e-5 in any MX row (Qwen3.5-0.8B in `fp4x6` everywhere), the
 range 3.3 measured at no cost (drops on - off: -0.02 to 0 points).
 
-**What ran where.** Every run on hwe-bench (2026-10-12; 2000 tokens; 6 BLAS threads and 6
+**What ran where.** Every run on the simulation host (2026-10-12; 2000 tokens; 6 BLAS threads and 6
 quantizer processes; 3 min for LFM2.5-230M to 82 min for Qwen3.5-35B-A3B), no proxy model: the
-checkpoints at omarchy's Hugging Face revisions (Qwen3.5-35B-A3B 59d61f3c, gemma-4-26B-A4B-it
-4d7ae498, Phi-4-mini cfbefacb, ...), shard sha256s equal to omarchy's (Phi-4-mini, Qwen3.5-4B,
+checkpoints at the build host's Hugging Face revisions (Qwen3.5-35B-A3B 59d61f3c, gemma-4-26B-A4B-it
+4d7ae498, Phi-4-mini cfbefacb, ...), shard sha256s equal to the build host's (Phi-4-mini, Qwen3.5-4B,
 Qwen3.5-35B-A3B). The -it checkpoints read docs/isa.md as plain text after `<bos>`, as
 formats.md's Gemma 4 rows do, and the chat above. Qwen3.5-4B's and SmolLM3's MX int8 rows ran
 apart (`mx_formats.py run` with that variant, 10 and 7 min; int8's KL per token equal to the first
@@ -769,8 +769,8 @@ together). The layer weights' drops are few and fall on tokens no worse than tod
 counted. Where every kind is counted together (Phi-4-mini 2.2e-3 of the inputs, as much in its MX
 int8 row: not the 4-bit kinds') MX - today on the tokens with a drop is -0.002 to -0.031.
 
-**What ran where.** hwe-bench (the dense models, the MoE models, the ablations; the priority slot
-from 17:40) and omarchy (Gemma 4 E2B-it and E4B-it), 2026-10-12, 2000 tokens, 6 BLAS threads, one
+**What ran where.** the simulation host (the dense models, the MoE models, the ablations; the priority slot
+from 17:40) and the build host (Gemma 4 E2B-it and E4B-it), 2026-10-12, 2000 tokens, 6 BLAS threads, one
 process a run: 45 s for LFM2.5-230M to 82 min for Qwen3.5-35B-A3B (25.5 GB); the 26B 49 and 38 min
 (33 and 40 GB, the chat and docs/isa.md). The today rows' identity: ee8f118d's formats_scan on the
 same text (docs/isa.md as the MX tree has it) and the same chat ids. The runs' numbers (each row's
@@ -866,10 +866,10 @@ rows, PAIR's integer add, the result FIFO, E lanes), `base_top.sv` (today's colu
 epilogue, copied from `otpu_mxu`, with the same surroundings), `tb_mx.sv` (both families against a
 reference model), `ooc.tcl` / `run_ooc.sh` (Vivado), `run_xsim.sh`.
 
-**Bit-exact**: `tb_mx.sv` in xsim on the unisim models (omarchy, 2026-10-11): 260 rows, 880 lane
+**Bit-exact**: `tb_mx.sv` in xsim on the unisim models (the build host, 2026-10-11): 260 rows, 880 lane
 outputs, 416 conversions, 0 mismatches, for the DSP48E1 (pumped) and the DSP48E2 (packed) columns.
 
-**Synthesis estimate** (Yosys 0.64 `synth_xilinx -family xc7 / xcup -flatten` on the Mac, the
+**Synthesis estimate** (Yosys 0.64 `synth_xilinx -family xc7 / xcup -flatten` on a laptop, the
 sources through sv2v; synthesis only, no placement or timing, and Yosys's LUT counts run above
 Vivado's: use the differences). Both tops hold the columns, the column ends, the epilogue, the
 result FIFO and the read-modify-write lanes; neither holds the ACT RAM, the issuer, the chunk and
@@ -904,7 +904,7 @@ One lane: 1,167 LUTs, 100 SRLs, 546 flip-flops, 6 DSPs.
 **Vivado out of context** (`run_ooc.sh`: Vivado 2026.1 synthesis, opt, place, phys_opt and
 route. clk_s is 133.33 MHz. On the 7-series the pumped columns run at 266.67 MHz from the same
 MMCM, with their DSPs' operand pins as two-fast-cycle multicycle paths. Inputs and outputs are
-registered. omarchy, 2026-10-12, 3 to 8 minutes a run):
+registered. The build host, 2026-10-12, 3 to 8 minutes a run):
 
 | part | design | rows | LUT | LUT RAM | SRL | FF | DSP | slices | WNS clk_s | clk_f | clk_s -> clk_f | clk_f -> clk_s | WHS |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -987,7 +987,7 @@ MX arrays of 8 rows with 4 lanes and of 16 rows with 8, against today's MCOLS 4:
 
 ### 6.2 An ideal port
 
-The BCU1525's and F2's slices: a 128-byte chunk a core cycle, 60 cycles of latency:
+The BCU1525's slices: a 128-byte chunk a core cycle, 60 cycles of latency:
 
 | workload | MCOLS 4 | MX 8 rows | change | MX 16 rows | change |
 |---|---:|---:|---:|---:|---:|
@@ -1011,11 +1011,6 @@ against its own board and clock:
 | BCU1525 DDR4-2400, 200 MHz | MX 16 rows, TMEM x4 | 1.00x | 1.93x | 2.50x | 1.00x | 1.48x |
 | BCU1525 DDR4-2400, 200 MHz | port 256 B + MXU x2 | 1.41x | 1.50x | 1.63x | 1.28x | 1.45x |
 | BCU1525 DDR4-2400, 200 MHz | port 256 B + MXU x2, 8 rows | 1.42x | 1.79x | 2.54x | 1.28x | 1.70x |
-| F2 (S 4, 250 MHz) | MX 8 rows | 1.00x | 1.26x | 1.57x | 1.00x | 1.19x |
-| F2 (S 4, 250 MHz) | MX 16 rows, TMEM x4 | 1.00x | 1.78x | 2.22x | 1.00x | 1.41x |
-| F2 (S 4, 250 MHz) | port 256 B + MXU x2 | 1.75x | 1.52x | 1.58x | 1.46x | 1.57x |
-| F2 (S 4, 250 MHz) | port 256 B + MXU x2, 8 rows | 1.75x | 1.80x | 2.31x | 1.46x | 1.80x |
-| F2 (S 4, 250 MHz) | port 512 B + MXU x4 | 2.51x | 2.00x | 2.21x | 1.80x | 2.11x |
 
 The scoreboard has no lane limit (E = MCOLS); the co-sim puts E = MCOLS/2 within 0.6% of that.
 "MXU x2 / x4" is where the MX column matters beyond the row count: two products per DSP (pumped
@@ -1070,7 +1065,7 @@ columns at 266.67 MHz, section 5):
    lever (-28 to -48% of those runs' cycles, decode unchanged) for a fifth of the LUTs (under half
    with the SRLs and LUT RAM) and an eighth of the flip-flops that MCOLS 8 costs today. 16 rows with
    a bigger TMEM (and the sequencer's wider ranges) on the bigger boards (scoreboard 1.48x on the
-   BCU1525, 1.41x on the F2, before a wider port). Pumped DSP48E1s on the 7-series, packed DSP48E2s
+   BCU1525, before a wider port). Pumped DSP48E1s on the 7-series, packed DSP48E2s
    on UltraScale+.
 
 **Decisions for the user** (not guessed here):
@@ -1084,7 +1079,7 @@ columns at 266.67 MHz, section 5):
   not (then fp4x6 alone).
 - **E**: MCOLS/2 (no measured cost; 2 lanes at 4 rows, 4 at 8) or MCOLS/4 (one lane, ~1.3K LUTs,
   fewer; needs the chunk rule and TMEM, and the MoE experts still lose 9-11% on 16 rows).
-- **Card time**: a qualification on the card needs a session the lead schedules (none used here).
+- **Card time**: a qualification on the card needs a session the maintainer schedules (none used here).
 - **Decided (the user, 2026-10-12)**: the formats rule on the MX column takes MX int8 (`int8x`,
   `a8x32`) as its reference; the per-kind defaults are 3.6's table, with the 26B's experts in
   NVFP4 by the user's choice (+6.6% decode, estimated) for text far from the chat (3.6). Open:
@@ -1126,13 +1121,13 @@ Staged so that each step is checked before the next one costs Vivado time.
   largest, the row's scale).
 - `tests/test_rtl.py` / `test_quant_rtl.py` (Verilator): IMPL 3 against isasim, bit-exact, random
   MMs at MCOLS 4 / 8, E 1 / 2 / 4, every format; the `*_token_on_rtl` tests on the new refs.
-- OOC of `otpu_mxu` IMPL 3 against IMPL 2 (omarchy / opentpu), then a FAST=1 board build at 100
-  MHz (dev-builds rule) for function, then 133.33 MHz; card qualification in a session the lead
+- OOC of `otpu_mxu` IMPL 3 against IMPL 2 (the build host / the card host), then a FAST=1 board build at 100
+  MHz (dev-builds rule) for function, then 133.33 MHz; card qualification in a session the maintainer
   schedules.
 
 **3. 8 rows** on the YPCB: the pumped column (`rtl/exp/dsp_pump`, a second clock) or 8 physical
 columns, ACT RAM 8 rows a cycle, E = 4; on UltraScale+ the packed DSP48E2 column (`otpu_mx_us`).
-16 rows with 4x TMEM where the board has the RAM (BCU1525, F2), with `otpu_seq`'s TAW widened
+16 rows with 4x TMEM where the board has the RAM (BCU1525), with `otpu_seq`'s TAW widened
 to clog2(TMEM_WORDS).
 
 **Risks**
@@ -1244,7 +1239,7 @@ prints them and adds both to its MM-by-source table (per MM from the `MXS` lines
 - `tests/test_tech.py`: the xilinx7 `otpu_mxce` on Yosys's DSP48E1 model equals the generic one
   at CPG 1 and 2.
 
-**Out of context** (Vivado on omarchy, xc7k480t-2 at 7.5 ns, D 128, MCOLS 4, DEPTH 1024, LANES
+**Out of context** (Vivado on the build host, xc7k480t-2 at 7.5 ns, D 128, MCOLS 4, DEPTH 1024, LANES
 8): `otpu_mxu` LUT 12,311, LUT RAM 4,071, FF 22,472, DSP 562, BRAM36 33, WNS +0.164 against
 b370889d's 15,704 / 3,656 / 24,545 / 554 / 32, WNS +0.051. Both are limited by the same pop_q ->
 `otpu_pe` INMODE fan-out. The new paths' slacks: shift into B +4.69, chain end into A +0.98, the
@@ -1387,7 +1382,7 @@ Sixteen rows a pass on eight pumped DSP48E1 columns: section 5's experiment (`rt
 `mx_top` on `otpu_mx_x7`, `run_ooc.sh k7-mx8e4 k7-mx8e8`: clk_s 133.33 MHz, the pumped columns at
 266.67 MHz, inputs and outputs registered) and the production tree's `otpu_actram`
 (`tools/synth/ooc_rows.py --mcols 16 --rows 16 --tops otpu_actram`), on 8b33206e with
-`rtl/exp/dsp_pump` (omarchy, 2026-10-12, 5 to 7 minutes a run). The 4-column run again
+`rtl/exp/dsp_pump` (the build host, 2026-10-12, 5 to 7 minutes a run). The 4-column run again
 reproduces section 5's row to the LUT.
 
 | design (xc7k480t-2) | rows | LUT | LUT RAM | SRL | FF | DSP | slices | WNS clk_s | clk_f | clk_s -> clk_f | clk_f -> clk_s | WHS |

@@ -319,7 +319,7 @@ def test_build_goes_through_the_image_cache(tiny, tmp_path, monkeypatch):
     _, W, spec = tiny
     monkeypatch.setenv("OTPU_IMAGE_CACHE", str(tmp_path))
     monkeypatch.setattr(QC, "MIN_ELEMS", 0)                     # (the tiny model's matrices)
-    monkeypatch.setattr(QC, "FREE_FLOOR", 0)                    # (omarchy's tmp: 16 GB tmpfs)
+    monkeypatch.setattr(QC, "FREE_FLOOR", 0)                    # (the build host's tmp: 16 GB tmpfs)
     first = spec.image(_cfg(), 1024, wformat="fp4", head_format="int8").build(W)[0]
     n = len(list(tmp_path.rglob("*.npz")))
     assert n > 0

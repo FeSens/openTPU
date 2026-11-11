@@ -5,8 +5,8 @@ Status: **branch `bend-sim`, 2026-10-23.** Two of openTPU's Python simulators ar
 with the fp32 arithmetic of `opentpu/fp32.py`) and the expert cache's replays
 (`tools/offload/cachesim.py`'s `simulate`). Both give the Python's results bit for bit. Laws
 state what they must satisfy, and Bend's checker accepts a proof of each.
-Differential runs against the Python check everything else. Times are on the Mac (Apple M5,
-4 performance + 6 efficiency cores), except where hwe-bench (Linux, 20 cores, shared) is named.
+Differential runs against the Python check everything else. Times are on a laptop (Apple M5,
+4 performance + 6 efficiency cores), except where the simulation host (Linux, 20 cores, shared) is named.
 
 ## 1. Summary
 
@@ -228,17 +228,17 @@ all three proof files on every run.
 
   | Where | Suites | Runs identical | Same error | Skipped (host hook) | Mismatch |
   |---|---|---|---|---|---|
-  | Mac | test_qwen3 (sequential MXU) | 1,049 | | 5 | 0 |
-  | Mac | test_qwen3 (parallel MXU) | 1,102 | | 5 | 0 |
-  | Mac | test_isa, test_kernels, test_mx, test_stream, test_vops, test_gemma4 | 275 | 18 | 68 | 0 |
-  | hwe-bench A | test_qwen35, test_qwen35_moe, test_lfm2, test_lfm2_moe | 2,908 | | 10,994 | 0 |
-  | hwe-bench B | test_prefill, test_prefill_gemma4, test_llama, test_gemma4, test_gemma4_moe, test_tiled, test_waits, test_chatkv | 10,110 | 1 | 10,275 | 5 (harness) |
-  | Mac | B's five mismatching tests again, with the fix | 531 | | 68 | 0 |
+  | a laptop | test_qwen3 (sequential MXU) | 1,049 | | 5 | 0 |
+  | a laptop | test_qwen3 (parallel MXU) | 1,102 | | 5 | 0 |
+  | a laptop | test_isa, test_kernels, test_mx, test_stream, test_vops, test_gemma4 | 275 | 18 | 68 | 0 |
+  | the simulation host A | test_qwen35, test_qwen35_moe, test_lfm2, test_lfm2_moe | 2,908 | | 10,994 | 0 |
+  | the simulation host B | test_prefill, test_prefill_gemma4, test_llama, test_gemma4, test_gemma4_moe, test_tiled, test_waits, test_chatkv | 10,110 | 1 | 10,275 | 5 (harness) |
+  | a laptop | B's five mismatching tests again, with the fix | 531 | | 68 | 0 |
 
   B's five mismatches differ only in the count of HALT CHAINs (7 vs 0, 9 vs 0). They come
   from two of gemma4's PLE-on-host tests and three of chatkv's MTP rollback tests. isasim
-  counts chains across runs, and hwe-bench's copy of the shadow compared that total with one
-  run's count (fixed in 97ee4630). With the fix, the same five tests pass on the Mac and all
+  counts chains across runs, and the simulation host's copy of the shadow compared that total with one
+  run's count (fixed in 97ee4630). With the fix, the same five tests pass on a laptop and all
   531 of their runs are identical. The
   "same error" runs come from tests that check isasim's errors (an RLD outside its bound, bad
   addresses and the like), and both machines stop on the same one. Under the shadow, A's tests had 199 passed and 3 skipped. B's had 361 passed and 1 skipped;
@@ -248,7 +248,7 @@ all three proof files on every run.
   references. On test_lfm2_moe and test_qwen35_moe, with the MoE expert server and the
   beat-by-beat link (`tests/beat_link.py`) as hooks, 85 passed and 1 failed, in 460 s.
   - The failure is `test_device_follows_hf_and_routes_on_the_card`. Its median cosine to HF
-    is 0.9968 against a threshold of 0.997, and it fails the same way on isasim on the Mac (an
+    is 0.9968 against a threshold of 0.997, and it fails the same way on isasim on a laptop (an
     environment issue).
   - The host's turn is isasim's: it polls until a waiting WAITW holds. An earlier version
     polled until nothing was left to do, and that gave the hint tests different promotion
@@ -296,8 +296,8 @@ thread count is the runtime's choice.
 - **Four threads is the knee.** Past it, the M5's efficiency cores and Bend's scheduler give
   nothing more. The scheduler hands each task to a core once, so a fork-join tree is only as
   balanced as its split.
-- **The shadow's suite times.** On the Mac, test_qwen3's 1,102 runs took 316.1 s on isasim and
-  23.9 s on Bend (13.2x). On hwe-bench, the server was built before the parallel MXU and ran
+- **The shadow's suite times.** On a laptop, test_qwen3's 1,102 runs took 316.1 s on isasim and
+  23.9 s on Bend (13.2x). On the simulation host, the server was built before the parallel MXU and ran
   with 4 threads on a shared host (load 5-11). There the suites' runs took 885 vs 224 s (A,
   4.0x) and 3,224 vs 1,015 s (B, 3.2x). DSTEP's tests: 39.9 vs 6.9 s.
 

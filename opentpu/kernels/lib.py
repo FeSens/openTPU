@@ -4,23 +4,37 @@ import math
 from .. import language as ol
 
 
-def rmsnorm(x, gamma, eps: float):
-    """x: [M, H] tile, gamma: [H] tile (None: no weight, Gemma 4's v_norm)."""
+def rmsnorm(x, gamma, eps: float, n: int | None = None):
+    """x: [M, H] tile, gamma: [H] tile (None: no weight, Gemma 4's v_norm); n: the columns the
+    mean is over (default H; GPT-OSS's 2880 of rows padded with zeros to 2944)."""
     ss = ol.sum(x * x, axis=1)
-    r = ol.rsqrt(ss * (1.0 / x.cols) + eps)
+    r = ol.rsqrt(ss * (1.0 / (n or x.cols)) + eps)
     if gamma is None:
         return x * r[:, None]
     return (x * r[:, None]) * gamma[None, :]
 
 
 def sigmoid(x):
-    """1 / (1 + 2^(-x*log2(e)))."""
+    """1 / (1 + 2^(-x*log2(e))): one VOP SIGMOID with Config.VSIG (the same words)."""
+    if ol.has_vsig():
+        return ol.sigmoid_vop(x, -ol.LOG2E)
     return ol.recip(ol.exp2(x * -ol.LOG2E) + 1.0)
 
 
 def silu(x):
-    """x * sigmoid(x)."""
+    """x * sigmoid(x): one VOP SILU with Config.VSIG."""
+    if ol.has_vsig():
+        return ol.silu_vop(x, -ol.LOG2E)
     return x * sigmoid(x)
+
+
+def silu_l2(x):
+    """-log2(e) silu(y) of x = -log2(e) y, the input already scaled (its weights'): x / (1 +
+    2^x), silu's VOPs but its MUL (Config.VSIG: SILU with k = 1, whose x * 1 + -0 is EXP2's own
+    first step)."""
+    if ol.has_vsig():
+        return ol.silu_vop(x, 1.0)
+    return x * ol.recip(ol.exp2(x) + 1.0)
 
 
 # gelu_tanh's exponent x (A + B x^2): -2 sqrt(2 / pi) log2(e) (x + 0.044715 x^3)
@@ -30,13 +44,18 @@ GELU_B = GELU_A * 0.044715
 
 def gelu_tanh(x):
     """GELU, tanh approximation (gelu_pytorch_tanh): 0.5 x (1 + tanh(z)) = x sigmoid(2 z),
-    z = sqrt(2 / pi) (x + 0.044715 x^3), as x / (1 + 2^(x (A + B x^2))): 8 VOPs."""
+    z = sqrt(2 / pi) (x + 0.044715 x^3), as x / (1 + 2^(x (A + B x^2))): 8 VOPs (Config.VSIG: 6,
+    the exponent's SIGMOID with k = 1)."""
+    if ol.has_vsig():
+        return x * ol.sigmoid_vop(x * (x * x * GELU_B + GELU_A), 1.0)
     return x * ol.recip(ol.exp2(x * (x * x * GELU_B + GELU_A)) + 1.0)
 
 
 def softcap(x, c: float):
     """The logit soft cap c tanh(x / c) (Gemma's final_logit_softcapping), as 2c sigmoid(2x / c)
-    - c = 2c / (1 + 2^(-2 log2(e) x / c)) - c: 5 VOPs."""
+    - c = 2c / (1 + 2^(-2 log2(e) x / c)) - c: 5 VOPs (Config.VSIG: 3)."""
+    if ol.has_vsig():
+        return ol.sigmoid_vop(x, -2.0 * ol.LOG2E / c) * (2.0 * c) - c
     return ol.recip(ol.exp2(x * (-2.0 * ol.LOG2E / c)) + 1.0) * (2.0 * c) - c
 
 

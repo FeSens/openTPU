@@ -47,6 +47,9 @@ module otpu_asic_top
   parameter int TMEM_PRK   = 0,
   parameter int TMEM_SDM   = -1,
   parameter bit SEQ_WC     = 1'b0,      // the sequencer's wait entries (otpu_slice)
+  parameter bit ICACHE     = 1'b0,      // IMEM an instruction cache over the program (otpu_slice)
+  parameter int IC_LINES   = 16,        // ICACHE: its lines (otpu_slice)
+  parameter int IC_PF      = 2,         // ICACHE: the lines prefetched ahead (otpu_slice)
   parameter bit COLL_GATHER = 1'b1      // 0: the collective unit runs BAR alone (otpu_coll_bar)
 ) (
   input  logic                clk,
@@ -121,16 +124,18 @@ module otpu_asic_top
                .TMEM_NSB(TMEM_NSB), .TMEM_SBP(TMEM_SBP), .TMEM_SBH(TMEM_SBH),
                .TMEM_RPL(TMEM_RPL), .TMEM_TDP(TMEM_TDP), .TMEM_GST(TMEM_GST),
                .TMEM_PMP(TMEM_PMP), .TMEM_PRK(TMEM_PRK), .TMEM_SDM(TMEM_SDM),
-               .SEQ_WC(SEQ_WC)) u_slice (
+               .SEQ_WC(SEQ_WC), .ICACHE(ICACHE), .IC_LINES(IC_LINES), .IC_PF(IC_PF)) u_slice (
     // clk_f: TMEM_PMP 0 (above), so no 2x clock
     .clk, .clk_f(1'b0), .sys_rst, .rst, .rinit(rinit_a), .ld_start, .ld_addr, .ld_n, .ld_busy,
     .a_rdy, .b_rdy, .sw_rdy, .wr_idle, .rd_idle,
     .a_req, .a_we, .a_addr, .a_wdata, .a_be, .a_rvalid, .a_rdata,
     .sw_req, .sw_addr, .sw_wdata, .sw_be,
     .b_req, .b_tag, .b_we, .b_wmask, .b_wdata, .b_addr, .b_par, .b_rvalid, .b_rtag, .b_rdata,
+    .pw_rdy(1'b0), .pw_req(), .pw_addr(), .pw_bv('0), .pw_bd('0), .pw_slot(), .pw_one(),
+    .p_clk(clk), .p_we('0), .p_q('0), .p_slot('0), .p_d('0), .p_cnt('0),
     .coll_req, .coll_cmd(coll_cmd[0]), .coll_ack,
     .coll_ren(coll_ren[0]), .coll_raddr(coll_raddr[0]), .coll_rdata(coll_rdata[0]),
-    .coll_wen, .coll_waddr, .coll_wdata, .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
+    .coll_wen, .coll_waddr, .coll_wdata, .coll_wtop(1'b1), .coll_gnt_local(coll_gl), .coll_gnt(coll_gl),
     .halted, .error(s_error), .wait_to, .a_inval, .icount, .pf(), .dump(1'b0));
 
   if (COLL_GATHER) begin : g_coll

@@ -204,5 +204,7 @@ module otpu_native_sys #(
     .s_ctl_wready, .s_ctl_bresp, .s_ctl_bvalid, .s_ctl_bready, .s_ctl_araddr, .s_ctl_arvalid,
     .s_ctl_arready, .s_ctl_rdata, .s_ctl_rresp, .s_ctl_rvalid, .s_ctl_rready,
     .n_cvalid, .n_cready, .n_cwe, .n_caddr, .n_wvalid, .n_wready, .n_wdata, .n_wmask,
-    .n_rvalid, .n_rdata, .n_wdone, .n_err);
+    .n_rvalid, .n_rdata, .n_wdone, .n_wfree('0), .n_err,      // (n_wfree: NAT_WPOST only)
+    .n_csrc(), .n_cslot(), .p_clk(clk), .p_we('0), .p_q('0), .p_slot('0), .p_d('0),
+    .p_cntg('0));                                            // (NAT_XPOST only)
 endmodule

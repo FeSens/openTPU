@@ -146,6 +146,78 @@ def test_field_widths_raise_value_errors():
             make()
 
 
+def test_immediates_at_aw():
+    """docs/isa.md "Address bits": LI / ADDI's {w2, w1}: w1 alone at AW 32 (the words as
+    before), the high word in w2 above it; any other immediate one 32-bit word, never
+    truncated."""
+    assert I.li(1, 0x1234).w == [0x1234, 0, 0, 0, 0, 0, 0]
+    assert I.addi(1, 2, -0x40).w == [0xFFFFFFC0, 0, 0, 0, 0, 0, 0]
+    assert I.li(1, 0x7_0000_1000, aw=36).w[:2] == [0x1000, 7]
+    assert I.addi(1, 2, -0x40, aw=36).w[:2] == [0xFFFFFFC0, 0xFFFFFFFF]
+    assert I.addi(1, 2, 0x40, aw=36).w[:2] == [0x40, 0]
+    assert I.imm64(-1, 36) == [0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 0, 0, 0]
+    for make in (lambda: I.li(1, 1 << 32),                    # 33 bits at AW 32
+                 lambda: I.li(1, 1 << 36, aw=36),             # past AW
+                 lambda: I.ld(1 << 32, 0, 1)):                # an offset of 33 bits
+        with pytest.raises(ValueError):
+            make()
+
+
+def test_rld_mul_by_a_negative_constant_at_aw():
+    """isa.rld_mul: at AW 32 one RLD MUL (the product's low 32 bits); above it the word is
+    zero-extended, so a negative multiplier is LI'd into R[rd] first and the RLD multiplies by
+    R[rd] + 0."""
+    one = I.rld_mul(3, 0x40, -1, ra=1)
+    assert len(one) == 1 and one[0].w[1] == 0xFFFFFFFF and one[0].flags & I.F_MUL
+    two = I.rld_mul(3, 0x40, -1, ra=1, aw=36)
+    assert [x.op for x in two] == [I.LI, I.RLD] and two[0].w[:2] == [0xFFFFFFFF, 0xFFFFFFFF]
+    assert (two[1].rb, two[1].ra, two[1].w[1]) == (3, 1, 0)
+    assert len(I.rld_mul(3, 0x40, 9344, aw=36)) == 1
+    with pytest.raises(ValueError):
+        I.rld_mul(3, 0x40, -1, ra=3, aw=36)
+
+
+def test_addresses_above_4gib():
+    """docs/isa.md "Address bits" in the simulator at AW 36: LI / ADDI's {w2, w1}, a DRAM address
+    R[x] + w zero-extended (no wrap at 4 GiB), RLD MUL's AW-bit product, the TMEM index the low
+    32 bits; DRAM a sparse file (only the pages written)."""
+    cfg = Config(S=1, AW=36, DRAM_BYTES=1 << 34, TMEM_WORDS=1 << 10)
+    hi = 0x3_0000_0040
+    prog = [I.vop(I.V_FILL, 0, 0, 0, 1, 4, 0, 0, 0, I.B_SCALAR, 2.5),
+            I.li(1, hi, aw=36),
+            I.st(0, 0, 4, ra=1),                          # T[0..3] -> DRAM 0x3_0000_0040
+            I.addi(2, 1, -0x40, aw=36),                   # 0x3_0000_0000
+            I.ld(0x44, 8, 2, ra=2),                       # its words 1, 2 -> T[8..9]
+            I.li(3, 0x1_0000_0000, aw=36),
+            I.ld(0xFFFFFFF0, 16, 1, ra=3),               # 0x1_FFFF_FFF0: no wrap
+            I.vop(I.V_FILL, 32, 0, 0, 1, 1, 0, 0, 0, I.B_SCALAR, 3.0),
+            I.rld(4, 32, mul=0, rb=3),                    # 3 x 2^32
+            *I.rld_mul(5, 32, -1, aw=36),                 # 3 x -1 at AW: 2^36 - 3
+            I.addi(6, 5, 4, aw=36),                       # 1
+            I.Instr(I.ADDI, rd=7, ra=0, w=[5, 9, 0, 0, 0, 0, 0]),
+            I.halt()]
+    dram = np.zeros(1 << 20, np.uint8)
+    dram[0x1_0000:0x1_0004] = 0xAB                        # an image's word below 4 GiB
+    s = Machine(cfg, [prog], [dram]).run().slices[0]
+    assert isinstance(s.dram, np.memmap) and s.dram.shape == (1 << 34,)
+    assert s.m32[hi // 4:hi // 4 + 4].view(np.float32).tolist() == [2.5] * 4
+    assert s.tget([8, 9]).tolist() == [2.5, 2.5]
+    assert s.R[1:8] == [hi, 0x3_0000_0000, 1 << 32, 3 << 32, (1 << 36) - 3, 1, 9 << 32 | 5]
+    assert s.dram[0x1_0000] == 0xAB and s.dram[0x1_0004] == 0
+    # at AW 32 the same words wrap at 4 GiB, and ADDI ignores w2
+    s32 = run1([I.li(1, 0xFFFF_FFF0), I.addi(2, 1, 0x20),
+                I.Instr(I.ADDI, rd=3, ra=0, w=[5, 9, 0, 0, 0, 0, 0]), I.halt()])
+    assert s32.R[1:4] == [0xFFFF_FFF0, 0x10, 5]
+
+
+def test_halt_chain_below_4gib():
+    """HALT CHAIN's program is read below 4 GiB (the board's chain loader, docs/isa.md)."""
+    cfg = Config(S=1, AW=36, DRAM_BYTES=1 << 34)
+    prog = [I.li(1, 1 << 32, aw=36), I.li(2, 1), I.Instr(I.HALT, ra=1, rb=2, flags=I.F_CHAIN)]
+    with pytest.raises(SimError, match="HALT CHAIN"):
+        Machine(cfg, [prog], [None]).run()
+
+
 def test_qst_data_and_scale_overlap_is_refused():
     """docs/isa.md QST: the data and scale ranges of one QST must not overlap."""
     cfg = Config(S=1, D=32)

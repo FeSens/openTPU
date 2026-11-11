@@ -30,9 +30,9 @@
 # other than EXPECT, a failed selftest, another configuration or a missing file stops it; a failed
 # run or a token mismatch is reported and the next run goes on. The last line: MCPV3 PASS or
 # MCPV3 FAIL. About 25 min.
-# Stage (from the Mac, before the session; no host work while a session runs):
-#   git archive <sha> | ssh opentpu 'D=~/otpu-build/minicpmv/mcpv3/host; mkdir -p $D && tar -x -C $D'
-#   ssh opentpu 'echo <sha> > ~/otpu-build/minicpmv/mcpv3/host/COMMIT'
+# Stage (from a laptop, before the session; no host work while a session runs):
+#   git archive <sha> | ssh CARD_HOST 'D=~/otpu-build/minicpmv/mcpv3/host; mkdir -p $D && tar -x -C $D'
+#   ssh CARD_HOST 'echo <sha> > ~/otpu-build/minicpmv/mcpv3/host/COMMIT'
 # Run (no pipe): setsid nohup ~/.local/bin/otpu-lock --wait 600 -- bash \
 #   ~/otpu-build/minicpmv/mcpv3/host/tools/offload/sessions/mcpv3.sh > ~/otpu-build/minicpmv/mcpv3.launch.log 2>&1 \
 #   < /dev/null &

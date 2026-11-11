@@ -107,8 +107,12 @@ def test_cfg_registers(have_verilator):
     info = Board(t).info()
     c = info["cfg"]
     # CAPS2 bit0: the full collective unit, but BAR alone on the board's uarch (the card's
-    # build, rtlsim.BOARD_UARCH COLL_GATHER 0)
-    assert info["regmap"] == 5 and info["caps2"] == {"gather": rtlsim.gathers(1)}
+    # build, rtlsim.BOARD_UARCH COLL_GATHER 0); bit12 the instruction cache where the simulation
+    # builds one (OTPU_ICACHE); the capabilities after these (xcard, fsum, vsig ...) off
+    known = {"gather": rtlsim.gathers(1), "outer": True, "dstep2": False, "se_own": False,
+             "bmc": False, "kt": False, "bhw": 0, "icache": t.icache, "st16": ""}
+    assert info["regmap"] == 5 and {k: info["caps2"][k] for k in known} == known
+    assert not [k for k, v in info["caps2"].items() if k not in known and v], info["caps2"]
     assert t.gather == rtlsim.gathers(1)
     assert (c["S"], c["TMEM_WORDS"], c["IMEM_WORDS"], c["ACT_BLOCKS"]) == (1, 1 << 16, 1 << 15, 128)
     assert (c["DRAM_BYTES"], c["channels"], c["channel_bytes"]) == (1 << 32, 2, 1 << 31)
@@ -121,7 +125,8 @@ def test_cfg_registers(have_verilator):
     # the board model's sequencer takes wait entries as the simulators' (rtlsim.UARCH SEQ_WC)
     assert cfg == T.build_config(T.current(), MCOLS=CFG.MCOLS, LANES=CFG.LANES,
                                  ACT_ROWS=CFG.act_rows, DSTEP=1,
-                                 SEQ_WC=int(bool(rtlsim.UARCH.get("SEQ_WC"))))
+                                 SEQ_WC=int(bool(rtlsim.UARCH.get("SEQ_WC"))),
+                                 ICACHE=int(t.icache))
     assert t.reg_read(R.R_CFG_WIN0) == 0xDEADBEEF    # reserved
 
 
@@ -155,12 +160,13 @@ def test_caps2_coll_bar(have_verilator):
     from opentpu.host.board import NoGather
     # (the full unit named: the board's uarch builds the card's, BAR alone; rtlsim.BOARD_UARCH)
     full = SimTransport(ch_bytes=1 << 20, params={"COLL_GATHER": 1})
-    assert full.gather and full.reg_read_many([R_REGMAP, R.R_CAPS2]) == [5, 1]
+    assert full.gather and full.reg_read_many([R_REGMAP, R.R_CAPS2]) == \
+        [5, 1 | (R.CAP2_ICACHE if full.icache else 0)]
     # (SEQ_WC 0: the raw load below loads no wait entries, which the board's uarch would need)
     t = SimTransport(ch_bytes=1 << 20, params={"COLL_GATHER": 0, "SEQ_WC": 0},
                      plusargs=["+coll_gerr_ok"])
     assert not t.gather
-    assert t.reg_read_many([R_REGMAP, R.R_CAPS2]) == [5, 0]
+    assert t.reg_read_many([R_REGMAP, R.R_CAPS2]) == [5, R.CAP2_ICACHE if t.icache else 0]
     b = Board(t, check=False)
     assert not b.gather
     at, src, dst, n = 0x10000, 0, 1024, 32                      # 4 rows of 8 words
@@ -176,7 +182,7 @@ def test_caps2_coll_bar(have_verilator):
         t.reg_write(R_CTRL, R.CTRL_LOAD)
         t.poll(R_STATUS, R.ST_LOADING, 0)
 
-    def run(prog, load):
+    def run(prog, load, at=at):
         b.write(0, data.view(np.uint8))
         b.write(0x1000, np.zeros(4 * n, np.uint8))
         b.write(0x2000, np.full(4 * n, 0xFF, np.uint8))
@@ -192,7 +198,8 @@ def test_caps2_coll_bar(have_verilator):
     assert (out == data).all()
     with pytest.raises(NoGather, match="instruction 3"):
         b.load_program(at, np.asarray(I.assemble(gat), np.uint32))
-    st, ic, out = run(gat, raw_load)                            # GATHER: ERROR, nothing moved
+    # GATHER: ERROR, nothing moved (beside the loaded program: an ICACHE board's write refuses it)
+    st, ic, out = run(gat, raw_load, at + 0x1000)
     assert st & ST_HALTED and st & R.ST_ERROR and ic == len(gat)
     assert not out.any()
 
@@ -262,7 +269,8 @@ def test_counter_snapshots_bracket_a_run(have_verilator):
     assert nsnap == 2
     assert d["RUNNING"] == cyc and d["UPTIME"] > cyc
     assert d["INSTR"] == ic == len(prog)
-    assert brd == (4096 + 1024) // (CFG.D // 4) and bwr == brd  # a request per chunk
+    fill = 1024 // CFG.D if t.icache else 0     # ICACHE: the program's 1 KiB line, on port B
+    assert brd == (4096 + 1024) // (CFG.D // 4) + fill and bwr == brd - fill  # a request per chunk
     assert d["DRAM_RD"] == 2 * brd and d["DRAM_WR"] == 2 * bwr
     assert d["DMA_BUSY"] > 0 and d["MXU_BUSY"] == d["MXU_MAC"] == d["VPU_BUSY"] == 0
     # the AXI model stalls (30%), but the adapter's 16-entry request queues take every DMA

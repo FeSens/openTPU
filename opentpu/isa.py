@@ -6,14 +6,15 @@ from dataclasses import dataclass, field
 import numpy as np
 
 NOP, HALT, LI, ADDI, LOOP, BAR, RLD, WAITW = 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
-LD, ST, DSTEP, STREAM = 0x10, 0x11, 0x12, 0x13
+LD, ST, DSTEP, STREAM, LDA = 0x10, 0x11, 0x12, 0x13, 0x14
 MM, QACT, QST = 0x20, 0x21, 0x22
 VOP = 0x30
 GATHER = 0x40
 
 OPNAMES = {NOP: "NOP", HALT: "HALT", LI: "LI", ADDI: "ADDI", LOOP: "LOOP", BAR: "BAR", RLD: "RLD",
            WAITW: "WAITW",
-           LD: "LD", ST: "ST", DSTEP: "DSTEP", STREAM: "STREAM", MM: "MM", QACT: "QACT",
+           LD: "LD", ST: "ST", DSTEP: "DSTEP", STREAM: "STREAM", LDA: "LDA", MM: "MM",
+           QACT: "QACT",
            QST: "QST", VOP: "VOP", GATHER: "GATHER"}
 
 # MM / QACT / QST flags
@@ -27,12 +28,27 @@ WFORMATS = {"int8": W8, "int4": W4I, "fp4": W4F, "nvfp4": WNV}
 MX_W = {W8: 16, W4I: 11, W4F: 11, WNV: 13}   # the shift window W of each format
 F_PAIR = 0x40                   # MM, 4-bit only: column reuse, two K-blocks per cycle and row
 F_RSC = 0x80                    # MM: row scales only (each scale row is Sw[n]; dw 0, m 1)
+MM_SPL = 1 << 31                # MM w7 (srs) bit31, SPLMM: a split's terms as one MM (KB 3: lo.hi +
+MM_HLD = 20                     #   hi.hi + hi.lo; KB 2: hi + lo), lo at + w7[30:20] KiB; srs w7[19:0]
 F_ROW, F_CSCALE, F_RSCALE = 0x1, 0x2, 0x4   # QACT (QST: F_ROW)
 F_DUP = 0x8                     # QACT: also write the rows to ACT rows rows..2*rows-1 (PAIR)
+F_QLO = 0x10                    # QACT, SPLITQ: the split's lo part, q8lo(x') with S * 2^-8 (fp32.quantize_mx)
+F_QHL = 0x20                    # QACT, QHL: hi into blocks ab .., lo into ab + KB .. in one pass
+QHL_ELEMS = 8192                # QACT HL: a row's elements at most (KB x D; otpu_quant's row buffer)
+F_QST = 0x40                    # QACT, QONCE: each row's ACT bytes and records to DRAM too (w3)
+QREC = 8                        # QACT ST / LDA: a block's record: its fp32 S, its NSUB offsets
+QALIGN = 64                     # QACT ST / LDA: their DRAM rows' addresses and stride, multiples of it
 F_HALF = 0x2                    # QST, ROW mode: write only the first half of each row
+F_QGRP = 0x4                    # QST: into a grouped int8 matrix (WG > 1, GALL): rows R[rd] + w6 ..
+F_QCOL = 0x8                    # QST GRP: the rows are the grouped matrix's columns (V^T)
+QST_LG = 4                      # QST GRP: flags 6:4 = LG, the matrix's groups of 2^LG rows (WG)
+F_SLO = 0x80                    # QST, SPLITQ: the split's lo part (as QACT's F_QLO)
+QST_HL = 1 << 31                # QST w5 (srs) bit31, QSTHL: hi and lo from one read, lo at
+QST_HLD = 20                    #   + w5[30:20] KiB (data and scales; HLD); srs w5[19:0]
 F_RAW = 0x1                     # RLD: the word's bits (no fp32 -> int conversion)
-F_MUL = 0x2                     # RLD: times R[rb] + w2 (mod 2^32)
-F_BOUND = 0x4                   # RLD: w3 <= the value <= w4 (the waits pass's; the hardware ignores it)
+F_MUL = 0x2                     # RLD: times R[rb] + w2 (mod 2^AW)
+F_BOUND = 0x4                   # RLD: {w5, w3} <= the value <= {w6, w4} (the waits pass's; the hardware ignores it)
+VARIANT = 0x8000_0000           # RLD w7: a variant's count word (rld's variant; the hardware ignores it)
 F_CHAIN = 0x1                   # HALT: then load and start the program at R[ra], R[rb] words
 C_EQ, C_NE, C_GE = 0, 1, 2      # WAITW flags[1:0]: the word ==, != or >= (signed difference) ref
 
@@ -40,16 +56,23 @@ C_EQ, C_NE, C_GE = 0, 1, 2      # WAITW flags[1:0]: the word ==, != or >= (signe
 V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_OUTER = 0, 1, 2, 3, 4, 5, 6
 V_COPY, V_EXP2, V_RECIP, V_RSQRT, V_ABS, V_FILL, V_EXP2SUB, V_LOG2 = 8, 9, 10, 11, 12, 13, 14, 15
 V_RSUM, V_RMAX, V_RSSQ, V_RDOT, V_ARGMAX = 16, 17, 18, 19, 20
+V_SIGMOID, V_SILU = 21, 22             # Config.VSIG: recip(exp2(A*B) + 1), A times it
+V_MAC = 23                           # dst += A * B in place (Config.VMAC: B per column or a scalar)
 VFUNCS = {V_ADD: "add", V_SUB: "sub", V_RSUB: "rsub", V_MUL: "mul", V_MAX: "max",
           V_MIN: "min", V_OUTER: "outer", V_COPY: "copy", V_EXP2: "exp2", V_RECIP: "recip",
           V_RSQRT: "rsqrt", V_ABS: "abs", V_FILL: "fill", V_EXP2SUB: "exp2sub",
           V_LOG2: "log2", V_RSUM: "rsum", V_RMAX: "rmax", V_RSSQ: "rssq", V_RDOT: "rdot",
-          V_ARGMAX: "argmax"}
-BINARY = {V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_FILL, V_EXP2SUB}
+          V_ARGMAX: "argmax", V_SIGMOID: "sigmoid", V_SILU: "silu", V_MAC: "mac"}
+BINARY = {V_ADD, V_SUB, V_RSUB, V_MUL, V_MAX, V_MIN, V_FILL, V_EXP2SUB, V_SIGMOID, V_SILU}
 REDUCE = {V_RSUM, V_RMAX, V_RSSQ, V_RDOT, V_ARGMAX}
-READS_B = BINARY | {V_RDOT}          # functions that read operand B in its bmode (OUTER: B_ROW)
+READS_B = BINARY | {V_RDOT, V_MAC}   # functions that read operand B in its bmode (OUTER: B_ROW;
+#                                      MAC: B_COL or B_SCALAR)
 F_DSCALAR, F_DONE = 0x1, 0x2         # VOP OUTER: decay T[d] for every column / decay 1.0
+F_FSUM = 0x4                         # VOP EXP2SUB: also T[imm + r] = isum_64 of row r (FSUM),
+#                                      written by the time its take (VOP RSUM with it) is done
 OUTER_MAX_COLS = 256                 # OUTER: its column vectors are held in 256-word buffers
+FSUM_MAX_ROWS, FSUM_MIN_COLS = 256, 64   # FSUM: row sums buffered (RDOT's 256), whole partials
+MAC_MAX_COLS = 256                   # MAC per column: its column vector is held in OUTER's buffer
 
 # VOP broadcast modes for operand B
 B_FULL, B_ROW, B_COL, B_SCALAR = 0, 1, 2, 3
@@ -105,8 +128,25 @@ def _check(ok: bool, what: str) -> None:
 
 
 def _w(*vals) -> list:
+    """Immediate words w1.. (the rest 0): each a 32-bit word, a negative one in two's
+    complement; one that does not fit 32 bits is an error, not truncated (an address of AW >
+    32 bits is a base register's: LI / ADDI's {w2, w1}, imm64)."""
+    for x in vals:
+        _check(-(1 << 32) < int(x) < 1 << 32, f"immediate {int(x):#x} does not fit 32 bits")
     v = [u32(x) for x in vals]
     return v + [0] * (7 - len(v))
+
+
+def imm64(imm: int, aw: int = 32) -> list:
+    """LI's and ADDI's immediate words {w2, w1} = imm mod 2^64 (docs/isa.md "Address bits"): at
+    AW 32 w1 alone, w2 0 (the hardware ignores w2: a negative imm is w1's two's complement); at
+    AW > 32 w2 the high word, 0xFFFFFFFF for a negative imm of 32 bits."""
+    imm = int(imm)
+    if aw == 32:
+        return _w(imm)
+    _check(32 < aw <= 64 and -(1 << aw) < imm < 1 << aw,
+           f"LI / ADDI immediate {imm:#x} at AW {aw}")
+    return _w(imm & 0xFFFFFFFF, (imm >> 32) & 0xFFFFFFFF)
 
 
 def nop(comment=""):
@@ -119,12 +159,22 @@ def halt(chain=False, ra=0, rb=0, comment=""):
     return Instr(HALT, ra=ra, rb=rb, flags=F_CHAIN if chain else 0, comment=comment)
 
 
-def li(rd, imm, comment=""):
-    return Instr(LI, rd=rd, w=_w(imm), comment=comment)
+def wrap(v: int, aw: int = 32) -> int:
+    """v mod 2^AW as a signed AW-bit number: an increment LI / ADDI take whatever v's size
+    (register arithmetic is mod 2^AW), e.g. a loop's reset of a stride times its count."""
+    m = 1 << aw
+    v = int(v) % m
+    return v - m if v >= m >> 1 else v
 
 
-def addi(rd, ra, imm, comment=""):
-    return Instr(ADDI, rd=rd, ra=ra, w=_w(imm), comment=comment)
+def li(rd, imm, comment="", aw: int = 32):
+    """R[rd] = imm mod 2^AW ({w2, w1}: imm64)."""
+    return Instr(LI, rd=rd, w=imm64(imm, aw), comment=comment)
+
+
+def addi(rd, ra, imm, comment="", aw: int = 32):
+    """R[rd] = R[ra] + imm mod 2^AW ({w2, w1}: imm64; a negative imm at AW > 32 sets w2)."""
+    return Instr(ADDI, rd=rd, ra=ra, w=imm64(imm, aw), comment=comment)
 
 
 def loop(body_len, count, rcount=0, comment=""):
@@ -135,20 +185,48 @@ def bar():
     return Instr(BAR)
 
 
-def rld(rd, tmem, ra=0, raw=False, mul=None, rb=0, bound=None, comment=""):
-    """R[rd] = f2i(T[R[ra] + tmem]) (raw: the word's bits), times R[rb] + mul (mod 2^32) if mul
-    is given; docs/isa.md "RLD". bound (lo, hi): the values the register may take, lo <= v <= hi
-    as unsigned 32-bit numbers, what the kernel knows of the word (an index below E, a slot of
-    the pool): the waits pass bounds the footprints computed from the register by it
-    (opentpu.waits), the ISA simulator checks it, the hardware ignores it (flag bit 2, w3, w4)."""
+def rld(rd, tmem, ra=0, raw=False, mul=None, rb=0, bound=None, variant=None, comment=""):
+    """R[rd] = f2i(T[R[ra] + tmem]) (raw: the word's bits), times R[rb] + mul (mod 2^AW: the
+    word zero-extended) if mul is given; docs/isa.md "RLD". bound (lo, hi): the values the
+    register may take, lo <= v <= hi as unsigned numbers (lo below 2^AW and hi past it: v from
+    lo to 2^AW - 1 or v + 2^AW up to hi, a negative multiplier's product: compiler.mul_bound),
+    what the kernel knows of the word (an index below E, a slot of the pool, a resident
+    expert's place: id x expert bytes, past 32 bits above AW 32): the waits pass bounds the
+    footprints computed from the register by it
+    (opentpu.waits), the ISA simulator checks it, the hardware ignores it (flag bit 2; {w5, w3}
+    and {w6, w4}, w5 and w6 0 below 2^32, so 32-bit bounds keep their words). variant (k, K):
+    the count word of variant k of K (attention._Variants: words tmem - k .. tmem - k + K - 1 of
+    one table, exactly one of them 1 at a run, bound (0, 1)), w7 = VARIANT | K << 16 | k: the
+    waits pass then runs the K paths apart (opentpu.waits); the hardware ignores w7."""
     flags = (F_RAW if raw else 0) | (F_MUL if mul is not None else 0)
     lo = hi = 0
     if bound is not None:
         lo, hi = (int(x) for x in bound)
-        _check(0 <= lo <= hi <= 0xFFFFFFFF, f"RLD: bound {bound}")
+        _check(0 <= lo <= hi < 1 << 64, f"RLD: bound {bound}")
         flags |= F_BOUND
+    tag = 0
+    if variant is not None:
+        k, K = (int(x) for x in variant)
+        _check(0 <= k < K < 1 << 15 and bound == (0, 1) and ra == 0 and not raw and mul is None,
+               f"RLD: variant {variant} (a constant word, bound (0, 1))")
+        tag = VARIANT | K << 16 | k
     return Instr(RLD, ra=ra, rb=rb, rd=rd, flags=flags,
-                 w=_w(tmem, 0 if mul is None else mul, lo, hi), comment=comment)
+                 w=_w(tmem, 0 if mul is None else mul, lo & 0xFFFFFFFF, hi & 0xFFFFFFFF,
+                      lo >> 32, hi >> 32, tag), comment=comment)
+
+
+def rld_mul(rd, tmem, c, ra=0, raw=False, bound=None, comment="", aw: int = 32) -> list:
+    """R[rd] = the word at T[R[ra] + tmem] times the integer c (an RLD MUL), as instructions: at
+    AW 32, or c >= 0, the RLD with w2 = c (a negative c in two's complement: the low 32 bits of
+    the product, signed and unsigned alike); at AW > 32 a negative c is AW bits, so it goes
+    into R[rd] first (LI, w2 0xFFFFFFFF) and the RLD multiplies by R[rd] + 0 (its multiplier
+    read before R[rd] is written). The word is zero-extended: c * a non-negative value."""
+    if aw == 32 or c >= 0:
+        return [rld(rd, tmem, ra=ra, raw=raw, mul=c, bound=bound, comment=comment)]
+    _check(rd != 0 and ra != rd, f"RLD MUL by {c} at AW {aw}: R{rd} takes the multiplier first "
+                                 f"(rd R1..R15, not ra)")
+    return [li(rd, c, comment=f"{comment}: x {c}", aw=aw),
+            rld(rd, tmem, ra=ra, raw=raw, mul=0, rb=rd, bound=bound, comment=comment)]
 
 
 def waitw(dram, tmem, ref, cmp, ra=0, rb=0, rc=0, mask=0xFFFFFFFF, interval=0, timeout=0,
@@ -198,17 +276,34 @@ def st(dram, tmem, nwords, ra=0, rb=0, comment=""):
 DSTEP_LANES = 8                      # DSTEP: state words per cycle (timing only)
 DSTEP_MAX_ROWS = 256                 # DSTEP: o is held in a 256-word buffer
 F_DZERO = 0x1                        # DSTEP: the state starts at +0 (DRAM is not read)
+F_DPAIR = 0x2                        # DSTEP: two heads (Config.DSTEP2), rows / 2 rows each
+F_DQKB = 0x4                         # DSTEP pair: head b's q | k after head a's, else head a's
+F_DST16 = 0x8                        # DSTEP: the DRAM state in 16 bits (Config.ST16; fp32 inside)
+DSTEP_PAIR_COLS = 128                # DSTEP pair: the heads' cols (both vectors in SE's buffers)
+DSTEP_PAIR_ROWS = 16                 # DSTEP pair: rows a multiple (a head's rows: the engine's
+#                                      row groups, up to 8, each in one head)
 
 
-def dstep(dram, qk, v, rows, cols, g, gs, o, zero=False, ra=0, rb=0, rc=0, comment=""):
+def dstep(dram, qk, v, rows, cols, g, gs, o, zero=False, pair=False, qkb=False, ra=0, rb=0,
+          rc=0, comment="", st16=False):
     """DSTEP (DMA): one Gated DeltaNet head step on an fp32 state St [rows, cols] (row-major)
     in DRAM at byte address R[ra] + dram, updated in place. q = T[qk + c], k = T[qk + cols + c]
     (qk: R[rb] + w2), v(r) = T[v + r] (R[rc] + w3), the decay e = T[g], beta = T[g + gs], and
     o(r) = T[o + r] is written. Row by row: kv = rdot(St[r], k), d = (v(r) - kv * e) * beta,
     St[r] = St[r] * e + d * k, o(r) = rdot(St[r], q) -- the rounding of RDOT, MUL, SUB, MUL,
-    OUTER, RDOT (docs/isa.md). `zero`: the state starts at +0 and is not read (position 0)."""
+    OUTER, RDOT (docs/isa.md). `zero`: the state starts at +0 and is not read (position 0).
+    `pair` (Config.DSTEP2): two heads' steps, rows r >= rows / 2 head b's, with e = T[g + 1],
+    beta = T[g + gs + 1] and (`qkb`) q | k at qk + 2 cols; cols 128, rows a multiple of 16.
+    `st16` (Config.ST16): the state is 16-bit in DRAM (2 rows cols bytes; the format the
+    configuration's, docs/isa.md "ST16"), fp32 in the step."""
     _check(0 < rows < 65536 and 0 < cols < 65536, f"DSTEP: rows {rows}, cols {cols}")
-    return Instr(DSTEP, ra=ra, rb=rb, rc=rc, flags=F_DZERO if zero else 0,
+    _check(not qkb or pair, "DSTEP: qkb is a pair's")
+    _check(not pair or (rows % DSTEP_PAIR_ROWS == 0 and cols == DSTEP_PAIR_COLS),
+           f"DSTEP pair: rows {rows} (a multiple of {DSTEP_PAIR_ROWS}), cols {cols} "
+           f"({DSTEP_PAIR_COLS})")
+    fl = (F_DZERO if zero else 0) | (F_DPAIR if pair else 0) | (F_DQKB if qkb else 0) | \
+        (F_DST16 if st16 else 0)
+    return Instr(DSTEP, ra=ra, rb=rb, rc=rc, flags=fl,
                  w=_w(dram, qk, v, rows | (cols << 16), g, o, gs), comment=comment)
 
 
@@ -219,6 +314,15 @@ F_SZERO = 0x1                        # the stream reads as +0 (nothing is read)
 F_SRC_T = 0x2                        # the stream source is TMEM (words), not DRAM (bytes)
 F_DST_T = 0x4                        # the stream destination is TMEM
 F_NODST = 0x8                        # the stream is not written back
+F_SST16 = 0x10                       # the DRAM stream in 16 bits, source and destination
+#                                      (Config.ST16, as DSTEP's ST16; fp32 inside)
+F_SST16R = 0x20                      # the source alone in 16 bits, the destination fp32
+F_SST16W = 0x40                      # the destination alone in 16 bits, the source fp32
+
+# ST16 (docs/isa.md "ST16"): a DSTEP's (STREAM's) DRAM state in 16 bits, its format the
+# configuration's (Config.ST16, CAPS2 bits 14:13): e6m9 (6 exponent bits, bias 31, 9 mantissa
+# bits) or bf16
+ST16_CODE = {"": 0, "e6m9": 1, "bf16": 2}
 
 A_SLOT, A_SELF, A_CONST, A_MAX = 0, 1, 2, 3      # REDUCE A: A = isum_64(S[r] * opA), or
 #                                                   the row's max (A_MAX, VOP RMAX's order)
@@ -325,15 +429,23 @@ class StreamDesc:
 
 
 def stream(desc, src, dst, vec, x, k, out, ks=1, zero=False, src_t=False, dst_t=False,
-           nodst=False, ra=0, rb=0, rc=0, rd=0, comment=""):
+           nodst=False, ra=0, rb=0, rc=0, rd=0, comment="", st16=False, st16r=False,
+           st16w=False):
     """STREAM (docs/stream.md): the descriptor at TMEM `desc` over the rows of the stream at
     src + R[ra] (DRAM bytes, or TMEM words with src_t), Y written to dst + R[ra]; column slots
     at vec + R[rb] (slot i at + i * cols), row scalars X[r] = T[x + R[rc] + r], constants
     K_j = T[k + R[rd] + j * ks], row outputs O[r] = T[out + r]. desc and ks share w1 (desc in
-    [15:0], ks in [31:16]) so the scoreboard knows the constants' range."""
+    [15:0], ks in [31:16]) so the scoreboard knows the constants' range. `st16`
+    (Config.ST16): the DRAM stream's values in 16 bits (2 bytes each), both ends in DRAM;
+    `st16r` (`st16w`) the source's (the destination's) alone, the other end fp32 and apart
+    from it."""
     _check(0 <= desc < 1 << 16 and 0 <= ks < 1 << 16, f"STREAM: desc {desc}, ks {ks} (16 bits)")
+    r16, w16 = st16 or st16r, st16 or st16w
+    _check(not (r16 or w16) or not (src_t or dst_t or nodst), "STREAM: ST16 is a DRAM stream's")
+    _check(r16 == w16 or src != dst, "STREAM: ST16 on one side needs dst apart from src")
     fl = (F_SZERO if zero else 0) | (F_SRC_T if src_t else 0) | (F_DST_T if dst_t else 0) | \
-        (F_NODST if nodst else 0)
+        (F_NODST if nodst else 0) | \
+        (F_SST16 if r16 and w16 else F_SST16R if r16 else F_SST16W if w16 else 0)
     return Instr(STREAM, ra=ra, rb=rb, rc=rc, rd=rd, flags=fl,
                  w=_w(desc | ks << 16, src, dst, vec, x, k, out), comment=comment)
 
@@ -388,14 +500,24 @@ def stream_hw_cfg(d: StreamDesc, flags: int = 0) -> dict | None:
 
 
 def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=False,
-       ascale=None, wf=W8, pair=False, k0=0, rsc=False, ra=0, rb=0, rc=0, comment=""):
+       ascale=None, wf=W8, pair=False, k0=0, rsc=False, grp=1, kt=False, hld=0, ra=0, rb=0,
+       rc=0, comment=""):
     """MM (docs/isa.md). With `ascale` (a TMEM address; needs unit and acc) the old accumulator
     is first multiplied by a per-row factor: y = T[out] * T[ascale + j] + a.w (the
     flash-attention rescale, done in the MXU epilogue). The address travels in the (unused)
     scale field. `wf`: the streamed weights' format (W8, W4I, W4F, WNV). `pair` (4-bit only):
     column reuse, ACT row j + m carries the odd K-blocks of row j ("Column reuse"). `k0`: the
     MM's first block within the scale rows at `ssa` (each row starts with its Sw). `rsc`: the
-    scale rows are Sw alone (one word a row: the K cache)."""
+    scale rows are Sw alone (one word a row: the K cache). `grp`: the operand's rows a group, 1
+    or quant.grp_r(fmt, Config.WG) (WG int8, 2 WG 4-bit; docs/isa.md "Weight groups"): rs and
+    srs are then the groups' strides; its log2 is MM's rd field (no flag is free). `kt`
+    (Config.KT, groups only; docs/isa.md "K tail"): the groups in pairs that share their last
+    K-block's chunk, rs the pairs' stride; rs's bit 0 (a group stride is a multiple of WG x D).
+    hld > 0 (MM_SPL, Config.SPLMM; docs/isa.md "Split terms"): the weights' lo part hld bytes
+    after their hi part, one block each: kb 3 the split's three terms (ACT blocks ab the hi
+    and ab + 1 the lo against hi, ab against lo), kb 2 a pair's (ACT block ab against hi, then lo),
+    the lo terms 2^-8 under the hi block's scales; groups, int8 RSC, k0 0, not PAIR, KT, RMAX
+    or ASCALE."""
     _check(0 < n < 65536 and 0 < kb < 256 and 0 < m < 256 and 0 <= ab < 256
            and 0 <= ors < 65536 and 0 <= k0 < 256,
            f"MM: n {n}, kb {kb}, m {m}, ab {ab}, ors {ors}, k0 {k0}")
@@ -403,38 +525,96 @@ def mm(sa, ssa, out, n, kb, rs, ors, m, ab, srs, unit=False, acc=False, rmax=Fal
     _check(not pair or wf != W8, "MM: PAIR needs 4-bit weights")
     _check(not pair or k0 % 2 == 0, "MM: PAIR needs an even k0")
     _check(not rsc or wf != WNV, "MM: RSC does not take NVFP4")
+    _check(0 < grp < 1 << 15 and grp & (grp - 1) == 0, f"MM: {grp} rows a group")
+    # (RMAX and ASCALE on a group: GALL machines only, the simulator's check)
+    _check(grp == 1 or not pair, "MM: groups take no PAIR")
+    _check(not kt or (grp > 1 and k0 == 0 and wf != WNV and rs % 2 == 0),
+           f"MM: KT needs groups, k0 0, an int8 / int4 / fp4 operand and an even rs ({rs})")
+    _check(hld % 1024 == 0 and 0 <= hld >> 10 < 1 << (31 - MM_HLD), f"MM: SPL offset {hld}")
+    _check(not hld or (kb in (2, 3) and grp > 1 and wf == W8 and rsc and not unit and k0 == 0
+                       and not (pair or kt or rmax or ascale is not None)),
+           f"MM: SPL needs KB 2 or 3, groups, int8 RSC, k0 0 and not PAIR, KT, RMAX or ASCALE")
+    _check(not hld or 0 <= srs < 1 << MM_HLD, f"MM: SPL with srs {srs} past 20 bits")
     if ascale is not None:
         _check(unit and acc, "MM: ASCALE needs UNIT and ACC")
         ssa = ascale
     fl = (F_UNIT if unit else 0) | (F_ACC if acc else 0) | (F_RMAX if rmax else 0) | \
         (F_ASCALE if ascale is not None else 0) | (F_PAIR if pair else 0) | \
         (F_RSC if rsc else 0) | (wf << WF_SHIFT)
-    return Instr(MM, ra=ra, rb=rb, rc=rc, flags=fl,
-                 w=_w(sa, ssa, out, n | (kb << 16) | (k0 << 24), rs,
-                      ors | (m << 16) | (ab << 24), srs),
+    return Instr(MM, ra=ra, rb=rb, rc=rc, rd=grp.bit_length() - 1, flags=fl,
+                 w=_w(sa, ssa, out, n | (kb << 16) | (k0 << 24), rs | int(kt),
+                      ors | (m << 16) | (ab << 24),
+                      (srs | MM_SPL | (hld >> 10) << MM_HLD) if hld else srs),
                  comment=comment)
 
 
 def qact(src, rows, ab, kb, srs, row=False, cscale=None, rscale=None, dup=False, ra=0,
-         comment=""):
+         lo=False, hl=False, store=None, rc=0, comment=""):
     """QACT. `cscale`/`rscale`: TMEM addresses of a per-column / per-row factor applied before
     quantization, x' = (x * T[rscale + r]) * T[cscale + c]. `dup`: ACT row r + rows receives
-    a copy of row r in the same cycles (the odd K-blocks' column of an MM PAIR)."""
+    a copy of row r in the same cycles (the odd K-blocks' column of an MM PAIR). `lo` (F_QLO,
+    SPLITQ): the split's lo part instead of q, its blocks' scale S * 2^-8. `hl` (F_QHL, QHL):
+    both, q into blocks ab .. ab + kb - 1 and lo into ab + kb .. ab + 2 kb - 1, from one read.
+    `store` (F_QST, QONCE): (dram, drs), each row's ACT bytes and records also to DRAM, row r at
+    R[rc] + dram + r drs (qrow_bytes a row, LDA's); w3 is then that address, srs moves to w6
+    and drs is w7."""
     _check(0 < rows < 256 and 0 <= ab < 256 and 0 < kb < 65536,
            f"QACT: rows {rows}, ab {ab}, kb {kb}")
+    _check(not hl or not (lo or dup), "QACT: HL with LO or DUP")
+    _check(store is None or not hl, "QACT: ST with HL")
     fl = (F_ROW if row else 0) | (F_CSCALE if cscale is not None else 0) | \
-        (F_RSCALE if rscale is not None else 0) | (F_DUP if dup else 0)
-    return Instr(QACT, ra=ra, flags=fl,
-                 w=_w(src, rows | (ab << 8) | (kb << 16), srs, cscale or 0, rscale or 0),
+        (F_RSCALE if rscale is not None else 0) | (F_DUP if dup else 0) | (F_QLO if lo else 0) \
+        | (F_QHL if hl else 0) | (F_QST if store is not None else 0)
+    if store is None:
+        w = _w(src, rows | (ab << 8) | (kb << 16), srs, cscale or 0, rscale or 0)
+    else:
+        w = _w(src, rows | (ab << 8) | (kb << 16), store[0], cscale or 0, rscale or 0, srs,
+               store[1])
+    return Instr(QACT, ra=ra, rc=rc if store is not None else 0, flags=fl, w=w,
+                 comment=comment)
+
+
+def qrow_bytes(kb: int, D: int) -> int:
+    """QACT ST's and LDA's bytes a row (docs/isa.md "Quantize once"): its KB blocks' D bytes as
+    ACT RAM holds them, then KB records of QREC bytes (the block's fp32 S, its NSUB offsets)."""
+    return kb * D + kb * QREC
+
+
+def lda(dram, rows, ab, kb, drs, arow=0, ra=0, comment=""):
+    """LDA (DMA, Config.QONCE): rows rows of ACT bytes and records (QACT ST's, qrow_bytes a
+    row), row r from DRAM R[ra] + dram + r drs, into ACT rows arow + r at blocks ab .. ab + kb
+    - 1: the operand a QACT ST stored, unchanged."""
+    _check(0 < rows < 256 and 0 <= ab < 256 and 0 < kb < 65536 and 0 <= arow < 65536,
+           f"LDA: rows {rows}, ab {ab}, kb {kb}, ACT row {arow}")
+    return Instr(LDA, ra=ra, w=_w(dram, rows | (ab << 8) | (kb << 16), drs, arow),
                  comment=comment)
 
 
 def qst(src, dst, sdst, rows, kb, srs, drs, es, row=False, half=False, ra=0, rb=0, rc=0,
-        comment=""):
+        grp=1, col=False, rd=0, lo=False, hld=0, comment=""):
+    """grp > 1 (F_QGRP, docs/isa.md QST): rows R[rd] + drs .. of a grouped int8 matrix at dst in
+    groups of grp rows (the machine's WG; LG = log2 grp in flags 6:4), a group's chunks P = grp
+    x D bytes: es is the scale areas' group stride; col (F_QCOL): the rows are the matrix's
+    columns, es its group stride. lo (F_SLO, SPLITQ): the split's lo bytes, the scale S * 2^-8.
+    hld > 0 (QST_HL, QSTHL; GRP ROW rows): hi and lo from one read, the lo part's bytes and
+    scales hld bytes (a multiple of 1 KiB) after hi's."""
+    lg = int(grp).bit_length() - 1
     _check(0 < rows < 65536 and 0 < kb < 65536, f"QST: rows {rows}, kb {kb}")
+    _check(grp >= 1 and grp == 1 << lg and lg < 8, f"QST: groups of {grp} rows")
     _check(row or not half, "QST: HALF needs ROW mode")
-    return Instr(QST, ra=ra, rb=rb, rc=rc, flags=(F_ROW if row else 0) | (F_HALF if half else 0),
-                 w=_w(src, dst, sdst, rows | (kb << 16), srs, drs, es), comment=comment)
+    _check(grp > 1 or not col, "QST: COL needs GRP")
+    _check(not col or row, "QST: COL needs ROW mode (a column's scale is its row's)")
+    _check(not hld or (grp > 1 and row and not (col or half or lo)),
+           "QST: HL needs GRP rows in ROW mode, not COL, HALF or LO")
+    _check(hld % 1024 == 0 and 0 <= hld >> 10 < 1 << (31 - QST_HLD), f"QST: HL offset {hld}")
+    _check(not hld or 0 <= srs < 1 << QST_HLD, f"QST: HL with srs {srs} past 20 bits")
+    return Instr(QST, ra=ra, rb=rb, rc=rc, rd=rd,
+                 flags=(F_ROW if row else 0) | (F_HALF if half else 0) |
+                 ((F_QGRP | lg << QST_LG) if grp > 1 else 0) | (F_QCOL if col else 0) |
+                 (F_SLO if lo else 0),
+                 w=_w(src, dst, sdst, rows | (kb << 16),
+                      (srs | QST_HL | (hld >> 10) << QST_HLD) if hld else srs, drs, es),
+                 comment=comment)
 
 
 def vop(func, dst, a, b, rows, cols, drs, ars, brs, bmode=B_FULL, imm=0.0,
@@ -470,6 +650,44 @@ def outer(dst, d, b, c, rows, cols, drs, brs, dmode="scalar", ra=0, rb=0, rc=0, 
                  w=_w(dst, d, b, rows | (cols << 16), drs, brs | (V_OUTER << 16) | (B_ROW << 24),
                       c),
                  comment=comment)
+
+
+def mac(dst, a, b, rows, cols, drs, ars, bmode=B_COL, imm=0.0, ra=0, rb=0, rc=0,
+        comment="mac"):
+    """VOP MAC (Config.VMAC): T[dst + r*drs + c] = add(T[dst + r*drs + c], mul(A(r, c), B)) in
+    place, B per column (T[b + c], cols <= 256: read before anything is written, so it may
+    overlap dst) or the scalar imm; the MUL then ADD of `dst + A * B` bit for bit."""
+    _check(bmode in (B_COL, B_SCALAR) and (bmode == B_SCALAR or cols <= MAC_MAX_COLS),
+           f"MAC: bmode {bmode}, cols {cols} (B per column, cols <= {MAC_MAX_COLS}, or a scalar)")
+    return vop(V_MAC, dst, a, b if bmode == B_COL else 0, rows, cols, drs, ars, 0, bmode, imm,
+               ra=ra, rb=rb, rc=rc, comment=comment)
+
+
+def exp2sub_sum(dst, a, b, sums, rows, cols, drs, ars, brs, bmode=B_ROW, ra=0, rb=0, rc=0,
+                rd=0, comment="exp2sub"):
+    """VOP EXP2SUB with FSUM (Config.FSUM): T[dst + r*drs + c] = exp2(A - B) and T[sums + R[rd] +
+    r] = isum_64 of row r's results (RSUM's of them, bit for bit), written by its take
+    (fsum_take; untouched until then). B not a scalar (the immediate word is the sums' address),
+    rows <= 256, cols >= 64."""
+    _check(bmode != B_SCALAR and 0 < rows <= FSUM_MAX_ROWS and FSUM_MIN_COLS <= cols < 65536,
+           f"EXP2SUB FSUM: bmode {bmode}, rows {rows}, cols {cols} (B not a scalar, rows <= "
+           f"{FSUM_MAX_ROWS}, cols >= {FSUM_MIN_COLS})")
+    ins = vop(V_EXP2SUB, dst, a, b, rows, cols, drs, ars, brs, bmode, 0.0, ra=ra, rb=rb, rc=rc,
+              rd=rd, comment=comment)
+    ins.flags = F_FSUM
+    ins.w[6] = u32(sums)
+    return ins
+
+
+def fsum_take(sums, a, rows, cols, ars, ra=0, rb=0, comment="rsum fsum"):
+    """VOP RSUM with FSUM: the take of the oldest EXP2SUB FSUM's row sums not taken yet, at
+    T[sums + R[ra] + r] (that EXP2SUB's): done once they are written, its footprint RSUM's of A
+    (T[a + R[rb]]: that EXP2SUB's results, [rows, cols] at row stride ars). It reads and
+    computes nothing."""
+    ins = vop(V_RSUM, sums, a, 0, rows, cols, 1, ars, 0, B_FULL, 0.0, ra=ra, rb=rb,
+              comment=comment)
+    ins.flags = F_FSUM
+    return ins
 
 
 def gather(src, dst, rows, cols, srs, drs, seg, ra=0, rb=0, comment=""):

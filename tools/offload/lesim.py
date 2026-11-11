@@ -2,7 +2,7 @@
 """Lookahead expert scheduling (LES, OpenBMB's llama.cpp-omni) on path (a): how well the next
 layer's experts can be predicted, and what prefetching them would buy on the card (docs/offload.md
 15). Offline, on offload's router traces (tools/offload/router_trace.py; ~/otpu-build/offload/traces
-on omarchy: <model>.<text>.npz, four texts of 2048 tokens), each text warmed by the other three's
+on the build host: <model>.<text>.npz, four texts of 2048 tokens), each text warmed by the other three's
 profile (cachesim.py's rule), the server's per-layer slots by decayed use (lfu_layer).
 
   recall MODEL SLOTS MB TRACE...   the predictions against the routes and against the server's

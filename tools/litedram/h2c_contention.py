@@ -64,7 +64,8 @@ def work_setup(kind, M, spec, work: str, cfg, cap: int, pos: int):
         s, img = C.model_image(kind, M, spec, "1", "moe", 1, cfg, cap)
         mo = s.moe
         ids = C.em_ids(rows, mo.k, mo.E, C.EM_USED[kind], 0)
-        need = len(MO.em_slots(img.offload, rows * MO.em_record(s.hidden, mo.k))) \
+        need = len(MO.em_slots(img.offload,
+                               rows * MO.em_record(s.hidden, mo.k, MO.em_qd(img.cfg)))) \
             + C.em_passes(ids, mo.E)[1]
         n = max(mo.k, -(-need // len(img.offload.slots)))
         s, img = C.model_image(kind, M, spec, "1", "moe", 1, cfg, cap, experts=n)

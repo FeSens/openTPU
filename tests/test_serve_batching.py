@@ -109,6 +109,60 @@ def test_sampled_requests_alone_and_together():
         w.stop()
 
 
+class _Halts:
+    """The ISA simulator's backend with a card's run_generate: a run's tokens as they land, and
+    on the armed run, after `k` of them, `arrive()` (another request comes) and the loop halts
+    as stop() halts the card's (the run's other uniforms drawn, not used)."""
+
+    def __init__(self, be, k: int):
+        self.be, self.k, self.arrive = be, k, None
+
+    def __getattr__(self, name):
+        return getattr(self.be, name)
+
+    def run_generate(self, progs, out, nb, on_token, stop, state):
+        import numpy as np
+        from opentpu.llm import generate as G
+        st = self.be.run(progs)
+        w = self.be.read(0, out, 4 * nb).view(np.uint32)
+        k = int(np.argmax(w == G.OUT_MARK)) if (w == G.OUT_MARK).any() else nb
+        got = [int(x) for x in w[:k].view(np.float32)]
+        if self.arrive is not None and len(got) > self.k:
+            got = got[:self.k]
+            self.arrive()
+            self.arrive = None
+            assert stop()
+        for t in got:
+            on_token(t)
+        return st, got
+
+
+def test_sampled_request_halted_in_the_card_loop_keeps_its_uniforms():
+    """A seeded sampled request decoding alone in slot 0 (the card's loop, which draws a run's
+    uniforms ahead) that another request's arrival halts after 3 tokens goes on in the steps
+    with the uniform after its last token's: its tokens are its reply alone's."""
+    eng, W, spec, cfg1 = _setup()
+    eng.backend = _Halts(eng.backend, 3)
+    stop = frozenset()
+    samp = SC.Sampling(0.9, 16, 0.9, 1.0, seed=4)
+    p = _prompts(11, [16])[0]
+    w = BW.BatchWorker(eng, _Tok()).start()
+    try:
+        alone = w.submit(SC.Request(p, max_new=14, stop_ids=stop, sampling=samp)).wait(900)
+        w.flush()
+        late = []
+        eng.backend.arrive = lambda: late.append(w.submit(SC.Request(
+            _prompts(12, [20])[0], max_new=6, stop_ids=stop,
+            sampling=SC.Sampling(1.0, 32, 0.95, 1.0, seed=2))))
+        loops = w.stats["card_loops"]
+        again = w.submit(SC.Request(p, max_new=14, stop_ids=stop, sampling=samp)).wait(900)
+        late[0].wait(900)
+        assert w.stats["card_loops"] > loops and eng.backend.arrive is None
+        assert again.error is None and again.out == alone.out
+    finally:
+        w.stop()
+
+
 def test_stop_strings_and_cancel_in_slots():
     eng, W, spec, cfg1 = _setup()
     w = BW.BatchWorker(eng, _Tok()).start()

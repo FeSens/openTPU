@@ -4,7 +4,7 @@ up to gigabytes, so:
 
 - **Where.** OTPU_SIM_TMP names the parent directory; else, where the system's temporary
   directory is a tmpfs or ramfs (Linux: /proc/mounts), DISK (its files would hold RAM:
-  omarchy's /tmp is a 16 GB tmpfs); else the system's.
+  the build host's /tmp is a 16 GB tmpfs); else the system's.
 - **Removed on any exit.** The directory goes when its `tempdir()` block ends, by return or
   exception (SIGINT is Python's KeyboardInterrupt). SIGTERM and SIGHUP, where the program has
   no handler of its own: the handler (installed at import, from the main thread) kills the
@@ -14,6 +14,10 @@ up to gigabytes, so:
   worker's SIGTERM leaves the parent's runs alone. A process killed outright (SIGKILL, the OOM
   killer) leaves its directory: each new one sweeps its parent of those whose marker (MARKER:
   host and pid) names a process of this host that is gone.
+
+**DRAM files.** dram_file(n): an ISA simulator slice's DRAM above 4 GiB (AW > 32: the BCU's
+32 GiB) as a sparse file under root(), deleted as it is made (nothing to sweep, even after
+SIGKILL), mapped shared: its disk blocks and page cache are the pages written.
 
 The handler comes with importing this module: rtlsim (and so profile, lens, llm.rtl_backend,
 host.hwlens, the tests and the co-sim tools) and the board model's run (host.board's
@@ -30,6 +34,8 @@ import socket
 import tempfile
 import threading
 from pathlib import Path
+
+import numpy as np
 
 ENV = "OTPU_SIM_TMP"
 DISK = Path.home() / "otpu-build" / "tmp"
@@ -168,6 +174,18 @@ def tempdir(prefix: str = "otpu_"):
     finally:
         _live.discard(str(d))
         shutil.rmtree(d, ignore_errors=True)
+
+
+def dram_file(nbytes: int) -> np.ndarray:
+    """nbytes of zeros (a uint8 array) in a sparse file under root(), unlinked at once (the
+    space goes with the array): pages are allocated as they are written; a read of one never
+    written is a zero page of the page cache."""
+    base = root()
+    if base is not None:
+        base.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryFile(prefix="otpu_dram_", dir=base) as f:
+        f.truncate(nbytes)
+        return np.memmap(f, dtype=np.uint8, mode="r+", shape=(nbytes,))
 
 
 install()

@@ -564,6 +564,45 @@ def column_parts(rows: np.ndarray, srows: np.ndarray, fmt: str, K: int, C: int,
              part_scales(srows, fmt, j * C // D, C // D)) for j in range(K // C)]
 
 
+def gather_order(K: int, C: int, S: int) -> np.ndarray:
+    """The columns of a down projection's K = S F' inputs (each slice's F' in chunks of C) in
+    the all-gather's order: chunk c of slice 0, of slice 1, ..., then chunk c + 1
+    (kernels.mlp.swiglu_down: each chunk's activations of every slice are one QACT range and
+    W_down's part c one MM). S = 1: in order."""
+    f = K // S
+    if K % S or f % C:
+        raise ValueError(f"{K} columns: {S} slices in chunks of {C}")
+    return np.arange(K).reshape(S, f // C, C).transpose(1, 0, 2).reshape(-1)
+
+
+def gathered_rows(rows: np.ndarray, srows: np.ndarray, fmt: str, K: int, C: int, S: int,
+                  D: int = 128) -> tuple:
+    """Quantized rows of K = S F' columns (quantize_mxu's) with their columns in gather_order:
+    whole C-column chunks moved (C whole D-byte chunks of elements: int8 D, 4-bit 2 D), the
+    rows' Sw kept and the blocks' offsets moved with them, so the values are the rows'. Stored
+    in column parts of S C (column_parts), part c is chunk c of every slice."""
+    if S == 1:
+        return rows, srows
+    f = K // S
+    if K % S or f % C or C % (D if fmt == "int8" else 2 * D):
+        raise ValueError(f"{K} columns: {S} slices in chunks of {C} ({fmt}, D {D})")
+    starts = [t * f + c * C for c in range(f // C) for t in range(S)]
+    er = np.concatenate([part_rows(rows, fmt, a, a + C, D) for a in starts], 1)
+    hdr, per = (4, 1) if fmt == "int8" else (8, 4) if fmt in ("int4", "fp4") else (16, 8)
+    sr = np.array(srows, np.uint8)
+    kb = C // D
+    sr[:, hdr:hdr + per * (K // D)] = np.concatenate(
+        [sr[:, hdr + per * (a // D):hdr + per * (a // D + kb)] for a in starts], 1)
+    return er, sr
+
+
+def gathered_parts(rows: np.ndarray, srows: np.ndarray, fmt: str, K: int, C: int, S: int,
+                   D: int = 128) -> list:
+    """column_parts of S C of the rows in gather_order (gathered_rows): part c chunk c of
+    every slice's F' (S = 1: column parts of C)."""
+    return column_parts(*gathered_rows(rows, srows, fmt, K, C, S, D), fmt, K, S * C, D)
+
+
 def gather_scales(srows: np.ndarray, fmt: str, K: int, D: int = 128) -> np.ndarray:
     """A table's scales as kernels.gather streams its rows (a block, 4-bit a chunk of two blocks,
     a streamed row each): int8 an fp32 per block, Sw 2^-dw [N, KB] (MM RSC, 4 bytes apart);
@@ -590,6 +629,267 @@ def gather_scale_bytes(K: int, fmt: str, D: int = 128) -> int:
     if fmt == "int8":
         return 4 * KB
     return -(-KB // 2) * (16 if fmt in ("int4", "fp4") else 32)
+
+
+# =============================================================================== weight groups
+# A matrix in groups (docs/isa.md "Weight groups", MM GRP) on a machine of WG lanes (Config.WG,
+# the MXU's columns and port W's channels): a group is R = grp_r(fmt, WG) rows, WG of int8 and
+# 2 WG of a 4-bit format, and its chunk c, P = WG x D contiguous bytes at g rs + c P, a lane's D
+# bytes apiece: int8 chunk c (K-block c) of row g R + l in lane l; 4-bit K-block c of rows
+# g R + 2l and g R + 2l + 1 in lane l, element i of the pair in byte i (row 2l's the low nibble).
+# Group g's scale area at g srs: the rows' Sw words, padded to swp(), then per block the R rows'
+# block data (an int8 dw byte, a 4-bit word, NVFP4's eight E4M3 bytes). WG = 1 is the natural
+# layout (quantize_mxu's rows and scale rows) byte for byte. N is padded to whole groups with zero
+# rows. On a machine with the channel hash (Config.CHASH) each group chunk's lanes are stored
+# permuted by the chunk's address (hash_rows): lane l of the chunk at A at lane l ^
+# chunk_fold(A / P, WG). The functions below take the machine's WG (`wg`) and the format; swp
+# and grp_rows take a group's rows.
+SCALE_DATA = {"int8": 1, "int4": 4, "fp4": 4, "nvfp4": 8}   # a block's scale data bytes a row
+
+
+def grp_r(fmt: str, wg: int) -> int:
+    """The rows of a group on a machine of `wg` lanes: wg (int8), 2 wg (a 4-bit format: two rows
+    a lane); 1 at wg = 1."""
+    return wg if wg == 1 or fmt == "int8" else 2 * wg
+
+
+def swp(fmt: str, R: int, rsc: bool = False) -> int:
+    """The Sw part of a scale area of R rows: R words, padded so that a block's entries stay
+    aligned: 4 R (int8, RSC); int4 / fp4 8 at R = 1 (PAIR's two words), 4 R above (a block's
+    R words); NVFP4 16 at R = 1, 8 R above. At R = 1, the scale row's header."""
+    if rsc or fmt == "int8":
+        return 4 * R
+    if fmt in ("int4", "fp4"):
+        return 8 if R == 1 else 4 * R
+    return 16 if R == 1 else 8 * R
+
+
+def grp_rows(N: int, R: int) -> int:
+    """Rows of a grouped matrix of N rows in groups of R rows: whole groups."""
+    return -(-N // R) * R
+
+
+def grp_row_bytes(K: int, fmt: str, D: int = 128, wg: int = 1) -> int:
+    """The group stride of a grouped [., K] matrix: its chunks, wg x D bytes each (int8: a
+    D-block a chunk; 4-bit at wg > 1: a D-block of the group's 2 wg rows a chunk)."""
+    if wg == 1 or fmt == "int8":
+        return row_bytes(K, fmt, D) * wg
+    if K % D:
+        raise ValueError(f"inner dimension {K} is not a multiple of D={D}")
+    return (K // D) * wg * D
+
+
+def grp_scale_bytes(K: int, fmt: str, D: int = 128, wg: int = 1, rsc: bool = False) -> int:
+    """The group scale stride: the Sw part and K / D blocks' entries, padded to swp (at wg = 1
+    scale_bytes)."""
+    if K % D:
+        raise ValueError(f"inner dimension {K} is not a multiple of D={D}")
+    R = grp_r(fmt, wg)
+    p = swp(fmt, R, rsc)
+    n = p if rsc else p + (K // D) * R * SCALE_DATA[fmt]
+    return -(-n // p) * p
+
+
+def group_rows(rows: np.ndarray, wg: int, D: int = 128, fmt: str = "int8",
+               K: int | None = None) -> np.ndarray:
+    """Natural element rows [N, nc D] (whole D-byte chunks; 4-bit: K elements, default every
+    block of the rows) -> the grouped matrix's bytes [ceil(N / R), grp_row_bytes] (a group a
+    row), the padding rows 0."""
+    rows = np.asarray(rows, np.uint8)
+    N, w = rows.shape
+    if w % D:
+        raise ValueError(f"rows of {w} bytes are not whole {D}-byte chunks")
+    R = grp_r(fmt, wg)
+    G, nc = -(-N // R), w // D
+    if R == wg:
+        out = np.zeros((G * R, w), np.uint8)
+        out[:N] = rows
+        return np.ascontiguousarray(out.reshape(G, R, nc, D).transpose(0, 2, 1, 3)).reshape(G, -1)
+    KB = 2 * nc if K is None else K // D
+    if K is not None and (K % D or KB > 2 * nc):
+        raise ValueError(f"K {K}: not whole D-blocks of rows of {w} bytes")
+    c = np.zeros((G * R, KB * D), np.uint8)
+    c[:N] = unpack4(rows)[:, :KB * D]
+    c = c.reshape(G, wg, 2, KB, D)                              # [g, lane, row of the pair, k, i]
+    out = c[:, :, 0] | (c[:, :, 1] << 4)                        # [g, lane, k, i]
+    return np.ascontiguousarray(out.transpose(0, 2, 1, 3)).reshape(G, -1)
+
+
+def chunk_fold(m, R: int):
+    """The channel hash of group chunk index `m` (an int or an integer array): the XOR fold of
+    its bits into log2 R bits, bit i into bit i mod log2 R (otpu_native_dram's fold at NCH = R);
+    0 at R = 1."""
+    m = np.asarray(m, np.int64)
+    b = (R - 1).bit_length()
+    h = np.zeros_like(m)
+    if b:
+        while m.any():
+            h ^= m & (R - 1)
+            m = m >> b
+    return h
+
+
+def hash_rows(data: np.ndarray, at: int, wg: int, D: int = 128) -> np.ndarray:
+    """A grouped matrix's bytes (any shape, whole wg x D chunks) as a machine with the channel
+    hash stores them at DRAM address `at` (a multiple of P = wg x D; docs/isa.md "Weight
+    groups"): in the chunk at A lane l's D bytes at lane l ^ chunk_fold(A / P, wg), so that
+    channel c holds lane c of every chunk. Its own inverse at the same address; the same bytes at
+    another address are hash_rows(hash_rows(x, at, wg, D), new, wg, D)."""
+    data = np.asarray(data, np.uint8)
+    P = wg * D
+    if at % P or data.size % P:
+        raise ValueError(f"grouped bytes at {at:#x} ({data.size} bytes) are not whole {P}-byte "
+                         f"chunks")
+    c = data.reshape(-1, wg, D)
+    h = chunk_fold(at // P + np.arange(c.shape[0]), wg)
+    return c[np.arange(c.shape[0])[:, None], np.arange(wg)[None, :] ^ h[:, None]].reshape(
+        data.shape)
+
+
+def ungroup_rows(data: np.ndarray, N: int, wg: int, D: int = 128,
+                 fmt: str = "int8") -> np.ndarray:
+    """group_rows' inverse: the grouped bytes [G, grp_row_bytes] -> natural rows [N, row_bytes]
+    (4-bit: K = the chunks' blocks, padded to whole D-byte chunks)."""
+    data = np.asarray(data, np.uint8)
+    G = data.shape[0]
+    nc = data.shape[1] // (wg * D)
+    R = grp_r(fmt, wg)
+    if R == wg:
+        return data.reshape(G, nc, R, D).transpose(0, 2, 1, 3).reshape(G * R, nc * D)[:N]
+    c = data.reshape(G, nc, wg, D).transpose(0, 2, 1, 3)        # [g, lane, k, i]
+    codes = np.stack([c & 15, c >> 4], 2).reshape(G * R, nc * D)
+    out = np.zeros((G * R, row_bytes(nc * D, fmt, D)), np.uint8)
+    out[:, :nc * D // 2] = pack4(codes)
+    return out[:N]
+
+
+def _scale_parts(srows: np.ndarray, fmt: str, KB: int, rsc: bool):
+    """Natural scale rows -> (Sw bytes [N, 4], block data [N, KB, sb] or None)."""
+    srows = np.asarray(srows, np.uint8)
+    if rsc:
+        return srows[:, :4], None
+    h, sb = swp(fmt, 1), SCALE_DATA[fmt]
+    return srows[:, :4], srows[:, h:h + KB * sb].reshape(-1, KB, sb)
+
+
+def group_scales(srows: np.ndarray, fmt: str, K: int, wg: int, D: int = 128,
+                 rsc: bool = False) -> np.ndarray:
+    """Natural scale rows [N, >= scale_bytes] (quantize_mxu's) -> the grouped scale areas
+    [ceil(N / R), grp_scale_bytes] (uint8), the padding rows' Sw and data 0."""
+    KB = K // D
+    sw, dat = _scale_parts(srows, fmt, KB, rsc)
+    N = sw.shape[0]
+    R = grp_r(fmt, wg)
+    G, p = -(-N // R), swp(fmt, R, rsc)
+    out = np.zeros((G, grp_scale_bytes(K, fmt, D, wg, rsc)), np.uint8)
+    s = np.zeros((G * R, 4), np.uint8)
+    s[:N] = sw
+    out[:, :4 * R] = s.reshape(G, 4 * R)
+    if dat is not None:
+        sb = dat.shape[2]
+        d = np.zeros((G * R, KB, sb), np.uint8)
+        d[:N] = dat
+        out[:, p:p + KB * R * sb] = d.reshape(G, R, KB, sb).transpose(0, 2, 1, 3).reshape(G, -1)
+    return out
+
+
+def ungroup_scales(areas: np.ndarray, fmt: str, K: int, N: int, wg: int, D: int = 128,
+                   rsc: bool = False) -> np.ndarray:
+    """group_scales' inverse: grouped areas -> natural scale rows [N, scale_bytes]."""
+    areas = np.asarray(areas, np.uint8)
+    KB, G = K // D, areas.shape[0]
+    R = grp_r(fmt, wg)
+    out = np.zeros((G * R, scale_bytes(K, fmt, D, rsc)), np.uint8)
+    out[:, :4] = areas[:, :4 * R].reshape(G * R, 4)
+    if not rsc:
+        h, sb, p = swp(fmt, 1), SCALE_DATA[fmt], swp(fmt, R)
+        d = areas[:, p:p + KB * R * sb].reshape(G, KB, R, sb).transpose(0, 2, 1, 3)
+        out[:, h:h + KB * sb] = d.reshape(G * R, KB * sb)
+    return out[:N]
+
+
+def grouped(q: np.ndarray, s: np.ndarray, fmt: str, K: int, wg: int, D: int = 128,
+            at: int | None = None, kt: bool = False):
+    """quantize_mxu's (rows, scale rows) of a [., K] matrix grouped for a machine of wg lanes:
+    (data [ceil(N/R), grp_row_bytes], scale areas [ceil(N/R), grp_scale_bytes]); wg = 1: as
+    given. `at`: the data's DRAM address on a machine with the channel hash (Config.CHASH): its
+    lanes as stored there (hash_rows); None: group_rows' order. kt: in MM KT's pairs (data
+    [ceil(G / 2), kt_pair_bytes]: kt_rows, kt_scales; the matrix's K ends in the first half of
+    its last D-block, kt_fits)."""
+    if wg == 1:
+        if kt:
+            raise ValueError("grouped: KT's pairs are of groups (wg > 1)")
+        return q, s
+    d, sc = group_rows(q, wg, D, fmt, K), group_scales(s, fmt, K, wg, D)
+    if kt:
+        d, sc = kt_rows(d, wg, D), kt_scales(sc, fmt, K // D, wg)
+    return (d if at is None else hash_rows(d, at, wg, D)), sc
+
+
+def kt_fits(k: int, D: int = 128) -> bool:
+    """A matrix whose own K (k columns, before an image pads it to whole D-blocks) ends in the
+    first half of its last D-block: the rest of that block is zero, MM KT's pairs hold it
+    (docs/isa.md "K tail")."""
+    return 0 < k % D <= D // 2
+
+
+def kt_pair_bytes(K: int, fmt: str, D: int = 128, wg: int = 1) -> int:
+    """The pair stride of a [., K] matrix in MM KT's pairs: two groups' chunks but one, (2 KB -
+    1) P (P = wg x D; docs/isa.md "K tail")."""
+    return 2 * grp_row_bytes(K, fmt, D, wg) - wg * D
+
+
+def kt_rows(data: np.ndarray, wg: int, D: int = 128) -> np.ndarray:
+    """A grouped matrix's bytes [G, KB P] (group_rows'; P = wg x D) whose K ends in the middle
+    of its last K-block (every lane's bytes D/2 .. D-1 of chunk KB-1 zero) -> MM KT's pairs
+    [ceil(G / 2), (2 KB - 1) P] (docs/isa.md "K tail"): pair p is group 2p's chunks 0 .. KB-2,
+    the tail chunk (lane l: group 2p's half block, then group 2p + 1's), group 2p + 1's chunks
+    0 .. KB-2; an odd G's last pair has group 2p alone (its tail's upper halves 0, then zeros).
+    One chunk a pair less than the groups': the half blocks of zeros are not streamed."""
+    data = np.asarray(data, np.uint8)
+    P, G = wg * D, data.shape[0]
+    KB = data.shape[1] // P
+    c = np.zeros((2 * -(-G // 2), KB, wg, D), np.uint8)
+    c[:G] = data.reshape(G, KB, wg, D)
+    if np.any(c[:, KB - 1, :, D // 2:]):
+        raise ValueError("kt_rows: the last K-block's upper halves are not zero")
+    ev, od = c[0::2], c[1::2]
+    t = np.concatenate([ev[:, KB - 1, :, :D // 2], od[:, KB - 1, :, :D // 2]], -1)
+    return np.concatenate([ev[:, :KB - 1], t[:, None], od[:, :KB - 1]], 1).reshape(len(ev), -1)
+
+
+def kt_scales(areas: np.ndarray, fmt: str, KB: int, wg: int, rsc: bool = False) -> np.ndarray:
+    """Grouped scale areas [G, .] (group_scales', KB blocks' entries) -> MM KT's (docs/isa.md "K
+    tail"): an odd group's entries in the order it takes its chunks, the tail block's first
+    (int4 / fp4: its sub-blocks 0 and 1's multipliers also at 2 and 3, the half that meets its
+    swapped activation), then blocks 0 .. KB-2; the even groups' as they are."""
+    areas = np.array(areas, np.uint8)
+    if rsc or len(areas) < 2:
+        return areas
+    R = grp_r(fmt, wg)
+    p, sb = swp(fmt, R), SCALE_DATA[fmt]
+    e = areas[1::2, p:p + KB * R * sb].reshape(-1, KB, R, sb)
+    tail = e[:, KB - 1:].copy()
+    if fmt in ("int4", "fp4"):
+        w = tail.view("<u4")
+        w[:] = (w & 0xFFFFF) | (((w >> 8) & 0xFFF) << 20)
+    elif fmt != "int8":
+        raise ValueError(f"kt_scales: {fmt} has no K tail")
+    areas[1::2, p:p + KB * R * sb] = np.concatenate([tail, e[:, :KB - 1]], 1).reshape(len(e), -1)
+    return areas
+
+
+def quantize_grouped(W: np.ndarray, fmt: str, wg: int, D: int = 128, at: int | None = None):
+    """W [N, K] in an MXU format, grouped for wg lanes (grouped(quantize_mxu(W)), `at` its)."""
+    return grouped(*quantize_mxu(W, fmt, D), fmt, W.shape[1], wg, D, at)
+
+
+def grp_bytes(N: int, K: int, fmt: str, D: int = 128, wg: int = 1, kt: bool = False) -> tuple:
+    """(data, scale) bytes of an [N, K] matrix grouped for wg lanes (wg = 1: N rows' row_bytes
+    and scale_bytes); kt: its data in MM KT's pairs (whole pairs, grouped's)."""
+    G = -(-N // grp_r(fmt, wg))
+    d = -(-G // 2) * kt_pair_bytes(K, fmt, D, wg) if kt else G * grp_row_bytes(K, fmt, D, wg)
+    return d, G * grp_scale_bytes(K, fmt, D, wg)
 
 
 # =============================================================================== emulation
@@ -723,6 +1023,22 @@ def fake_act(x, D: int = 128, n: int | None = None, row: bool = False,
     return out
 
 
+def fake_act_gathered(x, D: int = 128, C: int | None = None, S: int = 1):
+    """A down projection's input x [..., S F'] quantized as kernels.mlp.swiglu_down's QACTs on S
+    slices (fake_act): chunk c of every slice's F' (gather_order: S C columns) one range; C None:
+    the whole row. S = 1: fake_act's ranges of C."""
+    if C is None or S == 1:
+        return fake_act(x, D, C)
+    g = D // NVG                                                # da: an offset per D/8
+    if C % g:
+        raise ValueError(f"fake_act_gathered: chunks of {C} are not whole groups of {g}")
+    x = np.asarray(x, np.float64)
+    order = gather_order(x.shape[-1], C, S)
+    a = fake_act(x[..., order], D, S * C)
+    return MXAct.of(np.asarray(a).view(np.ndarray)[..., np.argsort(order)],
+                    a.da[..., np.argsort(order[::g] // g)])
+
+
 def mx_matmul(h, w: np.ndarray, dw: np.ndarray | None = None, W: int = 16,
               D: int = 128) -> np.ndarray:
     """h @ w.T (float64) as MM sums it: w [N, K] the streamed matrix's values with its groups'
@@ -765,7 +1081,7 @@ def _pow2_f32(e: np.ndarray, what: str) -> np.ndarray:
     return np.ldexp(np.ones(e.shape, np.float32), e.astype(np.int32)).astype(np.float32)
 
 
-def import_mxfp4(codes: np.ndarray, e8m0: np.ndarray, D: int = 128):
+def import_mxfp4(codes: np.ndarray, e8m0: np.ndarray, D: int = 128, want: str | None = None):
     """An OCP MXFP4 matrix (E2M1 element codes [N, K], 0..15 with the sign in bit 3; an E8M0
     scale per 32 elements [N, K / 32], value 2^(e - 127) E2M1) in an MXU format, exactly:
     (rows, scale rows, format). fp4 (fp4x6) when every K-block's sub-blocks' exponents span at
@@ -774,7 +1090,8 @@ def import_mxfp4(codes: np.ndarray, e8m0: np.ndarray, D: int = 128):
     mantissa 0, subnormals 1, 2, 4 at the bottom) when every row's exponents span at most 17;
     else NotExact. Sub-blocks of zeros have any exponent. MM's window then drops what lies more
     than W below the row's top (fp4 11, nvfp4 13 octaves with the activations' offsets; the
-    representation itself is exact)."""
+    representation itself is exact). want "fp4" / "nvfp4": that format or NotExact (a matrix
+    that fp4 holds in nvfp4: a slot format of a model's experts)."""
     codes = np.asarray(codes, np.uint8)
     e = np.asarray(e8m0, np.int64)
     N, K = codes.shape
@@ -792,7 +1109,9 @@ def import_mxfp4(codes: np.ndarray, e8m0: np.ndarray, D: int = 128):
     blive = lv.any(-1)
     rows = np.zeros((N, row_bytes(K, "fp4", D)), np.uint8)
     rows[:, :K // 2] = pack4(codes)
-    if np.all(np.where(blive, emax - emin, 0) <= 5):
+    if want not in (None, "fp4", "nvfp4"):
+        raise ValueError(f"MXFP4 into {want!r}: fp4 or nvfp4")
+    if want != "nvfp4" and np.all(np.where(blive, emax - emin, 0) <= 5):
         top = np.where(blive, emin, small).max(-1)                      # [N]
         top = np.where(top == small, 129, top)                          # an all-zero row
         dw = np.where(blive, top[:, None] - emin, 0)
@@ -801,6 +1120,8 @@ def import_mxfp4(codes: np.ndarray, e8m0: np.ndarray, D: int = 128):
         m = np.where(lv, np.exp2(eb - np.where(blive, emin, 0)[..., None]), 1).astype(np.uint8)
         Sw = _pow2_f32(top - 128, "MXFP4")                              # codes are 2x E2M1
         return rows, pack_scales("fp4", Sw, dw=dw.astype(np.uint8), m=m), "fp4"
+    if want == "fp4":
+        raise NotExact("MXFP4: a K-block's exponents span more than fp4's 5 octaves")
     top = np.where(live, e, small).max(-1)                              # [N]
     span = np.where(live, top[:, None] - e, 0)
     if np.any(span > 17):

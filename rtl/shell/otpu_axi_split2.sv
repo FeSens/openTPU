@@ -350,39 +350,42 @@ endmodule
 // their order, the write data its write-command order, the read data its command order (no
 // backpressure, one cycle later); n_wdone comes a cycle late, so the adapter's WR_IDLE does too
 // (it counts a write taken here, and waits for the controller's count). In reset it holds nothing.
-module otpu_native_reg (
+module otpu_native_reg #(
+  parameter int CB  = 64,              // beat bytes and beat address bits (otpu_native_dram's;
+  parameter int CAW = 25               //   the card's 64 and 25)
+) (
   input  logic         clk,
   input  logic         rst,
   // the adapter's side
   input  logic         s_cvalid,
   output logic         s_cready,
   input  logic         s_cwe,
-  input  logic [24:0]  s_caddr,
+  input  logic [CAW-1:0] s_caddr,
   input  logic         s_wvalid,
   output logic         s_wready,
-  input  logic [511:0] s_wdata,
-  input  logic [63:0]  s_wmask,
+  input  logic [CB*8-1:0] s_wdata,
+  input  logic [CB-1:0] s_wmask,
   output logic         s_rvalid,
-  output logic [511:0] s_rdata,
+  output logic [CB*8-1:0] s_rdata,
   output logic [15:0]  s_wdone,
   output logic         s_err,
   // the channel's side (otpu_mem_ch, the memory model)
   output logic         m_cvalid,
   input  logic         m_cready,
   output logic         m_cwe,
-  output logic [24:0]  m_caddr,
+  output logic [CAW-1:0] m_caddr,
   output logic         m_wvalid,
   input  logic         m_wready,
-  output logic [511:0] m_wdata,
-  output logic [63:0]  m_wmask,
+  output logic [CB*8-1:0] m_wdata,
+  output logic [CB-1:0] m_wmask,
   input  logic         m_rvalid,
-  input  logic [511:0] m_rdata,
+  input  logic [CB*8-1:0] m_rdata,
   input  logic [15:0]  m_wdone,
   input  logic         m_err
 );
-  otpu_skid #(.W(26)) u_cmd (.clk, .rst, .s_valid(s_cvalid), .s_ready(s_cready),
+  otpu_skid #(.W(CAW + 1)) u_cmd (.clk, .rst, .s_valid(s_cvalid), .s_ready(s_cready),
     .s_data({s_cwe, s_caddr}), .m_valid(m_cvalid), .m_ready(m_cready), .m_data({m_cwe, m_caddr}));
-  otpu_skid #(.W(576)) u_wd (.clk, .rst, .s_valid(s_wvalid), .s_ready(s_wready),
+  otpu_skid #(.W(CB * 9)) u_wd (.clk, .rst, .s_valid(s_wvalid), .s_ready(s_wready),
     .s_data({s_wmask, s_wdata}), .m_valid(m_wvalid), .m_ready(m_wready),
     .m_data({m_wmask, m_wdata}));
   always_ff @(posedge clk) begin

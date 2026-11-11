@@ -19,8 +19,8 @@ the attention's rows packed MCOLS / G to an MM (K / V streamed once per group of
 
 --mem ldc: the card's memory path (LiteDRAM's controllers co-simulated, DDR3-1066, the core at
 133.33 MHz); --mem port: the board's adapter in front of a memory at the core port's full rate
-(one 128-byte chunk a cycle on two channels, --lat cycles of latency): the BCU1525's DDR4 or the
-F2's HBM, whose bandwidth exceeds what one slice's port takes.
+(one 128-byte chunk a cycle on two channels, --lat cycles of latency): the BCU1525's DDR4, whose
+bandwidth exceeds what one slice's port takes.
 
 The images are zeros (timing does not depend on the data). One JSON line per run: cycles,
 cycles per row, the core-port roofline (port-B chunks, the MXU's own cycles), and with

@@ -24,6 +24,11 @@ layout and key (moe.pool_key: the MXU's numerics, the quantizer's code, the form
 layout, the checkpoint; a pool of the MXU before MX is refused), and hold every expert unless
 the checkpoint has the experts to pack the rest. `create=True` (moe_card's) makes a missing pool
 and packs each expert on its first use instead.
+
+Above AW 32 (bcu1525-wg's 32 GiB) a model whose every expert fits the DRAM beside the rest has
+them all in it, from 4 GiB on: the image's resident pool (qwen35.Image.pool, expert g at its
+base + g x its bytes), built from the checkpoint with the image; no pool file, no server, no
+expert-major runs (the layer-major prompt's runs read the pool).
 """
 from __future__ import annotations
 
@@ -86,18 +91,33 @@ def em_rows_of(spec) -> int:
     return EM_ROWS.get(_family(spec), 0)
 
 
-def probe(spec, cfg, cap: int, experts: int | None = None, rows: int = 1, **kw):
+def probe(spec, cfg, cap: int, experts: int | None = None, rows: int = 1, batch: int = 1,
+          **kw):
     """The image's layout alone (a DRAM too large to fill, no weights): its offload layout and
-    expert format, the pool's key, the slots that fit. rows: the image's (an MTP image's 2)."""
-    return spec.image(replace(cfg, DRAM_BYTES=1 << 40), cap, 1, rows,
+    expert format, the pool's key, the slots that fit. rows: the image's (an MTP image's 2);
+    batch: its sequences (Engine's, at least as many rows)."""
+    return spec.image(replace(cfg, DRAM_BYTES=1 << 40), cap, batch, max(rows, batch),
                       experts=spec.moe.k if experts is None else experts, **kw)
 
 
 def fit_experts(spec, cfg, cap: int, image=None, **kw) -> int:
     """The expert slots per MoE layer that fill the card's DRAM beside the rest of the image
-    (image: its probe, if made already)."""
+    (image: its probe, if made already). Above AW 32 the slots are below 4 GiB (beside the
+    run-time areas: qwen3.LOW_ROOM) unless every expert fits the DRAM (E: a resident pool)."""
+    from opentpu.llm.qwen3 import HIGH, LOW_ROOM
     L = (image or probe(spec, cfg, cap, **kw)).offload
-    return min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.pitch))
+    n = min(spec.moe.E, (cfg.DRAM_BYTES - L.slots[0][0]) // (L.layers * L.pitch))
+    if cfg.AW > 32 and n < spec.moe.E:
+        n = min(n, (HIGH - LOW_ROOM - L.slots[0][0]) // (L.layers * L.pitch))
+    return n
+
+
+def resident_pool(spec, cfg, cap: int, experts: int, **kw) -> bool:
+    """Whether the image of `experts` slots a layer holds every expert from 4 GiB on (AW > 32:
+    qwen35.Image.pool) instead of slots the server fills."""
+    if cfg.AW <= 32 or experts < spec.moe.E:
+        return False
+    return getattr(probe(spec, cfg, cap, experts=experts, **kw), "pool", None) is not None
 
 
 def expert_major_fits(spec, image, experts: int) -> bool:
@@ -107,9 +127,10 @@ def expert_major_fits(spec, image, experts: int) -> bool:
     prefill rows, a record each) must be at least 3 E. The card's: 35B 1720 - 26 at chat's KV
     capacity (1680 - 26 at moe_card's) against 768, 26B 540 - 17 against 384; a tiny test
     model's 2 slots a layer are not (12 - 20 against 24)."""
-    from opentpu.llm.moe import em_record
+    from opentpu.llm.moe import em_qd, em_record
     L = image.offload
-    scratch = -(-image.prefill_rows * em_record(spec.hidden, spec.moe.k) // L.pitch)
+    D = em_qd(image.cfg) if getattr(image, "cfg", None) is not None else 0
+    scratch = -(-image.prefill_rows * em_record(spec.hidden, spec.moe.k, D) // L.pitch)
     return L.layers * experts - scratch >= 3 * L.E
 
 
@@ -204,7 +225,8 @@ def engine(model, cfg, backend="isa", cap: int = 4096, pool=None, experts: int =
     Qwen3.5-35B-A3B's, docs/offload.md 15.6). vision_staged: MiniCPM-V's Spec.vision_staged
     (None: the Spec's); vision_warm: its tower programs' wait entries computed ahead in a
     background process (opentpu/host/vision_warm.py; the engine's `vision_warm`, the process or
-    None). kw: Engine's own."""
+    None). kw: Engine's own (batch: the image's sequences, each its KV and state slots,
+    opentpu/llm/batch35.py)."""
     from opentpu.llm import load_spec
     from opentpu.llm.qwen3 import Engine, LazyWeights
     if idle_parts not in IDLE_PARTS:
@@ -226,10 +248,15 @@ def engine(model, cfg, backend="isa", cap: int = 4096, pool=None, experts: int =
     if W is None:
         W = LazyWeights(model, mtp=True, mtp_from=mtp_from) if mtp else LazyWeights(model)
     ekw = {} if embed_host is None else {"embed_host": embed_host}   # (default: the image's)
-    img = probe(spec, cfg, cap, rows=kw.get("rows", 1), wformat=wformat,
-                head_format=head_format, lookup=True, **ekw)
+    lay = dict(rows=kw.get("rows", 1), batch=kw.get("batch", 1))
+    img = probe(spec, cfg, cap, wformat=wformat, head_format=head_format, lookup=True, **lay,
+                **ekw)
     if not experts:
         experts = fit_experts(spec, cfg, cap, img)
+    resident = resident_pool(spec, cfg, cap, experts, wformat=wformat, head_format=head_format,
+                             lookup=True, **lay, **ekw)
+    if resident:                                # (every expert in the image: no pool file)
+        pool, expert_major, layer_ahead = None, False, None
     if pool == DEFAULT:
         pool = default_pool(model, img.fmt.wformat, mtp)
     if pool is not None and not (create and not Path(pool).exists()):
@@ -257,6 +284,16 @@ def engine(model, cfg, backend="isa", cap: int = 4096, pool=None, experts: int =
     if eng.expert_major and em_rows:            # (a short call layer-major: 13.16)
         gate_expert_major(eng, em_rows)
     srv = eng.server
+    if srv is not None:                         # (a resident pool has none)
+        _serve(eng, srv, pooled, ahead_part, policy, idle_parts, willneed)
+    if vision_warm:                             # (MiniCPM-V on a WAITC card: ~23 s a new crop
+        from opentpu.host import vision_warm as VW      # size's first run, docs/minicpmv.md 6)
+        eng.vision_warm = VW.start(eng)
+    return eng
+
+
+def _serve(eng, srv, pooled, ahead_part, policy, idle_parts, willneed) -> None:
+    """engine()'s settings of the expert server."""
     if eng.layer_ahead and not (pooled and hasattr(srv, "ahead_layer")):
         raise ValueError("layer_ahead needs pooled slots and a server that streams ahead "
                          "(ExpertServer.ahead_layer)")
@@ -270,10 +307,6 @@ def engine(model, cfg, backend="isa", cap: int = 4096, pool=None, experts: int =
     pf = getattr(srv, "pool_file", None)
     if willneed and pf is not None:             # a request's misses read from the disk at once
         srv.ahead = pf.willneed
-    if vision_warm:                             # (MiniCPM-V on a WAITC card: ~23 s a new crop
-        from opentpu.host import vision_warm as VW      # size's first run, docs/minicpmv.md 6)
-        eng.vision_warm = VW.start(eng)
-    return eng
 
 
 def gate_expert_major(eng, rows: int) -> None:
@@ -334,7 +367,12 @@ def counters(eng) -> dict | None:
 
 def describe(eng, pool=None) -> str:
     """The streaming in words, as otpu-chat shows it: "1680 slots of 10240 experts (16%),
-    1.67 MB each; pool <path>"."""
+    1.67 MB each; pool <path>"; a resident pool's: "every one of 10240 experts resident from
+    4 GiB, 1.69 MB each"."""
+    P = getattr(eng.image, "pool", None)
+    if P is not None:
+        return (f"every one of {P.experts} experts resident from {P.base >> 30} GiB, "
+                f"{P.ebytes / 1e6:.2f} MB each")
     L = eng.image.offload
     n, slots = L.layers * L.E, sum(s for _, s in L.slots)
     s = f"{slots} slots of {n} experts ({100 * slots / n:.0f}%), {L.slot_bytes / 1e6:.2f} MB each"

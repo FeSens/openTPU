@@ -4,7 +4,7 @@
 A record is [63:60] type, [59:0] payload; the cycle fields are the slice's cycle counter (the
 `c=` of the trace lines), low 32 bits:
 
-    1 D  [55:52] slot, [47:32] pc, [31:0] cycle; two O records follow
+    1 D  [55:52] slot ([56:52] at a window of 32), [47:32] pc, [31:0] cycle; two O records follow
     9 O  [52] half, [51:0] that half of {op[7:0], w3, w2, w1} (half 0 first)
     2 S  [55:52] slot, [51:48] unit, [47:32] cycle - ready cycle, [31:0] cycle; 0xFFFF in the
          delay field: an R record follows
@@ -70,7 +70,7 @@ def records_to_trace(records, sid: int = 0) -> str:
         r = records[i]
         t = _typ(r)
         cyc = r & 0xFFFF_FFFF
-        slot = (r >> 52) & 0xF
+        slot = (r >> 52) & 0x1F                 # (bit 56: 0 at a window of 16)
         if t == T_D:
             o = records[i + 1:i + 3]
             if len(o) == 2 and all(_typ(x) == T_O and (x >> 52) & 1 == h for h, x in enumerate(o)):

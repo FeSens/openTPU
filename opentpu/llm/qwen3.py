@@ -21,8 +21,10 @@ exact integer (docs/mx_mxu.md). The residual stream, norms, RoPE and softmax are
 """
 from __future__ import annotations
 
+import inspect
 import json
 import math
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,14 +40,15 @@ from .. import qcache as QC
 from .. import quant as Q
 from .. import waits as WC
 from .. import language as ol
-from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, RunVar, Tensor, arg_words,
-                        Words, current, k_scale_bytes, trace_fit)
+from ..compiler import (Affine, CompileError, DevVar, KVDesc, QTensor, RunVar, Stationary, Tensor,
+                        arg_words, Words, current, gall_wg, k_scale_bytes, mul_bound, trace_fit,
+                        vt_tile)
 from . import formats as FM
 from . import generate as G
 from . import rope_parameters
 from . import snapshot as SN
-from ..isasim import Config, Machine, design_config
-from ..kernels.attention import Additive, Bucket, _attend_heads
+from ..isasim import DRAM_FILE_MIN, Config, Machine, design_config
+from ..kernels.attention import SPAN_P, Additive, Bucket, RunSpan, _attend_heads, variants_ahead
 from ..kernels.layouts import head_parallel_attention_weights
 from ..host.offload import BackendDram, RowLayout, RowServer
 from ..kernels import mailbox as MB
@@ -131,9 +134,9 @@ class Spec:
     def image(self, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
               wformat: str = "int8", head_format: str | None = None,
               lookup: bool = False, embed_host: bool | None = None,
-              formats: str | None = None) -> "Image":
-        return Image(self, cfg, cap, batch, rows, wformat, head_format, lookup, embed_host,
-                     formats)
+              formats: str | None = None, high: bool | None = None) -> "Image":
+        return fit_high(lambda h: Image(self, cfg, cap, batch, rows, wformat, head_format,
+                                        lookup, embed_host, formats, h), cfg, high)
 
 
 def finite(v: np.ndarray, name: str) -> np.ndarray:
@@ -235,12 +238,16 @@ def load_weights(model_dir, mtp: bool = False) -> Weights:
     loaded, under the names of a text-only one (model.language_model.* -> model.*): not the
     vision tower and projector (VISION), nor the multi-token prediction layers (mtp.*) unless
     `mtp` (Qwen3.5's drafter,
-    opentpu/llm/mtp.py). Gemma 4: gemma4.load_weights (its PLE table read by rows)."""
+    opentpu/llm/mtp.py). Gemma 4: gemma4.load_weights (its PLE table read by rows). GPT-OSS:
+    gptoss.load_weights (its experts' MXFP4 blocks and scales as stored)."""
     cfg = Path(model_dir) / "config.json"
-    if cfg.exists() and json.loads(cfg.read_text()).get("model_type") in ("gemma4",
-                                                                          "gemma4_text"):
+    kind = json.loads(cfg.read_text()).get("model_type") if cfg.exists() else None
+    if kind in ("gemma4", "gemma4_text"):
         from .gemma4 import load_weights as gemma4_weights
         return gemma4_weights(model_dir)
+    if kind == "gpt_oss":
+        from .gptoss import load_weights as gptoss_weights
+        return gptoss_weights(model_dir)
     return Weights(model_dir, mtp)
 
 
@@ -385,19 +392,25 @@ def qk_gains(spec: Spec, W, p: str) -> tuple[np.ndarray, np.ndarray]:
 def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
                   head: tuple | None = None, M: int = 4, embed_host: bool = False,
                   rows: int = 1, imem: int = 1 << 15, masks: bool = False,
-                  waitc: bool = False) -> dict:
+                  waitc: bool = False, S: int = 1, wg: int = 1, chash: bool = False,
+                  mask_blocks: int = 1) -> dict:
     """DRAM for the device-side inputs of a run-time position (RunPos): every token's embedding
     row, the RoPE cos / sin rows of every position, and the attention mask table
-    (attention.Bucket: cap entries +inf, then a block of -inf). The embedding rows are fp32
+    (attention.Bucket: cap entries +inf, then a block of -inf; mask_blocks blocks of it: an
+    image of several sequences, whose one step over slots masks whole groups, RunSpan). The embedding rows are fp32
     (flushed, as the host writes them), or with spec.embed "int8" the MXU's int8 rows and their
     gather scales, an fp32 per D block (kernels.gather.gather_row, with its one-hot operand for
     M MXU columns): the LM head's rows when `head` (its data and scale addresses) is given -- a
     tied int8 head whole on one slice; its gather scales beside its scale rows -- else a table
-    of their own, or with `embed_host` a slot of `rows` of them that the host fills from the
+    of their own (on S > 1 slices split by columns: slice s holds columns s of H / S of every
+    row, a whole number of D blocks, with their gather scales, and the gathered parts are
+    all-gathered, _gather: no slice holds the table whole), or with `embed_host` a slot of
+    `rows` of them that the host fills from the
     table it keeps (embed_record: each row's int8 data, then its gather scales) and a mailbox
-    for the generate loop's requests (opentpu.host.offload.RowLayout). A dense model's image
-    also holds the prompt runs' additive mask tiles (amask_table); a MoE model's with `masks` (its
-    tiled layer runs: tiled.compile_layer_tile)."""
+    for the generate loop's requests (opentpu.host.offload.RowLayout). wg: the gathers' groups
+    (language.gall_wg: kernels.gather.table_bytes' rows; chash: their lanes hashed). A dense
+    model's image also holds the prompt runs' additive mask tiles (amask_table); a MoE model's
+    with `masks` (its tiled layer runs: tiled.compile_layer_tile)."""
     block = block or ATTN_BLOCK
     half = len(rope_tables(spec, 0)[0])
     V, H = spec.vocab, spec.hidden
@@ -409,21 +422,24 @@ def _lookup_alloc(b: "_Bump", spec, cap: int, block: int = None, D: int = 128,
             emb = {"embed_q": (head[0], b.alloc(V * Q.gather_scale_bytes(H, "int8", D))),
                    "own": False, "head_gsc": True}
         elif embed_host:
-            rec = embed_record(H, D)
+            rec = embed_record(H, D, wg)
             slot = b.alloc(rows * rec)
-            emb = {"embed_q": (slot, slot + H), "own": False, "host": True, "rec": rec,
-                   "rows": rows, "mbox": b.alloc(RowLayout.WORDS)}
+            emb = {"embed_q": (slot, slot + GA.table_bytes(H, "int8", D, wg)[0]), "own": False,
+                   "host": True, "rec": rec, "rows": rows, "mbox": b.alloc(RowLayout.WORDS)}
         else:
-            emb = {"embed_q": (b.alloc(V * H), b.alloc(V * Q.gather_scale_bytes(H, "int8", D))),
-                   "own": True}
-        emb.update(onehot=b.alloc(4 * M * onehot_blocks(D, M, "int8") * D), M=M)
+            n = S if S > 1 and H % (S * D) == 0 else 1  # (the columns a slice holds: H / n)
+            rs, srs = GA.table_bytes(H // n, "int8", D, wg)
+            emb = {"embed_q": (b.alloc(V * rs), b.alloc(V * srs)), "own": True, "split": n}
+        emb.update(onehot=b.alloc(4 * M * onehot_blocks(D, M, "int8") * D), M=M, wg=wg,
+                   chash=chash)
     else:
         emb = {"embed": b.alloc(4 * V * H)}
     if masks or (getattr(spec, "moe", None) is None and not getattr(spec, "experts", 0)):
         emb.update(amask=b.alloc(amask_bytes(block, M)), amask_M=M)
     return {**emb, "cos_t": b.alloc(4 * cap * half), "sin_t": b.alloc(4 * cap * half),
-            "zmask": b.alloc(4 * (cap + block)), "half": half, "block": block, "D": D,
-            "gen": G.alloc(b, spec, cap, block, imem, waitc)}
+            "zmask": b.alloc(4 * (cap + mask_blocks * block)), "half": half, "block": block,
+            "D": D, "gen": G.alloc(b, spec, cap, block, imem, waitc),
+            **({"mask_blocks": mask_blocks} if mask_blocks > 1 else {})}
 
 
 def amask_bytes(block: int, M: int, tables: int = 1) -> int:
@@ -473,8 +489,8 @@ def put_head(img, W, qb, put, put_q, rows) -> None:
 
 def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
     cs = [rope_tables(spec, p) for p in range(cap)]
-    z = np.concatenate([np.full(cap, np.inf, np.float32), np.full(lk["block"], -np.inf,
-                                                                  np.float32)])
+    z = np.concatenate([np.full(cap, np.inf, np.float32),
+                        np.full(lk.get("mask_blocks", 1) * lk["block"], -np.inf, np.float32)])
     if "embed" in lk:
         e = F.ftz(np.asarray(W["model.embed_tokens.weight"], np.float32))
     elif lk["own"]:
@@ -482,13 +498,18 @@ def _lookup_build(put, S: int, W: dict, spec, cap: int, lk: dict) -> None:
         eq, es = Q.quantize_mxu(tab, "int8", lk["D"])
         es = Q.gather_scales(es, "int8", tab.shape[1], lk["D"])
     elif lk.get("host"):                    # the host's table, in the slot's record format
-        lk["store"] = embed_store(W["model.embed_tokens.weight"], lk["D"])
+        lk["store"] = embed_store(W["model.embed_tokens.weight"], lk["D"], lk.get("wg", 1))
     for s in range(S):
         if "embed" in lk:
             put(s, lk["embed"], e)
-        elif lk["own"]:
-            put(s, lk["embed_q"][0], eq)
-            put(s, lk["embed_q"][1], es)
+        elif lk["own"]:                     # (split: this slice's columns, its blocks' scales)
+            n, wg = lk.get("split", 1), lk.get("wg", 1)
+            q, g = (np.hsplit(eq, n)[s], np.hsplit(es, n)[s]) if n > 1 else (eq, es)
+            if wg > 1:                      # (rows of whole chunks, hashed: the gathers' groups)
+                q, g = GA.pack_table(q, g, "int8", lk["D"], wg,
+                                     lk["embed_q"][0] if lk.get("chash") else None)
+            put(s, lk["embed_q"][0], q)
+            put(s, lk["embed_q"][1], g)
         put(s, lk["cos_t"], np.stack([c for c, _ in cs]))
         put(s, lk["sin_t"], np.stack([x for _, x in cs]))
         put(s, lk["zmask"], z)
@@ -512,8 +533,11 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
                                lk["rec"], lk["D"], wf=Q.mxu_wf("int8"))
         d["embed_mbox"] = mbox = lk["mbox"]
         d["post_token"] = lambda tok: MB.post(mbox, tok)    # the generate loop's request
-    else:                       # the table's rows and their gather scales (kernels.gather)
-        d["embed_q"] = GA.table(*lk["embed_q"], spec.vocab, spec.hidden, "int8", lk["D"])
+    else:                       # the table's rows and their gather scales (kernels.gather;
+        n = lk.get("split", 1)  # split: this slice's columns of them)
+        d["embed_q"] = GA.table(*lk["embed_q"], spec.vocab, spec.hidden // n, "int8", lk["D"],
+                                lk.get("wg", 1))
+        d["embed_split"] = n > 1
     if "embed" not in lk:
         M, D = lk["M"], lk["D"]
         d["onehot"] = _tdesc(lk["onehot"], (M, onehot_blocks(D, M, "int8") * D))
@@ -521,24 +545,44 @@ def _lookup_desc(lk: dict, spec, cap: int) -> dict:
     return d
 
 
-def embed_record(H: int, D: int) -> int:
+def embed_record(H: int, D: int, wg: int = 1) -> int:
     """Bytes of one int8 embedding row in a host-filled slot (embed_host): its H int8 values
     (the MXU's int8, quant.quantize_mxu), then its gather scales (an fp32 per D block,
-    quant.gather_scales), whole MXU chunks."""
-    return -(-(H + Q.gather_scale_bytes(H, "int8", D)) // ALIGN) * ALIGN
+    quant.gather_scales), whole MXU chunks; with the gathers in groups (wg > 1) the values and
+    the record whole wg x D chunks (kernels.gather.table_bytes)."""
+    unit = ALIGN if wg == 1 else wg * D
+    nd = GA.table_bytes(H, "int8", D, wg)[0]
+    return -(-(nd + Q.gather_scale_bytes(H, "int8", D)) // unit) * unit
 
 
-def embed_store(table, D: int) -> np.ndarray:
+def embed_store(table, D: int, wg: int = 1) -> np.ndarray:
     """The int8 embedding table [V, H] the host keeps (embed_host), in the slot's record format
-    (embed_record): [V, record bytes] uint8, quantized as the on-card table would be."""
+    (embed_record): [V, record bytes] uint8, quantized as the on-card table would be (with the
+    channel hash the lanes as stored: embed_rows hashes them by their slot row)."""
     V, H = table.shape
-    out = np.zeros((V, embed_record(H, D)), np.uint8)
-    gb = Q.gather_scale_bytes(H, "int8", D)
+    out = np.zeros((V, embed_record(H, D, wg)), np.uint8)
+    gb, nd = Q.gather_scale_bytes(H, "int8", D), GA.table_bytes(H, "int8", D, wg)[0]
     for r0 in range(0, V, Q.QUANT_ROWS):
         q, sc = Q.quantize_mxu(np.asarray(table[r0:r0 + Q.QUANT_ROWS], np.float32), "int8", D)
         n = len(q)
         out[r0:r0 + n, :H] = np.asarray(q).view(np.uint8).reshape(n, H)
-        out[r0:r0 + n, H:H + gb] = Q.gather_scales(sc, "int8", H, D).view(np.uint8).reshape(n, gb)
+        out[r0:r0 + n, nd:nd + gb] = Q.gather_scales(sc, "int8", H, D).view(np.uint8).reshape(
+            n, gb)
+    return out
+
+
+def embed_rows(lk: dict, recs: np.ndarray, row: int = 0) -> np.ndarray:
+    """Records [n, rec] (embed_store's) as the slot stores them from slot row `row` on: on a
+    machine with the channel hash and the gathers in groups each record's values' lanes by
+    their address (quant.hash_rows), else as they are."""
+    wg = lk.get("wg", 1)
+    if wg == 1 or not lk.get("chash"):
+        return recs
+    out = np.array(recs, np.uint8).reshape(-1, lk["rec"])
+    slot, D = lk["embed_q"][0], lk["D"]
+    nd = lk["embed_q"][1] - slot            # (the values' bytes, whole chunks)
+    for r in range(len(out)):
+        out[r, :nd] = Q.hash_rows(out[r, :nd], slot + (row + r) * lk["rec"], wg, D)
     return out
 
 
@@ -560,7 +604,8 @@ class EmbedHost:
         lk = self.lookup
         if len(tokens) > lk["rows"]:
             raise ValueError(f"{len(tokens)} tokens, the embedding slot holds {lk['rows']}")
-        return [(lk["embed_q"][0], lk["store"][[int(t) for t in tokens]].reshape(-1))]
+        return [(lk["embed_q"][0],
+                 embed_rows(lk, lk["store"][[int(t) for t in tokens]]).reshape(-1))]
 
     def row_server(self, backend) -> RowServer | None:
         """The host's server of the generate loop's requests, on the backend's DRAM (the
@@ -571,7 +616,7 @@ class EmbedHost:
         lk = self.lookup
         return RowServer(BackendDram(backend), RowLayout(lk["mbox"], lk["embed_q"][0],
                                                          lk["rec"]),
-                         lambda t: lk["store"][t])
+                         lambda t: embed_rows(lk, lk["store"][t][None])[0])
 
 
 class Embedding:
@@ -850,8 +895,8 @@ def emulated_logits(spec: Spec, W: dict, tokens, D: int = 128, wformat: str = "i
             h = _fake_q(norm(x, W[p + "post_attention_layernorm.weight"]), D)
             g = w(p + "mlp.gate_proj.weight") @ h
             u = w(p + "mlp.up_proj.weight") @ h
-            x = x + w(p + "mlp.down_proj.weight") @ _fake_q((g / (1 + np.exp(-g))) * u, D,
-                                                             chunk(i))
+            x = x + w(p + "mlp.down_proj.weight") @ Q.fake_act_gathered(
+                (g / (1 + np.exp(-g))) * u, D, chunk(i), S)
         out.append(w(head) @ _fake_q(norm(x, W["model.norm.weight"]), D))
     return np.array(out)
 
@@ -864,17 +909,139 @@ ATTN_DEPTH = 3
 
 
 class _Bump:
-    def __init__(self, start: int = 0):
-        self.next = start
+    """Allocations at multiples of `align` (an image's: _align(cfg))."""
+
+    def __init__(self, start: int = 0, align: int = ALIGN):
+        self.next, self.align = start, align
 
     def alloc(self, nbytes: int) -> int:
-        a = self.next
-        self.next = (a + nbytes + ALIGN - 1) // ALIGN * ALIGN
+        a = -(-self.next // self.align) * self.align
+        self.next = (a + nbytes + self.align - 1) // self.align * self.align
         return a
 
 
-def _qdesc(daddr: int, saddr: int, n: int, k: int, D: int, fmt: str = "int8") -> QTensor:
-    return QTensor.weight(daddr, saddr, n, k, fmt, D)
+def _align(cfg: Config) -> int:
+    """An image's allocation unit: whole MXU chunks, and at WG > 1 whole groups' chunks (a
+    grouped matrix's steps are WG x D-byte aligned, docs/isa.md "Weight groups")."""
+    return max(ALIGN, cfg.WG * cfg.D)
+
+
+# An image above AW 32 (docs/isa.md "Address bits"): R0 + w reaches the low 4 GiB, which holds
+# the programs, the run's arguments, the I/O area, the KV caches, the states and the lookup
+# tables; an image that does not fit there beside LOW_ROOM (or OTPU_HIGH=1) has its weights from
+# HIGH on (Image.high), which its programs reach through base registers (docs/compiler.md
+# "Addresses above 4 GiB").
+HIGH = 1 << 32
+LOW_ROOM = 1 << 28                  # the low DRAM an image leaves for the run-time areas past it
+# With the memory's bank-half window (Config.BHW: the slice's first 2^BHW bytes, its lower half on
+# the banks with the DIMMs' bank-high bit 0 and its upper half on the others) an image is always
+# high: its low area in the window's lower half (low_top), what a decode writes, the DeltaNet
+# mixers' weights in its upper half (mixer_base), every other weight from its end on (high_base).
+# At BHW 33 the low area is the 4 GiB it is without the window.
+
+
+def low_top(cfg: Config) -> int:
+    """The end of an Image.high's low area (what R0 + w reaches and a decode writes): HIGH, with
+    the bank-half window its lower half's end."""
+    return 1 << cfg.BHW - 1 if cfg.BHW else HIGH
+
+
+def high_base(cfg: Config) -> int:
+    """Where an Image.high's weights start (with the bank-half window: those but the DeltaNet
+    mixers', past the window)."""
+    return 1 << cfg.BHW if cfg.BHW else HIGH
+
+
+def mixer_base(cfg: Config) -> int | None:
+    """Where the DeltaNet mixers' weights start (the bank-half window's upper half), None
+    without the window (with the other weights)."""
+    return 1 << cfg.BHW - 1 if cfg.BHW else None
+
+
+class LowError(MemoryError):
+    """An image with its weights below HIGH that does not fit there (fit_high: high=True)."""
+
+
+def fit_high(make, cfg: Config, high: bool | None = None):
+    """make(high), an image: `high` as given, else OTPU_HIGH's (1: the weights from HIGH on, 0:
+    below it), else below HIGH where they fit (make raises LowError when not) and from HIGH on
+    where not. At AW 32 the weights are always below (OTPU_HIGH is not read); with the bank-half
+    window (Config.BHW) always out of the low area."""
+    import os
+    if cfg.BHW:
+        return make(True)
+    if cfg.AW <= 32:
+        return make(bool(high))
+    v = os.environ.get("OTPU_HIGH", "")
+    h = high if high is not None else (v != "0") if v else None
+    if h is not None:
+        return make(bool(h))
+    try:
+        return make(False)
+    except LowError:
+        return make(True)
+
+
+def low_check(image, cfg: Config, high: bool, layout: str | None = None) -> None:
+    """Image.high's bounds above AW 32: the whole image below HIGH - LOW_ROOM, or with high its
+    low area (below low_top - LOW_ROOM; LowError: an image that would fit with high). layout: the
+    name of an image class without a high layout (its LowError says so)."""
+    if cfg.AW <= 32:
+        if high:
+            raise ValueError("weights above 4 GiB (high=True) need AW > 32")
+        return
+    if not high and image.nbytes > HIGH - LOW_ROOM:
+        raise LowError(f"model image needs {image.nbytes / 2**20:.0f} MiB per slice, above the "
+                       f"low {(HIGH - LOW_ROOM) / 2**20:.0f} MiB: " +
+                       ("its weights from HIGH on (high=True)" if layout is None else
+                        f"{layout} has no layout with its weights above 4 GiB (qwen3's and "
+                        "qwen35's have)"))
+    top = low_top(cfg) - LOW_ROOM
+    if high and image.low_end > top:
+        raise MemoryError(f"model image's low area (I/O, KV caches, states, tables) needs "
+                          f"{image.low_end / 2**20:.0f} MiB per slice, above "
+                          f"{top / 2**20:.0f} MiB")
+
+
+def image_end(image) -> int:
+    """The first byte past an image's low area (Image.low_end; an image without one: its
+    nbytes): the run-time areas past the image (programs, snapshots, a batch area) go there."""
+    return getattr(image, "low_end", image.nbytes)
+
+
+def area_limit(image, cfg: Config) -> int:
+    """Where the run-time areas past an image end at the latest: low_top for one with its
+    weights out of the low area (programs and the run's words below 4 GiB, or in the bank-half
+    window's lower half), else the DRAM's end."""
+    return low_top(cfg) if getattr(image, "high", False) else cfg.DRAM_BYTES
+
+
+class Images(list):
+    """An image's arrays, one per slice, with `end` (the first byte past its low area and the
+    Engine's areas after it: the program area goes there) and `high` (where the weights of an
+    image with them out of the low area start, else None): a backend writes [0, end) and
+    [high, its length), the bytes between them unread; `skip` (lo, hi): bytes of the high part
+    unread too (the bank-half window's upper half past the DeltaNet mixers' weights). spans():
+    the ranges written."""
+
+    def __init__(self, arrays, end: int, high: int | None = None,
+                 skip: tuple[int, int] | None = None):
+        super().__init__(arrays)
+        self.end, self.high, self.skip = end, high, skip
+
+    def spans(self, n: int | None = None) -> list[tuple[int, int]]:
+        """The byte ranges a backend writes of an array of n bytes (default the first's)."""
+        n = len(self[0]) if n is None else n
+        if self.high is None:
+            return [(0, n)]
+        if self.skip is None or self.skip[0] >= self.skip[1]:
+            return [(0, self.end), (self.high, n)]
+        return [(0, self.end), (self.high, self.skip[0]), (self.skip[1], n)]
+
+
+def _qdesc(daddr: int, saddr: int, n: int, k: int, D: int, fmt: str = "int8",
+           grp: int = 1) -> QTensor:
+    return QTensor.weight(daddr, saddr, n, k, fmt, D, grp=grp)
 
 
 def _tdesc(addr: int, shape) -> Tensor:
@@ -904,12 +1071,20 @@ class Image(EmbedHost):
     kind's format over wformat per layer range (opentpu/llm/formats.py, KINDS; None:
     OTPU_FORMATS, else spec.formats): a layer block layout per combination, a run (a loop)
     per range of one layout. The KV cache and the activations stay int8.
+
+    high (above AW 32: fit_high, by fit unless OTPU_HIGH says): the layer blocks' weights and
+    the head from HIGH (4 GiB) on, each block's KV caches in a block of their own below it
+    (lloc, lbsize: the runs' units one after the other as the weights'), after the I/O area and
+    before the lookup tables; nbytes is the image's extent, low_end the end of what is below
+    HIGH.
     """
 
     def __init__(self, spec: Spec, cfg: Config, cap: int, batch: int = 1, rows: int = 1,
                  wformat: str = "int8", head_format: str | None = None, lookup: bool = False,
-                 embed_host: bool | None = None, formats: str | None = None):
+                 embed_host: bool | None = None, formats: str | None = None,
+                 high: bool = False):
         spec.check(cfg)
+        self.high = bool(high)
         if cap % cfg.D:
             raise ValueError("KV capacity must be a multiple of D")
         if spec.ctx and cap > spec.ctx:
@@ -927,11 +1102,15 @@ class Image(EmbedHost):
         self.wformat, self.head_format = wformat, fmt("head")
         self.mf = self.mats_formats(self.lf[0])     # layer 0's projections' formats
         self.formats = _formats(spec, formats)
-        rb = lambda k, f: Q.row_bytes(k, f, D)                          # noqa: E731
+        # every matrix in groups of WG rows (docs/isa.md "Weight groups"; WG 1: rows)
+        gw = cfg.WG
+        mb = lambda n, k, f: Q.grp_bytes(n, k, f, D, gw)                # noqa: E731
         self.batch, self.rows = batch, rows
         self.nq_loc, self.nkv_loc = spec.n_q // S, spec.n_kv // S
         self.h_loc, self.f_loc, self.v_loc = H // S, F_ // S, spec.vocab // S
-        b = _Bump()
+        A = _align(cfg)
+        b = _Bump(align=A)
+        hb = _Bump(high_base(cfg), A) if self.high else b      # the weights' (high: from HIGH)
         R = rows
         rd = spec.rope_dim
         self.io = {"x": b.alloc(4 * H * R), "cos": b.alloc(2 * rd * R),
@@ -946,30 +1125,32 @@ class Image(EmbedHost):
                      "wg": (self.f_loc, H), "wu": (self.f_loc, H)}
         # W_down in column parts of the MLP's F chunk: each down MM streams one part, whose
         # scales are then contiguous (with row-major scales every row would cost a DRAM beat);
-        # the chunk by W_down's format
+        # the chunk by W_down's format. On S > 1 slices its columns in the all-gather's order,
+        # a part S chunks (chunk c of every slice: kernels.mlp.swiglu_down's one MM)
         self.dchunks = {fd: _chunk(self.f_loc, D, D if fd == "int8" else 2 * D)
                         for fd in sorted({f[2] for f in self.lf})}
         self.dchunk = self.dchunks[self.lf[0][2]]
         self.bofs, self.bsize = {}, {}                  # per layout: offsets inside its block
+        self.lbsize = {}                                # (its KV caches' block: high)
         for key in dict.fromkeys(self.lf):
             mf, C = self.mats_formats(key), self.dchunks[key[2]]
-            lb = _Bump()
+            lb = _Bump(align=A)
+            lk = _Bump(align=A) if self.high else lb
             L = {"g_in": lb.alloc(4 * H), "g_post": lb.alloc(4 * H)}
             if spec.qk_norm:
                 L.update(qn=lb.alloc(4 * d), kn=lb.alloc(4 * d))
             if spec.nope:
                 L["rg"] = lb.alloc(8)
             for name, (n, k) in self.mats.items():
-                L[name] = (lb.alloc(n * rb(k, mf[name])),
-                           lb.alloc(n * Q.scale_bytes(k, mf[name], D)))
-            L["wd"] = [(lb.alloc(self.h_loc * rb(C, mf["wd"])),
-                        lb.alloc(self.h_loc * Q.scale_bytes(C, mf["wd"], D)))
-                       for _ in range(F_ // C)]
-            L["kvs"] = [[{"k": lb.alloc(cap * d), "ks": lb.alloc(cap * k_scale_bytes(d, D)),
-                          "vt": lb.alloc(d * cap), "vs": lb.alloc(4 * cap)}
+                L[name] = tuple(lb.alloc(x) for x in mb(n, k, mf[name]))
+            L["wd"] = [tuple(lb.alloc(x) for x in mb(self.h_loc, S * C, mf["wd"]))
+                       for _ in range(F_ // (S * C))]
+            L["kvs"] = [[{"k": lk.alloc(cap * d), "ks": lk.alloc(cap * k_scale_bytes(d, D)),
+                          "vt": lk.alloc(d * cap), "vs": lk.alloc(4 * cap)}
                          for _ in range(self.nkv_loc)] for _ in range(batch)]
             L["kv"] = L["kvs"][0]
             self.bofs[key], self.bsize[key] = L, (lb.next + 4095) // 4096 * 4096
+            self.lbsize[key] = (lk.next + 4095) // 4096 * 4096 if self.high else 0
         self.lofs, self.LS = self.bofs[self.lf[0]], self.bsize[self.lf[0]]   # layer 0's
         # the runs: each range of layers of one layout a hardware loop (one layer body in the
         # program per run: a pattern repeated in units, lfm2.plan's, would unroll each unit)
@@ -980,21 +1161,28 @@ class Image(EmbedHost):
                 self.runs[-1] = (first, unit, reps + 1)
             else:
                 self.runs.append((i, (key,), 1))
-        self.loc = {}                   # layer -> (run base, unit stride, iteration, offset)
+        def place(bump, size) -> dict:  # layer -> (run base, unit stride, iteration, offset)
+            loc = {}
+            for first, unit, reps in self.runs:
+                offs = np.cumsum([0] + [size[k] for k in unit]).tolist()
+                us, base = offs[-1], bump.next
+                for it in range(reps):
+                    for e in range(len(unit)):
+                        loc[first + it * len(unit) + e] = (base, us, it, offs[e])
+                bump.next = base + reps * us
+            return loc
         b.next = self.layer0
-        for first, unit, reps in self.runs:
-            offs = np.cumsum([0] + [self.bsize[k] for k in unit]).tolist()
-            us, base = offs[-1], b.next
-            for it in range(reps):
-                for e in range(len(unit)):
-                    self.loc[first + it * len(unit) + e] = (base, us, it, offs[e])
-            b.next = base + reps * us
+        self.layer0 = hb.next
+        self.loc = place(hb, self.bsize)
+        self.lloc = place(b, self.lbsize) if self.high else self.loc     # (the KV caches')
         head = cap * d + cap * k_scale_bytes(d, D) + d * cap + 4 * cap   # k, k scales, v^T, v's
         self.kv_bytes = spec.layers * self.nkv_loc * head         # per sequence
-        self.head = (b.alloc(self.v_loc * Q.row_bytes(H, self.head_format, D)),
-                     b.alloc(self.v_loc * Q.scale_bytes(H, self.head_format, D)))
-        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1)
-        shared = spec.tied and self.head_format == "int8" and S == 1
+        self.head = tuple(hb.alloc(x) for x in mb(self.v_loc, H, self.head_format))
+        # the int8 embedding rows of the resident decode are the tied int8 head's (S = 1; a
+        # grouped head's rows are not a table's: WG > 1 keeps a table of its own; nor a head
+        # above HIGH: the rows' address is a token's)
+        shared = spec.tied and self.head_format == "int8" and S == 1 and gw == 1 and \
+            not self.high
         if embed_host is None:      # dense: the int8 table stays on the card (the Engine moves
             embed_host = False      # it to the host when the image does not fit otherwise)
         if embed_host and not lookup:
@@ -1002,10 +1190,14 @@ class Image(EmbedHost):
         self.lookup = _lookup_alloc(b, spec, cap, D=D, head=self.head if shared else None,
                                     M=cfg.MCOLS, embed_host=bool(embed_host),
                                     rows=rows, imem=cfg.IMEM_WORDS,
-                                    waitc=cfg.SEQ_WC) if lookup else {}
+                                    waitc=cfg.SEQ_WC, S=S, wg=gall_wg(cfg),
+                                    chash=cfg.CHASH) if lookup else {}
         self.choices = {"embed_host": self.embed_host,          # (the compile worker's
                         "formats": self.formats}                # image)
-        self.nbytes = b.next
+        if self.high:
+            self.choices["high"] = True
+        self.low_end, self.nbytes = b.next, max(b.next, hb.next)
+        low_check(self, cfg, self.high)
         if self.nbytes > cfg.DRAM_BYTES:
             raise MemoryError(f"model image needs {self.nbytes / 2**20:.0f} MiB per slice, "
                               f"DRAM_BYTES is {cfg.DRAM_BYTES / 2**20:.0f} MiB")
@@ -1022,20 +1214,25 @@ class Image(EmbedHost):
             imgs[s][addr:addr + v.size] = v
 
         qb = QC.Batch()                 # the matrices, quantized in worker processes
+        gw = cfg.WG                     # in groups of WG rows (docs/isa.md "Weight groups")
+        gh = cfg.CHASH                  # (their rows in the channel hash's order, at their address)
 
         def put_q(addr_pair, parts, fmt):
             for s, p in enumerate(parts):
-                qb.submit(p, fmt, D, lambda q, sc, s=s: (put(s, addr_pair[0], q),
-                                                         put(s, addr_pair[1], sc)))
+                qb.submit(p, fmt, D, lambda q, sc, s=s, k=p.shape[1]: [
+                    put(s, a, x) for a, x in zip(addr_pair, Q.grouped(
+                        q, sc, fmt, k, gw, D, at=addr_pair[0] if gh else None))])
 
         def put_parts(addrs, parts, fmt, C):
-            """Each slice's rows quantized whole and stored in column parts of C (compiler
-            QTensor parts: each part's scale rows the rows' Sw and its blocks' offsets)."""
+            """Each slice's rows quantized whole and stored in column parts of S C, the
+            columns in the all-gather's order (quant.gathered_parts; compiler QTensor parts:
+            each part's scale rows the rows' Sw and its blocks' offsets)."""
             for s, p in enumerate(parts):
-                qb.submit(p, fmt, D, lambda q, sc, s=s: [
+                k = p.shape[1]
+                qb.submit(p, fmt, D, lambda q, sc, s=s, k=k: [
                     (put(s, a0, pq), put(s, a1, ps))
-                    for (a0, a1), (pq, ps) in zip(addrs, Q.column_parts(q, sc, fmt, p.shape[1],
-                                                                         C, D))])
+                    for (a0, a1), pr in zip(addrs, Q.gathered_parts(q, sc, fmt, k, C, S, D))
+                    for pq, ps in [Q.grouped(*pr, fmt, S * C, gw, D, at=a0 if gh else None)]])
 
         def rows(a, n):
             return [a[s * n:(s + 1) * n] for s in range(S)]
@@ -1085,11 +1282,15 @@ class Image(EmbedHost):
         fa, fg, fd = key
         return {"wq": fa, "wk": fa, "wv": fa, "wo": fa, "wg": fg, "wu": fg, "wd": fd}
 
-    def _off(self, li, it=None) -> Affine:
+    def _off(self, li, it=None, loc=None) -> Affine:
         """The block address of layer li (static), or of element li of its run's unit at
-        iteration `it` (a loop variable)."""
-        base, us, i, o = self.loc[li]
+        iteration `it` (a loop variable); loc: self.loc (the weights') or self.lloc."""
+        base, us, i, o = (self.loc if loc is None else loc)[li]
         return Affine(base + o) + Affine.of(i if it is None else it) * us
+
+    def _loff(self, li, it=None) -> Affine:
+        """_off of layer li's KV caches' block (Image.high; else its block)."""
+        return self._off(li, it, self.lloc)
 
     # ---- programs
     def compile_decode(self, blocks: int, lo: int, block: int = ATTN_BLOCK):
@@ -1155,15 +1356,18 @@ class Image(EmbedHost):
             for name, (n, k) in self.mats.items():
                 da, sa = lofs[name]
                 fm = mf[name]
-                setattr(ns, name, QTensor.weight(off + da, off + sa, n, k, fm, D))
+                setattr(ns, name, QTensor.weight(off + da, off + sa, n, k, fm, D, grp=cfg.WG))
             fm = mf["wd"]
-            C, n = self.dchunks[fm], self.h_loc
-            parts = tuple(QTensor.weight(off + da, off + sa, n, C, fm, D)
+            C, n = cfg.S * self.dchunks[fm], self.h_loc
+            parts = tuple(QTensor.weight(off + da, off + sa, n, C, fm, D, grp=cfg.WG)
                           for da, sa in lofs["wd"])
             ns.wd = QTensor(parts[0].data, parts[0].scale, (n, spec.ffn), parts[0].rs,
-                            parts[0].srs, D, parts=parts, pw=C, wf=parts[0].wf)
-            ns.kvs = [KVDesc({sid + j * cfg.S: {k: off + v for k, v in r.items()}
-                              for j, r in enumerate(heads)}, self.cap, d, D, cfg.S, sid)
+                            parts[0].srs, D, parts=parts, pw=C, wf=parts[0].wf, grp=parts[0].grp,
+                            gs=cfg.S)
+            loff = self._loff(li, it)               # (the KV caches': Image.high)
+            ns.kvs = [KVDesc({sid + j * cfg.S: {k: loff + v for k, v in r.items()}
+                              for j, r in enumerate(heads)}, self.cap, d, D, cfg.S, sid,
+                              wg=gall_wg(cfg))
                       for heads in lofs["kvs"]]
             ns.kv = ns.kvs[0]
             return ns
@@ -1179,8 +1383,8 @@ class Image(EmbedHost):
             logitsr=_tdesc(self.io["logits"], (self.rows, spec.vocab)),
             oscr=_tdesc(self.io["o"], (cfg.act_rows, self.nq_loc * d)) if "o" in self.io
             else None,
-            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format), v_loc=self.v_loc,
-            **_lookup_desc(self.lookup, spec, self.cap))
+            head=_qdesc(*self.head, self.v_loc, H, D, self.head_format, cfg.WG),
+            v_loc=self.v_loc, **_lookup_desc(self.lookup, spec, self.cap))
 
 
 # =============================================================================== kernel
@@ -1251,8 +1455,10 @@ class RunPos:
         self.t0 = (blocks - 1) * block
         self.tpos = RunVar("tpos", bound=min(block, cap - self.t0))
         self.pos = self.tpos + self.t0
-        # the mask row of a block at t0' starts at entry cap - 1 - p + t0' of the table
-        self.bucket = Bucket(blocks, Affine(zmask + 4 * (cap - 1 - self.t0)) + self.tpos * -4)
+        # the mask row of a block at t0' starts at entry cap - 1 - p + t0' of the table; the
+        # masked block read up to the sub-block of tpos (attention.Bucket's tpos), a row's alone
+        self.bucket = Bucket(blocks, Affine(zmask + 4 * (cap - 1 - self.t0)) + self.tpos * -4,
+                             tpos=self.tpos if type(self) is RunPos else None)
 
     @staticmethod
     def values(token: int, p: int, K: int = 1, block: int = ATTN_BLOCK) -> dict:
@@ -1267,6 +1473,44 @@ class RunPos:
         q.tpos, q.pos = self.tpos + r, self.pos + r
         q.bucket = Bucket(self.blocks, self.bucket.z - 4 * r)
         return q
+
+
+class SlotPos:
+    """A batched step's row at a position known only when the program runs, its attention's
+    blocks too (batch.slot_rows: one program for every position of the rows' slots), from the
+    WORDS words at TMEM w on (values(p) gives them): pos is p (RunVar p{r}: the fp32 at w),
+    span the attention over its first ceil((p + 1) / (P block)) groups of P blocks, each
+    masked by p's row of the image's mask table (attention.RunSpan, its count at w + 1), and
+    place p's V^T column (kv_append's): the tile q and column c of p = q tb + c (w + 2, w + 3),
+    and q d tb / wg + c as one value (w + 4, an int32's bits: RunVar raw), at wg 1 the column's
+    offset (KVDesc.vt_column's), at a grouped cache's wg > 1 (KVDesc.vt_place) its column in
+    the tiles as one grouped matrix (the QST GRP COL's first row, the tile's d tb bytes its
+    d tb / wg columns): the append's addresses then add the row's run-time value only in that
+    row, an RLD where it is used (Builder.transient), and the layers' terms in the data and
+    scale registers every row shares or steps."""
+
+    WORDS = 5
+
+    def __init__(self, r: int, w: int, block: int, zmask: int, cap: int, d: int,
+                 P: int = SPAN_P, wg: int = 1):
+        tb = vt_tile(cap)
+        p = RunVar(f"p{r}", bound=cap)
+        q, c = RunVar(f"q{r}", bound=cap // tb), RunVar(f"c{r}", bound=tb)
+        v = RunVar(f"v{r}", bound=cap * d // wg, raw=True)
+        self.words = {p.name: w, q.name: w + 2, c.name: w + 3, v.name: w + 4}
+        self.pos = p + 0
+        self.place = SimpleNamespace(tile=q + 0, col=c + 0, flat=v + 0, wg=wg)
+        self.span = RunSpan(Affine(zmask + 4 * (cap - 1)) + p * -4, w + 1, cap // (P * block),
+                            P)
+
+    @staticmethod
+    def values(p: int, block: int, cap: int, d: int, P: int = SPAN_P,
+               wg: int = 1) -> np.ndarray:
+        """Position p's words (fp32, exact below 2^24; the last an int32's bits)."""
+        tb = vt_tile(cap)
+        w = np.array([p, -(-(p + 1) // (P * block)), p // tb, p % tb, 0], np.float32)
+        w[4:].view(np.int32)[0] = p // tb * (d * tb // wg) + p % tb
+        return w
 
 
 class RunRows(RunPos):
@@ -1319,13 +1563,15 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
     A query group of more heads than the MXU has columns attends in parts of MCOLS heads, each
     streaming the KV head again. `gated` (Qwen3.5): lw.wgate projects a gate per query
     dimension, and the attention output is multiplied by sigmoid(gate) before W_o."""
-    d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
     kv = lw.kv
+    d, G, eps = spec.head_dim, spec.n_q // kv.kv_heads(spec.n_kv), spec.eps
     kpos = pos.pos if isinstance(pos, RunPos) else pos
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     k = ol.dot(xs, lw.wk)                       # [1, nkv_loc*d]
     v = ol.dot(xs, lw.wv)
-    sg = sigmoid(ol.dot(xs, lw.wgate)) if gated else None       # [1, nq_loc*d]
+    sp = kv_split(kv, spec, pos, block)
+    # [1, nq_loc*d]; split: projected after the queries, so their gather overlaps it
+    sg = sigmoid(ol.dot(xs, lw.wgate)) if gated and sp is None else None
     qn, kn = _load_opt(lw.qn), _load_opt(lw.kn)
     c, s_ = _rope_gate(lw, c, s_)
     scale = ol.LOG2E / math.sqrt(d)
@@ -1361,6 +1607,10 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
             return emit
         qhs = [part(*p) for p in parts]
     seq = pos.bucket if isinstance(pos, RunPos) else pos + 1
+    if sp is not None:                          # the head's blocks split over its copies
+        gate = (lambda: sigmoid(ol.dot(xs, lw.wgate))) if gated else None
+        o_row = _attend_split(queries(0), kv, heads[0], seq, block, scale, G, d, sp, gate)
+        return _o_residual(x, ol.all_gather(o_row), lw)
     outs = _attend_heads(qhs, kv, [heads[j] for j, _, _ in parts], seq, block, scale,
                          depth=ATTN_DEPTH, ahead=2)
     o_row = ol.empty([1, G * nh * d])
@@ -1372,14 +1622,98 @@ def _attention(x, lw, c, s_, pos: int, spec: Spec, block: int, gated: bool = Fal
         else:
             o_loc[r0:r1, :].set((acc / l[:, None]) * sg.reshape(G * nh, d)[r0:r1, :])
     o_all = ol.all_gather(o_row)                # [1, n_q*d], slice-major head order
-    y = ol.all_gather(ol.dot(o_all, lw.wo))     # [1, H]
-    return x + y
+    return _o_residual(x, o_all, lw)
 
 
-def _mlp(x, lw, spec: Spec):
+def kv_split_min(cfg) -> int:
+    """The decode buckets that split a copied KV head: OTPU_KVSPLIT=N when set, else the
+    Config's KVSPLIT (its target's; 0: never)."""
+    e = os.environ.get("OTPU_KVSPLIT", "")
+    return int(e) if e else int(getattr(cfg, "KVSPLIT", 0))
+
+
+def kv_split(kv, spec, pos, block: int):
+    """(p, r) when this decode step's attention splits its KV head by block over the head's r
+    copies (Config.KVSPLIT, kv_split_min): fewer KV heads than slices (KVDesc.kv_heads: each on
+    r = S / n_kv slices, its query heads split between them), r = 2, the copies' query groups
+    within the MXU's columns, and a length (a position or a bucket) of KVSPLIT blocks or more;
+    p = the slice's copy. Else None (each copy attends every block for its own queries)."""
+    b = current()
+    n, S = spec.n_kv, b.S
+    lo = kv_split_min(b.cfg)
+    if not lo or n >= S or S % n or kv.kv_heads(n) != S or S // n != 2:
+        return None
+    if 2 * (spec.n_q // S) > ol.mxu_columns() or (isinstance(pos, RunPos) and
+                                                   type(pos) is not RunPos):
+        return None
+    blocks = pos.blocks if isinstance(pos, RunPos) else -(-(pos + 1) // block)
+    return (b.sid % 2, 2) if blocks >= max(lo, 2) else None
+
+
+def _attend_split(queries, kv, h, seq, block: int, scale: float, G: int, d: int, part, gate):
+    """A decode step's attention with the KV head h's blocks split over its copies (kv_split's
+    part (p, r), r = 2): this slice's G queries (`queries`, a callable: its V^T append, then
+    them) gathered with every slice's (one GATHER of rows: slice s's at rows s G ..), the pair's
+    2 G queries attended over this copy's blocks alone (_attend_heads' part: blocks p, p + 2,
+    ..), the partner's G rows of the partial state (m and l, then acc) exchanged in two more
+    GATHERs, and each slice's own G rows combined (flash-decoding's merge): m = max(m_a, m_b),
+    o = (acc_a 2^(m_a - m) + acc_b 2^(m_b - m)) / (l_a 2^(m_a - m) + l_b 2^(m_b - m)), times
+    the gate (`gate`, a callable: Qwen3.5's sigmoid(x W_gate), projected while the queries
+    travel). The weights (with the gate) and the own rows' term are made while the partner's
+    acc rows travel, so two full-width VOPs follow their GATHER. Returns this slice's o row
+    [1, G d], as the unsplit path's. The copies' blocks differ, so their attention is a
+    Builder.diverge region: what outlives it (the exchanges' destinations, the o row, the
+    masked block's variant table) is allocated before it, and the slices' later allocations
+    agree. Both copies append every token (the caller's appends, unchanged), so the cache stays
+    whole on each: any program (an unsplit bucket, a prefill, the host's KV store) reads it."""
+    p, r = part
+    b = current()
+    S, base, q = b.S, ol.program_id() - p, 1 - p     # (the pair's first slice, the other copy)
+    variants_ahead(seq, kv, block)                  # (what the masked block's owner takes)
+    if isinstance(seq, Bucket):
+        b.args_ahead(seq.z)
+    qa = ol.all_gather_rows(queries())              # [S G, d]
+    sg = None if gate is None else gate().reshape(G, d)
+    ga, gm = ol.empty([S * G, kv.dv]), ol.empty([S, 2 * G])
+    o_row = ol.empty([1, G * d])
+    with b.diverge():
+        (acc, l, m), = _attend_heads([qa[base * G:(base + r) * G, :]], kv, [h], seq, block,
+                                     scale, depth=ATTN_DEPTH, ahead=2, part=part, maxima=True)
+        del qa
+        ml = ol.empty([1, 2 * G])                   # the partner's queries' m and l
+        ml[:, 0:G].set(m[q * G:(q + 1) * G][None, :])
+        ml[:, G:2 * G].set(l[q * G:(q + 1) * G][None, :])
+        ol.all_gather_rows(ml, out=gm)
+        ol.all_gather_rows(acc[q * G:(q + 1) * G, :], out=ga)
+        ps = base + q                               # the partner slice: its rows are this one's
+        m_b, l_b = gm[ps, 0:G], gm[ps, G:2 * G]
+        acc_a, m_a, l_a = acc[p * G:(p + 1) * G, :], m[p * G:(p + 1) * G], l[p * G:(p + 1) * G]
+        mm = ol.maximum(m_a, m_b)
+        f_a, f_b = ol.exp2(m_a - mm), ol.exp2(m_b - mm)
+        il = ol.recip(l_a * f_a + l_b * f_b)
+        w_a, w_b = (f_a * il)[:, None], (f_b * il)[:, None]
+        if sg is not None:
+            w_a, w_b = sg * w_a, sg * w_b
+        t = acc_a * w_a
+        o_row.reshape(G, d).set(ga[ps * G:(ps + 1) * G, :] * w_b + t)
+        del acc, l, m, ml, m_b, l_b, acc_a, m_a, l_a, mm, f_a, f_b, il, w_a, w_b, t
+    return o_row
+
+
+def _o_residual(x, o_all, lw):
+    """x + W_o . o_all ([R, H], replicated): each slice adds its part of x to its W_o rows'
+    outputs, then the all-gather (the caller's x.set() gathers into x)."""
+    h_loc = lw.wo.shape[0]
+    mine = slice(ol.program_id() * h_loc, (ol.program_id() + 1) * h_loc)
+    return ol.all_gather(x[:, mine] + ol.dot(o_all, lw.wo))
+
+
+def _mlp(x, lw, spec: Spec, each=None):
+    """The layer's MLP and residual; each(i): swiglu_down's (the caller's instructions beside
+    chunk i's MMs)."""
     sid = ol.program_id()
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_post), spec.eps))
-    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, loop=getattr(lw, "mlp_loop", False))
+    y = swiglu_down(xs, lw.wg, lw.wu, lw.wd, loop=getattr(lw, "mlp_loop", False), each=each)
     h_loc = lw.wd.shape[0]
     mine = slice(sid * h_loc, (sid + 1) * h_loc)
     return ol.all_gather(x[:, mine] + y)
@@ -1472,6 +1806,23 @@ def qwen3_step(m, pos: int, block: int = ATTN_BLOCK, tok: int | None = None):
     _lm_head(x, m, spec)
 
 
+def loop_ahead(m, pos):
+    """The step's work before the generate loop (generate._generate: a step kernel's ahead):
+    the int8 embedding's one-hot operand built once and held in ACT RAM for the loop
+    (m.gather_pin, _gather's operand: each token's gather then runs its MMs alone), where the
+    configuration holds it whole (kernels.gather.operand) in at most a quarter of the ACT RAM."""
+    if getattr(m, "embed_q", None) is None or not isinstance(pos, RunPos):
+        return
+    if m.onehot.shape[1] // ol.block_size() > ol.act_blocks() // 4:
+        return
+    oh = gather_operand(m.onehot)
+    if isinstance(oh, Stationary):
+        m.gather_pin = oh
+
+
+qwen3_step.ahead = loop_ahead
+
+
 def _layers(m):
     """Each layer's descriptors in the order the layers run (m.runs, Image): a run of repeats
     is one hardware loop over its unit (inside the loop the descriptors are the iteration's)."""
@@ -1485,32 +1836,40 @@ def _layers(m):
                 yield m.layer(first + e, it)
 
 
-def _inputs(m, pos, tok=None):
+def _inputs(m, pos, tok=None, ahead=None):
     """The token's embedding row and its RoPE rows: from the I/O area (the host writes them),
     or from the image's tables (Image(lookup=True)) at the token id and position -- at a
-    run-time position (RunPos), or at a compile-time token `tok` (a per-position program)."""
+    run-time position (RunPos), or at a compile-time token `tok` (a per-position program).
+    ahead(): loads the layers need later, queued once the embedding row's own are (_embed)."""
     if isinstance(pos, RunPos):
-        x = _embed(m, pos.tok)
+        x = _embed(m, pos.tok, ahead)
         ol.release(pos.tok)                 # its argument registers serve addresses from here on
         return x, ol.load(m.cos_t[pos.pos, :]), ol.load(m.sin_t[pos.pos, :])
     if tok is None:
-        return ol.load(m.x), ol.load(m.cos), ol.load(m.sin)
-    return _embed(m, tok), ol.load(m.cos_t[pos, :]), ol.load(m.sin_t[pos, :])
+        x = ol.load(m.x)
+        if ahead is not None:
+            ahead()
+        return x, ol.load(m.cos), ol.load(m.sin)
+    return _embed(m, tok, ahead), ol.load(m.cos_t[pos, :]), ol.load(m.sin_t[pos, :])
 
 
-def _embed(m, tok):
+def _embed(m, tok, ahead=None):
     """Token `tok`'s embedding row [1, H] (an int or a run-time value) from the image's tables:
     the fp32 table's row, or the int8 row gathered on the device (Spec.embed "int8"); with the
     table on the host (embed_host) the slot's row 0, once the host has served every request
-    (the generate loop's post of the token; before other runs the host writes the row)."""
+    (the generate loop's post of the token; before other runs the host writes the row).
+    ahead(): called once the row's loads are queued (a gather's: its operand's, _gather)."""
     eq = getattr(m, "embed_q", None)
     if eq is None:
-        return ol.load(m.embed[tok:tok + 1, :])
+        x = ol.load(m.embed[tok:tok + 1, :])
+        if ahead is not None:
+            ahead()
+        return x
     mbox = getattr(m, "embed_mbox", None)
     if mbox is not None:
         MB.wait_served(mbox)
         tok = 0
-    return next(_gather(m, eq, [tok]))
+    return next(_gather(m, eq, [tok], ahead))
 
 
 class OutTokens:
@@ -1532,7 +1891,10 @@ class RunWords:
     no host arguments), loaded at the program's start once the kernel has named them, and
     pos.words gives the kernel their TMEM addresses (LFM2's ringo); with a compile-time
     position, nothing. `with RunWords(m, pos): kernel(...)`; the host writes the words before
-    each run (prefill.run: those the run_args name and the image's prompt_words)."""
+    each run (prefill.run: those the run_args name and the image's prompt_words). Each
+    argument's RLD MUL is bounded by c * [0, var's bound) (compiler.mul_bound; tpos the rows'
+    RunRows bound, ring conv_k), so the waits pass's footprints of the addresses it forms are
+    their own and not all of DRAM."""
 
     def __init__(self, m, pos):
         self.m, self.pos, self.run = m, pos, isinstance(pos, RunRows)
@@ -1552,17 +1914,20 @@ class RunWords:
             b = current()
             body = b.stack[-1]
             i = next(j for j, x in enumerate(body) if x is self.at) + 1
-            body[i:i] = [I.rld(15 - k, b.run_words[v.name], mul=int(c),
-                               comment=f"argument {c}*{v.name}")
-                         for k, (v, c) in enumerate(b.run_args)]
+            bound = {"ring": getattr(self.m.spec, "conv_k", 1)}
+            body[i:i] = [x for k, (v, c) in enumerate(b.run_args)
+                         for x in I.rld_mul(15 - k, b.run_words[v.name], int(c),
+                                            bound=mul_bound(c, v.bound or bound.get(v.name),
+                                                            b.aw),
+                                            comment=f"argument {c}*{v.name}", aw=b.aw)]
             b.run_words = None
         return False
 
 
 def _embed_word(m, t):
     """_embed of the token id in the one-word tile t (a prefill run's, docs/prefill.md): its
-    row's address from a scratch register (RLD MUL into a compiler.DevVar) instead of a
-    run-time argument; the int8 table's row and its scales from two."""
+    row's address from a scratch register (RLD MUL into a compiler.DevVar, bounded by the
+    table's rows) instead of a run-time argument; the int8 table's row and its scales from two."""
     b = current()
     b.check_live(t)
     if getattr(m, "embed_mbox", None) is not None:
@@ -1571,14 +1936,17 @@ def _embed_word(m, t):
     if eq is None:
         e = m.embed
         r = b.scratch()
-        b.emit(I.rld(r, t.base, mul=4 * e.strides[0], comment="the token's row"))
+        b.emit(I.rld(r, t.base, mul=4 * e.strides[0], bound=mul_bound(4 * e.strides[0], e.shape[0]),
+                     comment="the token's row"))
         row = ol.load(Tensor(Affine.of(e.base) + DevVar("token row", r), (1, e.shape[1]),
                              e.strides))
         b.unscratch(r)
         return row
     rd, rs = b.scratch(), b.scratch()
-    b.emit(I.rld(rd, t.base, mul=eq.rs, comment="the token's row"))
-    b.emit(I.rld(rs, t.base, mul=eq.srs, comment="its scales"))
+    b.emit(I.rld(rd, t.base, mul=eq.rs, bound=mul_bound(eq.rs, eq.shape[0]),
+                 comment="the token's row"))
+    b.emit(I.rld(rs, t.base, mul=eq.srs, bound=mul_bound(eq.srs, eq.shape[0]),
+                 comment="its scales"))
     one = QTensor(Affine.of(eq.data) + DevVar("token row", rd),
                   Affine.of(eq.scale) + DevVar("token scales", rs), (1, eq.shape[1]), eq.rs,
                   eq.srs, eq.D, wf=eq.wf)
@@ -1663,13 +2031,22 @@ def _inputs_rows(m, rows, tokens=None, embed: bool = True):
     return x, c, s_
 
 
-def _gather(m, eq, toks):
+def _gather(m, eq, toks, ahead=None):
     """The int8 embedding rows of tokens `toks` (ints or run-time values), gathered on the
     device (kernels.gather.gather_row, one one-hot operand for all), one [1, H] tile at a
-    time."""
-    oh = gather_operand(m.onehot)
+    time; a table split by columns over the slices (_lookup_alloc) each slice's part, then
+    all-gathered. ahead(): called once the operand is queued, before the gathers' MMs (the
+    DMA then moves what it queues beside the MMs and the transpose's copies). m.gather_pin: the
+    operand the generate loop built before it (loop_ahead), held in ACT RAM for the loop."""
+    oh = getattr(m, "gather_pin", None)
+    if oh is None:
+        oh = gather_operand(m.onehot)
+    if ahead is not None:
+        ahead()
+    split = getattr(m, "embed_split", False)
     for t in toks:
-        yield gather_row(oh, eq, t, "int8").reshape(1, eq.shape[1])
+        g = gather_row(oh, eq, t, "int8").reshape(1, eq.shape[1])
+        yield ol.all_gather(g) if split else g
 
 
 def _lm_head(x, m, spec):
@@ -1679,18 +2056,25 @@ def _lm_head(x, m, spec):
     generate loop's debug mode). With m.lm_split (the first part of a split generate program)
     x itself to that DRAM tensor instead: the second part runs the head. A spec with a
     softcap (Gemma's final_logit_softcapping) caps the chunks a sink samples from (lib.softcap;
-    not Greedy's, a raw sink: the cap keeps the order, and m.logits stays raw)."""
+    not Greedy's, a raw sink: the cap keeps the order, and m.logits stays raw). m.norm_n: the
+    final norm's width where x is padded (GPT-OSS: rmsnorm's n). m.lm_tail(): called once
+    before the head's last stretch (its last chunk of whole HEAD_CHUNK rows and the rest: the
+    generate loop's loads for the next token, queued beside the head's MMs; generate._generate)."""
     split = getattr(m, "lm_split", None)
     if split is not None:
         ol.store(split, x)
         return
     sid = ol.program_id()
-    xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps))
+    xs = ol.quantize(rmsnorm(x, ol.load(m.g_final), spec.eps, getattr(m, "norm_n", None)))
     chunk = min(HEAD_CHUNK, ol.tmem_words() // 8)
     sink = getattr(m, "lm_sink", None)
+    tail = getattr(m, "lm_tail", None)
+    last = max(0, m.v_loc - chunk) // chunk * chunk     # (the last stretch's first row)
     for c0 in range(0, m.v_loc, chunk):
         n = min(chunk, m.v_loc - c0)
         col = sid * m.v_loc + c0
+        if c0 == last and tail is not None:
+            tail()
         if sink is None:
             ol.store(m.logits[:, col:col + n], ol.dot(xs, m.head[c0:c0 + n, :]))
         else:
@@ -1744,7 +2128,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False,
     be a run-time one (RunPos.offset: a layer-major prefill run), its K / V appended row by row.
     kv_only: the rows' K / V appended, nothing else (no queries, no output: None; the MTP
     layer's prompt rows in a layer-major prefill, qwen35.qwen35_mtp_kv_run)."""
-    d, G, eps = spec.head_dim, spec.n_q // spec.n_kv, spec.eps
+    d, G, eps = spec.head_dim, spec.n_q // lw.kv.kv_heads(spec.n_kv), spec.eps
     R = rows.R if isinstance(rows, RunRows) else len(rows)
     xs = ol.quantize(rmsnorm(x, ol.load(lw.g_in), eps))
     k = ol.dot(xs, lw.wk)                       # [R, nkv_loc*d]
@@ -1764,9 +2148,10 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False,
         if run:                                 # V^T at a run-time position: a row at a time
             for r in range(R):
                 ol.kv_append(lw.kvs[0], hh, rows.pos + r, kj[r:r + 1, :], vj[r:r + 1, :])
-        elif isinstance(rows[0][1], RunPos):    # (rows of their own RunPos, likewise)
-            for r, (sq, p) in enumerate(rows):
-                ol.kv_append(lw.kvs[sq], hh, p.pos, kj[r:r + 1, :], vj[r:r + 1, :])
+        elif isinstance(rows[0][1], (RunPos, SlotPos)):  # (rows of their own RunPos, likewise;
+            for r, (sq, p) in enumerate(rows):            # a SlotPos's V^T column its own)
+                ol.kv_append(lw.kvs[sq], hh, p.pos, kj[r:r + 1, :], vj[r:r + 1, :],
+                             place=getattr(p, "place", None))
         else:
             for sq, p0, r0, n in _runs(rows):
                 ol.kv_append(lw.kvs[sq], hh, p0, kj[r0:r0 + n, :], vj[r0:r0 + n, :])
@@ -1794,7 +2179,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False,
         if run:
             return rows.bucket_row(r)
         p = rows[r][1]
-        return p.bucket if isinstance(p, RunPos) else p + 1
+        return p.bucket if isinstance(p, RunPos) else p.span if isinstance(p, SlotPos) else p + 1
 
     _attend_heads([Q[r * nq + j * G + g0:r * nq + j * G + g1, :] for r, j, g0, g1 in ent],
                   [lw.kvs[0 if run else rows[r][0]] for r, *_ in ent],
@@ -1806,8 +2191,7 @@ def _attention_rows(x, lw, c, s_, rows, spec, block: int, gated: bool = False,
             cols = slice(h0 * d, min(nq, h0 + mc) * d)      # a time (TMEM)
             o[:, cols].set(o[:, cols] * sigmoid(ol.dot(xs, lw.wgate[cols, :])))
     o_all = ol.all_gather(o)                    # [R, n_q*d]
-    y = ol.all_gather(ol.dot(o_all, lw.wo))     # [R, H]
-    return x + y
+    return _o_residual(x, o_all, lw)
 
 
 @ol.jit
@@ -1834,8 +2218,11 @@ def qwen3_prompt_run(m, pos, R: int, kind: str, block: int = ATTN_BLOCK):
 
 
 def head_rows_chunk(rows: int) -> int:
-    """The LM head's vocabulary rows per MM for `rows` token rows (their fp32 logits fit TMEM)."""
-    return min(HEAD_CHUNK, ol.tmem_words() // (8 * rows))
+    """The LM head's vocabulary rows per MM for `rows` token rows (their fp32 logits fit TMEM;
+    whole weight groups of any format, and whole blocks of the sampler's block maxima,
+    generate.BLK: x2's three rows, TMEM / 24 = 5,456, are 5,440)."""
+    n, q = min(HEAD_CHUNK, ol.tmem_words() // (8 * rows)), math.lcm(ol.weight_group(), G.BLK)
+    return max(q, n // q * q)
 
 
 def _lm_head_rows(x, m, spec, logit_rows):
@@ -1878,10 +2265,12 @@ def device_config(spec: Spec, cap: int, batch: int = 1, rows: int = 1, wformat: 
 class IsaBackend:
     """The bit-exact ISA simulator, one persistent machine (DRAM keeps the KV cache).
     adopt: the images (arrays of their own) become the machine's DRAM, grown to DRAM_BYTES in
-    place instead of copied, so a 4 GiB image is held once; the caller gives them up."""
+    place instead of copied, so a 4 GiB image is held once; the caller gives them up. Above
+    isasim.DRAM_FILE_MIN the DRAM is a sparse file (isasim.dram_zeros) the images are copied
+    into: growing an array there would write all of DRAM_BYTES."""
 
     def __init__(self, cfg: Config, images: list, adopt: bool = False):
-        own = adopt and all(isinstance(m, np.ndarray) and m.dtype == np.uint8 and m.ndim == 1
+        own = adopt and cfg.DRAM_BYTES <= DRAM_FILE_MIN and all(isinstance(m, np.ndarray) and m.dtype == np.uint8 and m.ndim == 1
                             and m.flags.owndata and len(m) <= cfg.DRAM_BYTES for m in images)
         self.machine = Machine(cfg, [[] for _ in range(cfg.S)],
                                [None] * cfg.S if own else images)
@@ -1889,6 +2278,11 @@ class IsaBackend:
             for s, m in zip(self.machine.slices, images):
                 m.resize(cfg.DRAM_BYTES, refcheck=False)
                 s.dram = m
+        # the bank-half window's guard: an image with its weights out of the low area writes
+        # only there (every ST, DSTEP, STORE and QST below low_top: isasim Slice.wlim)
+        if cfg.BHW and getattr(images, "high", None) is not None:
+            for s in self.machine.slices:
+                s.wlim = low_top(cfg)
 
     def write(self, s: int, addr: int, data: np.ndarray) -> None:
         v = np.ascontiguousarray(data).view(np.uint8).reshape(-1)
@@ -1948,7 +2342,8 @@ def worker_words(image, prog, run_args=None) -> np.ndarray:
     ra = run_args if run_args is not None else getattr(prog, "run_args", ())
     w = Words.of(assemble(prog), ra)
     if image.cfg.SEQ_WC:
-        w.waits = WC.entries(w, image.cfg.D, image.cfg.S, ra, prog=prog)
+        w.waits = WC.entries(w, image.cfg.D, image.cfg.S, ra, prog=prog, aw=image.cfg.AW,
+                             win=image.cfg.WC_WIN)
     return w
 
 
@@ -1988,10 +2383,17 @@ def layer_programs(image, key, block: int, hint: bool = False, em: bool = False,
                                         keep=key[3:] == ("keep",))
     if key[0] == "v":                       # (("v", rows): image rows, minicpmv.Image)
         return image.compile_vis_run(key[1], em=em)
-    if key[-1] == "tile":
-        from . import tiled as TL
+    if key[0] == "L":                       # (("L", layer, blocks, rows[, "tile"]): a layer's
+        from .prefill_loop import compile_layer_loop    # runs in a loop, prefill_loop)
+        return compile_layer_loop(image, key[1], key[2], block, n=key[3],
+                                  tile=key[-1] == "tile", em=em, slot=slot)
+    if key[0] == "dnc":                     # (("dnc", layer): the chunked DeltaNet core)
+        return image.compile_dn_run(key[1], **({"slot": slot} if slot else {}))
+    if key[-1] == "tile" or str(key[-1]).startswith("dn-"):
+        from . import tiled as TL               # (a DeltaNet layer by chunks: TL.DN_PARTS)
         return TL.compile_layer_tile(image, key[0], key[1], key[2], block,
-                                     **({"slot": slot} if slot else {}))
+                                     **({"slot": slot} if slot else {}),
+                                     **({"part": key[-1]} if key[-1] != "tile" else {}))
     kw = {"hint": True} if hint and key[0] >= 0 else {}
     if em:
         kw["em"] = True
@@ -2003,11 +2405,27 @@ def layer_programs(image, key, block: int, hint: bool = False, em: bool = False,
     return image.compile_layer_run(key[0], key[1], block, R=key[2], embedded=key[3], **kw)
 
 
-def _worker_layer(key, hint: bool = False, em: bool = False, slot: int = 0):
+def layer_what(key, block: int, hint: bool = False, em: bool = False, slot: int = 0) -> tuple:
+    """The program cache's `what` of layer_programs' run of `key` (Engine._layer_what,
+    _worker_layer, warm35x2.warm_layers)."""
+    return ("layer", key, block, hint, em, slot)
+
+
+def _worker_layer(key, hint: bool = False, em: bool = False, slot: int = 0, layout=None):
     """The worker process: layer_programs' program, assembled (one slice), and its
-    run_args."""
+    run_args. layout (the engine's, its program cache on): a run the cache holds (warm35's)
+    read from it instead of compiled (~2 ms against 16-46 ms: a bucket's 81 off the card's
+    path); a compile here is not written (the engine's own runs write theirs)."""
     image, block = _WORKER
-    progs, ra = layer_programs(image, key, block, hint, em, slot)
+    what = layer_what(key, block, hint, em, slot)
+
+    def compile():
+        return layer_programs(image, key, block, hint, em, slot)
+    if layout is not None and PC.has(layout, what):
+        progs, ra = PC.get(layout, what, compile)
+        PC.clear()                          # (the engine keeps the words)
+    else:
+        progs, ra = compile()
     return worker_words(image, progs[0], ra), ra
 
 
@@ -2207,7 +2625,10 @@ class Engine:
     with OTPU_TILE=0 as the image is built), Gemma 4's opt-in (tile_runs True or OTPU_TILE=1),
     of `tile_rows` rows (None: tiled.LAYER_ROWS' 8 for Qwen3.5-MoE, else layer_major's), at
     most ACT_ROWS; the calls that run layer-major (gate_expert_major's short ones) keep
-    layer_major's rows, untiled.
+    layer_major's rows, untiled. layer_loop (Qwen3.5, no layer hints;
+    opentpu/llm/prefill_loop.py): each layer's runs of a chunk in one bucket as one run, a
+    hardware loop over them, and the embed runs (the table on the card) as one, their tokens
+    from out[]: bit for bit the runs one by one.
 
     rollback(k) takes the context back to its first k tokens (a chat's next turn, whose
     template renders the last reply differently from what was fed: opentpu/llm/snapshot.py).
@@ -2228,9 +2649,10 @@ class Engine:
                  pool_map: bool = True, prog_cache: bool | None = None,
                  prompt_runs: bool = False, layer_ahead=None, expert_major: bool = False,
                  snapshots: int = 0, batch_area: bool = False, tile_runs: bool | None = None,
-                 tile_rows: int | None = None):
+                 tile_rows: int | None = None, layer_loop: bool = False):
         from . import prefill as PF
         self.spec, self.cap, self.block = spec, cap, block
+        self.layer_loop = bool(layer_loop)  # (prefill_layers: a layer's runs in a bucket, one)
         self.prog_cache = PC.enabled() if prog_cache is None else bool(prog_cache)
         self.prompt_runs = prompt_runs
         self.tile_runs = tile_runs          # (None: OTPU_TILE's choice, prefill.tile_flag:
@@ -2256,6 +2678,8 @@ class Engine:
             self.rows = self.cfg.act_rows
             if cfg is None:
                 self.cfg = device_config(spec, cap, batch=batch, rows=self.rows, **wkw)
+        if expert_major and "em" in inspect.signature(spec.image).parameters:
+            wkw["em"] = True                # (a resident pool's records: Image(em=True))
         try:
             self.image = spec.image(self.cfg, cap, batch, self.rows, **wkw)
         except MemoryError as e:            # an int8 embedding table of its own that does not
@@ -2294,6 +2718,11 @@ class Engine:
                                        SN.Snapshots.area(self.image, self.cfg, snapshots))
             if self._snaps.base is not None:
                 images = SN.grow(images, self._snaps.end())
+        # the end of the image's low area and the areas after it (Images.end): with the weights
+        # from HIGH on, the image's low_end; else the arrays' length
+        high = getattr(self.image, "high", False)
+        end = max(image_end(self.image), self._snaps.end() if self._snaps is not None and
+                  self._snaps.base is not None else 0) if high else len(images[0])
         self.snap_stats: list = []          # the snapshots' and restores' copies (stats)
         # batched decode steps over the sequences' KV slots (opentpu/llm/batch.py): their area
         # past the image (and the snapshots)
@@ -2303,12 +2732,16 @@ class Engine:
                 raise ValueError("batch_area needs batch > 1 and the lookup tables "
                                  "(resident=True)")
             from . import batch as BA
-            self.bat = BA.alloc(self.image, self.cfg, batch, -(-len(images[0]) // 4096) * 4096)
+            self.bat = BA.alloc(self.image, self.cfg, batch, -(-end // 4096) * 4096)
             if self.bat["end"] + WC.area(self.cfg.IMEM_WORDS, self.cfg.SEQ_WC) > \
-                    self.cfg.DRAM_BYTES:
+                    area_limit(self.image, self.cfg):
                 raise MemoryError("no room in the DRAM for the batch area")
             images = SN.grow(images, self.bat["end"])
             BA.build(images, self.bat, spec, self.cfg)
+            end = self.bat["end"]
+        images = Images(images, end if high else max(len(m) for m in images),
+                        getattr(self.image, "wlo", high_base(self.cfg)) if high else None,
+                        getattr(self.image, "wskip", None) if high else None)
         self.backend = IsaBackend(self.cfg, images, adopt=True) if backend == "isa" else backend(
             self.cfg, images)
         self.resident = bool(resident) and lookup and bool(getattr(self.backend, "args", False))
@@ -2355,14 +2788,18 @@ class Engine:
         self._layer_slot = 0                # (the DeltaNet states' slot of the runs: an MTP
                                             # image's committed one, prefill_layers' slot)
         if self.layer_major and not (getattr(self.image, "prefill_rows", 0) and self.device_inputs
-                                     and getattr(self.backend, "args", False) and batch == 1):
+                                     and getattr(self.backend, "args", False) and
+                                     (batch == 1 or getattr(self.image, "slot_runs", False))):
             raise ValueError("layer-major prefill needs an image with prefill rows and lookup "
-                             "tables (compile_layer_run), batch 1 and a backend with run "
-                             "arguments")
-        if self.expert_major and not (self.layer_major and self.server is not None and pooled
-                                      and not self.layer_hint):
+                             "tables (compile_layer_run), batch 1 (or runs at a slot: "
+                             "qwen35.Image(batch=N)) and a backend with run arguments")
+        em_pool = getattr(self.image, "pool", None) is not None and \
+            getattr(self.image, "em_ok", lambda: False)()   # (every expert in DRAM, the records)
+        if self.expert_major and not (self.layer_major and not self.layer_hint and (
+                em_pool or self.server is not None and pooled)):
             raise ValueError("expert-major MoE needs layer-major prefill, the expert server "
-                             "with pooled slots, and no layer hints (its runs post needs)")
+                             "with pooled slots (or a resident pool with its records, "
+                             "Image(em=True)), and no layer hints (its runs post needs)")
         # expert-major runs of more than one row tiled (tiled.py's compile_layer_tile: the
         # layer's weights once for the run's rows, up to ACT_ROWS of them; the image's mask
         # tiles): Qwen3.5-MoE's by default, tiled.LAYER_ROWS rows a run, unless tile_runs is
@@ -2958,6 +3395,7 @@ class Engine:
             q = fix[0]
             fix = (("m", q // B + 1, 1) + (("xbuf",) if em else ()),
                    dict(RunPos.values(tokens[0], q, K, B), row=0), fix[1])
+        core = TL.dn_core(img) if tile else None    # (the chunked DeltaNet core: dn_parts)
         chunks, p0 = [], self.pos       # each chunk's runs: (key, run arguments, the host's rows
         for c0 in range(0, len(tokens), img.prefill_rows):  # written before it, or None)
             part, runs = tokens[c0:c0 + img.prefill_rows], []
@@ -2969,14 +3407,16 @@ class Engine:
                 runs.append(((-1, (p0 + i) // B + 1, 1, True),  # (embed_host: the token's row)
                              dict(RunPos.values(t, p0 + i, K, B), row=i), [t]))
             for li in range(self.spec.layers):
-                i = 0
+                i, k0 = 0, len(runs)
+                cut = TL.core_end(core, low, len(part)) if self.spec.kinds[li] == "linear" \
+                    else None                   # (a tile ends where the chunked core's run does)
                 while i < len(part):
                     p = p0 + i
                     if i < low:
                         n = min(R, low - i)
                         runs.append(((li, None, n, True, p), {"row": i}, None))
                     else:
-                        n = min(T, len(part) - i, B - p % B)
+                        n = min(T, len(part) - i, B - p % B, cut - i if cut and i < cut else T)
                         if li == 0 and vp is not None:      # a run of text or of image rows
                             j, im = i + 1, vp[i] >= 0
                             while j < i + n and (vp[j] >= 0) == im and \
@@ -2999,10 +3439,20 @@ class Engine:
                         runs.append((key, dict(RunPos.values(part[i], p, K, B), row=i),
                                      part[i:i + n] if gather else None))
                     i += n
+                if tile and getattr(self.cfg, "DNCHUNK", 0) and \
+                        self.spec.kinds[li] == "linear":    # (by chunks: tiled.dn_parts)
+                    runs[k0:] = TL.dn_merged(TL.dn_parts(runs[k0:], core),
+                                             getattr(self.cfg, "DNMERGE", 0))
                 if em and li >= mo.first:               # the layer's expert run
                     runs.append((("x", li) + ((self.em_pass,) if self.em_pass else ()),
                                  {"rows": len(part), "entries": len(part) * mo.k},
                                  None))
+            if self.layer_loop and not self.layer_hint and \
+                    type(img).__module__.endswith(".qwen35"):   # (the layer loop: a layer's runs
+                from .prefill_loop import loop_runs             # in a bucket, one run; the
+                runs = loop_runs(runs, embed=not getattr(img, "embed_host", False) and  # embed
+                                 self.row_server is None and "gen" in img.lookup)  # runs' from
+                                                                                    # out[])
             nx = [] if mtp is None else mtp[c0:c0 + len(part)]
             have = next((i for i, t in enumerate(nx) if t is None), len(nx))
             i = 0
@@ -3030,10 +3480,12 @@ class Engine:
         if srv is not None and hasattr(srv, "begin_prefill"):
             kw = {} if send is None else {"ahead": True} if not self.layer_hint else \
                 {"ahead": True, "part": self.ahead_part}
-            if em:                          # (the scratch: the first chunk's rows' records;
-                from .moe import em_record  # the needs go in idle-poll parts, as hints')
-                kw.update(expert_major=True, part=self.ahead_part, scratch=len(chunks[0][0]) *
-                          em_record(self.spec.hidden, mo.k))
+            if em:                          # (the scratch: moe.em_scratch's records; the needs
+                from .moe import em_qd, em_record, em_scratch   # go in idle-poll parts,
+                kw.update(expert_major=True, part=self.ahead_part,
+                          scratch=em_scratch(img.offload, len(chunks[0][0]), img.prefill_rows,
+                                             em_record(self.spec.hidden, mo.k,
+                                                       em_qd(self.cfg))))   # (as hints')
             srv.begin_prefill(**kw)
         if fix is not None:             # its residual row into chunk row 0, the next token's
             self.backend.write(0, img.io["xbuf"], np.asarray(fix[2], np.float32))   # row
@@ -3054,7 +3506,10 @@ class Engine:
                         self._send_ahead(send, 0)
                     elif 0 < j < nm:
                         self._send_ahead(send, j)
-                if rows is not None:
+                if key[0] == "L" and key[1] < 0:       # (an embed loop's tokens: out[],
+                    from .prefill import write_tokens   # prefill_loop.qwen35_embed_out)
+                    write_tokens(self, (key[2] - 1) * B + vals["tpos0"], rows)
+                elif rows is not None:
                     self._write_host_rows(rows)
                 try:
                     run(key, vals)
@@ -3099,32 +3554,39 @@ class Engine:
             if fut is not None:             # (the words with their run_args: Words)
                 words, ra = fut.result()
                 self._layer_runs[ck] = (None, ra, Words.of(words, ra))
-            else:
-                progs, ra = layer_programs(self.image, key, self.block, self.layer_hint,
-                                           self.expert_major, self._layer_slot)
+            else:                           # (through the program cache: S > 1 has no
+                progs, ra = self.cached(        # workers, and a bucket's runs are 81 programs)
+                    self._layer_what(key),
+                    lambda: layer_programs(self.image, key, self.block, self.layer_hint,
+                                           self.expert_major, self._layer_slot))
                 words = Words.of(I.assemble(progs[0]), ra) \
-                    if getattr(self.backend, "runs_words", False) else None
+                    if getattr(self.backend, "runs_words", False) and self.cfg.S == 1 else None
                 self._layer_runs[ck] = (progs, ra, words)
         return self._layer_runs[ck]
 
     def _slot_key(self, key):
         return key if not self._layer_slot else (key, "slot", self._layer_slot)
 
+    def _layer_what(self, key) -> tuple:
+        """The program cache's `what` of layer_programs' run of `key` (layer_what)."""
+        return layer_what(key, self.block, self.layer_hint, self.expert_major, self._layer_slot)
+
     def _precompile_layers(self, keys) -> None:
         """prefill_layers' runs not compiled yet, compiled by the worker processes in the order
         they run (the process pipeline): the card runs a layer while the next one's programs
         compile (22-46 ms each against a layer's 200-460 ms, docs/offload.md 13.7). Queued
         while the workers start too (a prompt right after the engine: the 26B's); until they
-        are up, _layer_run compiles a run here and drops its compile."""
+        are up, _layer_run compiles a run here and drops its compile. A run the program cache
+        holds (warm35's layer runs) a worker reads from it (_worker_layer's layout)."""
         if not self._procs:
             return
+        layout = self.layout if self.prog_cache else None
         for k in dict.fromkeys(keys):
             ck = self._slot_key(k)
             if ck not in self._layer_runs and ck not in self._layer_next:
                 self._layer_next[ck] = self._pool.submit(_worker_layer, k, self.layer_hint,
-                                                         self.expert_major,
-                                                         *([self._layer_slot]
-                                                           if self._layer_slot else []))
+                                                         self.expert_major, self._layer_slot,
+                                                         layout)
 
     def step_batch(self, tokens) -> np.ndarray:
         """One token for each of the first len(tokens) sequences, each at its own next
@@ -3194,7 +3656,8 @@ class Engine:
 
     def _generate_chain(self, b0: int, b1: int, samp=None) -> None:
         """Buckets b0 + 1 .. b1 in the chain area of samp's mode and its table (each written
-        once per samp.key)."""
+        once per samp.key; in a ring of slots, G.alloc's, again when another bucket took its
+        slot: b1 - b0 < G.nslot)."""
         g = self.image.lookup["gen"]
         mode = int(samp is not None)
         key = (None if samp is None else samp.key, self.gen_debug)
@@ -3206,12 +3669,18 @@ class Engine:
         new = [k for k in range(lo, b1 + 1) if k not in have]
         if not new:
             return
+        ns = G.nslot(g)
+        if b1 - lo >= ns:
+            raise ValueError(f"buckets {lo} .. {b1} in a ring of {ns} chain slots")
+        taken = {(k - 1) % ns for k in new}
+        have -= {k for k in have if (k - 1) % ns in taken}     # (their slots rewritten)
         if getattr(self.backend, "waitc", False):   # (their wait entries at once: the workers)
             items = [(np.asarray(I.assemble(prog), np.uint32), None, prog)
                      for k in new for pj in (lambda p: p if isinstance(p, tuple) else (p,))(
                          self._generate_prog(k, samp)) for prog in pj]
             WC.entries_many(items, self.cfg.D, self.cfg.S,
-                            self._pool if self._procs and self._ready.done() else None)
+                            self._pool if self._procs and self._ready.done() else None,
+                            aw=self.cfg.AW, win=self.cfg.WC_WIN)
         for k in new:
             progs = self._generate_prog(k, samp)
             for j, pj in enumerate(progs if isinstance(progs, tuple) else (progs,)):
@@ -3283,8 +3752,12 @@ class Engine:
             else:
                 b0 = p // self.block + 1
                 b1 = b0
+                left = n                            # (this run's tokens: all of them, or
                 if getattr(self.backend, "chains", False):     # the whole run on the device
-                    b1 = (p + n - 1) // self.block + 1
+                    b1 = (p + n - 1) // self.block + 1          # up to a chain ring's reach)
+                    if "nslot" in g:
+                        b1 = min(b1, b0 + G.nslot(g) - 2)
+                        left = min(n, b1 * self.block - p)
                     self._generate_chain(b0, b1, samp)
                 progs = self._generate_prog(b0, samp)
                 if isinstance(progs, tuple):      # split: the run starts at the first part
@@ -3294,8 +3767,8 @@ class Engine:
                     self._generate_inputs(samp, p, nb, ctx, rng)
                 self._write_host_rows([tok])        # the first token's rows (then the loop's
                 for s in range(self.cfg.S):         # requests, served while it runs)
-                    self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, n, ids,
-                                                                    self.block, samp))
+                    self.backend.write(s, g["state"], G.state_words(self.spec, tok, p, left,
+                                                                    ids, self.block, samp))
                     self.backend.write(s, g["out"] + 4 * (p + 1),
                                        np.full(nb, G.OUT_MARK, np.uint32))
                 runner = getattr(self.backend, "run_generate", None)

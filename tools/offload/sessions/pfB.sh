@@ -1,6 +1,6 @@
 #!/bin/bash
 # Session pfB (docs/offload.md 13.11, 13.13, 13.14, 13.15): expert-major MoE in the layer-major prefill
-# on the card, A/B against today's default. Run 2026-10-12 on opentpu.
+# on the card, A/B against today's default. Run 2026-10-12 on the card host.
 # Tree: GitHub main ee8f118d plus this script (its opentpu/ the same as production's host/, 23b68089),
 # a git archive at ~/otpu-build/moe-ab/tree-ee8f118d (T). Card: production deploy_mt4_91a9c2d3 as
 # loaded (EXPECT 91a9c2d3, register map 4); no bitstream change.

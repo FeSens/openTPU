@@ -1,8 +1,9 @@
 """Greedy decoding on the ISA simulator vs Hugging Face (fp32), prompt by prompt.
 
     python3 tools/compare_hf.py [--model qwen3|lfm2|qwen35|DIR] [--tokens 16] [--chat] [--emulate]
-                                [--cfg board|CFG.pkl] [--wformat F] [--head-format F]
-                                [--backend isa|board] [--resident] [prompt ...]
+                                [--cfg board|CFG.pkl] [--set K=V,...] [--wformat F] [--head-format F]
+                                [--backend isa|board] [--resident] [--layers N] [--hf-dtype bf16]
+                                [--chunk N] [--json FILE] [prompt ...]
 
 For each prompt: the two continuations, the first token where they differ with Hugging Face's
 logit gap there, and the device's logit error against Hugging Face's logits over the steps
@@ -12,10 +13,15 @@ wraps each prompt in the model's chat template (a user turn). --emulate also run
 at the first difference, to tell quantization effects (the emulation agrees with the device)
 from kernel bugs (it agrees with Hugging Face). --cfg runs the ISA simulator in a board
 configuration (the card's, as tools/qual/refs.py cfg pickles it) instead of the design one;
---wformat / --head-format pick the weight formats (Engine). --backend board runs the device
-on the card (the host driver, as otpu-chat --backend board; a card session), --resident with
-the resident decode program. Hugging Face runs first and is freed before the device's image is
-built (a 4B model is 16 GB in fp32).
+--set overrides its fields (e.g. S=4,MCOLS=1: a board configuration another target's; without
+--cfg over the board's); --wformat / --head-format pick the weight formats (Engine). --backend
+board runs the device on the card (the host driver, as otpu-chat --backend board; a card
+session), --resident with the resident decode program. Hugging Face runs first and is freed
+before the device's image is built (a 4B model is 16 GB in fp32; --hf-dtype bf16 halves it, a
+27B's 54 GB). --layers N compares a model truncated to its first N layers (and its final norm
+and head) on both sides: Hugging Face loads only those layers' weights. --chunk: the prompt's
+rows a device run (Engine.prefill; 1: token by token with the decode program). --json writes
+each prompt's tokens and logit errors.
 """
 from __future__ import annotations
 
@@ -55,13 +61,19 @@ def main() -> None:
     ap.add_argument("--cfg", help="the device configuration: a pickled Config (tools/qual/refs.py "
                     "cfg, e.g. the card's), or 'board' (isasim.board_config); default the "
                     "design configuration")
-    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4", "mix"])
+    ap.add_argument("--set", default="", help="K=V,... over the --cfg configuration's fields "
+                    "(ints; without --cfg over the board's)")
+    ap.add_argument("--wformat", default="int8", choices=["int8", "int4", "fp4", "nvfp4", "mix"])
     ap.add_argument("--head-format", default=None, choices=["int8", "int4", "fp4"])
     ap.add_argument("--backend", default="isa", choices=["isa", "bend", "board"],
                     help="the ISA simulator, or the card (--cfg does not apply)")
     ap.add_argument("--dev", default="/dev/xdma0", help="the card's XDMA device (--backend board)")
     ap.add_argument("--resident", action="store_true",
                     help="decode with the resident program (Engine resident=True)")
+    ap.add_argument("--layers", type=int, help="the model's first N layers only, both sides")
+    ap.add_argument("--hf-dtype", default="fp32", choices=["fp32", "bf16"])
+    ap.add_argument("--chunk", type=int, help="prompt rows a device run (1: token by token)")
+    ap.add_argument("--json", help="write each prompt's tokens and logit errors here")
     a = ap.parse_args()
     path = model_dir(a.model)
     tok = transformers.AutoTokenizer.from_pretrained(path)
@@ -76,7 +88,16 @@ def main() -> None:
     prompts = [(p, encode(p)) for p in a.prompts]
     # Hugging Face first, then freed: a 3-4B model in fp32 is 12-16 GB, and the device side
     # needs its image and the simulator's DRAM next to it
-    hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).eval()
+    kw = {}
+    if a.layers:                            # (a multimodal config's text model)
+        hc = transformers.AutoConfig.from_pretrained(path)
+        tc = getattr(hc, "text_config", hc)
+        tc.num_hidden_layers = a.layers
+        if getattr(tc, "layer_types", None):
+            tc.layer_types = tc.layer_types[:a.layers]
+        kw["config"] = hc
+    dtype = torch.bfloat16 if a.hf_dtype == "bf16" else torch.float32
+    hf = transformers.AutoModelForCausalLM.from_pretrained(path, dtype=dtype, **kw).eval()
     wants, refs = [], []
     for p, ids in prompts:
         with torch.no_grad():
@@ -85,11 +106,15 @@ def main() -> None:
                                repetition_penalty=1.0)[0, len(ids):].tolist()
             # the logits that chose each of HF's tokens (causal: the steps with the same context
             # are a prefix of them)
-            refs.append(hf(torch.tensor([ids + want[:-1]])).logits[0, len(ids) - 1:].numpy())
+            refs.append(hf(torch.tensor([ids + want[:-1]])).logits[0, len(ids) - 1:]
+                        .float().numpy())
         wants.append(want)
     del hf
     gc.collect()
     spec, W = load_spec(path), load_weights(path)
+    if a.layers:
+        from dataclasses import replace
+        spec = replace(spec, kinds=spec.kinds[:a.layers])
     emulated_logits = importlib.import_module(type(spec).__module__).emulated_logits
     need = max(len(ids) for _, ids in prompts) + a.tokens
     cap = max(256, -(-need // 128) * 128)
@@ -97,15 +122,19 @@ def main() -> None:
     if a.backend == "board":
         from opentpu.host.chat import make_backend
         backend, cfg = make_backend("board", spec, cap, a.dev, path.name, lookup=a.resident)
-    elif a.cfg:
+    elif a.cfg or a.set:
         import pickle
         from dataclasses import replace
 
         from opentpu.host.board import sim_config
         from opentpu.isasim import board_config
-        base = board_config() if a.cfg == "board" else pickle.loads(Path(a.cfg).read_bytes())
-        cfg = sim_config(spec, cap, replace(base, DRAM_BYTES=1 << 32), wformat=a.wformat,
-                         head_format=a.head_format)
+        base = board_config() if a.cfg in (None, "board") else \
+            pickle.loads(Path(a.cfg).read_bytes())
+        sets = dict(kv.split("=") for kv in a.set.split(",") if kv)
+        base = replace(base, **{k: type(getattr(base, k))(int(v)) for k, v in sets.items()})
+        # (the card's DRAM, at least 4 GiB: sim_config sizes within it, the BCU's 32 GiB at AW 36)
+        cfg = sim_config(spec, cap, replace(base, DRAM_BYTES=max(base.DRAM_BYTES, 1 << 32)),
+                         wformat=a.wformat, head_format=a.head_format)
     if a.backend == "bend":                     # the ISA simulator in Bend (docs/bend.md)
         from opentpu.bend_sim import bend_backend
         backend = bend_backend()
@@ -114,10 +143,10 @@ def main() -> None:
     print(f"device: {a.backend} {eng.cfg}, weights {a.wformat}, head {a.head_format or a.wformat}"
           f"{', resident decode' if eng.resident else ''}")
     top2 = lambda l: [tok.decode([int(i)]) for i in np.argsort(-l)[:2]]
-    same, worst = 0, (0.0, 1.0)
+    same, worst, out = 0, (0.0, 1.0), []
     for (p, ids), want, ref in zip(prompts, wants, refs):
         eng.reset()
-        got, dev = [], [eng.prefill(ids)]            # dev[i]: the logits that chose got[i]
+        got, dev = [], [eng.prefill(ids, chunk=a.chunk)]   # dev[i]: the logits that chose got[i]
         while len(got) < a.tokens:
             got.append(int(np.argmax(dev[-1])))
             if got[-1] in spec.eos or len(got) == a.tokens:
@@ -131,6 +160,9 @@ def main() -> None:
         cos = float(((d * ref).sum(-1) / np.linalg.norm(d, axis=-1)
                      / np.linalg.norm(ref, axis=-1)).min())
         worst = (max(worst[0], err), min(worst[1], cos))
+        out.append({"prompt": p, "ids": ids, "hf": want, "device": got, "steps": n,
+                    "max_err": err, "min_cos": cos, "first_diff": k,
+                    "hf_span": float(np.ptp(ref, axis=-1).max())})
         print(f"{p!r}")
         print(f"   HF    : {tok.decode(want)!r}\n   device: {tok.decode(got)!r}")
         print(f"   logits vs HF over {n} steps: max |diff| {err:.3f} (HF's logits span up to "
@@ -152,6 +184,12 @@ def main() -> None:
             print(f"   the emulation's top two there: {top2(emu)}")
     print(f"{same}/{len(prompts)} prompts identical for {a.tokens} tokens; logits vs HF: "
           f"max |diff| {worst[0]:.3f}, min cosine {worst[1]:.5f}")
+    if a.json:
+        import json
+        Path(a.json).write_text(json.dumps({"model": str(path), "layers": a.layers,
+                                            "hf_dtype": a.hf_dtype, "cfg": str(eng.cfg),
+                                            "wformat": a.wformat, "head": a.head_format,
+                                            "prompts": out}, indent=1))
 
 
 if __name__ == "__main__":

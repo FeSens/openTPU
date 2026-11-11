@@ -287,6 +287,44 @@ def test_softmax_fuses_exp2_sub_and_elides_set_copies():
     assert np.allclose(r.outputs["out"], want, rtol=1e-5)
 
 
+@pytest.mark.parametrize("home", [False, True])
+def test_a_home_tile_keeps_a_loops_head_load_off_its_body_tiles(home):
+    """ol.load_home: a hardware loop's head load (a layer's norm gain) into a tile the program
+    keeps. Next-fit placement wraps within the body, so with ol.load a later body tile lands on
+    the gain's words (the next iteration's load then waits for that tile's last read: a false
+    WAR); with load_home no instruction but the load writes there. The results are the same."""
+    N, L = 256, 3
+
+    @ol.jit
+    def k(x, gain, out):
+        acc = ol.load(x)
+        for i in ol.range(L):
+            g = ol.load_home(gain[i * N:(i + 1) * N], "g") if home else \
+                ol.load(gain[i * N:(i + 1) * N])
+            y = acc * g
+            del g
+            for j in range(12):                 # fresh tiles: next-fit walks on and wraps
+                y = (y * 0.5) + float(j)
+            acc.set(y)
+        ol.store(out, acc)
+
+    cfg = Config(TMEM_WORDS=4096)
+    x = np.random.default_rng(0).standard_normal(N).astype(np.float32)
+    gn = np.random.default_rng(1).standard_normal(L * N).astype(np.float32)
+    prog = _prog(k, cfg, x=Input(x), gain=Input(gn), out=Output((N,)))
+    (lo, n), = [(p.w[1], p.w[2]) for p in prog if p.op == I.LD and p.ra]     # the gain's
+    on = [p for p in prog if p.op == I.VOP and p.w[0] < lo + n and
+          lo < p.w[0] + (p.w[3] & 0xFFFF) * (p.w[3] >> 16)]
+    assert bool(on) != home
+    r = launch(k, cfg, x=Input(x), gain=Input(gn), out=Output((N,)))
+    want = x.astype(np.float32)
+    for i in range(L):
+        want = want * gn[i * N:(i + 1) * N]
+        for j in range(12):
+            want = want * np.float32(0.5) + np.float32(j)
+    assert np.allclose(r.outputs["out"], want, rtol=1e-5)
+
+
 def test_named_temporaries_are_not_clobbered():
     @ol.jit
     def k(x, out):
@@ -304,6 +342,36 @@ def test_named_temporaries_are_not_clobbered():
     assert "exp2sub" not in ops and "copy" in ops
     r = launch(k, Config(), x=Input(x), out=Output((2, 8)))
     assert np.allclose(r.outputs["out"], 2 * np.exp2(x - 1) + (x - 1), rtol=1e-5)
+
+
+def test_an_add_in_place_is_the_set_of_a_sum_without_its_temp():
+    """x.add(y) (Tile.add: the DeltaNet layers' residual, qwen35._residual) is the ADD that
+    x.set(x + y) ends with once set moves it into x, and the next tiles go where they went
+    after x + y's temp (Builder.skip): the same program, x.set(x.add(y)) adding nothing. Where
+    TMEM has no room for that temp only the add compiles."""
+    N = 256
+
+    @ol.jit
+    def k(x, y, out, form: str, hold: int):
+        a, b = ol.load(x), ol.load(y)
+        h = ol.zeros([hold]) if hold else None
+        a.set(a + b if form == "set" else a.add(b))
+        del b, h
+        ol.store(out, a * 2.0 + 1.0)            # later tiles: placed after the add
+
+    rng = np.random.default_rng(0)
+    xs, ys = (rng.standard_normal(N).astype(np.float32) for _ in range(2))
+    args = dict(x=Input(xs), y=Input(ys), out=Output((N,)))
+    progs = {f: _prog(k, Config(TMEM_WORDS=4096), **args, form=f, hold=0)
+             for f in ("set", "add")}
+    assert np.array_equal(I.assemble(progs["set"]), I.assemble(progs["add"]))
+    add = next(p for p in progs["add"] if p.comment == "add")
+    assert add.w[0] == add.w[1] and "copy" not in [p.comment for p in progs["add"]]  # into a
+    cfg = Config(TMEM_WORDS=1024)                # a, b and 300 held words: no room for a + b
+    with pytest.raises(CompileError, match="TMEM exhausted"):
+        _prog(k, cfg, **args, form="set", hold=300)
+    r = launch(k, cfg, **args, form="add", hold=300)
+    assert np.array_equal(r.outputs["out"], (xs + ys) * np.float32(2) + np.float32(1))
 
 
 # ------------------------------------------------------------------ fusions into the hardware
@@ -391,6 +459,32 @@ def test_act_and_tmem_are_reused_once_dead():
     assert np.abs(r.outputs["out"] - want).max() < 0.05 * np.abs(want).max()
 
 
+def test_a_top_tile_is_kept_apart_from_next_fit():
+    """alloc(top=True) takes the highest free words and leaves next-fit's cursor where it was,
+    so a small tile kept for the whole program (attention's variant table) does not split the
+    gaps next-fit turns through (888fbb98: the 35B's sampled decode loop at pos 2000 and 4000,
+    top-k 64, found no gap for its head's 8193-word logits chunks)."""
+    seen = {}
+
+    @ol.jit
+    def k(x, out):
+        b = current()
+        a = ol.load(x)
+        at = b.tmem_next
+        t = b.alloc((2,), top=True)
+        u = b.alloc((3,), top=True)
+        seen.update(a=a.base, at=at, next=b.tmem_next, t=t.base, u=u.base, b=ol.load(x).base)
+        t.set(1.0)
+        u.set(2.0)
+        ol.store(out, a + ol.load(x))
+
+    cfg = Config(TMEM_WORDS=2048)
+    rng = np.random.default_rng(3)
+    _prog(k, cfg, x=Input(rng.standard_normal((16,))), out=Output((16,)))
+    top = 2048 - (I.STREAM_DESC_AREA if cfg.STREAM else 0)
+    assert seen["t"] == top - 2 and seen["u"] == top - 5
+    assert seen["next"] == seen["at"] and seen["b"] == seen["a"] + 16
+
 def _released_kernel(n_keys: int, late_arg: bool):
     """Two arguments of tok, then tok released; a loop holding n_keys address registers at
     once; then (late_arg) an argument of tpos."""
@@ -471,6 +565,68 @@ def test_a_run_time_address_does_not_take_a_register_freed_in_a_live_loop():
     xs = np.arange(4096, dtype=np.float32)
     got = _run_out(cfg, b, b.finish(), xs, {"tok": 5}, 1 << 15)
     assert np.array_equal(got, 2 * (xs[0:4] + xs[40:44]))
+
+
+def test_a_borrowed_spare_comes_back_from_its_twin():
+    """Builder.borrow with no register free (a step over slots' attention, RunSpan): a spare (an
+    inner loop's register, its outer terms left) whose terms a live register holds too; the
+    caller steps it in a loop of a run-time count (no reset after it), and give_back copies the
+    twin into it, so the inner loop's next pass reads where it would have. Transient run words
+    (Builder.transient): c * var alone in a scratch register for its one instruction, no
+    argument register."""
+    from opentpu.compiler import DevVar
+    tok = RunVar("tok", bound=8)
+    cfg = Config(DRAM_BYTES=1 << 16)
+    X = Tensor(Affine(0), (4096,), (1,))
+    W = Tensor(Affine(1 << 14), (8,), (1,))             # the run words: tok, the count
+
+    @ol.jit
+    def k():
+        b = current()
+        w = ol.load(W)
+        b.run_words, b.transient = {"tok": w.base}, True
+        acc = ol.zeros([4])
+        acc.set(acc + ol.load(X[tok * 4:tok * 4 + 4]))   # tok alone: transient
+        for i in ol.range(3):
+            acc.set(acc + ol.load(X[i * 16:i * 16 + 4]))     # {i}: live
+            for j in ol.range(2):                           # {i, j}: a spare {i} after j
+                acc.set(acc * 2.0 + ol.load(X[64 + i * 16 + j * 4:64 + i * 16 + j * 4 + 4]))
+            c = b.scratch()
+            b.emit(I.rld(c, w.base + 1, bound=(1, 4)))
+            held = []
+            while b.free_regs:
+                held.append(b.scratch())
+            r, how = b.borrow()
+            assert how is not None
+            b.emit(I.addi(r, 0, 4 * 256))
+            lp = b.begin_loop(0, rcount=c)
+            b.unscratch(c)
+            acc.set(acc * 3.0 + ol.load(Tensor(DevVar("v", r) + 0, (4,), (1,))))
+            b.emit(I.addi(r, r, 16))
+            b.end_loop(lp)
+            b.give_back(r, how)
+            for h in held:
+                b.unscratch(h)
+        ol.store(Tensor(Affine(1 << 15), (4,), (1,)), acc)
+        b.run_words, b.transient = None, False
+
+    b = k.trace(cfg, 0, {})
+    prog = b.finish()
+    assert not b.run_args and any("spare register back" in x.comment for x in prog)
+    xs = np.arange(4096, dtype=np.float32) % 7 - 3
+    dram = np.zeros(cfg.DRAM_BYTES, np.uint8)
+    dram[:4 * len(xs)] = xs.view(np.uint8)
+    dram[1 << 14:(1 << 14) + 8] = np.array([5.0, 2.0], np.float32).view(np.uint8)
+    m = Machine(cfg, [prog], [dram]).run()
+    got = m.slices[0].dram[1 << 15:(1 << 15) + 16].view(np.float32)
+    want = xs[20:24].copy()
+    for i in range(3):
+        want = want + xs[i * 16:i * 16 + 4]
+        for j in range(2):
+            want = want * 2 + xs[64 + i * 16 + j * 4:64 + i * 16 + j * 4 + 4]
+        for g in range(2):
+            want = want * 3 + xs[256 + g * 4:256 + g * 4 + 4]
+    assert np.array_equal(got, want)
 
 
 @pytest.mark.parametrize("head", [True, False])
@@ -807,3 +963,216 @@ def test_a_counter_steps_where_the_program_says(words):
         assert np.array_equal(got, want.astype(np.float32)), t
     with pytest.raises(CompileError, match="stepped while a loop's address adds it"):
         kernel(3, early=True).trace(cfg, 0, {})
+
+
+# ------------------------------------------------------------------------- AW > 32 (the BCU's 36)
+def _run_segments(cfg, kernel, args, weights_at=None, **kw):
+    """compile_kernel's steps with the weights at `weights_at`, run on the ISA simulator from
+    the images' written areas alone (a DRAM above 4 GiB: isasim.dram_zeros' sparse file)."""
+    from opentpu.runtime import collect, place
+    dram, layout, bound = place(cfg, args, weights_at=weights_at)
+    b = kernel.trace(cfg, 0, {**bound[0], **kw})
+    prog = b.finish()
+    m = Machine(cfg, [prog], [None])
+    img = dram.images[0]
+    m.slices[0].dram[:dram.next] = img[:dram.next]
+    if weights_at is not None:
+        m.slices[0].dram[weights_at:dram.high_next] = img[weights_at:dram.high_next]
+    m.run()
+    from opentpu.compiler import Compiled
+    return prog, collect(Compiled(cfg, [prog], [b.stores], layout), [m.slices[0].dram], [], {})
+
+
+AW_CFG = Config(AW=36, DRAM_BYTES=1 << 34, D=32, MCOLS=4)
+
+
+def test_weights_above_4gib_through_the_window_and_biased_registers():
+    """docs/compiler.md "Addresses above 4 GiB": the same kernel with its weights at 0 and at
+    9 GiB + 1 MiB gives the same outputs bit for bit. A static MM there takes the window
+    register (LI {w2, w1} where it moves: once for two MMs 4 GiB within, again after a loop),
+    a loop's MMs a register biased by the window's base (LI before the loop, stepped and reset
+    as any); every offset a 32-bit word."""
+    @ol.jit
+    def k(x, w, v, out, out2):
+        xs = ol.load(x)
+        ol.store(out, ol.dot(xs, w[0:16, :]) + ol.dot(xs, w[16:32, :]))
+        acc = ol.zeros([4, 8])
+        for i in ol.range(4):
+            acc.set(acc + ol.dot(xs, v[i * 8:(i + 1) * 8, :]))
+        ol.store(out2, acc + ol.dot(xs, w[32:40, :]))
+
+    rng = np.random.default_rng(1)
+    args = dict(x=Input(rng.standard_normal((4, 64), np.float32)),
+                w=Weight(rng.standard_normal((40, 64), np.float32)),
+                v=Weight(rng.standard_normal((32, 64), np.float32)),
+                out=Output((4, 16)), out2=Output((4, 8)))
+    lo_prog, lo = _run_segments(AW_CFG, k, args)
+    at = (9 << 30) + (1 << 20)
+    hi_prog, hi = _run_segments(AW_CFG, k, args, weights_at=at)
+    for name in ("out", "out2"):
+        assert np.array_equal(lo.outputs[name].view(np.uint32), hi.outputs[name].view(np.uint32))
+    lis = [p for p in hi_prog if p.op == I.LI and p.w[1]]
+    assert [x.comment for x in lis].count("window") == 2       # the first MMs; after the loop
+    assert any(x.comment == "address base" for x in lis)        # the loop's register
+    mms = [p for p in hi_prog if p.op == I.MM]
+    assert all(p.ra for p in mms) and all(p.w[0] < 1 << 32 for p in mms)
+    # the low layout at AW 36 is AW 32's program but for the negative ADDIs' w2
+    p32, _ = _run_segments(Config(D=32, MCOLS=4, DRAM_BYTES=1 << 24), k, args)
+    assert len(p32) == len(lo_prog) and all(p.w[1] == 0 for p in p32 if p.op in (I.LI, I.ADDI))
+    assert all(x.op == y.op and (x.w[0] == y.w[0] and x.w[2:] == y.w[2:] if x.op == I.ADDI
+                                 else x.w == y.w) for x, y in zip(p32, lo_prog))
+    resets = [p for p in hi_prog if p.op == I.ADDI and "reset" in p.comment]
+    assert resets and all(p.w[1] == 0xFFFFFFFF for p in resets)         # negative: w2 set
+
+
+@pytest.mark.parametrize("regs", [15, 1])
+def test_the_window_register_is_not_one_an_earlier_loop_of_the_body_steps(monkeypatch, regs):
+    """A static MM above 4 GiB after an inner loop over rows below, both in an outer loop: the
+    window register is not the inner loop's (stepped, reset and given back in the outer loop's
+    body: a free register holds 0 where that body starts again, so the window's base in it
+    would start the inner loop's next pass 4 GiB off; generate.py's token loop at Image.high
+    read its KV rows from the weights). With that register the only one (regs 1) it is zeroed
+    at the outer body's end instead. Low and high give the same outputs bit for bit."""
+    from opentpu import compiler as C
+    init = C.Builder.__init__
+
+    def few(self, *a, **kw):
+        init(self, *a, **kw)
+        self.free_regs = self.free_regs[-regs:]
+    monkeypatch.setattr(C.Builder, "__init__", few)
+
+    @ol.jit
+    def k(x, u, w, out):
+        xs = ol.load(x)
+        acc = ol.zeros([4, 8])
+        for _ in ol.range(2):
+            for i in ol.range(4):
+                acc.set(acc + ol.load(u[i * 4:(i + 1) * 4, :]))
+            acc.set(acc + ol.dot(xs, w[0:8, :]))
+        ol.store(out, acc)
+
+    rng = np.random.default_rng(3)
+    args = dict(x=Input(rng.standard_normal((4, 64), np.float32)),
+                u=Input(rng.standard_normal((16, 8), np.float32)),
+                w=Weight(rng.standard_normal((8, 64), np.float32)), out=Output((4, 8)))
+    _, lo = _run_segments(AW_CFG, k, args)
+    hi_prog, hi = _run_segments(AW_CFG, k, args, weights_at=(9 << 30) + (1 << 20))
+    assert any(p.comment == "window" for p in hi_prog)
+    assert any(p.comment.startswith("register reset (the next") for p in hi_prog) == (regs == 1)
+    assert np.array_equal(lo.outputs["out"].view(np.uint32), hi.outputs["out"].view(np.uint32))
+
+
+def test_an_address_above_4gib_a_device_value_cannot_reach_is_an_error():
+    """A device value (DevVar: its own register) plus a constant at or above 4 GiB: no register
+    of the compiler's holds the base, so it is a CompileError, not a wrapped offset."""
+    from opentpu.compiler import DevVar
+
+    @ol.jit
+    def k(out):
+        r = current().scratch()
+        ol.store(Tensor(Affine(5 << 30) + DevVar("slot", r), (8,), (1,)), ol.zeros([8]))
+        ol.store(out, ol.zeros([8]))
+
+    from opentpu.runtime import place
+    _, _, bound = place(AW_CFG, dict(out=Output((8,))))
+    with pytest.raises(CompileError, match="cannot be reached at AW 36"):
+        k.trace(AW_CFG, 0, bound[0])
+
+
+def test_runs_above_4gib_share_a_base_and_a_run_time_row_adds_it():
+    """Two loops over weights above 4 GiB: the second takes the first's registers, which hold
+    the base after it (spares: no second LI); a static MM inside a loop LIs the window in the
+    body (each iteration); a run-time row (c * pos, an argument register) with a loop and the
+    base: its register starts at ADDI R_arg + base before the loop."""
+    @ol.jit
+    def k(x, w, v, out, pos):
+        xs = ol.load(x)
+        acc = ol.zeros([4, 8])
+        for i in ol.range(2):
+            acc.set(acc + ol.dot(xs, v[i * 8:(i + 1) * 8, :]) + ol.dot(xs, w[0:8, :]))
+        for i in ol.range(2):
+            acc.set(acc + ol.dot(xs, v[16 + i * 8:24 + i * 8, :]))
+        for i in ol.range(2):
+            acc.set(acc + ol.dot(xs, w[pos * 8 + i * 8:pos * 8 + i * 8 + 8, :]))
+        ol.store(out, acc)
+
+    rng = np.random.default_rng(2)
+    args = dict(x=Input(rng.standard_normal((4, 64), np.float32)),
+                w=Weight(rng.standard_normal((40, 64), np.float32)),
+                v=Weight(rng.standard_normal((32, 64), np.float32)), out=Output((4, 8)))
+    pos = RunVar("pos", bound=3)
+    res = {}
+    for at in (None, (5 << 30) + (3 << 20)):
+        prog, _ = _run_segments(AW_CFG, k, args, weights_at=at, pos=pos)
+        words = arg_words(prog.run_args, {"pos": 2})
+        from opentpu.runtime import collect, place
+        from opentpu.compiler import Compiled
+        dram, layout, bound = place(AW_CFG, args, weights_at=at)
+        m = Machine(AW_CFG, [prog], [None], args=words)
+        m.slices[0].dram[:dram.next] = dram.images[0][:dram.next]
+        if at is not None:
+            m.slices[0].dram[at:dram.high_next] = dram.images[0][at:dram.high_next]
+        m.run()
+        b = k.trace(AW_CFG, 0, {**bound[0], "pos": pos})
+        res[at] = collect(Compiled(AW_CFG, [prog], [b.stores], layout), [m.slices[0].dram],
+                          [], {}).outputs["out"]
+        if at is not None:
+            c = [p.comment for p in prog if p.op in (I.LI, I.ADDI) and p.w[1]]
+            # (the rows' and the scale rows' registers: two keys, the second loop's the same)
+            assert c.count("address base") == 2 and c.count("window") == 1
+            assert any(p.op == I.ADDI and p.ra >= 8 and p.w[1] == 1 and "pos" in p.comment
+                       for p in prog)
+            body = next(j for j, p in enumerate(prog) if p.op == I.LOOP)
+            assert any(p.comment == "window" for p in prog[body:body + prog[body].w[0] + 1])
+    lo, hi = res.values()
+    assert np.array_equal(lo.view(np.uint32), hi.view(np.uint32))
+
+
+def test_a_negative_argument_above_aw_32_is_its_complement():
+    """Above AW 32 an argument register holds the host's word zero-extended, so c * pos with
+    c < 0 (a row counted down from the end) is the argument -c * (bound - 1 - pos), "pos~",
+    the constant less -c (bound - 1): at AW 36, low and with the weights at 5 GiB (a bare
+    argument's register plus a base: ADDI R_arg, B), every pos reads the rows AW 32 reads.
+    progcache's run_var gives it back by name."""
+    from opentpu.compiler import Comp, run_var
+    from opentpu.runtime import collect, place
+    from opentpu.compiler import Compiled
+
+    @ol.jit
+    def k(x, w, out, pos):
+        xs = ol.load(x)
+        ol.store(out, ol.dot(xs, w[16 + pos * -8:24 + pos * -8, :]))
+
+    rng = np.random.default_rng(3)
+    x, w = rng.standard_normal((4, 64), np.float32), rng.standard_normal((24, 64), np.float32)
+    args = dict(x=Input(x), w=Weight(w), out=Output((4, 8)))
+    pos = RunVar("pos", bound=3)
+    res = {}
+    c32 = Config(D=32, MCOLS=4, DRAM_BYTES=1 << 24)
+    for cfg, at in ((c32, None), (AW_CFG, None), (AW_CFG, (5 << 30) + (3 << 20))):
+        dram, layout, bound = place(cfg, args, weights_at=at)
+        b = k.trace(cfg, 0, {**bound[0], "pos": pos})
+        prog = b.finish()
+        ra = prog.run_args            # (the rows' and their scales')
+        if at is not None:            # R_arg + 5 GiB's base, the offset below 4 GiB
+            assert sum(p.op == I.ADDI and p.ra >= 8 and p.w[1] == 1 for p in prog) == 2
+        assert [(type(v), c) for v, c in ra] == ([(RunVar, -512), (RunVar, -64)] if cfg.AW == 32
+                                                 else [(Comp, 512), (Comp, 64)])
+        for p in range(3):
+            words = arg_words(ra, {"pos": p})
+            assert words[-2:] == [(c * (p if cfg.AW == 32 else 2 - p)) & 0xFFFFFFFF
+                                  for v, c in ra[::-1]]
+            m = Machine(cfg, [prog], [None], args=words)
+            m.slices[0].dram[:dram.next] = dram.images[0][:dram.next]
+            if at is not None:
+                m.slices[0].dram[at:dram.high_next] = dram.images[0][at:dram.high_next]
+            m.run()
+            got = collect(Compiled(cfg, [prog], [b.stores], layout), [m.slices[0].dram],
+                          [], {}).outputs["out"]
+            res.setdefault(p, []).append(got.view(np.uint32))
+            assert np.allclose(got, x @ w[16 - 8 * p:24 - 8 * p].T, rtol=0.1, atol=0.5)
+    assert all(np.array_equal(r[0], y) for r in res.values() for y in r[1:])
+    back = run_var(ra[0][0].name, ra[0][0].bound)
+    assert (back.name, back.bound, back.value({"pos": 1})) == ("pos~", 3, 1)
+    with pytest.raises(CompileError, match="needs pos's bound"):
+        k.trace(AW_CFG, 0, {**place(AW_CFG, args)[2][0], "pos": RunVar("pos")})
