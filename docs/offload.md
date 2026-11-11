@@ -5143,13 +5143,13 @@ ms a token, 1.127x (turns 1.129 / 1.177 / 1.041 / 1.143 / 1.161x), acceptance 0.
 - The last call's extra row: Chat took MTP's snapshot a token before the reply's start and rolled
   back to k - 1 (the MTP layer's row at k - 1 takes the token at k, which the next turn changes),
   so each turn fed that position again through the whole model, and 5 rows at R = 2 are 3 runs a
-  layer (122 runs against 81). Now (F2) the snapshot is plain's: the part before it keeps its last
+  layer (122 runs against 81). Now (the snapshot fix) the snapshot is plain's: the part before it keeps its last
   row's residual (Engine.prefill_layers(keep=True)), the snapshot holds it, and after a rollback
   to it the next prefill appends the MTP layer's row before it from that row and the new token
   (one 1-row K / V run, Engine.prefill_layers(fix=...)), bit for bit a re-run's
   (tests/test_mtp_moe.py test_moe_mtp_rollback_to_a_held_snapshot_is_a_rerun).
 - The first draft: after the head, a 1-row MTP run of its own (compiled at its position, its MoE
-  request served) before a0 came back. Now (F1b) the prefill returns a0 at once and the loop's run
+  request served) before a0 came back. Now (the draft fix) the prefill returns a0 at once and the loop's run
   starts with the D1 of the last prompt row's bucket (the loop's own program, its request served
   in the run), bit for bit the former draft (test_moe_mtp_loop_drafts_the_prompts_last_row_first).
 - The first call: the layer-major one (turn 2) costs only its K / V runs (7: +0.03 s device). The
@@ -5160,15 +5160,15 @@ ms a token, 1.127x (turns 1.129 / 1.177 / 1.041 / 1.143 / 1.161x), acceptance 0.
   a --trace of an expert-major turn in each arm on the card.
 
 The next card check is session mtp2 (tools/offload/sessions/mtp2.sh): mtp1c's arms and runs with
-B on F1b and F2, then one more run of each arm with chatmoe --trace (outside the timed ones). It
+B on the draft and snapshot fixes, then one more run of each arm with chatmoe --trace (outside the timed ones). It
 puts the measured TTFT B - A of each turn beside the model's, mtp1c's means less the parts the
 two fixes remove (-0.31 / +0.06 / +0.33 / +0.33 / +0.59 s: the first call's part left in turns
 2-5), and from the traced pair the expert-major turns' (3-5) calls by run kind (layer, expert,
 K / V, head): device and wall time, the gaps between runs, the server's idle parts and requests.
 
 mtp2 passed (2026-10-14, token-exact throughout): decode 1.123x, TTFT B - A +0.00 / +0.29 / +0.23 /
-+0.33 / +0.32 s. F2 took the last call's extra row away (its part +0.02 to -0.02 s, from +0.16 to
-+0.20); F1b only ~0.035 s (0.08 in turn 1). What is left in turns 2-5, besides the first call's,
++0.33 / +0.32 s. The snapshot fix took the last call's extra row away (its part +0.02 to -0.02 s, from +0.16 to
++0.20); the draft fix only ~0.035 s (0.08 in turn 1). What is left in turns 2-5, besides the first call's,
 is +0.10 to +0.13 s outside the calls, which the call times cannot place. chatmoe.py --trace now
 stamps each turn's host phases up to its first token (_Phases: the template, the rollback with its
 restore, each prefill_layers and its end_prefill, the snapshot and MTP's held row's read, MTP's own

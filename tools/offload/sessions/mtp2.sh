@@ -1,9 +1,9 @@
 #!/bin/bash
 # Session mtp2 (docs/offload.md 15.6): mtp1c's A / B again with the two TTFT fixes, and a traced pair. A = production's
 # host tree (PD/host: deploy_hostr21_b10245f5, d966c3df, with S), plain decode from production's pool; B = mcpv-mtp
-# (TB, its COMMIT: les-mtp's MoE MTP drafter with MiniCPM-V on main, and F1b: the loop's first run drafts the prompt's
-# last row; F2: the chat's snapshot at the reply's start holds the row before it), chatmoe --mtp from the MTP pool (QM,
-# mtp1's). The 35B's five les1 turns of --max-new 32. Predicted TTFT B - A from mtp1c's parts with F1b and F2
+# (TB, its COMMIT: les-mtp's MoE MTP drafter with MiniCPM-V on main, and the draft fix: the loop's first run drafts the prompt's
+# last row; the snapshot fix: the chat's snapshot at the reply's start holds the row before it), chatmoe --mtp from the MTP pool (QM,
+# mtp1's). The 35B's five les1 turns of --max-new 32. Predicted TTFT B - A from mtp1c's parts with the draft and snapshot fixes
 # (MODEL, turns 1-5): -0.31 +0.06 +0.33 +0.33 +0.59 s (docs/offload.md 15.6); decode as mtp1c's (1.127x).
 # Card: production deploy_hostr21_b10245f5 as loaded (EXPECT b10245f5, register map 5); its qual/cfg.pkl; the ISA
 # references: PD/chatmoe (TURNS' two: RF) and les's five-turn ones (RL: chatmoe5-qwen35-35b.json in mtp1's refs/).
@@ -62,7 +62,7 @@ echo "mtp2 start $(date +%T) A $TA ($(cat $TA/COMMIT)) B $TB ($(cat $TB/COMMIT))
   "mem $(mem) GB, /home $(df -BG --output=avail /home | tail -1 | tr -d ' ') free; $(uptime)"
 grep -q 'mtp_from' $TB/opentpu/host/streamed.py && grep -q '"--mtp"' $TB/tools/qual/chatmoe.py \
   && grep -q 'def _settle' $TB/opentpu/llm/mtp.py && grep -q 'def holds' $TB/opentpu/llm/mtp.py \
-  || { echo "STOP: TB is not mcpv-mtp with F1b and F2 (streamed.engine's mtp, chatmoe --mtp, MTPDecoder._settle, holds)"; exit 2; }
+  || { echo "STOP: TB is not mcpv-mtp with the draft and snapshot fixes (streamed.engine's mtp, chatmoe --mtp, MTPDecoder._settle, holds)"; exit 2; }
 grep -q 'mtp_from' $TA/opentpu/host/streamed.py && { echo "STOP: TA already has les-mtp's engine"; exit 2; }
 [ -f $O/$QA ] && [ -f $QM ] && [ -f $RF/chatmoe-$name.json ] && [ -f $RL/chatmoe5-$name.json ] \
   || { echo "STOP: $O/$QA, $QM, $RF/chatmoe-$name.json or $RL/chatmoe5-$name.json missing"; exit 2; }
@@ -196,7 +196,7 @@ for i in range(n):
         tot[c][0] += m * g
         tot[c][1] += g
     print(f"      TTFT B - A of the means {mean(B, i, 'ttft_s') - mean(A, i, 'ttft_s'):+.3f} s against the "
-          f"model's {model[i]:+.2f} (mtp1c's parts less F1b's and F2's)" if i < len(model) else "")
+          f"model's {model[i]:+.2f} (mtp1c's parts less the two fixes')" if i < len(model) else "")
     print(f"      MTP: acceptance {ac / max(1, it):.3f} ({ac} of {it}); decode {ma / mb if mb else 0:.3f}x "
           f"(A {ma:.1f}, B {mb:.1f} ms a token); beyond S ({s_ms:+.2f} ms) {ma / (mb - s_ms) if mb else 0:.3f}x")
 ma, mb = (tot[c][0] / max(1, tot[c][1]) for c in "AB")
